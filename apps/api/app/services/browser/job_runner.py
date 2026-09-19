@@ -15,10 +15,12 @@ import uuid
 
 from app.config.settings import settings
 from app.constants.browser import (
+    BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS,
     BROWSER_JOB_CRASHED_SUMMARY,
     BROWSER_TASK_EVENT,
     BROWSER_TOOL_CATEGORY,
     BrowserSessionStatus,
+    HandoffKind,
     HandoffStatus,
     SensitiveCategory,
 )
@@ -27,6 +29,7 @@ from app.core.stream_manager import stream_manager
 from app.models.chat_models import SourceCategory
 from app.models.stream_events import ToolOutputPayload
 from app.schemas.browser import (
+    AgentGuidanceRequest,
     BrowserActionOutput,
     BrowserCardSnapshot,
     BrowserHandoffSnapshot,
@@ -35,15 +38,20 @@ from app.schemas.browser import (
     BrowserStepSnapshot,
     HandoffOutcome,
     HandoffRequest,
+    PendingAgentGuidance,
 )
 from app.schemas.browser_job import BrowserJobRequest, BrowserJobState, BrowserJobStatus
 from app.services.analytics_service import AnalyticsEvents, capture_event
+from app.services.browser.agent_guidance import (
+    clear_guidance_request,
+    put_guidance_request,
+)
 from app.services.browser.bot_delivery import BotProgressDelivery
 from app.services.browser.exceptions import BrowserConcurrencyLimit, BrowserUnavailableError
 from app.services.browser.fingerprint import reset_fingerprint_seed, set_fingerprint_seed
 from app.services.browser.handoff import await_handoff, create_pending_handoff
 from app.services.browser.job_events import publish_job_event
-from app.services.browser.jobs import job_cancel_requested, put_job_state
+from app.services.browser.jobs import job_cancel_requested, joiner_lease_held, put_job_state
 from app.services.browser.llm import build_browser_llm
 from app.services.browser.replay import create_replay_link
 from app.services.browser.runner import (
@@ -357,6 +365,29 @@ async def _run_handoff(
     return outcome
 
 
+async def _run_guidance(
+    request: AgentGuidanceRequest,
+    *,
+    job_id: str,
+    user_id: str,
+    conversation_id: str,
+) -> HandoffOutcome:
+    """Pause the run and ask the joined agent for one instruction.
+
+    Deliberately silent to the user: an AGENT handoff takes no conversation key
+    and emits no card, so their only sign of it is the step frame's caption.
+    """
+    handoff_id = uuid.uuid4().hex
+    await create_pending_handoff(
+        handoff_id, user_id, conversation_id, request.reason, kind=HandoffKind.AGENT
+    )
+    await put_guidance_request(job_id, PendingAgentGuidance(handoff_id=handoff_id, request=request))
+    try:
+        return await await_handoff(handoff_id, BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS)
+    finally:
+        await clear_guidance_request(job_id)
+
+
 async def persist_run_outcome(
     request: BrowserJobRequest,
     *,
@@ -481,6 +512,13 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
                     ),
                     is_cancelled=partial(_is_cancelled, request),
                     action_results=thread_mirror.results,
+                    agent_joined=partial(joiner_lease_held, request.job_id),
+                    request_guidance=partial(
+                        _run_guidance,
+                        job_id=request.job_id,
+                        user_id=request.user_id,
+                        conversation_id=request.conversation_id,
+                    ),
                 ),
                 config=BrowserRunConfig(
                     max_steps=settings.BROWSER_USE_MAX_STEPS,
