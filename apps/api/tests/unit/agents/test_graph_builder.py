@@ -309,13 +309,11 @@ class TestBuildCommsGraph:
     async def test_create_agent_called_with_comms_params(self):
         with ExitStack() as stack:
             deps = _apply_patches(stack)
-            from app.agents.core.graph_builder.build_graph import (
-                COMMS_TRACKED_TODO_TOOLS,
-                build_comms_graph,
-            )
+            from app.agents.core.graph_builder.build_graph import build_comms_graph
 
             async with build_comms_graph(chat_llm=deps["llm"], in_memory_checkpointer=True) as _:
                 pass
+
             mock_ca = deps["mocks"][f"{_MOD}.create_agent"]
             mock_ca.assert_called_once()
             kwargs = mock_ca.call_args.kwargs
@@ -327,7 +325,6 @@ class TestBuildCommsGraph:
                 "call_executor",
                 "cancel_executor",
                 *[memory_tool.name for memory_tool in memory_tools.tools],
-                *[tool.name for tool in COMMS_TRACKED_TODO_TOOLS],
             ]
 
     async def test_comms_graph_has_end_graph_hooks(self):
@@ -356,35 +353,17 @@ class TestBuildCommsGraph:
             assert "call_executor" in tool_registry
             assert "add_memory" in tool_registry
             assert "search_memory" in tool_registry
-
-    async def test_comms_tracks_tracked_todo_lifecycle_directly(self):
-        """Comms holds the tracked-todo lifecycle (create/update/complete/search/
-        list) so a user never has to ask GAIA to track or close work. Canvas
-        writes and trigger subscriptions stay executor-owned."""
-        with ExitStack() as stack:
-            deps = _apply_patches(stack)
-            from app.agents.core.graph_builder.build_graph import build_comms_graph
-
-            async with build_comms_graph(chat_llm=deps["llm"], in_memory_checkpointer=True) as _:
-                pass
-
-            call = deps["mocks"][f"{_MOD}.create_agent"].call_args
-            tool_registry = call.args[1]
+            # Comms stays a thin front door: tracked-todo work is delegated to
+            # the executor, which owns the lifecycle tools and their rules.
             for name in (
                 "create_tracked_todo",
                 "update_tracked_todo",
                 "complete_tracked_todo",
                 "search_todo_context",
                 "list_tracked_todos",
+                "update_tracked_todo_canvas",
             ):
-                assert name in tool_registry, f"comms must bind {name}"
-            for name in ("update_tracked_todo_canvas", "subscribe_todo_to_trigger"):
                 assert name not in tool_registry, f"{name} must stay executor-only"
-            kwargs = call.kwargs
-            assert kwargs["tools_config"].disable_retrieve_tools is True
-            initial = kwargs["tools_config"].initial_tool_ids
-            assert "create_tracked_todo" in initial
-            assert "complete_tracked_todo" in initial
 
     async def test_comms_pre_model_hooks_structure(self):
         with ExitStack() as stack:

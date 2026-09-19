@@ -38,13 +38,6 @@ from app.agents.tools.subagent_control_tool import (
     message_subagent,
 )
 from app.agents.tools.todo_tools import create_todo_pre_model_hook, create_todo_tools
-from app.agents.tools.tracked_todo_tools import (
-    complete_tracked_todo,
-    create_tracked_todo,
-    list_tracked_todos,
-    search_todo_context,
-    update_tracked_todo,
-)
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
 from app.override.langgraph_bigtool.agent_config import (
@@ -91,19 +84,6 @@ EXECUTOR_INITIAL_TOOL_IDS = [
     "read_playbook",
     "disable_playbook",
 ]
-
-#: Tracked-todo lifecycle tools bound to comms (GAIA-internal bookkeeping on
-#: no external surface). Comms creates/tracks/completes these directly instead
-#: of routing every "add a tracked todo" through the executor. Canvas writes
-#: (update_tracked_todo_canvas) and trigger subscriptions stay executor-owned:
-#: comms' set is lifecycle-only.
-COMMS_TRACKED_TODO_TOOLS = (
-    create_tracked_todo,
-    update_tracked_todo,
-    complete_tracked_todo,
-    search_todo_context,
-    list_tracked_todos,
-)
 
 
 @asynccontextmanager
@@ -250,7 +230,6 @@ async def build_comms_graph(
         "call_executor": call_executor,
         "cancel_executor": cancel_executor,
         **{memory_tool.name: memory_tool for memory_tool in memory_tools.tools},
-        **{tool.name: tool for tool in COMMS_TRACKED_TODO_TOOLS},
     }
     store = await get_tools_store()
 
@@ -267,7 +246,6 @@ async def build_comms_graph(
                 "call_executor",
                 "cancel_executor",
                 *[memory_tool.name for memory_tool in memory_tools.tools],
-                *[tool.name for tool in COMMS_TRACKED_TODO_TOOLS],
             ],
         ),
         hooks_config=HookConfig(
