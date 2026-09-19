@@ -28,7 +28,11 @@ from typing import Literal
 from uuid import uuid4
 
 from app.agents.core.background.executor_channel import ExecutorInbox
-from app.agents.tools.execute.dispatch import DispatchErrorKind, dispatch_tool
+from app.agents.tools.execute.dispatch import (
+    DispatchErrorKind,
+    dispatch_config_for,
+    dispatch_tool,
+)
 from app.constants.agents import AgentTag
 from app.constants.log_tags import LogTag
 from app.core.websocket_manager import websocket_manager
@@ -47,6 +51,7 @@ from app.services.hil.resolution import (
 )
 from app.services.hil.utils import GatedCall
 from app.utils.background_tasks import spawn_background_task
+from app.utils.general_utils import clip_text
 from shared.py.wide_events import log
 
 DecisionKind = Literal["approve", "deny"]
@@ -183,9 +188,7 @@ async def publish_ledger_decision(
     reload, and broadcasts so listening clients refresh.
     """
     mapped = (
-        HILApprovalStatus.APPROVED
-        if status is LedgerState.APPROVED
-        else HILApprovalStatus.DENIED
+        HILApprovalStatus.APPROVED if status is LedgerState.APPROVED else HILApprovalStatus.DENIED
     )
     entry = _approval_entry(
         row.approval_id,
@@ -205,8 +208,52 @@ async def publish_ledger_decision(
                 error_type=type(e).__name__,
             )
     await _persist_decision_status(row, mapped.value)
-    await _broadcast_decision(
-        row, mapped.value, feedback if feedback is not None else row.feedback
+    await _broadcast_decision(row, mapped.value, feedback if feedback is not None else row.feedback)
+
+
+async def publish_ledger_receipt(row: ApprovalLedgerDocument, outcome: str, result: object) -> None:
+    """Show the user what their approval DID — the other half of the decision.
+
+    The decide path settles the card to approved/denied, but the tool runs
+    detached afterwards; without this the user watches an approved card do
+    nothing forever. Same triple delivery as the decision frame (live stream
+    when still open, persisted frame for reload, broadcast for listeners) on
+    the existing approval_request wire shape, so no client changes are needed:
+    the settled card's feedback carries the receipt and the outcome chip shows
+    it. Best-effort like every other delivery here — the row is the truth.
+    """
+    receipt = _receipt_text(outcome, result)
+    entry = _approval_entry(
+        row.approval_id,
+        GatedCall(name=row.tool_name, id="", args=row.args),
+        HILApprovalStatus.APPROVED,
+        row.summary,
+        None,
+        receipt,
+    )
+    if row.proposing_run_id:
+        try:
+            await _publish_entry(row.proposing_run_id, entry)
+        except Exception as e:
+            log.warning(
+                f"{LogTag.HIL} Ledger receipt frame missed its stream",
+                approval_id=row.approval_id,
+                error_type=type(e).__name__,
+            )
+    await _persist_decision_status(row, HILApprovalStatus.APPROVED.value, feedback=receipt)
+    await _broadcast_decision(row, HILApprovalStatus.APPROVED.value, receipt)
+
+
+def _receipt_text(outcome: str, result: object) -> str:
+    """One user-facing line for a terminal execution outcome."""
+    preview = "" if result is None else clip_text(str(result), 300)
+    if outcome == "EXECUTED":
+        return f"Done: {preview}" if preview else "Done."
+    if outcome == "FAILED":
+        return f"Failed: {preview}" if preview else "Failed."
+    return (
+        f"Outcome unknown{(': ' + preview) if preview else ''} — never auto-retried; "
+        "check whether it happened before asking again."
     )
 
 
@@ -221,7 +268,9 @@ async def publish_ledger_revocation(row: ApprovalLedgerDocument) -> None:
     await _broadcast_decision(row, "revoked", None)
 
 
-async def _persist_decision_status(row: ApprovalLedgerDocument, status: str) -> None:
+async def _persist_decision_status(
+    row: ApprovalLedgerDocument, status: str, *, feedback: str | None = None
+) -> None:
     """Settle the persisted card frame so reload renders the terminal state.
 
     Isolated on purpose (mirrors ``bridge.publish_decision``): a write error
@@ -233,6 +282,7 @@ async def _persist_decision_status(row: ApprovalLedgerDocument, status: str) -> 
             user_id=row.user_id,
             approval_id=row.approval_id,
             status=status,
+            feedback=feedback,
         )
     except Exception as e:
         log.warning(
@@ -311,24 +361,32 @@ async def _execute_ledger_envelope(approval_id: str) -> None:
                 user_id=row.user_id or None,
                 tool_name=row.tool_name,
                 data=dict(row.args),
-                config={"configurable": {"user_id": row.user_id}},
+                # Identity-bearing config, not a bare configurable: the wrappers
+                # resolve per-user auth from this (see dispatch_config_for).
+                # A bare configurable ran approvals as Composio's "default" user
+                # with no connected accounts — every approval landed UNKNOWN.
+                config=dispatch_config_for(row.user_id or ""),
             )
         except Exception as e:
             await approval_ledger_repository.transition(
                 approval_id, LedgerState.EXECUTING, LedgerState.UNKNOWN
             )
+            cause = f"{type(e).__name__}: {e}"
             log.error(
                 f"{LogTag.HIL} Ledger execution raised; reconciled as UNKNOWN, never retried",
                 approval_id=approval_id,
                 error_type=type(e).__name__,
             )
-            await _wake_agent(row, "UNKNOWN", None)
+            await publish_ledger_receipt(row, "UNKNOWN", cause)
+            await _wake_agent(row, "UNKNOWN", cause)
             return
-        if not result.ok and result.error is not None and result.error.kind == DispatchErrorKind.TIMEOUT:
+        if (
+            not result.ok
+            and result.error is not None
+            and result.error.kind == DispatchErrorKind.TIMEOUT
+        ):
             state, outcome = LedgerState.UNKNOWN, "UNKNOWN"
-            detail: object = (
-                "provider timed out; may or may not have run — never auto-retried"
-            )
+            detail: object = "provider timed out; may or may not have run — never auto-retried"
         elif result.ok:
             state, outcome, detail = LedgerState.EXECUTED, "EXECUTED", result.output
         else:
@@ -352,12 +410,11 @@ async def _execute_ledger_envelope(approval_id: str) -> None:
             )
             await _wake_agent(live, actual, detail)
             return
+        await publish_ledger_receipt(row, outcome, detail)
         await _wake_agent(row, outcome, detail)
 
 
-async def _wake_agent(
-    row: ApprovalLedgerDocument, outcome: str, result: object
-) -> None:
+async def _wake_agent(row: ApprovalLedgerDocument, outcome: str, result: object) -> None:
     """One DECISIONS line into the executor inbox — the agent's only signal.
 
     Inbox is transport, ledger is truth: a lost wake re-surfaces via the next

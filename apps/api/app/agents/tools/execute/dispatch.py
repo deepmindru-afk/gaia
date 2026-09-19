@@ -77,6 +77,22 @@ class ToolExecutionResult(BaseModel):
     error: DispatchError | None = None
 
 
+def dispatch_config_for(user_id: str) -> RunnableConfig:
+    """Run config carrying the caller's identity for user-bound wrappers.
+
+    Tools are user-agnostic at resolve time (see the resolver's materialized
+    cache); Composio/MCP wrappers resolve per-user auth from config at
+    invocation — ``configurable`` AND ``metadata``, both, because different
+    wrappers read different keys. One helper so synthesized configs (sandbox
+    route, ledger executor) cannot drift into setting only one and running
+    as Composio's "default" user with no connected accounts.
+    """
+    return {
+        "configurable": {"user_id": user_id},
+        "metadata": {"user_id": user_id},
+    }
+
+
 async def dispatch_tool(
     *,
     user_id: str | None,

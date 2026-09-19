@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
 
-from app.agents.tools.execute.dispatch import DispatchError, dispatch_tool
+from app.agents.tools.execute.dispatch import DispatchError, dispatch_config_for, dispatch_tool
 from app.agents.tools.execute.tool_info import ToolInfo, full_tool_info
 from app.constants.execute import (
     SANDBOX_EXECUTE_BUDGET_WINDOW_SECONDS,
@@ -117,10 +117,7 @@ async def sandbox_execute(
         data=payload.data,
         # Synthesized run config: the wrappers resolve per-user auth server-side
         # from this identity (Composio connected account, MCP token store).
-        config={
-            "configurable": {"user_id": claims.user_id},
-            "metadata": {"user_id": claims.user_id},
-        },
+        config=dispatch_config_for(claims.user_id),
         # Internal tools need graph runtime this route doesn't have, and
         # excluding them narrows what a leaked token can reach.
         integration_only=True,

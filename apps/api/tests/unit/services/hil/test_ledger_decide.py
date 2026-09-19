@@ -55,8 +55,11 @@ class TestDecideLedger:
         assert outcome.state == LedgerState.APPROVED
         assert outcome.queued is False
         repo.transition.assert_awaited_once_with(
-            "ap_abc", LedgerState.PENDING, LedgerState.APPROVED,
-            decided_by="u1", feedback=None,
+            "ap_abc",
+            LedgerState.PENDING,
+            LedgerState.APPROVED,
+            decided_by="u1",
+            feedback=None,
         )
         sched.assert_called_once()
 
@@ -85,15 +88,16 @@ class TestDecideLedger:
             patch(f"{MODULE}.publish_ledger_decision", new=AsyncMock()),
             patch(f"{MODULE}.schedule_ledger_execution") as sched,
         ):
-            outcome = await decide_ledger(
-                "ap_abc", user_id="u1", kind="deny", feedback="nope", v=3
-            )
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="deny", feedback="nope", v=3)
 
         assert outcome.committed is True
         assert outcome.state == LedgerState.DENIED
         repo.transition.assert_awaited_once_with(
-            "ap_abc", LedgerState.PENDING, LedgerState.DENIED,
-            decided_by="u1", feedback="nope",
+            "ap_abc",
+            LedgerState.PENDING,
+            LedgerState.DENIED,
+            decided_by="u1",
+            feedback="nope",
         )
         sched.assert_not_called()
 
@@ -250,7 +254,9 @@ class TestEnvelopeExecution:
         repo = self._exec_repo(timeout_result)
         with (
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
-            patch.object(ledger_decide, "dispatch_tool", new=AsyncMock(return_value=timeout_result)),
+            patch.object(
+                ledger_decide, "dispatch_tool", new=AsyncMock(return_value=timeout_result)
+            ),
             patch.object(ledger_decide, "_wake_agent", new=AsyncMock()) as wake,
         ):
             await _execute_ledger_envelope("ap_abc")
@@ -278,6 +284,149 @@ class TestEnvelopeExecution:
             await _execute_ledger_envelope("ap_abc")
 
         wake.assert_awaited_once_with(reconciled, "unknown", "sent")
+
+
+@pytest.mark.unit
+class TestEnvelopeIdentity:
+    async def test_envelope_dispatches_with_user_identity_in_config(self) -> None:
+        """The approved envelope must run AS the row's user.
+
+        Tools are user-agnostic at resolve time; Composio/MCP wrappers resolve
+        per-user auth from config at invocation (configurable AND metadata —
+        different wrappers read different keys; the sandbox route already sets
+        both). Without metadata the invoke runs as Composio's "default" user,
+        finds no connected accounts, and lands UNKNOWN. Pinned from the
+        2026-09-18 production trace (ap_5ede5be5eb11).
+        """
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import _execute_ledger_envelope
+
+        repo = _repo(_row())
+        repo.claim_executing = AsyncMock(return_value=True)
+        repo.transition = AsyncMock(return_value=True)
+        ok_result = MagicMock(ok=True, output="sent", error=None)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(
+                ledger_decide, "dispatch_tool", new=AsyncMock(return_value=ok_result)
+            ) as dispatch,
+            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()),
+            patch.object(ledger_decide, "publish_ledger_receipt", new=AsyncMock()),
+        ):
+            await _execute_ledger_envelope("ap_abc")
+
+        config = dispatch.await_args.kwargs["config"]
+        assert config["configurable"]["user_id"] == "u1"
+        assert config["metadata"]["user_id"] == "u1"
+
+
+@pytest.mark.unit
+class TestExecutionReceipt:
+    async def test_executed_publishes_receipt_with_output(self) -> None:
+        from app.models.hil_models import LedgerState as LS
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import _execute_ledger_envelope
+
+        repo = _repo(_row())
+        repo.claim_executing = AsyncMock(return_value=True)
+        repo.transition = AsyncMock(return_value=True)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(
+                ledger_decide,
+                "dispatch_tool",
+                new=AsyncMock(return_value=MagicMock(ok=True, output="deleted xyz", error=None)),
+            ),
+            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()),
+            patch.object(ledger_decide, "publish_ledger_receipt", new=AsyncMock()) as receipt,
+        ):
+            await _execute_ledger_envelope("ap_abc")
+
+        repo.transition.assert_awaited_once_with("ap_abc", LS.EXECUTING, LS.EXECUTED)
+        receipt.assert_awaited_once()
+        assert receipt.await_args.args[1] == "EXECUTED"
+        assert "deleted xyz" in str(receipt.await_args.args[2])
+
+    async def test_failed_publishes_receipt_with_error_detail(self) -> None:
+        from app.agents.tools.execute.dispatch import DispatchError, DispatchErrorKind
+        from app.models.hil_models import LedgerState as LS
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import _execute_ledger_envelope
+
+        failed = MagicMock(
+            ok=False,
+            output=None,
+            error=DispatchError(kind=DispatchErrorKind.INVALID_ARGS, detail="bad date", hint="x"),
+        )
+        repo = _repo(_row())
+        repo.claim_executing = AsyncMock(return_value=True)
+        repo.transition = AsyncMock(return_value=True)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "dispatch_tool", new=AsyncMock(return_value=failed)),
+            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()),
+            patch.object(ledger_decide, "publish_ledger_receipt", new=AsyncMock()) as receipt,
+        ):
+            await _execute_ledger_envelope("ap_abc")
+
+        repo.transition.assert_awaited_once_with("ap_abc", LS.EXECUTING, LS.FAILED)
+        receipt.assert_awaited_once()
+        assert receipt.await_args.args[1] == "FAILED"
+        assert "bad date" in str(receipt.await_args.args[2])
+
+    async def test_raised_execution_publishes_unknown_receipt_with_cause(self) -> None:
+        """An infra raise must still tell the user what happened: UNKNOWN with
+        the cause, never a silent row flip and an empty wake."""
+        from app.models.hil_models import LedgerState as LS
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import _execute_ledger_envelope
+
+        repo = _repo(_row())
+        repo.claim_executing = AsyncMock(return_value=True)
+        repo.transition = AsyncMock(return_value=True)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(
+                ledger_decide,
+                "dispatch_tool",
+                new=AsyncMock(side_effect=ValueError("No connected accounts")),
+            ),
+            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()) as wake,
+            patch.object(ledger_decide, "publish_ledger_receipt", new=AsyncMock()) as receipt,
+        ):
+            await _execute_ledger_envelope("ap_abc")
+
+        repo.transition.assert_awaited_once_with("ap_abc", LS.EXECUTING, LS.UNKNOWN)
+        receipt.assert_awaited_once()
+        assert receipt.await_args.args[1] == "UNKNOWN"
+        assert "No connected accounts" in str(receipt.await_args.args[2])
+        wake.assert_awaited_once()
+        assert "No connected accounts" in str(wake.await_args.args[2])
+
+
+@pytest.mark.unit
+class TestReceiptDelivery:
+    async def test_receipt_settles_stream_persist_and_broadcast(self) -> None:
+        """The triple delivery mirrors the decision frame: live stream when it
+        is still open, persisted frame for reload, broadcast for listeners."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import publish_ledger_receipt
+
+        row = _row()
+        row.proposing_run_id = "stream-1"
+        with (
+            patch.object(ledger_decide, "_publish_entry", new=AsyncMock()) as publish,
+            patch.object(ledger_decide, "_persist_decision_status", new=AsyncMock()) as persist,
+            patch.object(ledger_decide, "_broadcast_decision", new=AsyncMock()) as broadcast,
+        ):
+            await publish_ledger_receipt(row, "EXECUTED", "deleted xyz")
+
+        publish.assert_awaited_once()
+        persist.assert_awaited_once()
+        assert persist.await_args.args[1] == "approved"
+        assert "deleted xyz" in str(persist.await_args.kwargs["feedback"])
+        broadcast.assert_awaited_once()
+        assert "deleted xyz" in str(broadcast.await_args.args[2])
 
 
 ANY_TEXT = "provider timed out; may or may not have run — never auto-retried"
