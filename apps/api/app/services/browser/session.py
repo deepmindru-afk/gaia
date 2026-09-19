@@ -35,7 +35,7 @@ from app.services.browser.storage_persistence import (
 from shared.py.wide_events import log
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class BrowserHostSession:
     """Client-side handle to one browser-host context (CDP + live endpoints)."""
 
@@ -43,6 +43,13 @@ class BrowserHostSession:
     cdp_url: str
     live_view_url: str
     context_id: str
+    #: Whether this run's cookies are worth keeping as a saved login: it was
+    #: seeded from one, or a sign-in completed in it.
+    persist_login: bool = False
+
+    def mark_authenticated(self) -> None:
+        """Record that a sign-in completed here, so the returned state is saved on release."""
+        self.persist_login = True
 
 
 async def keep_session_alive(session_id: str) -> None:
@@ -153,10 +160,10 @@ async def browser_session(
 ) -> AsyncIterator[BrowserHostSession]:
     """Create a browser-host session, yield it, and always release it.
 
-    Seed the user's saved storage_state for the start_url domain, register
-    ownership for live-view auth, and on exit persist the returned state and
-    unregister. Raise BrowserUnavailableError when the host cannot create the
-    session and BrowserConcurrencyLimit when it is at capacity.
+    Seed the saved storage_state for the start_url domain, register ownership
+    for live-view auth, and on exit persist the returned state only when the
+    session was seeded or marked authenticated. Raise BrowserUnavailableError
+    when the host cannot create the session, BrowserConcurrencyLimit at capacity.
     """
     domain = domain_of(start_url)
     storage_state = await load_storage_state(user_id, domain)
@@ -167,6 +174,8 @@ async def browser_session(
         cdp_url=host.cdp_ws,
         live_view_url=live_view_url(host.session_id),
         context_id=host.context_id,
+        # A seeded run writes its state back so a rotated token is not lost.
+        persist_login=storage_state is not None,
     )
     log.set(browser={"session_id": session.session_id, "operation": "create"})
     log.info(f"{LogTag.BROWSER} Browser session created")
@@ -184,7 +193,10 @@ async def browser_session(
     finally:
         try:
             returned_state = await host_client.delete_session(session.session_id)
-            await save_storage_state(user_id, domain, returned_state)
+            # Saving every run turned the login store into an invisible preference
+            # cache: one task's Deutsch cookie answered the next task in German.
+            if session.persist_login:
+                await save_storage_state(user_id, domain, returned_state)
             log.info(f"{LogTag.BROWSER} Browser session released")
         except Exception as exc:
             log.warning(

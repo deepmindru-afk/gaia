@@ -1171,6 +1171,45 @@ async def test_handoff_watchers_are_aimed_at_this_run_handoff_session_and_user(
     w.auto_resolve.assert_called_once_with(handoff_id, "sess-1", "u1")
 
 
+async def test_a_completed_login_takeover_marks_the_session_worth_saving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: only a real sign-in makes this run's cookies a saved login."""
+
+    async def body(h: Harness) -> BrowserResultSnapshot:
+        await h.request_handoff(
+            HandoffRequest(category=SensitiveCategory.CREDENTIALS, reason="log in")
+        )
+        return _result(BrowserSessionStatus.COMPLETED, True, "done")
+
+    h = _install(monkeypatch, run_body=body)
+
+    await _run(h, _request(task="x"))
+
+    h.session.mark_authenticated.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("category", "status"),
+    [
+        (SensitiveCategory.PAYMENT, HandoffStatus.COMPLETED),
+        (SensitiveCategory.CREDENTIALS, HandoffStatus.CANCELLED),
+    ],
+)
+async def test_a_handoff_that_is_no_sign_in_leaves_the_session_unmarked(
+    monkeypatch: pytest.MonkeyPatch, category: SensitiveCategory, status: HandoffStatus
+) -> None:
+    async def body(h: Harness) -> BrowserResultSnapshot:
+        await h.request_handoff(HandoffRequest(category=category, reason="confirm"))
+        return _result(BrowserSessionStatus.COMPLETED, True, "done")
+
+    h = _install(monkeypatch, run_body=body, handoff_outcome=HandoffOutcome(status=status))
+
+    await _run(h, _request(task="x"))
+
+    h.session.mark_authenticated.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # persist_run_outcome — analytics attribution
 # ---------------------------------------------------------------------------

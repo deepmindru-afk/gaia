@@ -361,6 +361,8 @@ async def _run_handoff(
     finally:
         for watcher in watchers:
             watcher.cancel()
+    if outcome.status == HandoffStatus.COMPLETED and req.category == SensitiveCategory.CREDENTIALS:
+        session.mark_authenticated()
     await emit(_handoff_snapshot(handoff_id, req, session, outcome.status))
     return outcome
 

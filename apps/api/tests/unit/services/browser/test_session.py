@@ -207,8 +207,12 @@ async def test_delete_session_called_with_this_sessions_id(
 async def test_save_storage_state_called_with_user_domain_and_returned_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A run seeded from a saved login writes the rotated state back."""
     _make_session_fakes(monkeypatch)
     returned_state = {"cookies": ["returned"]}
+    monkeypatch.setattr(
+        session_mod, "load_storage_state", AsyncMock(return_value={"cookies": ["seeded"]})
+    )
     monkeypatch.setattr(
         session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
     )
@@ -219,6 +223,31 @@ async def test_save_storage_state_called_with_user_domain_and_returned_state(
     session_mod.save_storage_state.assert_awaited_once_with(
         "u42", "foo.example.com", returned_state
     )
+
+
+async def test_a_run_that_never_signed_in_saves_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: a wikipedia.org language cookie was kept as a saved login and answered the next task in German."""
+    _make_session_fakes(monkeypatch)
+
+    async with session_mod.browser_session(user_id="u1", start_url="https://www.wikipedia.org"):
+        pass
+
+    session_mod.save_storage_state.assert_not_awaited()
+
+
+async def test_a_run_whose_login_takeover_completed_saves_its_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_session_fakes(monkeypatch)
+    returned_state = {"cookies": ["signed-in"]}
+    monkeypatch.setattr(
+        session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
+    )
+
+    async with session_mod.browser_session(user_id="u1", start_url="https://x.com") as session:
+        session.mark_authenticated()
+
+    session_mod.save_storage_state.assert_awaited_once_with("u1", "x.com", returned_state)
 
 
 async def test_release_failure_is_caught_logged_and_unregister_still_runs(
@@ -252,8 +281,8 @@ async def test_save_storage_state_failure_is_also_caught(
         session_mod, "save_storage_state", AsyncMock(side_effect=ValueError("disk full"))
     )
 
-    async with session_mod.browser_session(user_id="u1", start_url="https://x"):
-        pass
+    async with session_mod.browser_session(user_id="u1", start_url="https://x") as session:
+        session.mark_authenticated()
 
     session_mod.unregister_session.assert_awaited_once()
     assert len(fake_log.warning_calls) == 1
