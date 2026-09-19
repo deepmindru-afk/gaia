@@ -101,13 +101,20 @@ _ONLY_THE_SUMMARY = (
 
 
 def _redirect(notes: list[str]) -> str:
-    """Tell the assistant which instruction the reply answers when the user changed it mid-run."""
+    """Lead with the instruction the user changed the request to, when they changed it mid-run.
+
+    A trailing sentence lost to the model against the original request still in
+    its own context: a run that read the headline closed with "the sign-in
+    didn't finish", and a timed-out run blamed the user for a step they had
+    cancelled. First line, before anything the run itself reported.
+    """
     if not notes:
         return ""
     changed = ", then ".join(f'"{note}"' for note in notes)
     return (
-        f" Mid-run the user changed the instruction to {changed}; the original request was "
-        "NOT carried out unless the summary says so, so answer the changed instruction."
+        f"THE USER CHANGED THE REQUEST MID-RUN to: {changed}. Answer THAT, not the original "
+        "request. The original request was not carried out and must not be reported as "
+        "attempted-and-failed.\n\n"
     )
 
 
@@ -117,23 +124,25 @@ def agent_result_message(result: BrowserResultSnapshot) -> str:
     redirect = _redirect(result.user_notes)
     if result.status == BrowserSessionStatus.COMPLETED and result.success:
         return (
-            f"{summary or 'The task finished.'}\n\n"
+            f"{redirect}{summary or 'The task finished.'}\n\n"
             f"{_FINISHED_LINE} Reply with a short, natural confirmation of what you found "
-            f"or did. {_ONLY_THE_SUMMARY}{redirect} {_NO_META}"
+            f"or did. {_ONLY_THE_SUMMARY} {_NO_META}"
         )
     if result.status == BrowserSessionStatus.CANCELLED:
         return (
+            f"{redirect}"
             "BROWSER TASK WAS STOPPED before it finished. It did NOT complete, so there is no "
             "result and you must not claim one. It was stopped either because the user asked, "
             "or because the request that started it ended early; never say the user stopped it "
             "unless the conversation shows they did.\n\n"
             f"Briefly say the browser task was stopped and ask if they'd like you to try again "
-            f"or do something else. {_ONLY_THE_SUMMARY}{redirect} {_NO_META}"
+            f"or do something else. {_ONLY_THE_SUMMARY} {_NO_META}"
         )
     return (
+        f"{redirect}"
         f"BROWSER TASK DID NOT COMPLETE. Last state: {summary or 'the task could not be finished'}.\n\n"
         f"{_NO_RETRY} Tell the user honestly and briefly that it couldn't be finished, and why "
-        f"if it's clear. Do not fabricate a result. {_ONLY_THE_SUMMARY}{redirect} {_NO_META}"
+        f"if it's clear. Do not fabricate a result. {_ONLY_THE_SUMMARY} {_NO_META}"
     )
 
 

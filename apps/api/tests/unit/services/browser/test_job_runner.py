@@ -179,7 +179,40 @@ def test_a_mid_run_instruction_change_is_what_the_assistant_is_told_to_answer() 
     out = jr.agent_result_message(result)
 
     assert note in out
-    assert "NOT carried out" in out
+    assert "not carried out" in out.lower()
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "status,success",
+    [(BrowserSessionStatus.COMPLETED, True), (BrowserSessionStatus.FAILED, False)],
+)
+def test_the_changed_instruction_leads_the_text_the_assistant_reads(
+    status: BrowserSessionStatus, success: bool
+) -> None:
+    """Regression: buried mid-paragraph the model kept answering the original request, so a run that read the headline closed with "the sign-in didn't finish"."""
+    note = "never mind the login, just tell me what the homepage headline says"
+    result = _result(
+        status, success, "The headline says 'The future of building happens together'."
+    )
+    result.user_notes = [note]
+
+    out = jr.agent_result_message(result)
+
+    assert out.splitlines()[0].startswith("THE USER CHANGED THE REQUEST MID-RUN")
+    assert note in out.splitlines()[0]
+
+
+@pytest.mark.regression
+def test_a_failed_run_never_blames_the_user_for_the_step_they_cancelled() -> None:
+    """Regression: the timeout copy said "you never finished signing in" after the note had said to skip the login."""
+    result = _result(BrowserSessionStatus.FAILED, False, "Nobody finished the step in time.")
+    result.user_notes = ["skip the login, just tell me the title"]
+
+    out = jr.agent_result_message(result)
+
+    assert out.index("THE USER CHANGED THE REQUEST MID-RUN") < out.index("DID NOT COMPLETE")
+    assert "must not be reported as attempted-and-failed" in out
 
 
 def test_a_run_nobody_redirected_is_told_nothing_about_a_changed_instruction() -> None:

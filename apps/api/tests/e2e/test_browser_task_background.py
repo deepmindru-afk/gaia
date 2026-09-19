@@ -241,10 +241,55 @@ async def test_a_handoff_note_reaches_the_run_and_the_policy_deciding_it() -> No
     handoffs = [card for card in world.cards() if card["kind"] == "handoff"]
     assert [card["status"] for card in handoffs] == ["pending", "completed"]
     joined = run.result_for("wait_for_browser_task") or ""
-    assert joined.startswith("The table is booked for 7pm on Friday.")
     # The closing reply is written against the original booking otherwise, and
-    # confirms a table nobody booked.
+    # confirms a table nobody booked, so the changed instruction leads.
+    assert joined.startswith("THE USER CHANGED THE REQUEST MID-RUN")
     assert note in joined
+    assert "The table is booked for 7pm on Friday." in joined
+
+
+@pytest.mark.regression
+async def test_a_chat_redirect_makes_the_changed_instruction_lead_the_executors_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the run read what the chat reply asked for and the closing still reported the login it had been told to skip."""
+    from app.services.browser import resolution
+
+    note = "never mind the login, just tell me the opening hours"
+
+    async def _redirect(*_args: Any, **_kwargs: Any) -> resolution.HandoffReplyDecision:
+        return resolution.HandoffReplyDecision(action="redirect", note=note)
+
+    monkeypatch.setattr(resolution, "ainvoke_structured_gemini", _redirect)
+    script = JevScript(
+        decisions=[("REQUEST_HUMAN", None), ("TYPE_TEXT", "1")],
+        texts=[{"text": "Sign in and come back", "category": "credentials"}, {"text": "hours"}],
+    )
+    steps = [ScriptedStep(actions=[], decide=True), ScriptedStep(actions=[], decide=True)]
+
+    async with browser_job_world(STREAM, steps=steps, jev=script) as world:
+        async with executor_graph([RETRIEVE, START, JOIN, "Done."]) as graph:
+            run_task = asyncio.create_task(
+                run_graph(
+                    graph,
+                    "book me a table",
+                    thread_id=CONVERSATION,
+                    user_id=USER,
+                    **_configurable(),
+                )
+            )
+            await _wait_for_pending_handoff(world)
+            assert (
+                await resolution.resolve_handoff_from_message(CONVERSATION, USER, note)
+            ) == "redirect"
+            run = await run_task
+            await world.settle()
+
+    assert world.browser.takeover_notes == [note]
+    joined = run.result_for("wait_for_browser_task") or ""
+    assert joined.startswith("THE USER CHANGED THE REQUEST MID-RUN")
+    assert note in joined.splitlines()[0]
+    assert joined.index(note) < joined.index("The table is booked for 7pm on Friday.")
 
 
 async def _wait_for_pending_handoff(world: JobWorld) -> str:
