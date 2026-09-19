@@ -12,7 +12,7 @@ the text nodes the viewport actually shows.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -78,8 +78,9 @@ _MEASURE_HANDLES_JS = """function(...elements) {
 
 
 # The text a person reads off the screen: every text node whose parent is shown
-# and whose own range rect overlaps the viewport, in document order.
-_TEXT_JS = r"""(limit) => {
+# and whose own range rect overlaps the viewport, in document order. The live
+# url and title ride along, because the state summary's pair can disagree.
+_SCREEN_JS = r"""(limit) => {
   const w = window.innerWidth, h = window.innerHeight;
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   const lines = [];
@@ -99,7 +100,7 @@ _TEXT_JS = r"""(limit) => {
     total += text.length + 1;
     if (total >= limit) break;
   }
-  return lines.join('\n');
+  return {text: lines.join('\n'), url: location.href, title: document.title};
 }"""
 
 
@@ -121,14 +122,16 @@ class ViewportBox:
 
 @dataclass(frozen=True)
 class ViewportRead:
-    """One step's screen: the elements it shows, and the text it shows.
+    """One step's screen: the elements it shows, the text it shows, and where it is.
 
-    An index absent from boxes is one the page could not resolve; text is None
-    when the page could not be read at all, and the caller falls back.
+    An index absent from boxes is one the page could not resolve; text, url and
+    title are None when the page could not be read at all, and the caller falls back.
     """
 
     boxes: dict[int, ViewportBox] = field(default_factory=dict)
     text: str | None = None
+    url: str | None = None
+    title: str | None = None
 
 
 async def read_viewport(
@@ -143,11 +146,11 @@ async def read_viewport(
         )
     try:
         session = await browser.get_or_create_cdp_session()
-        boxes, text = await asyncio.gather(_measure(session, targets), _text(session))
+        boxes, screen = await asyncio.gather(_measure(session, targets), _screen(session))
     except Exception as exc:  # a failed read degrades to "everything unknown", not a dead step
         log.warning(f"{LogTag.BROWSER} Jev viewport read failed", error_type=type(exc).__name__)
         return ViewportRead()
-    return ViewportRead(boxes=boxes, text=text)
+    return replace(screen, boxes=boxes)
 
 
 async def _measure(session: CDPSession, targets: list[_Target]) -> dict[int, ViewportBox]:
@@ -162,13 +165,13 @@ async def _measure(session: CDPSession, targets: list[_Target]) -> dict[int, Vie
     return boxes or await _by_backend_node(session, targets)
 
 
-async def _text(session: CDPSession) -> str | None:
-    """Return the viewport's own text, or None when the page could not produce it."""
+async def _screen(session: CDPSession) -> ViewportRead:
+    """Return the viewport's own text, url and title; every field None when the page could not answer."""
     try:
         response: dict[str, Any] = dict(
             await session.cdp_client.send.Runtime.evaluate(
                 params={
-                    "expression": f"({_TEXT_JS})({JEV_PAGE_TEXT_MAX_CHARS})",
+                    "expression": f"({_SCREEN_JS})({JEV_PAGE_TEXT_MAX_CHARS})",
                     "returnByValue": True,
                 },
                 session_id=session.session_id,
@@ -178,14 +181,26 @@ async def _text(session: CDPSession) -> str | None:
         log.warning(
             f"{LogTag.BROWSER} Jev viewport text read failed", error_type=type(exc).__name__
         )
-        return None
+        return ViewportRead()
     if response.get("exceptionDetails"):
         log.warning(
             f"{LogTag.BROWSER} Jev viewport text read raised in the page", error_type="JSError"
         )
-        return None
+        return ViewportRead()
     value = (response.get("result") or {}).get("value")
-    return str(value)[:JEV_PAGE_TEXT_MAX_CHARS] if isinstance(value, str) else None
+    if not isinstance(value, dict):
+        return ViewportRead()
+    text = value.get("text")
+    return ViewportRead(
+        text=str(text)[:JEV_PAGE_TEXT_MAX_CHARS] if isinstance(text, str) else None,
+        url=_field(value, "url"),
+        title=_field(value, "title"),
+    )
+
+
+def _field(value: dict[str, Any], key: str) -> str | None:
+    read = value.get(key)
+    return read if isinstance(read, str) and read else None
 
 
 def _targets(selector_map: dict[int, EnhancedDOMTreeNode]) -> tuple[list[_Target], int]:

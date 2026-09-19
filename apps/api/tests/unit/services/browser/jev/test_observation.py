@@ -287,3 +287,28 @@ def test_the_page_text_is_the_screens_text_when_the_page_could_read_it(flights_s
 
 def test_the_page_text_falls_back_to_browser_uses_own_rendering(flights_state) -> None:
     assert observe(flights_state, None, ViewportRead()).text.startswith("[17]<input>")
+
+
+def test_the_url_and_title_come_from_the_page_itself_when_it_answered(flights_state) -> None:
+    """Regression: a cross-origin click whose watchdog timed out leaves state.url pre-navigation."""
+    screen = ViewportRead(url="https://de.wikipedia.org/wiki/Berlin", title="Berlin - Wikipedia")
+
+    observation = observe(flights_state, None, screen)
+
+    assert observation.url == "https://de.wikipedia.org/wiki/Berlin"
+    assert observation.title == "Berlin - Wikipedia"
+
+
+def test_the_url_and_title_fall_back_to_the_state_when_the_page_could_not_answer(
+    flights_state,
+) -> None:
+    observation = observe(flights_state, None, ViewportRead())
+
+    assert (observation.url, observation.title) == ("https://x", "X")
+
+
+def test_html_entities_in_the_fallback_page_text_are_decoded(flights_state) -> None:
+    """Regression: a done summary carried "n&#233;e" verbatim from the serialised DOM."""
+    flights_state.dom_state.llm_representation = lambda: "Grace Hopper (n&#233;e Murray)"
+
+    assert observe(flights_state).text == "Grace Hopper (née Murray)"

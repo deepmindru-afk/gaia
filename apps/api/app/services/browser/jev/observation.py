@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import html
 import json
 from typing import TYPE_CHECKING
 
@@ -172,10 +173,12 @@ def observe(
         if element is not None:
             elements.append(element)
     text = screen.text if screen.text is not None else _page_text(state)
-    url = getattr(state, "url", "") or ""
+    # The page's own answer over the state summary's: a cross-origin click whose
+    # watchdog timed out leaves that url pre-navigation while the title is not.
+    url = screen.url or getattr(state, "url", "") or ""
     observation = JevObservation(
         url=url,
-        title=getattr(state, "title", "") or "",
+        title=screen.title or getattr(state, "title", "") or "",
         text=text,
         elements=_on_screen(elements, url),
     )
@@ -213,7 +216,9 @@ def _page_text(state: BrowserStateSummary) -> str:
             error_type=type(exc).__name__,
         )
         return ""
-    return str(text)[:JEV_PAGE_TEXT_MAX_CHARS]
+    # The serialiser emits the source HTML's entities; the screen text path,
+    # which walks text nodes, never does. Jev and the user read the same string.
+    return html.unescape(str(text))[:JEV_PAGE_TEXT_MAX_CHARS]
 
 
 def _fingerprint(observation: JevObservation) -> str:

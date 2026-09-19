@@ -152,7 +152,7 @@ async def test_no_resolvable_node_skips_the_element_measure_entirely() -> None:
 
     assert (await read_viewport(browser, {})).boxes == {}
     assert [call["params"]["expression"] for call in seen] == [
-        f"({viewport_mod._TEXT_JS})({JEV_PAGE_TEXT_MAX_CHARS})"
+        f"({viewport_mod._SCREEN_JS})({JEV_PAGE_TEXT_MAX_CHARS})"
     ]
 
 
@@ -217,10 +217,17 @@ async def test_an_engine_without_usable_xpaths_is_measured_node_by_node() -> Non
 
 
 class _ScreenClient:
-    """A CDP engine that answers the element measure and the viewport-text read."""
+    """A CDP engine that answers the element measure and the viewport-screen read."""
 
-    def __init__(self, text: object = "Visible line\nSecond line") -> None:
+    def __init__(
+        self,
+        text: object = "Visible line\nSecond line",
+        url: str = "https://de.wikipedia.org/wiki/Berlin",
+        title: str = "Berlin - Wikipedia",
+    ) -> None:
         self.text = text
+        self.url = url
+        self.title = title
         self.expressions: list[str] = []
 
         class _Runtime:
@@ -230,7 +237,8 @@ class _ScreenClient:
                 if "createTreeWalker" in params["expression"]:
                     if isinstance(self.text, Exception):
                         raise self.text
-                    return {"result": {"value": self.text}}
+                    value = {"text": self.text, "url": self.url, "title": self.title}
+                    return {"result": {"value": value}}
                 return {"result": {"value": {"7": {"on_screen": True, "cx": 0.5, "cy": 0.5}}}}
 
         self.send = SimpleNamespace(Runtime=_Runtime())
@@ -256,6 +264,14 @@ async def test_the_screens_own_text_comes_back_with_the_boxes() -> None:
     assert screen.boxes == {7: ViewportBox(on_screen=True, cx=0.5, cy=0.5)}
 
 
+async def test_the_live_url_and_title_come_back_with_the_text() -> None:
+    """The state summary's url can be pre-navigation; the page's own answer never is."""
+    screen = await read_viewport(_screen_browser(_ScreenClient()), {7: _node("html/body/a")})
+
+    assert screen.url == "https://de.wikipedia.org/wiki/Berlin"
+    assert screen.title == "Berlin - Wikipedia"
+
+
 async def test_the_viewport_text_is_capped(monkeypatch) -> None:
     monkeypatch.setattr(viewport_mod, "JEV_PAGE_TEXT_MAX_CHARS", 7)
 
@@ -271,7 +287,7 @@ async def test_a_text_read_that_fails_leaves_the_text_unknown(monkeypatch) -> No
 
     screen = await read_viewport(_screen_browser(client), {7: _node("html/body/a")})
 
-    assert screen.text is None
+    assert (screen.text, screen.url, screen.title) == (None, None, None)
     # The element table survives a text failure; only the text is lost.
     assert screen.boxes == {7: ViewportBox(on_screen=True, cx=0.5, cy=0.5)}
     logger.warning.assert_called_once()
