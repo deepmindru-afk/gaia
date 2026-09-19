@@ -57,8 +57,13 @@ def published(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         assert stream_id == STREAM_ID
         chunks.append(chunk)
 
-    monkeypatch.setattr(chat_stream.stream_manager, "publish_chunk", AsyncMock(side_effect=capture))
-    monkeypatch.setattr(chat_stream.stream_manager, "complete_stream", AsyncMock())
+    # Patched on the class: monkeypatch restores an instance target by re-setting
+    # the instance attribute, which permanently shadows StreamManager.publish_chunk
+    # on the process-wide singleton for any later test that patches the class.
+    monkeypatch.setattr(
+        type(chat_stream.stream_manager), "publish_chunk", AsyncMock(side_effect=capture)
+    )
+    monkeypatch.setattr(type(chat_stream.stream_manager), "complete_stream", AsyncMock())
     return chunks
 
 
