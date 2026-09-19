@@ -54,7 +54,7 @@ from app.services.browser.jev.prompts import (
     URL_VALUE,
 )
 from app.services.browser.jev.seen_text import SeenText
-from app.services.browser.jev.viewport import ViewportBox, read_viewport
+from app.services.browser.jev.viewport import NodeHandles, ViewportBox, read_viewport
 from app.services.browser.run_contract import GuidanceGate
 from shared.py.wide_events import log
 
@@ -119,6 +119,7 @@ class JevChatModel:
         self._guidance_allowed: GuidanceGate | None = None
         self._observation: JevObservation | None = None
         self._seen_text = SeenText()
+        self._handles = NodeHandles()
         #: One-shot: guidance just arrived, so this next step may not give up on it.
         self._blocked_suppressed = False
 
@@ -184,7 +185,8 @@ class JevChatModel:
             raise BrowserUnavailableError("Jev policy has no browser session bound.")
         state = await self._browser.get_browser_state_summary(cached=True, include_screenshot=False)
         selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
-        screen = await read_viewport(self._browser, selector_map)
+        self._handles.on_page(getattr(state, "url", None))
+        screen = await read_viewport(self._browser, selector_map, self._handles)
         self._viewport = screen.boxes
         observation = observe(state, await read_live_values(self._browser), screen)
         self._observation = observation
@@ -276,9 +278,12 @@ class JevChatModel:
             confidence=round(decision.confidence, 3),
         )
         self._done_reasks_left -= 1
-        return await choose(
+        alternative = await choose(
             self._client, observation, goal, self._history, offered - {JevOperation.DONE}
         )
+        # A re-ask that surfaces only a less sure WAIT spends a whole step (about
+        # 6s on a long page) to change nothing; the unsure DONE was the better read.
+        return alternative if alternative.confidence >= decision.confidence else decision
 
     async def _action_for(
         self, decision: JevDecision, observation: JevObservation, goal: str, registered: set[str]

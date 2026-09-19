@@ -12,6 +12,7 @@ the text nodes the viewport actually shows.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 import json
 import re
@@ -157,8 +158,39 @@ class ViewportRead:
     at_bottom: bool | None = None
 
 
+class NodeHandles:
+    """Remote-object handles for backend node ids, kept for as long as one page lives.
+
+    Resolving a node is one CDP round trip, serialised by the engine: 200 nodes
+    cost about 2s on every step of a long page. A handle stays valid while its
+    document does, so the same page pays that once.
+    """
+
+    def __init__(self) -> None:
+        self._url: str | None = None
+        self._handles: dict[int, str] = {}
+
+    def on_page(self, url: str | None) -> None:
+        """Forget every handle when the document changed; the old ones point into it."""
+        if url != self._url:
+            self._url = url
+            self._handles = {}
+
+    def get(self, backend_node_id: int) -> str | None:
+        return self._handles.get(backend_node_id)
+
+    def put(self, backend_node_id: int, object_id: str) -> None:
+        self._handles[backend_node_id] = object_id
+
+    def forget(self, backend_node_ids: Iterable[int]) -> None:
+        for backend_node_id in backend_node_ids:
+            self._handles.pop(backend_node_id, None)
+
+
 async def read_viewport(
-    browser: BrowserSession, selector_map: dict[int, EnhancedDOMTreeNode]
+    browser: BrowserSession,
+    selector_map: dict[int, EnhancedDOMTreeNode],
+    handles: NodeHandles | None = None,
 ) -> ViewportRead:
     """Read the screen: measure every element on it, and collect the text it shows."""
     targets, framed = _targets(selector_map)
@@ -169,14 +201,18 @@ async def read_viewport(
         )
     try:
         session = await browser.get_or_create_cdp_session()
-        boxes, screen = await asyncio.gather(_measure(session, targets), _screen(session))
+        boxes, screen = await asyncio.gather(
+            _measure(session, targets, handles or NodeHandles()), _screen(session)
+        )
     except Exception as exc:  # a failed read degrades to "everything unknown", not a dead step
         log.warning(f"{LogTag.BROWSER} Jev viewport read failed", error_type=type(exc).__name__)
         return ViewportRead()
     return replace(screen, boxes=boxes)
 
 
-async def _measure(session: CDPSession, targets: list[_Target]) -> dict[int, ViewportBox]:
+async def _measure(
+    session: CDPSession, targets: list[_Target], handles: NodeHandles
+) -> dict[int, ViewportBox]:
     """One Runtime.evaluate over every xpath, falling back to per-node resolution.
 
     Some engines serialise no parent chain, so Browser-Use's xpath collapses to
@@ -185,7 +221,7 @@ async def _measure(session: CDPSession, targets: list[_Target]) -> dict[int, Vie
     if not targets:
         return {}
     boxes = await _by_xpath(session, targets)
-    return boxes or await _by_backend_node(session, targets)
+    return boxes or await _by_backend_node(session, targets, handles)
 
 
 async def _screen(session: CDPSession) -> ViewportRead:
@@ -261,11 +297,18 @@ async def _by_xpath(session: CDPSession, targets: list[_Target]) -> dict[int, Vi
     return _parse(response)
 
 
-async def _by_backend_node(session: CDPSession, targets: list[_Target]) -> dict[int, ViewportBox]:
-    """Measure each node through its backend id: N resolveNode calls, then batched measures."""
+async def _by_backend_node(
+    session: CDPSession, targets: list[_Target], handles: NodeHandles
+) -> dict[int, ViewportBox]:
+    """Measure each node through its backend id: a resolveNode per new node, then batched measures."""
     semaphore = asyncio.Semaphore(_RESOLVE_CONCURRENCY)
 
     async def resolve(target: _Target) -> tuple[int, str] | None:
+        if target.backend_node_id is None:
+            return None
+        known = handles.get(target.backend_node_id)
+        if known is not None:
+            return (target.index, known)
         async with semaphore:
             try:
                 resolved = await session.cdp_client.send.DOM.resolveNode(
@@ -280,18 +323,27 @@ async def _by_backend_node(session: CDPSession, targets: list[_Target]) -> dict[
                 return None
         payload: dict[str, Any] = dict(resolved)
         object_id = (payload.get("object") or {}).get("objectId")
-        return (target.index, str(object_id)) if object_id else None
+        if not object_id:
+            return None
+        handles.put(target.backend_node_id, str(object_id))
+        return (target.index, str(object_id))
 
-    handles = [
+    resolved = [
         handle
         for handle in await asyncio.gather(
             *(resolve(t) for t in targets if t.backend_node_id is not None)
         )
         if handle is not None
     ]
-    batches = [handles[i : i + _MEASURE_BATCH] for i in range(0, len(handles), _MEASURE_BATCH)]
+    batches = [resolved[i : i + _MEASURE_BATCH] for i in range(0, len(resolved), _MEASURE_BATCH)]
     measured = await asyncio.gather(*(_measure_batch(session, batch) for batch in batches))
-    return {index: box for batch in measured for index, box in batch.items()}
+    boxes = {index: box for batch in measured for index, box in batch.items()}
+    if not boxes and resolved:
+        # A kept handle can outlive its document without the url changing; drop
+        # them all and measure this screen the slow way once.
+        handles.forget(t.backend_node_id for t in targets if t.backend_node_id is not None)
+        return await _by_backend_node(session, targets, NodeHandles())
+    return boxes
 
 
 async def _measure_batch(

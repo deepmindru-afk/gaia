@@ -14,7 +14,12 @@ import pytest
 from app.constants.browser import JEV_PAGE_TEXT_MAX_CHARS
 from app.constants.log_tags import LogTag
 from app.services.browser.jev import viewport as viewport_mod
-from app.services.browser.jev.viewport import ViewportBox, ViewportRead, read_viewport
+from app.services.browser.jev.viewport import (
+    NodeHandles,
+    ViewportBox,
+    ViewportRead,
+    read_viewport,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -312,3 +317,28 @@ async def test_the_page_end_being_on_screen_comes_back_with_the_text() -> None:
     screen = await read_viewport(_screen_browser(client), {7: _node("html/body/a")})
 
     assert screen.at_bottom is True
+
+
+async def test_a_node_resolved_once_is_not_resolved_again_on_the_same_page() -> None:
+    """Two hundred resolveNode round trips cost about 2 s on every step of a long page."""
+    client = _FallbackClient()
+    session = SimpleNamespace(session_id="sess", cdp_client=client)
+
+    async def get_or_create_cdp_session():
+        return session
+
+    browser = cast(
+        BrowserSession, SimpleNamespace(get_or_create_cdp_session=get_or_create_cdp_session)
+    )
+    selector_map = {3: _node("a", backend_node_id=11), 4: _node("a", backend_node_id=12)}
+    handles = NodeHandles()
+    handles.on_page("https://example.com/list")
+
+    first = (await read_viewport(browser, selector_map, handles)).boxes
+    second = (await read_viewport(browser, selector_map, handles)).boxes
+    handles.on_page("https://example.com/other")
+    await read_viewport(browser, selector_map, handles)
+
+    assert first == second
+    assert client.resolved == [11, 12, 11, 12]
+    assert len(client.batched) == 3

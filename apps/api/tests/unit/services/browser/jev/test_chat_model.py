@@ -102,16 +102,17 @@ def _answer(choice: str, keys: list[str], confidence: float = 0.8) -> JevChoiceA
 class ScriptedGateway:
     """Answers each request from a script of (operation, target); records what it saw."""
 
-    script: list[tuple[str, str | None]]
+    script: list[tuple[Any, ...]]
     model: str = "typesafe-ai/jev"
     requests: list[Any] = field(default_factory=list)
     confidence: float = 0.8
 
     async def evaluate(self, request):
         self.requests.append(request)
-        operation, target = self.script.pop(0)
+        operation, target, *rest = self.script.pop(0)
+        confidence = rest[0] if rest else self.confidence
         ops = list(request.questions["operation"].criteria)
-        answers = {"operation": _answer(operation, ops, self.confidence)}
+        answers = {"operation": _answer(operation, ops, confidence)}
         if target is not None:
             head = f"{operation.lower()}_target"
             answers[head] = _answer(target, list(request.questions[head].criteria))
@@ -426,6 +427,20 @@ async def test_an_unconfident_done_is_re_asked_without_done_offered(flights_stat
     assert _action(result.completion) == {"click": {"index": 40}}
     assert "DONE" not in gateway.requests[1].questions["operation"].criteria
     assert "CLICK" in gateway.requests[1].questions["operation"].criteria
+
+
+async def test_a_re_ask_that_only_finds_a_less_sure_wait_keeps_the_done(flights_state) -> None:
+    """Two re-asks that surfaced WAIT at p=0.30 cost 12 s on a long page and changed nothing."""
+    model, gateway, _, _ = _model(
+        flights_state,
+        [("DONE", None, 0.5), ("WAIT", None, 0.3)],
+        [{"text": "The article says 2008."}],
+    )
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert "done" in _action(result.completion)
+    assert len(gateway.requests) == 2
 
 
 async def test_a_confident_done_is_never_re_asked(flights_state) -> None:
