@@ -370,7 +370,6 @@ class ToolRegistry:
             playbook_tools,
             reminder_tool,
             research_tool,
-            revoke_tool,
             skill_tools,
             subscription_tool,
             support_tool,
@@ -469,7 +468,9 @@ class ToolRegistry:
         )
         self._add_category(
             "control",
-            tools=[finish_task_tool.finish_task, revoke_tool.revoke_tool],
+            tools=[
+                finish_task_tool.finish_task,
+            ],
             options=CategoryOptions(internal=True),
             risk=CategoryRisk(destructive_tools=set()),
         )

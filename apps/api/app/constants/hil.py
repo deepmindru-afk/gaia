@@ -158,6 +158,8 @@ HIL_RESUME_ACTIVE_TTL_SECONDS = 1800
 # Orchestration/plumbing tools that must never be gated (they don't touch the
 # outside world themselves; their inner tool calls are gated in the child graph).
 # These are the only names hardcoded here — everything else is registry-driven.
+# Ticket operations (approve/revoke) are execute-proxied inner names, exempt
+# for the same reason: the approval IS the gate, re-gating would re-ask.
 HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
     {
         "retrieve_tools",
@@ -165,7 +167,8 @@ HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
         "cancel_executor",
         "handoff",
         "spawn_subagent",
-        "revoke_tool",
+        "approve",
+        "revoke",
         FINISH_TASK_NAME,
         "plan_tasks",
         "update_tasks",
@@ -178,9 +181,7 @@ HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
 # ``spawn_subagent`` bubble up their child graph's gate interrupt. A gated sibling of
 # one of these must never auto-run: the pause re-runs the whole tool node, so anything
 # that already executed would execute a second time (see ``policy.has_pausing_sibling``).
-HIL_PAUSING_TOOLS: frozenset[str] = frozenset(
-    {"handoff", "spawn_subagent"}
-)
+HIL_PAUSING_TOOLS: frozenset[str] = frozenset({"handoff", "spawn_subagent"})
 
 # tool_data entry name for the approval card (mirrored in @gaia/shared/chat).
 APPROVAL_REQUEST_TOOL_NAME = "approval_request"

@@ -773,7 +773,7 @@ class TestOpenPendingsBlock:
         assert text.startswith("OPEN PENDINGS")
         assert "ap_1 | GMAIL_SEND_EMAIL" in text
         assert "Send it" in text
-        assert 'revoke_tool("ap_1")' in text or "revoke_tool" in text
+        assert 'execute(tool_name="revoke"' in text
 
     async def test_caps_at_ten_with_overflow_count(self) -> None:
         from app.agents.context.fetchers import build_open_pendings_block

@@ -94,7 +94,6 @@ def build_provider_parent_tool_runtime_config(
             "bash",
             "execute",
             "get_tool_schema",
-            "revoke_tool",
             *finish,
             *todo_tool_names,
             *extra_auto_bind,

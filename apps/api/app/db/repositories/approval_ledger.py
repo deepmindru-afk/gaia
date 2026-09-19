@@ -145,28 +145,9 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
             )
             .sort("executing_started_at", 1)
         )
-        return [ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=200)]
-
-    async def list_approved_unblocked(
-        self, conversation_id: str
-    ) -> list[ApprovalLedgerDocument]:
-        """APPROVED rows with no unresolved dependencies, oldest first.
-
-        The recovery seam: anything here should be executing or queued, so a
-        row found here by the reconciler is a commit whose task never ran.
-        """
-        cursor = (
-            self._raw_collection()
-            .find(
-                {
-                    "conversation_id": conversation_id,
-                    "state": str(LedgerState.APPROVED),
-                    "blocked_by": {"$size": 0},
-                }
-            )
-            .sort("created_at", 1)
-        )
-        return [ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=200)]
+        return [
+            ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=200)
+        ]
 
     async def get_by_approval_id(self, approval_id: str) -> ApprovalLedgerDocument | None:
         """One row by its ``ap_`` id, or ``None``."""
@@ -201,7 +182,9 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
             )
             .sort("created_at", 1)
         )
-        return [ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=200)]
+        return [
+            ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=200)
+        ]
 
     async def find_latest_denied(
         self, fingerprint: str, conversation_id: str

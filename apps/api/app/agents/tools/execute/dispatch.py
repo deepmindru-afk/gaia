@@ -24,6 +24,11 @@ from prometheus_client import Counter
 from pydantic import BaseModel, ValidationError
 
 from app.agents.tools.execute.resolver import resolve_tool
+from app.constants.execute import (
+    TICKET_APPROVE_NAME,
+    TICKET_NAMES,
+    TICKET_REVOKE_NAME,
+)
 from app.constants.llm import TOOL_EXECUTION_TIMEOUT_SECONDS, TOOL_TIMEOUT_EXEMPT_TOOLS
 from app.constants.log_tags import LogTag
 from app.services.analytics_service import AnalyticsEvents, capture_event
@@ -119,6 +124,13 @@ async def dispatch_tool(
     — the same hole ``retrieve_tools`` has, and closing it means defining a
     subagent's space by toolkit rather than by name.
     """
+    if tool_name in TICKET_NAMES:
+        return await _dispatch_ticket(
+            user_id=user_id,
+            tool_name=tool_name,
+            data=data,
+            config=config,
+        )
     resolved = await resolve_tool(user_id, tool_name)
     if resolved is None:
         log.warning(f"{LogTag.TOOL} execute: unknown tool", tool_name=tool_name)
@@ -243,6 +255,64 @@ async def dispatch_tool(
         )
 
     return ToolExecutionResult(ok=True, resolved_name=resolved_name, output=output)
+
+
+async def _dispatch_ticket(
+    *,
+    user_id: str | None,
+    tool_name: str,
+    data: dict[str, Any],
+    config: RunnableConfig,
+) -> ToolExecutionResult:
+    """Honor a ticket operation (approve/revoke) on a ledger row.
+
+    Runs BEFORE resolution: ticket names are control-plane, not provider
+    tools, so they bypass the registry, the catalog, and the caller's tool
+    space. Enforcement lives at the row (owner-or-executor, conversation and
+    user match) — the same checks the old revoke_tool applied. Refusals are
+    answers, not failures: they return ``ok=True`` with the refusal as the
+    output, so the model reads them instead of tripping the failure metric.
+    """
+    # Deferred import: ledger services reach the registry via dispatch, so a
+    # top-level import would close the same cycle revoke_tool documented.
+    from app.models.agent_models import agent_configurable  # noqa: PLC0415
+    from app.services.hil.ledger_decide import redeem_approved, revoke_ticket  # noqa: PLC0415
+
+    configurable = agent_configurable(config)
+    caller = str(configurable.get("thread_id") or "")
+    ticket_user = str(configurable.get("user_id") or user_id or "")
+    conversation_id = str(configurable.get("conversation_id") or "")
+    approval_id = data.get("id")
+    if not isinstance(approval_id, str) or not approval_id:
+        return ToolExecutionResult(
+            ok=True,
+            resolved_name=tool_name,
+            output=f'Name the ticket: {tool_name} needs data {{"id": "<approval_id>"}}.',
+        )
+    if tool_name == TICKET_APPROVE_NAME:
+        result = await redeem_approved(
+            approval_id,
+            user_id=ticket_user,
+            conversation_id=conversation_id,
+            caller=caller,
+        )
+        text = (
+            f"Executed '{approval_id}' ({result.state.value}): {result.detail}"
+            if result.ok
+            else f"Could not run '{approval_id}': {result.detail}"
+        )
+    elif tool_name == TICKET_REVOKE_NAME:
+        text = await revoke_ticket(
+            approval_id,
+            conversation_id=conversation_id,
+            caller=caller,
+        )
+    else:
+        # Unreachable: dispatch_tool only routes TICKET_NAMES here. Loud if
+        # that ever changes, so a new ticket name cannot fall through silent.
+        raise ValueError(f"Unknown ticket operation '{tool_name}'.")
+    _EXECUTE_DISPATCH_TOTAL.labels(outcome="ok").inc()
+    return ToolExecutionResult(ok=True, resolved_name=tool_name, output=text)
 
 
 def _failure(user_id: str | None, tool_name: str, error: DispatchError) -> ToolExecutionResult:

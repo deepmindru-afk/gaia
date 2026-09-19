@@ -357,20 +357,12 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
         return matched > 0
 
     async def set_message_approval_status(
-        self,
-        conversation_id: str,
-        *,
-        user_id: str,
-        approval_id: str,
-        status: str,
-        feedback: str | None = None,
+        self, conversation_id: str, *, user_id: str, approval_id: str, status: str
     ) -> bool:
         """Settle a persisted approval_request frame's status wherever it lives in
         the messages array. Returns whether the frame was there to settle. Does not
         advance ``updatedAt``."""
         update: dict[str, object] = {"messages.$[msg].tool_data.$[entry].data.status": status}
-        if feedback is not None:
-            update["messages.$[msg].tool_data.$[entry].data.feedback"] = feedback
         matched = await self._apply_raw_update_unfetched(
             # The approval belongs in the match, not only in the array filters:
             # those pick which element is written but never narrow `matched`, so

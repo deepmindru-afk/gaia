@@ -38,7 +38,6 @@ from app.agents.tools.finish_task_tool import finish_task
 from app.agents.tools.integration_instructions_tools import update_integration_instructions
 from app.agents.tools.memory_tools import search_memory
 from app.agents.tools.research_tool import deep_research
-from app.agents.tools.revoke_tool import revoke_tool
 from app.agents.tools.todo_tools import create_todo_pre_model_hook, create_todo_tools
 from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
 from app.constants.general import FINISH_TASK_NAME
@@ -154,8 +153,6 @@ def build_scoped_tool_dict(
         initial_tool_ids.append(scoped_execute.name)
         scoped_tool_dict[get_tool_schema.name] = get_tool_schema
         initial_tool_ids.append(get_tool_schema.name)
-        scoped_tool_dict[revoke_tool.name] = revoke_tool
-        initial_tool_ids.append(revoke_tool.name)
 
     if include_finish_task:
         scoped_tool_dict[FINISH_TASK_NAME] = finish_task

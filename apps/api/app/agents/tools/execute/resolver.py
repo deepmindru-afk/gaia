@@ -22,6 +22,7 @@ from app.constants.execute import (
     COMPOSIO_CATALOG_LOOKUP_TIMEOUT_SECONDS,
     GLOBAL_SHAPE_SCOPE,
     MCP_SHAPE_SCOPE_PREFIX,
+    TICKET_NAMES,
     UNKNOWN_CATALOG_SLUG_CACHE_MAX,
 )
 from app.constants.log_tags import LogTag
@@ -63,6 +64,10 @@ _unknown_composio_slugs: set[str] = set()
 
 async def resolve_tool(user_id: str | None, tool_name: str) -> ResolvedTool | None:
     """The canonical tool for a model-supplied name, or ``None`` if unknown."""
+    if tool_name in TICKET_NAMES:
+        # Ticket operations are control-plane, not tools: dispatch routes them
+        # before resolution, and no provider registry may ever claim them.
+        return None
     registry = await get_tool_registry()
 
     resolved = _from_registry(registry, tool_name)

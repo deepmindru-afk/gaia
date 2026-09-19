@@ -171,7 +171,12 @@ class TestSubagentResolution:
 
         assert space is not None
         assert REGISTRY_TOOL in space.tools
-        assert space.initial_tool_ids == [REGISTRY_TOOL, "execute", "get_tool_schema", "revoke_tool", FINISH_TASK_NAME]
+        assert space.initial_tool_ids == [
+            REGISTRY_TOOL,
+            "execute",
+            "get_tool_schema",
+            FINISH_TASK_NAME,
+        ]
         assert space.subagent is subagent
 
     async def test_a_subagent_that_never_finishes_explicitly_binds_no_finish_task(self) -> None:
@@ -186,7 +191,7 @@ class TestSubagentResolution:
             space = await resolve_subagent_tools(SUBAGENT_ID, USER_ID, _registry())
 
         assert space is not None
-        assert space.initial_tool_ids == [REGISTRY_TOOL, "execute", "get_tool_schema", "revoke_tool"]
+        assert space.initial_tool_ids == [REGISTRY_TOOL, "execute", "get_tool_schema"]
         assert FINISH_TASK_NAME not in space.tools
 
 
@@ -228,7 +233,13 @@ class TestMcpBackedSubagent:
             space = await resolve_subagent_tools(SUBAGENT_ID, USER_ID, _registry())
 
         assert space is not None
-        assert space.initial_tool_ids == [REGISTRY_TOOL, "execute", "get_tool_schema", "revoke_tool", FINISH_TASK_NAME, LIVE_MCP_TOOL]
+        assert space.initial_tool_ids == [
+            REGISTRY_TOOL,
+            "execute",
+            "get_tool_schema",
+            FINISH_TASK_NAME,
+            LIVE_MCP_TOOL,
+        ]
 
     async def test_a_live_tool_that_shadows_a_registry_one_is_bound_once(self) -> None:
         subagent = _subagent(mcp=True)
@@ -240,7 +251,12 @@ class TestMcpBackedSubagent:
             space = await resolve_subagent_tools(SUBAGENT_ID, USER_ID, _registry())
 
         assert space is not None
-        assert space.initial_tool_ids == [REGISTRY_TOOL, "execute", "get_tool_schema", "revoke_tool", FINISH_TASK_NAME]
+        assert space.initial_tool_ids == [
+            REGISTRY_TOOL,
+            "execute",
+            "get_tool_schema",
+            FINISH_TASK_NAME,
+        ]
 
     async def test_an_unreachable_integration_yields_an_empty_tool_set(self) -> None:
         """A briefly down integration must not kill authoring or replay.
@@ -267,7 +283,12 @@ class TestMcpBackedSubagent:
 
         assert space is not None
         assert space.tools == {}
-        assert space.initial_tool_ids == [REGISTRY_TOOL, "execute", "get_tool_schema", "revoke_tool", FINISH_TASK_NAME]
+        assert space.initial_tool_ids == [
+            REGISTRY_TOOL,
+            "execute",
+            "get_tool_schema",
+            FINISH_TASK_NAME,
+        ]
         assert space.subagent is subagent
 
     async def test_the_unreachable_warning_names_the_subagent_and_the_failure(self) -> None:
@@ -349,7 +370,6 @@ class TestToolSpaceDenial:
             "bash",
             "execute",
             "get_tool_schema",
-            "revoke_tool",
             "finish_task",
             "posthog_fast",
         ]
@@ -367,7 +387,6 @@ class TestToolSpaceDenial:
             "bash",
             "execute",
             "get_tool_schema",
-            "revoke_tool",
         ]
 
     def test_tools_with_no_subagent_behind_them_have_no_runtime_bound(self) -> None:

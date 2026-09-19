@@ -1,8 +1,15 @@
-"""Decide ledger approvals: CAS commit, instant-eligible execution, agent wake.
+"""Decide ledger approvals: CAS commit, ticket wake, agent redeem.
 
 The single entry point for every ledger decision source — the web/mobile
 decide endpoints, and later the bot classifier. Each supplies approve/deny;
 everything else is identical.
+
+Approval is permission, not execution: the backend never runs an approved
+tool. Committing wakes the model with the ticket (the approval id); the model
+redeems it with execute(tool_name="approve", data={"id": ...}), which runs
+the stored envelope and returns the result in-context so dependent work can
+chain on it. Steering a live run vs starting an idle one is
+``deliver_to_executor``'s contract.
 
 Guarantees (mirror ``resolution.py`` for the old path):
 
@@ -12,16 +19,16 @@ Guarantees (mirror ``resolution.py`` for the old path):
 * **Stale clients refresh, never overwrite.** Every render carries the row
   version ``v``; a decide call with a mismatched ``v`` returns the current
   row with ``committed=False``.
-* **Execution never blocks the tap.** Approval commits in the request;
-  the envelope runs in a canonical background task right after, and the
-  agent learns from the executor-inbox DECISIONS wake. Crash between commit
-  and receipt lands the row in UNKNOWN, reconciled lazily (never blind-retried).
+* **Stale approvals never execute.** An approve older than
+  ``LEDGER_APPROVAL_MAX_AGE_SECONDS`` is refused at decide time — the world
+  has moved on, so the model re-proposes fresh instead of acting on old args.
+* **Single-use tickets.** Redeem claims ``APPROVED -> EXECUTING``; the loser
+  is refused, never re-run.
 * **No daemon.** Crash recovery (stalled EXECUTING, orphaned APPROVED) runs
   lazily inside the decide path via :func:`reconcile_conversation_ledger` —
   every decide heals its own conversation as a side effect.
 """
 
-import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -34,6 +41,7 @@ from app.agents.tools.execute.dispatch import (
     dispatch_tool,
 )
 from app.constants.agents import AgentTag
+from app.constants.general import EXECUTOR_THREAD_PREFIX
 from app.constants.log_tags import LogTag
 from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
@@ -50,20 +58,14 @@ from app.services.hil.resolution import (
     ApprovalRequestNotFoundError,
 )
 from app.services.hil.utils import GatedCall
-from app.utils.background_tasks import spawn_background_task
-from app.utils.general_utils import clip_text
 from shared.py.wide_events import log
 
 DecisionKind = Literal["approve", "deny"]
 
-# EXECUTING rows older than this never had a live claimant: the process died
-# holding the claim. Reconciled lazily to UNKNOWN on the decide path — there
-# is no sweeper by design, so this cutoff is the only crash detector.
+# A redeem that dies between claim and receipt leaves EXECUTING behind.
+# Reconciled lazily to UNKNOWN on the decide path — there is no sweeper by
+# design, so this cutoff is the only crash detector.
 STALLED_EXECUTING_MINUTES = 10
-
-# Bounded parallelism for batch submits: a 12-item approve-all must not fan
-# out 12 concurrent provider calls.
-_EXECUTION_SEMAPHORE = asyncio.Semaphore(4)
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,19 @@ class LedgerDecision:
     stale: bool = False
 
 
+@dataclass(frozen=True)
+class RedeemResult:
+    """What one ticket redeem did: ran the stored envelope, or refused."""
+
+    ok: bool
+    approval_id: str
+    state: LedgerState
+    # The tool's output on success, the error detail on failure, the refusal
+    # reason when the ticket could not be honored (already redeemed, wrong
+    # owner, stale row). Never None — the caller always has words.
+    detail: str
+
+
 async def decide_ledger(
     approval_id: str,
     *,
@@ -92,7 +107,7 @@ async def decide_ledger(
     feedback: str | None = None,
     v: int | None = None,
 ) -> LedgerDecision:
-    """Commit one decision, schedule execution, wake the agent. Never blocks."""
+    """Commit one decision and wake the model with the ticket. Never blocks."""
     row = await approval_ledger_repository.get_by_approval_id(approval_id)
     if row is None:
         raise ApprovalRequestNotFoundError()
@@ -127,10 +142,11 @@ async def decide_ledger(
     log.set(hil={"approval_id": approval_id, "decision": kind, "tool": row.tool_name})
     queued = bool(target is LedgerState.APPROVED and row.blocked_by)
     if target is LedgerState.APPROVED and not queued:
-        # Schedule BEFORE the best-effort fan-out below: a cancel or shutdown
-        # between commit and claim must still leave a live task holding the
-        # execution, never a committed row nobody owns.
-        schedule_ledger_execution(approval_id)
+        # Permission granted — hand the ticket to the model, which redeems it
+        # with the approve ticket and chains on the result. deliver_to_executor
+        # steers a live run or starts an idle conversation, so this covers
+        # both without the decider knowing which.
+        await _deliver_ticket(row)
     await publish_ledger_decision(row, target, feedback=feedback)
     if target is LedgerState.DENIED:
         # Denials schedule nothing, but the agent still needs the verdict: it
@@ -149,14 +165,192 @@ async def decide_ledger(
     )
 
 
+def _ticket_task(row: ApprovalLedgerDocument) -> str:
+    """The wake that turns an approval into a redeem: ticket id, what it is,
+    how old it is, and the one call that honors it — via execute, no new tool."""
+    age = "unknown age"
+    if row.created_at is not None:
+        seconds = (datetime.now(UTC) - row.created_at).total_seconds()
+        age = f"{int(seconds // 3600)}h{int(seconds % 3600 // 60)}m old"
+    return (
+        f"APPROVAL_READY {row.approval_id}: the user approved {row.summary} "
+        f'({age}). Run it now with execute(tool_name="approve", '
+        f'data={{"id": "{row.approval_id}"}}) and continue with its result. '
+        "If it is no longer needed, say so instead of running it."
+    )
+
+
+async def _deliver_ticket(row: ApprovalLedgerDocument) -> None:
+    """Hand an approved ticket to the model — steer or start, never execute.
+
+    Deferred import: executor_runner reaches services.hil (approvals_store,
+    resume_slot), so a top-level import risks closing a cycle the way
+    revoke_tool's deferred publish_ledger_revocation documents.
+    """
+    from app.agents.core.background.executor_runner import (  # noqa: PLC0415 -- same cycle guard as revoke_tool
+        deliver_to_executor,
+    )
+
+    await deliver_to_executor(
+        row.conversation_id,
+        {"user_id": row.user_id or ""},
+        _ticket_task(row),
+    )
+
+
+async def redeem_approved(
+    approval_id: str,
+    *,
+    user_id: str,
+    conversation_id: str,
+    caller: str,
+) -> RedeemResult:
+    """Honor one ticket: run the stored envelope, return its outcome.
+
+    The model supplies no args — the ticket IS the approval id and the row
+    holds the envelope, so nothing the model says can drift the call. The
+    ``APPROVED -> EXECUTING`` claim is the single-use CAS: exactly one
+    redeemer wins, every loser is refused with the row's actual state.
+    """
+
+    row = await approval_ledger_repository.get_by_approval_id(approval_id)
+    # Unknown id and foreign conversation read identically: existence must
+    # not leak across conversations (same contract as revoke_tool).
+    if row is None or row.conversation_id != conversation_id:
+        raise ApprovalRequestNotFoundError()
+    if row.user_id != user_id:
+        raise ApprovalRequestForbiddenError()
+    if row.state is not LedgerState.APPROVED:
+        return RedeemResult(
+            ok=False,
+            approval_id=approval_id,
+            state=row.state,
+            detail=f"Already {row.state.value}; report that instead of retrying.",
+        )
+    if caller != row.owner_agent and not caller.startswith(EXECUTOR_THREAD_PREFIX):
+        return RedeemResult(
+            ok=False,
+            approval_id=approval_id,
+            state=row.state,
+            detail="This ticket belongs to another worker; only its proposer or the executor may redeem it.",
+        )
+    claimed = await approval_ledger_repository.claim_executing(approval_id)
+    if not claimed:
+        current = await approval_ledger_repository.get_by_approval_id(approval_id)
+        state = current.state if current is not None else row.state
+        return RedeemResult(
+            ok=False,
+            approval_id=approval_id,
+            state=state,
+            detail=f"Already {state.value}; report that instead of retrying.",
+        )
+    try:
+        result = await dispatch_tool(
+            user_id=row.user_id or None,
+            tool_name=row.tool_name,
+            data=dict(row.args),
+            # Identity-bearing config, not a bare configurable: the wrappers
+            # resolve per-user auth from this (see dispatch_config_for).
+            config=dispatch_config_for(row.user_id or ""),
+        )
+    except Exception as e:
+        await approval_ledger_repository.transition(
+            approval_id, LedgerState.EXECUTING, LedgerState.UNKNOWN
+        )
+        cause = f"{type(e).__name__}: {e}"
+        log.error(
+            f"{LogTag.HIL} Ticket redeem raised; reconciled as UNKNOWN, never retried",
+            approval_id=approval_id,
+            error_type=type(e).__name__,
+        )
+        return RedeemResult(
+            ok=False, approval_id=approval_id, state=LedgerState.UNKNOWN, detail=cause
+        )
+    if (
+        not result.ok
+        and result.error is not None
+        and result.error.kind == DispatchErrorKind.TIMEOUT
+    ):
+        state, detail = (
+            LedgerState.UNKNOWN,
+            "provider timed out; may or may not have run — never auto-retried",
+        )
+    elif result.ok:
+        state, detail = LedgerState.EXECUTED, str(result.output)
+    else:
+        state, detail = (
+            LedgerState.FAILED,
+            result.error.detail if result.error is not None else "unknown error",
+        )
+    committed = await approval_ledger_repository.transition(
+        approval_id, LedgerState.EXECUTING, state
+    )
+    if not committed:
+        # A reconciler moved the row under us (stalled cutoff fired
+        # mid-redeem): report what the ledger actually says, not what we
+        # attempted. Never a silent overwrite of its verdict.
+        current = await approval_ledger_repository.get_by_approval_id(approval_id)
+        live = current if current is not None else row
+        actual = live.state.value
+        log.error(
+            f"{LogTag.HIL} Ticket receipt lost its CAS; reporting actual state",
+            approval_id=approval_id,
+            attempted=state.value,
+            actual=actual,
+        )
+        return RedeemResult(
+            ok=False,
+            approval_id=approval_id,
+            state=live.state,
+            detail=f"Already {actual}; report that instead of retrying.",
+        )
+    return RedeemResult(ok=result.ok, approval_id=approval_id, state=state, detail=detail)
+
+
+async def revoke_ticket(approval_id: str, *, conversation_id: str, caller: str) -> str:
+    """Withdraw your own pending approval.
+
+    The revoke half of the ticket convention (mirrors ``redeem_approved``):
+    the row tombstones as REVOKED; decided rows are untouchable, so report
+    those instead. Unknown ids and foreign conversations read identically —
+    existence must not leak across conversations.
+    """
+
+    row = await approval_ledger_repository.get_by_approval_id(approval_id)
+    if row is None or row.conversation_id != conversation_id:
+        return f"No pending approval with id '{approval_id}'."
+    if row.state is not LedgerState.PENDING:
+        return (
+            f"Cannot revoke '{approval_id}': already {row.state.value}. "
+            "Report that to the user instead of retrying."
+        )
+    if caller != row.owner_agent and not caller.startswith(EXECUTOR_THREAD_PREFIX):
+        return (
+            f"Cannot revoke '{approval_id}': it belongs to another worker. "
+            "Only its proposer or the executor can withdraw it."
+        )
+    revoked = await approval_ledger_repository.transition(
+        approval_id, LedgerState.PENDING, LedgerState.REVOKED
+    )
+    if not revoked:
+        current = await approval_ledger_repository.get_by_approval_id(approval_id)
+        state = current.state.value if current else "gone"
+        return f"Cannot revoke '{approval_id}': already {state}."
+    revoked_row = await approval_ledger_repository.get_by_approval_id(approval_id)
+    if revoked_row is not None:
+        await publish_ledger_revocation(revoked_row)
+    return f"Revoked '{approval_id}' ({row.summary}). It will never be asked."
+
+
 async def reconcile_conversation_ledger(conversation_id: str) -> None:
     """Heal one conversation's ledger as a decide-path side effect.
 
     No daemon exists by design, so every decide also repairs: stalled
-    EXECUTING rows go UNKNOWN (with a wake, so the agent learns), and
-    APPROVED-but-unscheduled rows get their execution task back. Every step
-    is CAS-guarded, so concurrent deciders racing here converge instead of
-    duplicating.
+    EXECUTING rows go UNKNOWN (with a wake, so the agent learns). Orphaned
+    APPROVED rows need nothing: the ticket lives in model context (OPEN
+    PENDINGS + inbox) and only a redeem runs the envelope — never re-nudge,
+    never re-execute. Every step is CAS-guarded, so concurrent deciders
+    racing here converge instead of duplicating.
     """
     cutoff = datetime.now(UTC) - timedelta(minutes=STALLED_EXECUTING_MINUTES)
     for stalled in await approval_ledger_repository.list_stalled_executing(cutoff):
@@ -170,8 +364,6 @@ async def reconcile_conversation_ledger(conversation_id: str) -> None:
                 approval_id=stalled.approval_id,
             )
             await _wake_agent(stalled, "UNKNOWN", "stalled execution reconciled; never retried")
-    for orphan in await approval_ledger_repository.list_approved_unblocked(conversation_id):
-        schedule_ledger_execution(orphan.approval_id)
 
 
 async def publish_ledger_decision(
@@ -211,52 +403,6 @@ async def publish_ledger_decision(
     await _broadcast_decision(row, mapped.value, feedback if feedback is not None else row.feedback)
 
 
-async def publish_ledger_receipt(row: ApprovalLedgerDocument, outcome: str, result: object) -> None:
-    """Show the user what their approval DID — the other half of the decision.
-
-    The decide path settles the card to approved/denied, but the tool runs
-    detached afterwards; without this the user watches an approved card do
-    nothing forever. Same triple delivery as the decision frame (live stream
-    when still open, persisted frame for reload, broadcast for listeners) on
-    the existing approval_request wire shape, so no client changes are needed:
-    the settled card's feedback carries the receipt and the outcome chip shows
-    it. Best-effort like every other delivery here — the row is the truth.
-    """
-    receipt = _receipt_text(outcome, result)
-    entry = _approval_entry(
-        row.approval_id,
-        GatedCall(name=row.tool_name, id="", args=row.args),
-        HILApprovalStatus.APPROVED,
-        row.summary,
-        None,
-        receipt,
-    )
-    if row.proposing_run_id:
-        try:
-            await _publish_entry(row.proposing_run_id, entry)
-        except Exception as e:
-            log.warning(
-                f"{LogTag.HIL} Ledger receipt frame missed its stream",
-                approval_id=row.approval_id,
-                error_type=type(e).__name__,
-            )
-    await _persist_decision_status(row, HILApprovalStatus.APPROVED.value, feedback=receipt)
-    await _broadcast_decision(row, HILApprovalStatus.APPROVED.value, receipt)
-
-
-def _receipt_text(outcome: str, result: object) -> str:
-    """One user-facing line for a terminal execution outcome."""
-    preview = "" if result is None else clip_text(str(result), 300)
-    if outcome == "EXECUTED":
-        return f"Done: {preview}" if preview else "Done."
-    if outcome == "FAILED":
-        return f"Failed: {preview}" if preview else "Failed."
-    return (
-        f"Outcome unknown{(': ' + preview) if preview else ''} — never auto-retried; "
-        "check whether it happened before asking again."
-    )
-
-
 async def publish_ledger_revocation(row: ApprovalLedgerDocument) -> None:
     """Surface an agent-side revoke: tombstone, not a silent row change.
 
@@ -268,9 +414,7 @@ async def publish_ledger_revocation(row: ApprovalLedgerDocument) -> None:
     await _broadcast_decision(row, "revoked", None)
 
 
-async def _persist_decision_status(
-    row: ApprovalLedgerDocument, status: str, *, feedback: str | None = None
-) -> None:
+async def _persist_decision_status(row: ApprovalLedgerDocument, status: str) -> None:
     """Settle the persisted card frame so reload renders the terminal state.
 
     Isolated on purpose (mirrors ``bridge.publish_decision``): a write error
@@ -282,7 +426,6 @@ async def _persist_decision_status(
             user_id=row.user_id,
             approval_id=row.approval_id,
             status=status,
-            feedback=feedback,
         )
     except Exception as e:
         log.warning(
@@ -316,102 +459,6 @@ async def _broadcast_decision(
             approval_id=row.approval_id,
             error_type=type(e).__name__,
         )
-
-
-def schedule_ledger_execution(approval_id: str) -> None:
-    """Run an approved envelope post-response on the canonical task runner.
-
-    ``spawn_background_task`` strong-refs the task to completion and carries
-    the request's trace boundary — a bare create_task would risk both GC
-    mid-flight and detached logs.
-    """
-    spawn_background_task(
-        _execute_ledger_envelope(approval_id),
-        name=f"ledger-execute-{approval_id}",
-        on_done=lambda task: (
-            log.error(
-                f"{LogTag.HIL} Ledger execution task ended with an error",
-                approval_id=approval_id,
-                error=str(task.exception()),
-            )
-            if not task.cancelled() and task.exception() is not None
-            else None
-        ),
-    )
-
-
-async def _execute_ledger_envelope(approval_id: str) -> None:
-    """Claim EXECUTING exactly once, run the stored envelope, receipt, wake.
-
-    The semaphore comes FIRST so EXECUTING always means a provider call in
-    flight — never "queued behind 8 siblings". The provider timeout is the
-    one genuinely ambiguous outcome (may or may not have run), so it lands
-    UNKNOWN, never FAILED: FAILED invites a re-proposal that could duplicate
-    a send that already happened.
-    """
-    async with _EXECUTION_SEMAPHORE:
-        claimed = await approval_ledger_repository.claim_executing(approval_id)
-        if not claimed:
-            return
-        row = await approval_ledger_repository.get_by_approval_id(approval_id)
-        if row is None:
-            return
-        try:
-            result = await dispatch_tool(
-                user_id=row.user_id or None,
-                tool_name=row.tool_name,
-                data=dict(row.args),
-                # Identity-bearing config, not a bare configurable: the wrappers
-                # resolve per-user auth from this (see dispatch_config_for).
-                # A bare configurable ran approvals as Composio's "default" user
-                # with no connected accounts — every approval landed UNKNOWN.
-                config=dispatch_config_for(row.user_id or ""),
-            )
-        except Exception as e:
-            await approval_ledger_repository.transition(
-                approval_id, LedgerState.EXECUTING, LedgerState.UNKNOWN
-            )
-            cause = f"{type(e).__name__}: {e}"
-            log.error(
-                f"{LogTag.HIL} Ledger execution raised; reconciled as UNKNOWN, never retried",
-                approval_id=approval_id,
-                error_type=type(e).__name__,
-            )
-            await publish_ledger_receipt(row, "UNKNOWN", cause)
-            await _wake_agent(row, "UNKNOWN", cause)
-            return
-        if (
-            not result.ok
-            and result.error is not None
-            and result.error.kind == DispatchErrorKind.TIMEOUT
-        ):
-            state, outcome = LedgerState.UNKNOWN, "UNKNOWN"
-            detail: object = "provider timed out; may or may not have run — never auto-retried"
-        elif result.ok:
-            state, outcome, detail = LedgerState.EXECUTED, "EXECUTED", result.output
-        else:
-            state, outcome = LedgerState.FAILED, "FAILED"
-            detail = result.error.detail if result.error is not None else "unknown error"
-        committed = await approval_ledger_repository.transition(
-            approval_id, LedgerState.EXECUTING, state
-        )
-        if not committed:
-            # A reconciler moved the row under us (stalled cutoff fired
-            # mid-flight): report what the ledger actually says, not what we
-            # attempted. Never a silent overwrite of its verdict.
-            current = await approval_ledger_repository.get_by_approval_id(approval_id)
-            live = current if current is not None else row
-            actual = live.state.value
-            log.error(
-                f"{LogTag.HIL} Ledger receipt lost its CAS; waking with actual state",
-                approval_id=approval_id,
-                attempted=state.value,
-                actual=actual,
-            )
-            await _wake_agent(live, actual, detail)
-            return
-        await publish_ledger_receipt(row, outcome, detail)
-        await _wake_agent(row, outcome, detail)
 
 
 async def _wake_agent(row: ApprovalLedgerDocument, outcome: str, result: object) -> None:

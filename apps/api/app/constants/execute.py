@@ -7,6 +7,15 @@ drift (root CLAUDE.md, Type Safety item 18).
 
 EXECUTE_TOOL_NAME = "execute"
 
+# Ticket operations ride the execute proxy under reserved inner names — no
+# bound tool, no schema in context; the model learns the convention from the
+# PENDING guidance (revoke) and the APPROVAL_READY wake (approve). Reserved
+# here so no provider tool can ever squat on them: dispatch routes these
+# before resolution, and resolution refuses them outright.
+TICKET_APPROVE_NAME = "approve"
+TICKET_REVOKE_NAME = "revoke"
+TICKET_NAMES = frozenset({TICKET_APPROVE_NAME, TICKET_REVOKE_NAME})
+
 # A rendered schema doc becomes conversation context the model re-pays for on
 # every later turn, and Composio response schemas alone can run to thousands of
 # tokens — cap the doc, never inject a huge schema wholesale.

@@ -63,8 +63,8 @@ class TestLedgerBranch:
         assert result is not None
         assert "PENDING ap_abc1234567" in str(result.content)
         assert "needs the user's explicit approval" in str(result.content)
-        assert "never runs the tool" in str(result.content)
-        assert "revoke_tool" in str(result.content)
+        assert 'execute(tool_name="revoke"' in str(result.content)
+        assert "approve ticket" in str(result.content)
         assert result.additional_kwargs[HIL_STATUS_KWARG] == "pending"
 
     async def test_flag_off_takes_the_old_interrupt_path(self) -> None:

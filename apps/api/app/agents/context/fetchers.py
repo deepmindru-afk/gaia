@@ -377,7 +377,9 @@ async def build_open_pendings_block(ctx: SectionContext) -> str:
     ]
     if len(pendings) > len(shown):
         lines.append(f"(+{len(pendings) - len(shown)} more open)")
-    lines.append('Revoke anything this plan no longer needs with revoke_tool("<id>").')
+    lines.append(
+        'If a step is no longer needed, withdraw it with execute(tool_name="revoke", data={"id": "<id>"}).'
+    )
     return "OPEN PENDINGS (awaiting the user's decision):\n" + "\n".join(lines)
 
 

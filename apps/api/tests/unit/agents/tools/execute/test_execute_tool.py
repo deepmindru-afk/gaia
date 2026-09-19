@@ -35,6 +35,128 @@ async def _invoke(tool, tool_name: str = "GMAIL_SEND_EMAIL") -> str:
 
 
 @pytest.mark.unit
+class TestDispatchTicketNames:
+    """Ticket operations ride the proxy under reserved names — no bound tool,
+    no schema; the branch runs before resolution, space checks, and validation."""
+
+    def _config(self) -> dict[str, object]:
+        return {
+            "configurable": {
+                "thread_id": "executor_conv-1",
+                "user_id": "u1",
+                "conversation_id": "conv-1",
+            }
+        }
+
+    async def test_approve_routes_to_redeem_not_resolve(self) -> None:
+        from app.agents.tools.execute import dispatch as dispatch_module
+        from app.agents.tools.execute.dispatch import dispatch_tool
+        from app.models.hil_models import LedgerState
+        from app.services.hil.ledger_decide import RedeemResult
+
+        redeemed = RedeemResult(
+            ok=True, approval_id="ap_1", state=LedgerState.EXECUTED, detail="sent"
+        )
+        with (
+            patch.object(dispatch_module, "resolve_tool", new=AsyncMock()) as resolve,
+            patch(
+                "app.services.hil.ledger_decide.redeem_approved",
+                new=AsyncMock(return_value=redeemed),
+            ) as redeem,
+        ):
+            result = await dispatch_tool(
+                user_id="u1",
+                tool_name="approve",
+                data={"id": "ap_1"},
+                config=self._config(),  # type: ignore[arg-type]
+            )
+
+        resolve.assert_not_awaited()
+        redeem.assert_awaited_once_with(
+            "ap_1", user_id="u1", conversation_id="conv-1", caller="executor_conv-1"
+        )
+        assert result.ok is True
+        assert "Executed 'ap_1'" in str(result.output)
+
+    async def test_revoke_routes_to_revoke_ticket(self) -> None:
+        from app.agents.tools.execute import dispatch as dispatch_module
+        from app.agents.tools.execute.dispatch import dispatch_tool
+
+        with (
+            patch.object(dispatch_module, "resolve_tool", new=AsyncMock()) as resolve,
+            patch(
+                "app.services.hil.ledger_decide.revoke_ticket",
+                new=AsyncMock(return_value="Revoked 'ap_1'."),
+            ) as revoke,
+        ):
+            result = await dispatch_tool(
+                user_id="u1",
+                tool_name="revoke",
+                data={"id": "ap_1"},
+                config=self._config(),  # type: ignore[arg-type]
+            )
+
+        resolve.assert_not_awaited()
+        revoke.assert_awaited_once_with(
+            "ap_1", conversation_id="conv-1", caller="executor_conv-1"
+        )
+        assert result.ok is True
+        assert "Revoked" in str(result.output)
+
+    async def test_missing_id_is_guidance_not_failure(self) -> None:
+        """A ticket call without an id answers with the shape, not an error —
+        refusals are read by the model, not counted as failures."""
+        from app.agents.tools.execute.dispatch import dispatch_tool
+
+        result = await dispatch_tool(
+            user_id="u1",
+            tool_name="approve",
+            data={},
+            config=self._config(),  # type: ignore[arg-type]
+        )
+
+        assert result.ok is True
+        assert '{"id"' in str(result.output)
+
+    async def test_ticket_names_never_resolve(self) -> None:
+        """Fail closed: even if a provider catalog one day contains 'approve',
+        resolution refuses it — tickets dispatch before resolution, always."""
+        from app.agents.tools.execute.resolver import resolve_tool
+
+        assert await resolve_tool("u1", "approve") is None
+        assert await resolve_tool("u1", "revoke") is None
+
+    async def test_ticket_bypasses_caller_tool_space(self) -> None:
+        """Control-plane ops belong to no provider space: a scoped subagent
+        redeems its own ticket even though 'approve' is in no registry."""
+        from app.agents.tools.execute import dispatch as dispatch_module
+        from app.agents.tools.execute.dispatch import dispatch_tool
+        from app.models.hil_models import LedgerState
+        from app.services.hil.ledger_decide import RedeemResult
+
+        redeemed = RedeemResult(
+            ok=True, approval_id="ap_1", state=LedgerState.EXECUTED, detail="sent"
+        )
+        with (
+            patch(
+                "app.services.hil.ledger_decide.redeem_approved",
+                new=AsyncMock(return_value=redeemed),
+            ) as redeem,
+        ):
+            with patch.object(dispatch_module, "resolve_tool", new=AsyncMock()):
+                result = await dispatch_tool(
+                    user_id="u1",
+                    tool_name="approve",
+                    data={"id": "ap_1"},
+                    config=self._config(),  # type: ignore[arg-type]
+                    scoped_tool_names={"GMAIL_SEND_EMAIL"},
+                )
+
+        redeem.assert_awaited_once()
+        assert result.ok is True
+
+
+@pytest.mark.unit
 class TestExecuteToolScope:
     async def test_the_registry_instance_is_unscoped(self) -> None:
         """The executor's space is the whole registry — scoping it would refuse

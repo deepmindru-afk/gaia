@@ -1,5 +1,6 @@
 """Ledger decide: CAS commit, stale-v refresh, queued approvals, no execution yet."""
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -33,20 +34,19 @@ def _repo(row: Any = None) -> MagicMock:
     repo.get_by_approval_id = AsyncMock(return_value=row)
     repo.transition = AsyncMock(return_value=True)
     repo.list_stalled_executing = AsyncMock(return_value=[])
-    repo.list_approved_unblocked = AsyncMock(return_value=[])
     return repo
 
 
 @pytest.mark.unit
 class TestDecideLedger:
-    async def test_approve_cas_commits_and_claims_executing(self) -> None:
+    async def test_approve_cas_commits_and_delivers_ticket(self) -> None:
         from app.services.hil.ledger_decide import decide_ledger
 
         repo = _repo(_row())
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=repo),
             patch(f"{MODULE}.publish_ledger_decision", new=AsyncMock()),
-            patch(f"{MODULE}.schedule_ledger_execution") as sched,
+            patch(f"{MODULE}._deliver_ticket", new=AsyncMock()) as deliver,
         ):
             outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
 
@@ -61,7 +61,7 @@ class TestDecideLedger:
             decided_by="u1",
             feedback=None,
         )
-        sched.assert_called_once()
+        deliver.assert_awaited_once()
 
     async def test_stale_v_returns_current_row_without_writing(self) -> None:
         from app.services.hil.ledger_decide import decide_ledger
@@ -70,23 +70,23 @@ class TestDecideLedger:
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=repo),
             patch(f"{MODULE}.publish_ledger_decision", new=AsyncMock()),
-            patch(f"{MODULE}.schedule_ledger_execution") as sched,
+            patch(f"{MODULE}._deliver_ticket", new=AsyncMock()) as deliver,
         ):
             outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
 
         assert outcome.committed is False
         assert outcome.state == LedgerState.APPROVED
         repo.transition.assert_not_awaited()
-        sched.assert_not_called()
+        deliver.assert_not_awaited()
 
-    async def test_deny_commits_without_scheduling(self) -> None:
+    async def test_deny_commits_without_delivery(self) -> None:
         from app.services.hil.ledger_decide import decide_ledger
 
         repo = _repo(_row())
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=repo),
             patch(f"{MODULE}.publish_ledger_decision", new=AsyncMock()),
-            patch(f"{MODULE}.schedule_ledger_execution") as sched,
+            patch(f"{MODULE}._deliver_ticket", new=AsyncMock()) as deliver,
         ):
             outcome = await decide_ledger("ap_abc", user_id="u1", kind="deny", feedback="nope", v=3)
 
@@ -99,22 +99,22 @@ class TestDecideLedger:
             decided_by="u1",
             feedback="nope",
         )
-        sched.assert_not_called()
+        deliver.assert_not_awaited()
 
-    async def test_blocked_approval_stays_queued_without_scheduling(self) -> None:
+    async def test_blocked_approval_stays_queued_without_delivery(self) -> None:
         from app.services.hil.ledger_decide import decide_ledger
 
         repo = _repo(_row(blocked_by=["ap_dep"]))
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=repo),
             patch(f"{MODULE}.publish_ledger_decision", new=AsyncMock()),
-            patch(f"{MODULE}.schedule_ledger_execution") as sched,
+            patch(f"{MODULE}._deliver_ticket", new=AsyncMock()) as deliver,
         ):
             outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
 
         assert outcome.committed is True
         assert outcome.queued is True
-        sched.assert_not_called()
+        deliver.assert_not_awaited()
 
     async def test_stale_v_marks_stale_not_gone(self) -> None:
         from app.services.hil.ledger_decide import decide_ledger
@@ -123,7 +123,7 @@ class TestDecideLedger:
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=repo),
             patch(f"{MODULE}.publish_ledger_decision", new=AsyncMock()),
-            patch(f"{MODULE}.schedule_ledger_execution"),
+            patch(f"{MODULE}._deliver_ticket", new=AsyncMock()),
         ):
             outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
 
@@ -164,7 +164,7 @@ class TestDecideHardening:
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=_repo(row)),
             patch(f"{MODULE}.publish_ledger_decision", new=AsyncMock()),
-            patch(f"{MODULE}.schedule_ledger_execution"),
+            patch(f"{MODULE}._deliver_ticket", new=AsyncMock()),
             patch(f"{MODULE}._wake_agent", new=AsyncMock()) as wake,
         ):
             await decide_ledger("ap_abc", user_id="u1", kind="deny", feedback="nope", v=3)
@@ -178,16 +178,18 @@ class TestDecideHardening:
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=_repo(row)),
             patch(f"{MODULE}.publish_ledger_decision", new=AsyncMock()),
-            patch(f"{MODULE}.schedule_ledger_execution") as sched,
+            patch(f"{MODULE}._deliver_ticket", new=AsyncMock()) as deliver,
             patch(f"{MODULE}._wake_agent", new=AsyncMock()) as wake,
         ):
             outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
 
         assert outcome.queued is True
-        sched.assert_not_called()
+        deliver.assert_not_awaited()
         wake.assert_awaited_once_with(row, "QUEUED", "waiting on ap_dep")
 
-    async def test_reconcile_heals_stalled_and_orphans(self) -> None:
+    async def test_reconcile_heals_stalled_only(self) -> None:
+        """Orphaned APPROVED rows are left alone: the ticket lives in model
+        context and only a redeem runs the envelope — never re-nudge."""
         from app.models.hil_models import LedgerState as LS
         from app.services.hil.ledger_decide import reconcile_conversation_ledger
 
@@ -198,17 +200,16 @@ class TestDecideHardening:
         orphan.blocked_by = []
         repo = _repo()
         repo.list_stalled_executing = AsyncMock(return_value=[stalled])
-        repo.list_approved_unblocked = AsyncMock(return_value=[orphan])
         repo.transition = AsyncMock(return_value=True)
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=repo),
-            patch(f"{MODULE}.schedule_ledger_execution") as sched,
+            patch(f"{MODULE}._deliver_ticket", new=AsyncMock()) as deliver,
             patch(f"{MODULE}._wake_agent", new=AsyncMock()) as wake,
         ):
             await reconcile_conversation_ledger("conv-1")
 
         repo.transition.assert_awaited_once_with("ap_old", LS.EXECUTING, LS.UNKNOWN)
-        sched.assert_called_once_with("ap_orphan")
+        deliver.assert_not_awaited()
         assert wake.await_count == 1
 
     async def test_reconcile_ignores_other_conversations(self) -> None:
@@ -218,77 +219,85 @@ class TestDecideHardening:
         foreign.conversation_id = "conv-9"
         repo = _repo()
         repo.list_stalled_executing = AsyncMock(return_value=[foreign])
-        repo.list_approved_unblocked = AsyncMock(return_value=[])
         repo.transition = AsyncMock(return_value=True)
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=repo),
-            patch(f"{MODULE}.schedule_ledger_execution") as sched,
+            patch(f"{MODULE}._deliver_ticket", new=AsyncMock()) as deliver,
         ):
             await reconcile_conversation_ledger("conv-1")
 
         repo.transition.assert_not_awaited()
-        sched.assert_not_called()
+        deliver.assert_not_awaited()
 
 
 @pytest.mark.unit
-class TestEnvelopeExecution:
-    def _exec_repo(self, result: Any) -> MagicMock:
-        from app.services.hil.ledger_decide import _execute_ledger_envelope  # noqa: F401
+class TestRedeemExecution:
+    def _redeem_repo(self) -> MagicMock:
+        from app.models.hil_models import LedgerState as LS
 
-        repo = _repo(_row())
+        repo = _repo(_row(state=LS.APPROVED))
         repo.claim_executing = AsyncMock(return_value=True)
         repo.transition = AsyncMock(return_value=True)
         return repo
+
+    def _redeem_kwargs(self) -> dict[str, Any]:
+        return {
+            "user_id": "u1",
+            "conversation_id": "conv-1",
+            "caller": "executor_conv-1",
+        }
 
     async def test_provider_timeout_lands_unknown_never_failed(self) -> None:
         from app.agents.tools.execute.dispatch import DispatchError, DispatchErrorKind
         from app.models.hil_models import LedgerState as LS
         from app.services.hil import ledger_decide
-        from app.services.hil.ledger_decide import _execute_ledger_envelope
+        from app.services.hil.ledger_decide import redeem_approved
 
         timeout_result = MagicMock(
             ok=False,
             output=None,
             error=DispatchError(kind=DispatchErrorKind.TIMEOUT, detail="slow", hint="x"),
         )
-        repo = self._exec_repo(timeout_result)
+        repo = self._redeem_repo()
         with (
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(
                 ledger_decide, "dispatch_tool", new=AsyncMock(return_value=timeout_result)
             ),
-            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()) as wake,
         ):
-            await _execute_ledger_envelope("ap_abc")
+            result = await redeem_approved("ap_abc", **self._redeem_kwargs())
 
         repo.transition.assert_awaited_once_with("ap_abc", LS.EXECUTING, LS.UNKNOWN)
-        wake.assert_awaited_once_with(repo.get_by_approval_id.return_value, "UNKNOWN", ANY_TEXT)
+        assert result.ok is False
+        assert result.state == LS.UNKNOWN
+        assert "never auto-retried" in result.detail
 
-    async def test_lost_receipt_cas_wakes_with_actual_state(self) -> None:
+    async def test_redeem_failed_transition_still_returns_state(self) -> None:
         from app.models.hil_models import LedgerState as LS
         from app.services.hil import ledger_decide
-        from app.services.hil.ledger_decide import _execute_ledger_envelope
+        from app.services.hil.ledger_decide import redeem_approved
 
         ok_result = MagicMock(ok=True, output="sent", error=None)
-        repo = self._exec_repo(ok_result)
-        repo.claim_executing = AsyncMock(return_value=True)
+        repo = self._redeem_repo()
         repo.transition = AsyncMock(return_value=False)
         reconciled = _row()
         reconciled.state = LS.UNKNOWN
-        repo.get_by_approval_id = AsyncMock(side_effect=[_row(), reconciled])
+        approved = _row()
+        approved.state = LS.APPROVED
+        repo.get_by_approval_id = AsyncMock(side_effect=[approved, reconciled])
         with (
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(ledger_decide, "dispatch_tool", new=AsyncMock(return_value=ok_result)),
-            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()) as wake,
         ):
-            await _execute_ledger_envelope("ap_abc")
+            result = await redeem_approved("ap_abc", **self._redeem_kwargs())
 
-        wake.assert_awaited_once_with(reconciled, "unknown", "sent")
+        assert result.ok is False
+        assert "Already unknown" in result.detail
 
 
 @pytest.mark.unit
-class TestEnvelopeIdentity:
-    async def test_envelope_dispatches_with_user_identity_in_config(self) -> None:
+class TestRedeemIdentity:
+    async def test_redeem_dispatches_with_user_identity_in_config(self) -> None:
         """The approved envelope must run AS the row's user.
 
         Tools are user-agnostic at resolve time; Composio/MCP wrappers resolve
@@ -299,9 +308,9 @@ class TestEnvelopeIdentity:
         2026-09-18 production trace (ap_5ede5be5eb11).
         """
         from app.services.hil import ledger_decide
-        from app.services.hil.ledger_decide import _execute_ledger_envelope
+        from app.services.hil.ledger_decide import redeem_approved
 
-        repo = _repo(_row())
+        repo = _repo(_row(state=LedgerState.APPROVED))
         repo.claim_executing = AsyncMock(return_value=True)
         repo.transition = AsyncMock(return_value=True)
         ok_result = MagicMock(ok=True, output="sent", error=None)
@@ -310,10 +319,13 @@ class TestEnvelopeIdentity:
             patch.object(
                 ledger_decide, "dispatch_tool", new=AsyncMock(return_value=ok_result)
             ) as dispatch,
-            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()),
-            patch.object(ledger_decide, "publish_ledger_receipt", new=AsyncMock()),
         ):
-            await _execute_ledger_envelope("ap_abc")
+            await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
 
         config = dispatch.await_args.kwargs["config"]
         assert config["configurable"]["user_id"] == "u1"
@@ -321,13 +333,13 @@ class TestEnvelopeIdentity:
 
 
 @pytest.mark.unit
-class TestExecutionReceipt:
-    async def test_executed_publishes_receipt_with_output(self) -> None:
+class TestRedeemTerminalStates:
+    async def test_executed_returns_output(self) -> None:
         from app.models.hil_models import LedgerState as LS
         from app.services.hil import ledger_decide
-        from app.services.hil.ledger_decide import _execute_ledger_envelope
+        from app.services.hil.ledger_decide import redeem_approved
 
-        repo = _repo(_row())
+        repo = _repo(_row(state=LedgerState.APPROVED))
         repo.claim_executing = AsyncMock(return_value=True)
         repo.transition = AsyncMock(return_value=True)
         with (
@@ -337,51 +349,57 @@ class TestExecutionReceipt:
                 "dispatch_tool",
                 new=AsyncMock(return_value=MagicMock(ok=True, output="deleted xyz", error=None)),
             ),
-            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()),
-            patch.object(ledger_decide, "publish_ledger_receipt", new=AsyncMock()) as receipt,
         ):
-            await _execute_ledger_envelope("ap_abc")
+            result = await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
 
         repo.transition.assert_awaited_once_with("ap_abc", LS.EXECUTING, LS.EXECUTED)
-        receipt.assert_awaited_once()
-        assert receipt.await_args.args[1] == "EXECUTED"
-        assert "deleted xyz" in str(receipt.await_args.args[2])
+        assert result.ok is True
+        assert result.state == LS.EXECUTED
+        assert "deleted xyz" in result.detail
 
-    async def test_failed_publishes_receipt_with_error_detail(self) -> None:
+    async def test_failed_returns_error_detail(self) -> None:
         from app.agents.tools.execute.dispatch import DispatchError, DispatchErrorKind
         from app.models.hil_models import LedgerState as LS
         from app.services.hil import ledger_decide
-        from app.services.hil.ledger_decide import _execute_ledger_envelope
+        from app.services.hil.ledger_decide import redeem_approved
 
         failed = MagicMock(
             ok=False,
             output=None,
             error=DispatchError(kind=DispatchErrorKind.INVALID_ARGS, detail="bad date", hint="x"),
         )
-        repo = _repo(_row())
+        repo = _repo(_row(state=LedgerState.APPROVED))
         repo.claim_executing = AsyncMock(return_value=True)
         repo.transition = AsyncMock(return_value=True)
         with (
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(ledger_decide, "dispatch_tool", new=AsyncMock(return_value=failed)),
-            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()),
-            patch.object(ledger_decide, "publish_ledger_receipt", new=AsyncMock()) as receipt,
         ):
-            await _execute_ledger_envelope("ap_abc")
+            result = await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
 
         repo.transition.assert_awaited_once_with("ap_abc", LS.EXECUTING, LS.FAILED)
-        receipt.assert_awaited_once()
-        assert receipt.await_args.args[1] == "FAILED"
-        assert "bad date" in str(receipt.await_args.args[2])
+        assert result.ok is False
+        assert result.state == LS.FAILED
+        assert "bad date" in result.detail
 
-    async def test_raised_execution_publishes_unknown_receipt_with_cause(self) -> None:
-        """An infra raise must still tell the user what happened: UNKNOWN with
-        the cause, never a silent row flip and an empty wake."""
+    async def test_raised_execution_returns_unknown_with_cause(self) -> None:
+        """An infra raise must still tell the caller what happened: UNKNOWN
+        with the cause, never a silent row flip."""
         from app.models.hil_models import LedgerState as LS
         from app.services.hil import ledger_decide
-        from app.services.hil.ledger_decide import _execute_ledger_envelope
+        from app.services.hil.ledger_decide import redeem_approved
 
-        repo = _repo(_row())
+        repo = _repo(_row(state=LedgerState.APPROVED))
         repo.claim_executing = AsyncMock(return_value=True)
         repo.transition = AsyncMock(return_value=True)
         with (
@@ -391,42 +409,286 @@ class TestExecutionReceipt:
                 "dispatch_tool",
                 new=AsyncMock(side_effect=ValueError("No connected accounts")),
             ),
-            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()) as wake,
-            patch.object(ledger_decide, "publish_ledger_receipt", new=AsyncMock()) as receipt,
         ):
-            await _execute_ledger_envelope("ap_abc")
+            result = await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
 
         repo.transition.assert_awaited_once_with("ap_abc", LS.EXECUTING, LS.UNKNOWN)
-        receipt.assert_awaited_once()
-        assert receipt.await_args.args[1] == "UNKNOWN"
-        assert "No connected accounts" in str(receipt.await_args.args[2])
-        wake.assert_awaited_once()
-        assert "No connected accounts" in str(wake.await_args.args[2])
+        assert result.ok is False
+        assert result.state == LS.UNKNOWN
+        assert "No connected accounts" in result.detail
 
 
 @pytest.mark.unit
-class TestReceiptDelivery:
-    async def test_receipt_settles_stream_persist_and_broadcast(self) -> None:
-        """The triple delivery mirrors the decision frame: live stream when it
-        is still open, persisted frame for reload, broadcast for listeners."""
+class TestRevokeTicket:
+    def _revoke_kwargs(self) -> dict[str, Any]:
+        return {
+            "conversation_id": "conv-1",
+            "caller": "executor_conv-1",
+        }
+
+    async def test_revoke_tombstones_pending_row(self) -> None:
         from app.services.hil import ledger_decide
-        from app.services.hil.ledger_decide import publish_ledger_receipt
+        from app.services.hil.ledger_decide import revoke_ticket
+
+        repo = _repo(_row())
+        repo.transition = AsyncMock(return_value=True)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()) as tombstone,
+        ):
+            text = await revoke_ticket("ap_abc", **self._revoke_kwargs())
+
+        repo.transition.assert_awaited_once_with("ap_abc", LedgerState.PENDING, LedgerState.REVOKED)
+        tombstone.assert_awaited_once()
+        assert "Revoked 'ap_abc'" in text
+
+    async def test_revoke_wrong_conversation_looks_absent(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import revoke_ticket
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "dispatch_tool", new=AsyncMock()) as dispatch,
+        ):
+            text = await revoke_ticket(
+                "ap_abc",
+                conversation_id="other-conv",
+                caller="executor_other-conv",
+            )
+
+        assert "No pending approval" in text
+        dispatch.assert_not_awaited()
+
+    async def test_revoke_decided_row_refused(self) -> None:
+        from app.models.hil_models import LedgerState as LS
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import revoke_ticket
+
+        repo = _repo(_row(state=LS.APPROVED))
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()) as tombstone,
+        ):
+            text = await revoke_ticket("ap_abc", **self._revoke_kwargs())
+
+        assert "already approved" in text
+        tombstone.assert_not_awaited()
+
+    async def test_revoke_foreign_worker_refused(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import revoke_ticket
 
         row = _row()
-        row.proposing_run_id = "stream-1"
+        row.owner_agent = "worker-other"
+        repo = _repo(row)
         with (
-            patch.object(ledger_decide, "_publish_entry", new=AsyncMock()) as publish,
-            patch.object(ledger_decide, "_persist_decision_status", new=AsyncMock()) as persist,
-            patch.object(ledger_decide, "_broadcast_decision", new=AsyncMock()) as broadcast,
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()) as tombstone,
         ):
-            await publish_ledger_receipt(row, "EXECUTED", "deleted xyz")
+            text = await revoke_ticket(
+                "ap_abc",
+                conversation_id="conv-1",
+                caller="worker-unrelated",
+            )
 
-        publish.assert_awaited_once()
-        persist.assert_awaited_once()
-        assert persist.await_args.args[1] == "approved"
-        assert "deleted xyz" in str(persist.await_args.kwargs["feedback"])
-        broadcast.assert_awaited_once()
-        assert "deleted xyz" in str(broadcast.await_args.args[2])
+        assert "another worker" in text
+        tombstone.assert_not_awaited()
 
 
 ANY_TEXT = "provider timed out; may or may not have run — never auto-retried"
+
+
+@pytest.mark.unit
+class TestApproveDeliversToExecutor:
+    async def test_approve_wakes_executor_with_redeem_task(self) -> None:
+        """Approval is permission, not execution: commit wakes the model with
+        the ticket instead of scheduling a backend run."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()) as deliver,
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        assert outcome.committed is True
+        deliver.assert_awaited_once()
+        claimed_row = deliver.await_args.args[0]
+        assert claimed_row.approval_id == "ap_abc"
+
+
+@pytest.mark.unit
+class TestRedeemApproved:
+    async def test_redeem_runs_stored_envelope_and_returns_output(self) -> None:
+        """The model supplies no args: the ticket IS the approval_id and the
+        envelope runs verbatim."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import redeem_approved
+
+        repo = _repo(_row(state=LedgerState.APPROVED))
+        repo.claim_executing = AsyncMock(return_value=True)
+        repo.transition = AsyncMock(return_value=True)
+        ok_result = MagicMock(ok=True, output="deleted xyz", error=None)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(
+                ledger_decide, "dispatch_tool", new=AsyncMock(return_value=ok_result)
+            ) as dispatch,
+        ):
+            result = await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
+
+        dispatch.assert_awaited_once()
+        assert dispatch.await_args.kwargs["data"] == {"to": "b@x"}
+        assert result.ok is True
+        assert "deleted xyz" in result.detail
+
+    async def test_double_redeem_runs_envelope_once(self) -> None:
+        """The claim is the single-use CAS: loser is refused, never re-run."""
+        from app.models.hil_models import LedgerState as LS
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import redeem_approved
+
+        repo = _repo(_row(state=LedgerState.APPROVED))
+        repo.claim_executing = AsyncMock(side_effect=[True, False])
+        repo.transition = AsyncMock(return_value=True)
+        ok_result = MagicMock(ok=True, output="sent", error=None)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(
+                ledger_decide, "dispatch_tool", new=AsyncMock(return_value=ok_result)
+            ) as dispatch,
+        ):
+            first = await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
+            second = await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
+
+        assert first.ok is True
+        assert first.state == LS.EXECUTED
+        assert second.ok is False
+        dispatch.assert_awaited_once()
+
+    async def test_redeem_wrong_conversation_looks_absent(self) -> None:
+        """No existence leak across conversations — mirrors revoke_tool."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import redeem_approved
+        from app.services.hil.resolution import ApprovalRequestNotFoundError
+
+        repo = _repo(_row(state=LedgerState.APPROVED))
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "dispatch_tool", new=AsyncMock()) as dispatch,
+            pytest.raises(ApprovalRequestNotFoundError),
+        ):
+            await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="other-conv",
+                caller="executor_other-conv",
+            )
+        dispatch.assert_not_awaited()
+
+    async def test_redeem_non_approved_row_refused(self) -> None:
+        from app.models.hil_models import LedgerState as LS
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import redeem_approved
+
+        repo = _repo(_row(state=LS.EXECUTED))
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "dispatch_tool", new=AsyncMock()) as dispatch,
+        ):
+            result = await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
+
+        assert result.ok is False
+        dispatch.assert_not_awaited()
+
+
+@pytest.mark.unit
+class TestTicketCarriesAge:
+    async def test_old_approve_commits_and_task_names_age(self) -> None:
+        """No server refuse: a 3-day-old approve commits like any other, and
+        the ticket wake carries the age so the model judges freshness."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import _ticket_task, decide_ledger
+
+        old = _row()
+        old.created_at = datetime.now(UTC) - timedelta(days=3)
+        repo = _repo(old)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()) as deliver,
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        assert outcome.committed is True
+        deliver.assert_awaited_once()
+        claimed_row = deliver.await_args.args[0]
+        assert claimed_row.approval_id == "ap_abc"
+        task = _ticket_task(old)
+        assert task.startswith("APPROVAL_READY ap_abc")
+        assert "72h" in task
+        assert 'execute(tool_name="approve"' in task
+
+    async def test_fresh_approve_still_commits(self) -> None:
+        """Guard against over-blocking: a fresh card is unaffected."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        fresh = _row()
+        fresh.created_at = datetime.now(UTC)
+        repo = _repo(fresh)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        assert outcome.committed is True
+
+    async def test_stale_deny_still_passes(self) -> None:
+        """Deny is a refusal — age never gates it."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        old = _row()
+        old.created_at = datetime.now(UTC) - timedelta(days=3)
+        repo = _repo(old)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="deny", feedback="nope", v=3)
+
+        assert outcome.committed is True
+        assert outcome.state == LedgerState.DENIED

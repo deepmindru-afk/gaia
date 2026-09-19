@@ -460,6 +460,7 @@ class TestBuildExecutorGraph:
     async def test_activate_integration_leads_the_initial_tool_set(self):
         """activate_integration leads; the full initial set (handoff included) follows."""
         from app.agents.core.graph_builder.build_graph import EXECUTOR_INITIAL_TOOL_IDS
+
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -561,7 +562,6 @@ class TestBuildExecutorGraph:
                 "message_subagent",
                 "cancel_subagent",
                 "read_manual",
-                "revoke_tool",
                 "create_tracked_todo",
                 "update_tracked_todo",
                 "update_tracked_todo_canvas",

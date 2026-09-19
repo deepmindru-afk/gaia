@@ -536,11 +536,14 @@ def _pending_guidance(approval_id: str) -> str:
     return (
         "The approval card is already visible to the user in chat (web, mobile, "
         "desktop) and they decide there; you cannot approve it yourself. "
-        f'If this step is not needed, revoke it with revoke_tool("{approval_id}") '
-        "and continue with other work. If it is genuinely needed, leave it and move "
-        "on to independent work or exit — you will be woken with the verdict. "
-        "Re-calling with the same arguments returns the same pending id: it never "
-        "runs the tool and never creates a new request."
+        f'If this step is not needed, withdraw it with execute(tool_name="revoke", '
+        f'data={{"id": "{approval_id}"}}) and continue with other work. '
+        "If it is genuinely needed, leave it and move on to independent work "
+        "or exit — you will be woken with the approval and run it via "
+        'execute(tool_name="approve", data={"id": ...}). '
+        "Re-calling with the same arguments returns the same pending id: it "
+        "never runs the tool directly — after approval you run it once via "
+        "the approve ticket."
     )
 
 
