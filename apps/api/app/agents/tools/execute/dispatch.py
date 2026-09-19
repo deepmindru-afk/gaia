@@ -125,6 +125,23 @@ async def dispatch_tool(
     subagent's space by toolkit rather than by name.
     """
     if tool_name in TICKET_NAMES:
+        if integration_only:
+            # Tickets need a conversation (owner/caller checks) the sandbox
+            # route deliberately withholds: without it every ticket call
+            # misses, so refuse loudly instead of failing silently downstream.
+            log.warning(
+                f"{LogTag.TOOL} execute: ticket operation refused on integration-only surface",
+                tool_name=tool_name,
+            )
+            return _failure(
+                user_id,
+                tool_name,
+                DispatchError(
+                    kind=DispatchErrorKind.INTERNAL_TOOL,
+                    detail=f"'{tool_name}' is a conversation ticket, not an integration tool.",
+                    hint="Approve, revoke, and redeem only from the conversation, never from a sandbox script.",
+                ),
+            )
         return await _dispatch_ticket(
             user_id=user_id,
             tool_name=tool_name,
@@ -304,6 +321,7 @@ async def _dispatch_ticket(
     elif tool_name == TICKET_REVOKE_NAME:
         text = await revoke_ticket(
             approval_id,
+            user_id=ticket_user,
             conversation_id=conversation_id,
             caller=caller,
         )

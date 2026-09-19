@@ -20,6 +20,7 @@ import { formatApprovalAge } from "@shared/chat";
 import { useState } from "react";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
+import { flattenArgsPreview } from "@/features/chat/utils/argsPreview";
 import { resolveBatchOutcomeStatus } from "@/features/chat/utils/batchOutcome";
 import { toast } from "@/lib/toast";
 
@@ -186,14 +187,10 @@ export default function ApprovalReviewSheet({
               <div className="mb-3 space-y-2">
                 {list.map((item) => {
                   const picked = decisions[item.approval_id]?.decision ?? null;
-                  const argRows = Object.entries(
-                    item.args_preview ?? {},
-                  ).filter(
-                    ([, value]) =>
-                      typeof value === "string" ||
-                      typeof value === "number" ||
-                      typeof value === "boolean",
-                  );
+                  const preview = flattenArgsPreview(item.args_preview ?? {});
+                  const shown = preview.rows.slice(0, 6);
+                  const hidden =
+                    preview.rows.length - shown.length + preview.omitted;
                   return (
                     <div
                       key={item.approval_id}
@@ -208,16 +205,25 @@ export default function ApprovalReviewSheet({
                           {formatApprovalAge(item.age_seconds)}
                         </div>
                       )}
-                      {argRows.length > 0 && (
+                      {shown.length > 0 && (
                         <div className="mt-1.5 space-y-0.5">
-                          {argRows.slice(0, 3).map(([key, value]) => (
-                            <div key={key} className="text-xs text-zinc-400">
+                          {shown.map((row) => (
+                            <div
+                              key={`${row.group ?? "top"}:${row.key}`}
+                              className="text-xs text-zinc-400"
+                            >
                               <span className="text-zinc-500">
-                                {key.replaceAll("_", " ")}:{" "}
+                                {row.group != null ? `${row.group} ` : ""}
+                                {row.key.replaceAll("_", " ")}:{" "}
                               </span>
-                              {String(value)}
+                              {row.value}
                             </div>
                           ))}
+                          {hidden > 0 && (
+                            <div className="text-[11px] text-zinc-500">
+                              +{hidden} more
+                            </div>
+                          )}
                         </div>
                       )}
                       <div className="mt-2 flex items-center gap-2">

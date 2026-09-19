@@ -20,7 +20,7 @@ import hashlib
 import json
 from typing import Any, cast
 
-from app.agents.core.background.session import get_session
+from app.agents.core.background.session import RunKind, get_session
 from app.constants.cache import HIL_DECLINED_PREFIX
 from app.constants.hil import (
     APPROVAL_REQUEST_TOOL_NAME,
@@ -133,14 +133,22 @@ async def publish_ledger_request(
     entry.data.rationale = rationale
     entry.data.age_seconds = 0
     entry.data.ledger_version = 0
-    if not live:
+    session = get_session(stream_id)
+    held = (
+        live
+        and session is not None
+        and session.kind is RunKind.LIVE
+    )
+    if not held:
+        # Background runs, detached queued runs, and runs with no session at
+        # all publish immediately: nobody is watching this stream (or there is
+        # no stream to drain), so holding would hide the card until a drain
+        # that never comes.
         await _publish_entry(stream_id, entry)
         _schedule_pending_notification(user_id, conversation_id, approval_id, summary)
         return
     frame = {"tool_data": entry.model_dump(), "_held_approval": True}
-    session = get_session(stream_id)
-    if session is not None:
-        session.tool_events.append(frame)
+    session.tool_events.append(frame)
 
 
 async def publish_decision(

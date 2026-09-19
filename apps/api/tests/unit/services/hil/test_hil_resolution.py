@@ -229,6 +229,25 @@ class TestUnresumableRecords:
         assert resume.prepare.await_count == 0  # nothing to wake — executor is running
         assert resume.mark_resumed.await_count == 0  # no dispatch happened, none stamped
 
+    async def test_approve_with_feedback_records_denied_old_path(self, resume: Any) -> None:
+        # Same permission-scope conversion as the ledger path and the chat
+        # classifier: the stored call carries no conditions, so "approve +
+        # note" records as denied with the note instead of running.
+        from app.models.hil_models import HILApprovalStatus
+
+        record = make_record()
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)) as decided,
+        ):
+            await resolve_approval(
+                approval_id="appr-1", user_id=USER_ID, kind="approve", feedback="cc finance"
+            )
+
+        decided.assert_awaited_once()
+        assert decided.await_args.args[1] == HILApprovalStatus.DENIED
+        assert decided.await_args.kwargs["feedback"] == "cc finance"
+
     async def test_an_early_decision_with_no_live_executor_fails_loudly(self, resume: Any) -> None:
         # Fire-and-forget: the executor finished without ever joining, so nobody
         # will collect this decision. Accepting it would tell the user "going
@@ -246,8 +265,7 @@ class TestUnresumableRecords:
         assert decided.await_count == 0  # stays pending for the sweep's loud timeout
         assert resume.prepare.await_count == 0
 
-    async def test_a_failed_run_preparation_leaves_the_record_unstamped_for_the_sweep(
-        self, resume: Any
+    async def test_a_failed_run_preparation_leaves_the_record_unstamped_for_the_sweep(        self, resume: Any
     ) -> None:
         # The conversation lock could not be seized. Stamping resumed_at here would hide
         # the record from the sweep forever and strand the paused run.
@@ -420,6 +438,19 @@ class TestAbandonConversation:
         assert abandoned == ["a1"]
         assert decided.await_args.args[1] == "abandoned"
         assert resume.prepare.await_count == 0
+
+    async def test_foreign_records_are_skipped_not_closed(self, resume: Any) -> None:
+        # The resume-less close path must authorize like every other decision
+        # path: another user's record is skipped, never decided.
+        record = make_record(approval_id="a1", resume_item=None, user_id="someone-else")
+        with (
+            patch(f"{MODULE}.list_pending_for_conversation", new=AsyncMock(return_value=[record])),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock()) as decided,
+        ):
+            abandoned = await abandon_conversation_approvals("conv-1", USER_ID, "moved on")
+
+        assert abandoned == []
+        decided.assert_not_awaited()
 
 
 class TestSweep:

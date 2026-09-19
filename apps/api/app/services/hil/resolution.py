@@ -240,6 +240,8 @@ async def _resolve_or_close(
     pending goes on hijacking every later message in the conversation via the
     conversational resolver.
     """
+    if record.user_id != user_id:
+        raise ApprovalRequestForbiddenError()
     if record.resume_item is None:
         log.warning(
             f"{LogTag.HIL} Closing approval with no resume context",
@@ -267,6 +269,11 @@ async def _resolve_record(
     """Authorize, transition exactly once, and resume — from an already-loaded record."""
     if record.user_id != user_id:
         raise ApprovalRequestForbiddenError()
+    # An approval with feedback is a conditional approval, and the stored call
+    # carries no conditions — same conversion as the ledger path and the chat
+    # classifier: record it as denied with the note attached.
+    if kind == "approve" and feedback is not None and feedback.strip() != "":
+        kind = "deny"
     # Checked BEFORE the decided-transition: a decision we cannot act on must
     # fail the request (record stays pending; the sweep expires it), never
     # report success for an action that will silently not run.

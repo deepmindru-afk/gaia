@@ -529,8 +529,9 @@ export const chatApi = {
 
   /**
    * Relay a HIL approval decision to the awaiting agent gate. Silent — the
-   * caller surfaces real failures; a 410 (already resolved elsewhere) resolves
-   * over the stream regardless, so it's swallowed here rather than surfaced.
+   * caller surfaces real failures. A 410 (already resolved elsewhere) is
+   * reported as not_found instead of success: settling the tapped verdict
+   * would paint over the real one, so the caller refreshes instead.
    * Returns the relay outcome so callers can tell a commit from a stale tap:
    * `success:false` means the row moved under the client — refresh, don't retry.
    */
@@ -553,7 +554,7 @@ export const chatApi = {
     } catch (error) {
       const status = (error as { response?: { status?: number } })?.response
         ?.status;
-      if (status === HTTP_GONE) return { success: true };
+      if (status === HTTP_GONE) return { success: false, reason: "not_found" };
       throw error;
     }
   },
@@ -561,15 +562,25 @@ export const chatApi = {
   /**
    * Decide several pending approvals in one submission (the batch review's
    * "Approve all"/"Decline all"). Per-approval outcomes come back in the
-   * response — an already-resolved item never fails the rest.
+   * response — an already-resolved item never fails the rest. Chunked to the
+   * server's 25-item cap so a large sheet commits instead of 422ing whole.
    */
   postApprovalBatchDecision: async (
     payload: BatchApprovalDecisionPayload,
   ): Promise<BatchApprovalDecisionResponse> => {
-    return apiService.post<BatchApprovalDecisionResponse>(
-      "/approvals/batch-decision",
-      payload,
-      { silent: true },
-    );
+    const chunks: BatchApprovalDecisionPayload["decisions"][] = [];
+    for (let i = 0; i < payload.decisions.length; i += 25) {
+      chunks.push(payload.decisions.slice(i, i + 25));
+    }
+    const outcomes: BatchApprovalDecisionResponse["outcomes"] = [];
+    for (const decisions of chunks) {
+      const response = await apiService.post<BatchApprovalDecisionResponse>(
+        "/approvals/batch-decision",
+        { decisions },
+        { silent: true },
+      );
+      outcomes.push(...response.outcomes);
+    }
+    return { outcomes };
   },
 };

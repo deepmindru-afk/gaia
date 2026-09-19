@@ -406,7 +406,9 @@ class TestAResumeWithNoDecisionFailsClosed:
             result = await run_through_gate(make_request(), handler)
 
         handler.assert_not_awaited(), "no record decision means no execution, ever"
-        assert result.additional_kwargs[HIL_STATUS_KWARG] == "denied"
+        # System error, not a denial: the run could pause (it just did), but no
+        # decision landed on its record. "denied" would lie about the cause.
+        assert result.additional_kwargs[HIL_STATUS_KWARG] == "error"
 
     async def test_an_approved_record_does_run_it(self) -> None:
         # The positive control: without this, "never runs" would also pass if the gate

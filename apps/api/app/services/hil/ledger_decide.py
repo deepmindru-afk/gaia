@@ -125,6 +125,14 @@ async def decide_ledger(
             stale=True,
         )
 
+    # An approval with feedback is a conditional approval, and envelopes carry
+    # no conditions: the stored args would run unmodified while the card
+    # shows "approved with a note". Match the chat classifier (approve with
+    # feedback routes to deny): record it as denied with the note attached,
+    # so nothing executes beyond the granted permission.
+    if kind == "approve" and feedback is not None and feedback.strip() != "":
+        kind = "deny"
+
     target = LedgerState.APPROVED if kind == "approve" else LedgerState.DENIED
     transitioned = await approval_ledger_repository.transition(
         approval_id, LedgerState.PENDING, target, decided_by=user_id, feedback=feedback
@@ -145,8 +153,18 @@ async def decide_ledger(
         # Permission granted — hand the ticket to the model, which redeems it
         # with the approve ticket and chains on the result. deliver_to_executor
         # steers a live run or starts an idle conversation, so this covers
-        # both without the decider knowing which.
-        await _deliver_ticket(row)
+        # both without the decider knowing which. Failures fall back to the
+        # inbox wake: the decision already committed and published, so delivery
+        # must never fail the tap.
+        try:
+            await _deliver_ticket(row)
+        except Exception as e:
+            log.error(
+                f"{LogTag.HIL} Ledger ticket delivery failed; falling back to inbox wake",
+                approval_id=approval_id,
+                error_type=type(e).__name__,
+            )
+            await _wake_agent(row, "APPROVED", None)
     await publish_ledger_decision(row, target, feedback=feedback)
     if target is LedgerState.DENIED:
         # Denials schedule nothing, but the agent still needs the verdict: it
@@ -360,7 +378,9 @@ async def _settle_terminal(row: ApprovalLedgerDocument, state: LedgerState) -> N
     await _broadcast_decision(row, state.value, None)
 
 
-async def revoke_ticket(approval_id: str, *, conversation_id: str, caller: str) -> str:
+async def revoke_ticket(
+    approval_id: str, *, user_id: str, conversation_id: str, caller: str
+) -> str:
     """Withdraw your own pending approval.
 
     The revoke half of the ticket convention (mirrors ``redeem_approved``):
@@ -372,6 +392,8 @@ async def revoke_ticket(approval_id: str, *, conversation_id: str, caller: str) 
     row = await approval_ledger_repository.get_by_approval_id(approval_id)
     if row is None or row.conversation_id != conversation_id:
         return f"No pending approval with id '{approval_id}'."
+    if row.user_id != user_id:
+        raise ApprovalRequestForbiddenError()
     if row.state is not LedgerState.PENDING:
         return (
             f"Cannot revoke '{approval_id}': already {row.state.value}. "
@@ -436,9 +458,9 @@ async def reconcile_conversation_ledger(conversation_id: str) -> None:
     racing here converge instead of duplicating.
     """
     cutoff = datetime.now(UTC) - timedelta(minutes=STALLED_EXECUTING_MINUTES)
-    for stalled in await approval_ledger_repository.list_stalled_executing(cutoff):
-        if stalled.conversation_id != conversation_id:
-            continue
+    for stalled in await approval_ledger_repository.list_stalled_executing(
+        cutoff, conversation_id
+    ):
         if await approval_ledger_repository.transition(
             stalled.approval_id, LedgerState.EXECUTING, LedgerState.UNKNOWN
         ):
@@ -447,7 +469,12 @@ async def reconcile_conversation_ledger(conversation_id: str) -> None:
                 approval_id=stalled.approval_id,
             )
             await _settle_terminal(stalled, LedgerState.UNKNOWN)
-            await _wake_agent(stalled, "UNKNOWN", "stalled execution reconciled; never retried")
+            await _wake_agent(
+                stalled,
+                "UNKNOWN",
+                "stalled execution reconciled; never retried. The action may or may not "
+                "have run — verify before re-proposing, never blind-retry.",
+            )
 
 
 async def publish_ledger_decision(

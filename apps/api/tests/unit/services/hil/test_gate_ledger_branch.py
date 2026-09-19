@@ -88,9 +88,11 @@ class TestLedgerBranch:
         intr.assert_called_once()
 
     async def test_live_duplicate_returns_existing_id_without_register(self) -> None:
+        from app.models.hil_models import LedgerState
         from app.services.hil import gate
 
         live = MagicMock(approval_id="ap_live", summary="Send it")
+        live.state = LedgerState.PENDING
         ledger = _ledger(live=live)
         with (
             patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
@@ -105,6 +107,27 @@ class TestLedgerBranch:
         assert result is not None
         assert "PENDING ap_live" in str(result.content)
         assert "already requested" in str(result.content)
+
+    async def test_live_approved_row_is_not_called_awaiting_decision(self) -> None:
+        from app.models.hil_models import LedgerState
+        from app.services.hil import gate
+
+        live = MagicMock(approval_id="ap_live", summary="Send it")
+        live.state = LedgerState.APPROVED
+        ledger = _ledger(live=live)
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}.interrupt") as intr,
+        ):
+            result = await gate.decide_tool_call(_gated_request())
+
+        ledger.register.assert_not_awaited()
+        intr.assert_not_called()
+        assert result is not None
+        assert "APPROVED ap_live" in str(result.content)
+        assert "awaiting redeem" in str(result.content)
 
     async def test_same_run_denied_reissue_is_refused(self) -> None:
         from app.services.hil import gate

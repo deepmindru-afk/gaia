@@ -14,10 +14,11 @@ import type {
   ApprovalStatus,
 } from "@shared/chat";
 import { formatApprovalAge, RECONFIRM_AGE_SECONDS } from "@shared/chat";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ShieldAlertIcon } from "@/components/shared/icons";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
+import { flattenArgsPreview } from "@/features/chat/utils/argsPreview";
 import { formatToolName } from "@/features/chat/utils/chatUtils";
 import { toast } from "@/lib/toast";
 
@@ -30,23 +31,33 @@ interface ApprovalRequestSectionProps {
 }
 
 function ArgsPreview({ args }: { args: Record<string, unknown> }) {
-  const rows = Object.entries(args).filter(
-    ([, value]) =>
-      typeof value === "string" ||
-      typeof value === "number" ||
-      typeof value === "boolean",
-  );
+  const { rows, omitted } = useMemo(() => flattenArgsPreview(args), [args]);
   if (rows.length === 0) return null;
+  let lastGroup: string | null = null;
   return (
     <div className="mt-3 space-y-2 rounded-2xl bg-zinc-900 p-3">
-      {rows.map(([key, value]) => (
-        <div key={key} className="text-xs">
-          <div className="mb-0.5 text-[11px] text-zinc-500">
-            {key.replaceAll("_", " ")}
+      {rows.map((row) => {
+        const showGroup = row.group !== null && row.group !== lastGroup;
+        lastGroup = row.group;
+        return (
+          <div key={`${row.group ?? "top"}:${row.key}:${row.value}`}>
+            {showGroup && (
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                {row.group}
+              </div>
+            )}
+            <div className="text-xs">
+              <div className="mb-0.5 text-[11px] text-zinc-500">
+                {row.key.replace(/^./, (char) => char.toUpperCase())}
+              </div>
+              <div className="text-zinc-200">{row.value}</div>
+            </div>
           </div>
-          <div className="text-zinc-200">{String(value)}</div>
-        </div>
-      ))}
+        );
+      })}
+      {omitted > 0 && (
+        <div className="text-[11px] text-zinc-500">+{omitted} more</div>
+      )}
     </div>
   );
 }
@@ -75,10 +86,16 @@ export default function ApprovalRequestSection({
   ) => {
     setSubmitting(decision);
     setPhase("submitting");
+    // Feedback rides deny only (sheet parity): an approve-with-note would run
+    // the unmodified envelope while showing "approved", i.e. execute beyond
+    // the granted permission. The server converts it to deny, but the card
+    // should say what it means from the start.
+    const attachedFeedback =
+      decision === "deny" ? feedback.trim() || null : null;
     try {
       const outcome = await chatApi.postApprovalDecision(data.approval_id, {
         decision,
-        feedback: feedback.trim() || undefined,
+        feedback: attachedFeedback ?? undefined,
         scope,
         v: versionConflict ? undefined : (data.ledger_version ?? undefined),
       });
@@ -90,7 +107,7 @@ export default function ApprovalRequestSection({
           markApprovalDecided();
           onDecided(
             outcome.status === "approved" ? "approved" : "denied",
-            feedback.trim() || null,
+            attachedFeedback,
           );
         } else {
           setVersionConflict(true);
@@ -102,12 +119,12 @@ export default function ApprovalRequestSection({
       }
       // Settle locally: the resolved frame is published on the RESUMED run's
       // stream (a different message), so it never replaces this card. A 410
-      // (already resolved elsewhere) is swallowed by postApprovalDecision and
-      // settles here too; reaching the catch means the submit genuinely failed.
+      // surfaces as not_found and takes the refresh path above; reaching the
+      // catch means the submit genuinely failed.
       markApprovalDecided();
       onDecided(
         decision === "approve" ? "approved" : "denied",
-        feedback.trim() || null,
+        attachedFeedback,
       );
     } catch {
       toast.error("Couldn't submit your decision — please try again");

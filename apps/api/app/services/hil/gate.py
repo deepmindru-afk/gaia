@@ -51,7 +51,7 @@ from app.constants.hil import (
 )
 from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
-from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
+from app.models.hil_models import HILApprovalRecord, HILApprovalStatus, LedgerState
 from app.services.feature_flags import is_hil_ledger_enabled
 from app.services.hil.approvals_store import approval_id_for, get_approval
 from app.services.hil.bridge import (
@@ -152,7 +152,13 @@ async def decide_tool_call(request: ToolCallRequest) -> ToolMessage | None:
             approval_id=settled.approval_id,
             tool_name=settled.tool_name,
         )
-        return _unpausable_denial_message(unpack_tool_call(request))
+        return _tool_message(
+            unpack_tool_call(request),
+            f"{settled.tool_name} woke with no decision on its record "
+            f"({settled.approval_id}) — a system error, not a denial. The action "
+            "was NOT performed. Report the stall and continue without it.",
+            "error",
+        )
     return settled
 
 
@@ -238,6 +244,14 @@ async def _decide_ledger(
         fingerprint = approval_fingerprint(call.name, call.args)
         live = await approval_ledger_repository.find_live(fingerprint, context.conversation_id)
         if live is not None:
+            if live.state is LedgerState.APPROVED:
+                return _tool_message(
+                    call,
+                    f"APPROVED {live.approval_id}: {live.summary} already approved, "
+                    "awaiting redeem — not awaiting the user's decision. Do not "
+                    "re-request it; redeem it or continue other work.",
+                    "pending",
+                )
             return _tool_message(
                 call,
                 f"PENDING {live.approval_id}: {live.summary} already requested and "
@@ -249,9 +263,13 @@ async def _decide_ledger(
         )
         if denied is not None:
             if denied.proposing_run_id and denied.proposing_run_id == context.stream_id:
+                denied_why = (
+                    f' The user said: {denied.feedback!r}.' if denied.feedback else ""
+                )
                 return _tool_message(
                     call,
-                    f"REFUSED {call.name}: the user denied this exact call in this run. "
+                    f"REFUSED {denied.approval_id}: the user denied {denied.summary} "
+                    f"in this run.{denied_why} "
                     "DO NOT re-request it. State what you skipped and continue without it.",
                     "denied",
                 )

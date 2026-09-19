@@ -131,6 +131,66 @@ class TestLedgerPublishHold:
         finally:
             self._teardown(stream_id)
 
+    async def test_live_run_without_session_publishes_immediately(self) -> None:
+        """No session means no drain will ever persist the frame — holding
+        would hide the card until a drain that never comes."""
+        from app.services.hil.bridge import publish_ledger_request
+        from app.services.hil.utils import GatedCall
+
+        with (
+            patch(
+                "app.services.hil.bridge.stream_manager.publish_chunk",
+                new=AsyncMock(),
+            ) as chunk,
+            patch(
+                "app.services.hil.bridge._schedule_pending_notification"
+            ) as notify,
+        ):
+            await publish_ledger_request(
+                approval_id="ap_nosession",
+                stream_id="stream-without-session",
+                user_id="u1",
+                conversation_id="conv-1",
+                tool_call=GatedCall(name="GMAIL_SEND_EMAIL", id="c1", args={"to": "b@x"}),
+                summary="Send it",
+                integration_name="gmail",
+            )
+        chunk.assert_awaited_once()
+        notify.assert_called_once()
+
+    async def test_queued_session_publishes_immediately(self) -> None:
+        """Detached queued runs have a session but no watcher — holding would
+        park the card on an unwatched stream."""
+        from app.agents.core.background.session import RunKind, create_session
+        from app.services.hil.bridge import publish_ledger_request
+        from app.services.hil.utils import GatedCall
+
+        stream_id = "stream-queued-test"
+        create_session(stream_id, RunKind.QUEUED)
+        try:
+            with (
+                patch(
+                    "app.services.hil.bridge.stream_manager.publish_chunk",
+                    new=AsyncMock(),
+                ) as chunk,
+                patch(
+                    "app.services.hil.bridge._schedule_pending_notification"
+                ) as notify,
+            ):
+                await publish_ledger_request(
+                    approval_id="ap_queued",
+                    stream_id=stream_id,
+                    user_id="u1",
+                    conversation_id="conv-1",
+                    tool_call=GatedCall(name="GMAIL_SEND_EMAIL", id="c1", args={"to": "b@x"}),
+                    summary="Send it",
+                    integration_name="gmail",
+                )
+            chunk.assert_awaited_once()
+            notify.assert_called_once()
+        finally:
+            self._teardown(stream_id)
+
     async def test_background_run_publishes_immediately(self) -> None:
         from app.services.hil.bridge import publish_ledger_request
         from app.services.hil.utils import GatedCall

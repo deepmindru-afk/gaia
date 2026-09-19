@@ -98,7 +98,7 @@ class TestDispatchTicketNames:
 
         resolve.assert_not_awaited()
         revoke.assert_awaited_once_with(
-            "ap_1", conversation_id="conv-1", caller="executor_conv-1"
+            "ap_1", user_id="u1", conversation_id="conv-1", caller="executor_conv-1"
         )
         assert result.ok is True
         assert "Revoked" in str(result.output)
@@ -125,6 +125,27 @@ class TestDispatchTicketNames:
 
         assert await resolve_tool("u1", "approve") is None
         assert await resolve_tool("u1", "revoke") is None
+
+    async def test_tickets_refused_on_integration_only_surface(self) -> None:
+        """Sandbox scripts carry no conversation identity, so every ticket
+        check would miss — refuse loudly instead."""
+        from app.agents.tools.execute import dispatch as dispatch_module
+        from app.agents.tools.execute.dispatch import dispatch_tool
+
+        with (
+            patch.object(dispatch_module, "resolve_tool", new=AsyncMock()),
+        ):
+            result = await dispatch_tool(
+                user_id="u1",
+                tool_name="approve",
+                data={"id": "ap_1"},
+                config=self._config(),  # type: ignore[arg-type]
+                integration_only=True,
+            )
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "conversation ticket" in result.error.detail
 
     async def test_ticket_bypasses_caller_tool_space(self) -> None:
         """Control-plane ops belong to no provider space: a scoped subagent

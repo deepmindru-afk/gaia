@@ -745,13 +745,16 @@ class TestNoVolatileSectionIsClipped:
 
 @pytest.mark.unit
 class TestOpenPendingsBlock:
-    def _doc(self, approval_id: str = "ap_1", summary: str = "Send it") -> MagicMock:
+    def _doc(
+        self, approval_id: str = "ap_1", summary: str = "Send it", user_id: str = "u1"
+    ) -> MagicMock:
         from datetime import UTC, datetime
 
         doc = MagicMock()
         doc.approval_id = approval_id
         doc.tool_name = "GMAIL_SEND_EMAIL"
         doc.summary = summary
+        doc.user_id = user_id
         doc.created_at = datetime(2026, 9, 17, 10, 0, tzinfo=UTC)
         return doc
 
@@ -807,3 +810,22 @@ class TestOpenPendingsBlock:
         ) as ledger:
             ledger.list_open = AsyncMock(side_effect=ConnectionError("mongo down"))
             assert await build_open_pendings_block(self._ctx()) == ""
+
+    async def test_foreign_rows_never_render_into_this_users_context(self) -> None:
+        from app.agents.context.fetchers import build_open_pendings_block
+
+        with patch(
+            "app.agents.context.fetchers.approval_ledger_repository",
+        ) as ledger:
+            ledger.list_open = AsyncMock(
+                return_value=[
+                    self._doc("ap_mine", "Mine"),
+                    self._doc("ap_theirs", "Theirs", user_id="u2"),
+                    self._doc("ap_legacy", "Legacy", user_id=""),
+                ]
+            )
+            text = await build_open_pendings_block(self._ctx())
+
+        assert "ap_mine" in text
+        assert "ap_theirs" not in text
+        assert "ap_legacy" in text

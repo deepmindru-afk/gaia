@@ -370,6 +370,17 @@ async def build_open_pendings_block(ctx: SectionContext) -> str:
         return ""
     if not pendings:
         return ""
+    # Belt-and-suspenders behind the conversation scoping: a foreign row must
+    # never render into this user's agent context. Legacy rows without an
+    # owner stay visible rather than silently dropping legit pendings.
+    if ctx.user_id:
+        pendings = [
+            doc
+            for doc in pendings
+            if not doc.user_id or doc.user_id == ctx.user_id
+        ]
+        if not pendings:
+            return ""
     shown = pendings[:10]
     lines = [
         f"- {doc.approval_id} | {doc.tool_name} | {_pending_age(doc.created_at)} | {doc.summary}"

@@ -63,6 +63,24 @@ class TestDecideLedger:
         )
         deliver.assert_awaited_once()
 
+    async def test_approve_delivery_failure_falls_back_to_wake(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(
+                ledger_decide, "_deliver_ticket", new=AsyncMock(side_effect=RuntimeError("redis down"))
+            ),
+            patch.object(ledger_decide, "_wake_agent", new=AsyncMock()) as wake,
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        assert outcome.committed is True
+        wake.assert_awaited_once_with(repo.get_by_approval_id.return_value, "APPROVED", None)
+
     async def test_stale_v_returns_current_row_without_writing(self) -> None:
         from app.services.hil.ledger_decide import decide_ledger
 
@@ -235,13 +253,13 @@ class TestDecideHardening:
         deliver.assert_not_awaited()
         assert wake.await_count == 1
 
-    async def test_reconcile_ignores_other_conversations(self) -> None:
+    async def test_reconcile_scopes_stalled_scan_to_conversation(self) -> None:
+        # The stalled scan must not read every conversation's stalls on each
+        # tap: scope rides in the query, not a Python-side discard.
         from app.services.hil.ledger_decide import reconcile_conversation_ledger
 
-        foreign = _row(approval_id="ap_x")
-        foreign.conversation_id = "conv-9"
         repo = _repo()
-        repo.list_stalled_executing = AsyncMock(return_value=[foreign])
+        repo.list_stalled_executing = AsyncMock(return_value=[])
         repo.transition = AsyncMock(return_value=True)
         with (
             patch(f"{MODULE}.approval_ledger_repository", new=repo),
@@ -249,6 +267,8 @@ class TestDecideHardening:
         ):
             await reconcile_conversation_ledger("conv-1")
 
+        repo.list_stalled_executing.assert_awaited_once()
+        assert repo.list_stalled_executing.await_args.args[1] == "conv-1"
         repo.transition.assert_not_awaited()
         deliver.assert_not_awaited()
 
@@ -450,6 +470,7 @@ class TestRedeemTerminalStates:
 class TestRevokeTicket:
     def _revoke_kwargs(self) -> dict[str, Any]:
         return {
+            "user_id": "u1",
             "conversation_id": "conv-1",
             "caller": "executor_conv-1",
         }
@@ -481,12 +502,35 @@ class TestRevokeTicket:
         ):
             text = await revoke_ticket(
                 "ap_abc",
+                user_id="u1",
                 conversation_id="other-conv",
                 caller="executor_other-conv",
             )
 
         assert "No pending approval" in text
         dispatch.assert_not_awaited()
+
+    async def test_revoke_cross_user_forbidden(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import revoke_ticket
+        from app.services.hil.resolution import ApprovalRequestForbiddenError
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(
+                ledger_decide, "publish_ledger_revocation", new=AsyncMock()
+            ) as tombstone,
+            pytest.raises(ApprovalRequestForbiddenError),
+        ):
+            await revoke_ticket(
+                "ap_abc",
+                user_id="attacker",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
+        repo.transition.assert_not_awaited()
+        tombstone.assert_not_awaited()
 
     async def test_revoke_decided_row_refused(self) -> None:
         from app.models.hil_models import LedgerState as LS
@@ -516,6 +560,7 @@ class TestRevokeTicket:
         ):
             text = await revoke_ticket(
                 "ap_abc",
+                user_id="u1",
                 conversation_id="conv-1",
                 caller="worker-unrelated",
             )
@@ -652,6 +697,52 @@ class TestRedeemApproved:
 
         assert result.ok is False
         dispatch.assert_not_awaited()
+
+
+@pytest.mark.unit
+class TestConditionalApproveBecomesDeny:
+    async def test_approve_with_feedback_records_denied(self) -> None:
+        # Permission-scope guard: an envelope carries no conditions, so
+        # "approve + note" must never run the unmodified args. It records
+        # as denied with the note attached (chat-classifier parity).
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()) as deliver,
+            patch.object(ledger_decide, "_deliver_verdict", new=AsyncMock()) as verdict,
+        ):
+            outcome = await decide_ledger(
+                "ap_abc", user_id="u1", kind="approve", feedback="cc finance", v=3
+            )
+
+        assert outcome.committed is True
+        assert outcome.state == LedgerState.DENIED
+        repo.transition.assert_awaited_once_with(
+            "ap_abc", LedgerState.PENDING, LedgerState.DENIED,
+            decided_by="u1", feedback="cc finance",
+        )
+        deliver.assert_not_awaited()
+        verdict.assert_awaited_once()
+
+    async def test_plain_approve_unaffected(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()) as deliver,
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        assert outcome.committed is True
+        assert outcome.state == LedgerState.APPROVED
+        deliver.assert_awaited_once()
 
 
 @pytest.mark.unit

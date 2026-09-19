@@ -133,16 +133,24 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         )
         return bool(result.modified_count)
 
-    async def list_stalled_executing(self, cutoff: datetime) -> list[ApprovalLedgerDocument]:
-        """EXECUTING rows whose claim predates the cutoff — presumed crashed."""
+    async def list_stalled_executing(
+        self, cutoff: datetime, conversation_id: str | None = None
+    ) -> list[ApprovalLedgerDocument]:
+        """EXECUTING rows whose claim predates the cutoff — presumed crashed.
+
+        Scoped to one conversation when given: the reconciler heals its own
+        conversation per decide, and a global scan on every tap scales with
+        every conversation's stalls, not this one's.
+        """
+        query: dict[str, Any] = {
+            "state": str(LedgerState.EXECUTING),
+            "executing_started_at": {"$lt": cutoff},
+        }
+        if conversation_id is not None:
+            query["conversation_id"] = conversation_id
         cursor = (
             self._raw_collection()
-            .find(
-                {
-                    "state": str(LedgerState.EXECUTING),
-                    "executing_started_at": {"$lt": cutoff},
-                }
-            )
+            .find(query)
             .sort("executing_started_at", 1)
         )
         return [
@@ -157,10 +165,21 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
     async def find_live(
         self, fingerprint: str, conversation_id: str
     ) -> ApprovalLedgerDocument | None:
-        """Newest live (PENDING/APPROVED) row for a fingerprint, or ``None``."""
+        """Newest live (PENDING/APPROVED) row for a fingerprint, or ``None``.
+
+        The state predicate rides in the query so the partial live index
+        applies and terminal rows never even load — instead of fetching 50
+        rows and filtering in Python.
+        """
         cursor = (
             self._raw_collection()
-            .find({"fingerprint": fingerprint, "conversation_id": conversation_id})
+            .find(
+                {
+                    "fingerprint": fingerprint,
+                    "conversation_id": conversation_id,
+                    "state": {"$in": sorted(str(s) for s in LIVE_LEDGER_STATES)},
+                }
+            )
             .sort("created_at", -1)
         )
         raws = await cursor.to_list(length=50)
