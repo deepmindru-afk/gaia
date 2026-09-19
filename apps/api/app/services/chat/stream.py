@@ -32,7 +32,11 @@ from app.agents.core.background.executor_capture import (
 )
 from app.agents.core.background.session import get_session
 from app.constants.artifacts import ARTIFACT_FORWARDER_SUBSCRIBE_TIMEOUT
-from app.constants.browser import BROWSER_HANDOFF_ACK_CANCEL, BROWSER_HANDOFF_ACK_CONTINUE
+from app.constants.browser import (
+    BROWSER_HANDOFF_ACK_CANCEL,
+    BROWSER_HANDOFF_ACK_CONTINUE,
+    BROWSER_HANDOFF_ACK_REDIRECT,
+)
 from app.constants.cache import EXECUTOR_WAIT_TIMEOUT, VOICE_EXECUTOR_RESULT_TIMEOUT_S
 from app.constants.chat import (
     EMPTY_RESPONSE_FALLBACK,
@@ -499,6 +503,15 @@ async def _resolve_pending_approval_turn(
     return True
 
 
+# A reply the classifier read as anything else (unrelated, nothing pending)
+# leaves the handoff alone and runs as a normal turn.
+_BROWSER_HANDOFF_ACKS: dict[str, str] = {
+    "continue": BROWSER_HANDOFF_ACK_CONTINUE,
+    "redirect": BROWSER_HANDOFF_ACK_REDIRECT,
+    "cancel": BROWSER_HANDOFF_ACK_CANCEL,
+}
+
+
 async def _resolve_pending_browser_handoff_turn(
     body: MessageRequestWithHistory,
     user: AuthenticatedUser,
@@ -508,9 +521,9 @@ async def _resolve_pending_browser_handoff_turn(
 ) -> bool:
     """Resolve a paused browser task's handoff from the user's chat reply.
 
-    Returns True when the reply continued or cancelled the handoff, so the
-    caller must not run the agent (the paused task resumes on its own stream).
-    False when nothing was pending, so the normal turn runs.
+    Returns True when the reply continued, redirected or cancelled the handoff,
+    so the caller must not run the agent (the paused task resumes on its own
+    stream). False when nothing was pending, so the normal turn runs.
     """
     user_id = user.user_id
     message = user_message_content_from(body)
@@ -526,10 +539,10 @@ async def _resolve_pending_browser_handoff_turn(
         )
         return False
 
-    if action not in ("continue", "cancel"):
+    ack = _BROWSER_HANDOFF_ACKS.get(action or "")
+    if ack is None:
         return False
 
-    ack = BROWSER_HANDOFF_ACK_CONTINUE if action == "continue" else BROWSER_HANDOFF_ACK_CANCEL
     state.complete_message = ack
     state.turn_completed_at = datetime.now(UTC)
     await stream_manager.publish_chunk(stream_id, format_sse_response(ack))

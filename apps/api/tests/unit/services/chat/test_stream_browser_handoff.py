@@ -15,7 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.constants.browser import BROWSER_HANDOFF_ACK_CANCEL, BROWSER_HANDOFF_ACK_CONTINUE
+from app.constants.browser import (
+    BROWSER_HANDOFF_ACK_CANCEL,
+    BROWSER_HANDOFF_ACK_CONTINUE,
+    BROWSER_HANDOFF_ACK_REDIRECT,
+)
 from app.constants.log_tags import LogTag
 from app.models.message_models import MessageRequestWithHistory
 from app.models.stream_events import MainResponseCompleteFrame
@@ -318,6 +322,33 @@ class TestCancelResolution:
         # for None on any of these three calls silently drops the chunk.
         call_args_list = chat_stream.stream_manager.publish_chunk.await_args_list
         assert [call.args[0] for call in call_args_list] == [STREAM_ID, STREAM_ID, STREAM_ID]
+
+
+@pytest.mark.unit
+class TestRedirectResolution:
+    """A reply that declines the paused step but says what to do instead resumes the run."""
+
+    @pytest.mark.regression
+    async def test_publishes_the_exact_redirect_ack_and_short_circuits(
+        self, published: list[str], persist: AsyncMock
+    ) -> None:
+        state = _StreamState()
+        with patch.object(
+            chat_stream, "resolve_handoff_from_message", AsyncMock(return_value="redirect")
+        ):
+            result = await _resolve_pending_browser_handoff_turn(
+                _body(message="never mind the login, just tell me the headline"),
+                _user(),
+                CONVERSATION_ID,
+                STREAM_ID,
+                state,
+            )
+
+        assert result is True
+        assert published[0] == format_sse_response(BROWSER_HANDOFF_ACK_REDIRECT)
+        assert state.complete_message == BROWSER_HANDOFF_ACK_REDIRECT
+        assert published[-1] == "data: [DONE]\n\n"
+        persist.assert_awaited_once()
 
 
 @pytest.mark.unit

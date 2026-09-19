@@ -170,6 +170,7 @@ BROWSER_TASK_FAILED_PREFIX = "Browser task failed: "
 # Chat acks when a handoff is resolved by a natural-language reply.
 BROWSER_HANDOFF_ACK_CONTINUE = "Got it, continuing the browser task."
 BROWSER_HANDOFF_ACK_CANCEL = "Okay, I've stopped the browser task."
+BROWSER_HANDOFF_ACK_REDIRECT = "Got it, continuing with that instead."
 
 # The run's own summary when nobody finished the step in the live browser: a
 # handoff that expired is a failed run, not the completed one an earlier

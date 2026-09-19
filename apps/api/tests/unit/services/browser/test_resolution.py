@@ -197,6 +197,71 @@ def test_the_keyword_rule_reads_the_first_word_and_keeps_the_rest(reply, expecte
     assert keyword_reply_decision(reply) == HandoffReplyDecision(action=action, note=note)
 
 
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "never mind the login, just tell me what the github.com homepage headline says",
+        "skip the upvote, just tell me the title of the top post on r/python",
+        "nevermind the sign-in, read me the first paragraph",
+        "forget the payment, just tell me the total",
+        "don't bother logging in, give me the page title",
+        "no need to log in, just read the banner",
+        "instead, tell me what the top story is",
+    ],
+)
+def test_declining_the_step_with_a_new_instruction_is_a_redirect(reply):
+    """The whole reply is the instruction the paused run must follow."""
+    assert keyword_reply_decision(reply) == HandoffReplyDecision(action="redirect", note=reply)
+
+
+@pytest.mark.parametrize("reply", ["skip", "never mind", "nevermind.", "skipper is my dog"])
+def test_a_decline_without_a_new_instruction_is_not_a_redirect(reply):
+    assert keyword_reply_decision(reply).action != "redirect"
+
+
+@pytest.mark.regression
+async def test_a_redirect_resumes_the_run_with_the_whole_instruction(monkeypatch):
+    """Regression: a reply that declines the step but says what to do instead stranded the run."""
+    note = "never mind the login, just tell me what the github.com homepage headline says"
+    _pending(monkeypatch, "redirect", note=note)
+    resolve = AsyncMock(return_value=HandoffStatus.COMPLETED)
+    monkeypatch.setattr(res_mod, "resolve_handoff", resolve)
+
+    action = await resolve_handoff_from_message("c1", "u1", note)
+
+    assert action == "redirect"
+    resolve.assert_awaited_once_with("h1", HandoffDecision.CONTINUE, "u1", message=note)
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("action", "note"),
+    [("cancel", "stop"), ("continue", "Done."), ("continue", "ok, yes")],
+)
+async def test_an_acknowledgement_only_note_is_dropped(monkeypatch, action, note):
+    """The classifier feeding the go-ahead word back would reach the agent as an instruction."""
+    monkeypatch.setattr(
+        res_mod,
+        "ainvoke_structured_gemini",
+        AsyncMock(return_value=HandoffReplyDecision(action=action, note=note)),
+    )
+
+    assert await _interpret(note, "pay") == HandoffReplyDecision(action=action, note=None)
+
+
+async def test_a_real_instruction_note_survives_normalisation(monkeypatch):
+    monkeypatch.setattr(
+        res_mod,
+        "ainvoke_structured_gemini",
+        AsyncMock(return_value=HandoffReplyDecision(action="continue", note="use the other card")),
+    )
+
+    decision = await _interpret("done, use the other card", "pay")
+
+    assert decision == HandoffReplyDecision(action="continue", note="use the other card")
+
+
 async def test_note_typed_with_the_reply_reaches_the_run(monkeypatch):
     """The words after the go-ahead are instructions for the paused run, not chatter."""
     _pending(monkeypatch, "continue", note="skip the login and just tell me the title")
