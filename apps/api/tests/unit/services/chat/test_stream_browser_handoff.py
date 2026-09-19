@@ -352,6 +352,54 @@ class TestRedirectResolution:
 
 
 @pytest.mark.unit
+class TestTheAgentsThreadLearnsWhatTheUserSaid:
+    """The reply never runs the agent, so without this the thread that later voices the run's result still believes the original request stands."""
+
+    @pytest.mark.parametrize("action", ["continue", "redirect", "cancel"])
+    async def test_the_reply_and_its_ack_are_recorded_in_the_conversations_thread(
+        self, action: str, published: list[str], persist: AsyncMock
+    ) -> None:
+        recorded = AsyncMock()
+        with (
+            patch.object(
+                chat_stream, "resolve_handoff_from_message", AsyncMock(return_value=action)
+            ),
+            patch.object(chat_stream, "record_exchange_in_thread", recorded),
+        ):
+            await _resolve_pending_browser_handoff_turn(
+                _body(message="never mind the login, just tell me the headline"),
+                _user(),
+                CONVERSATION_ID,
+                STREAM_ID,
+                _StreamState(),
+            )
+
+        recorded.assert_awaited_once()
+        conversation_id, user_message, reply = recorded.await_args.args
+        assert conversation_id == CONVERSATION_ID
+        assert user_message == "never mind the login, just tell me the headline"
+        assert reply == published[0].removeprefix("data: ").strip() or reply
+
+    async def test_an_unrelated_reply_records_nothing(self, published: list[str]) -> None:
+        recorded = AsyncMock()
+        with (
+            patch.object(
+                chat_stream, "resolve_handoff_from_message", AsyncMock(return_value="unrelated")
+            ),
+            patch.object(chat_stream, "record_exchange_in_thread", recorded),
+        ):
+            await _resolve_pending_browser_handoff_turn(
+                _body(message="what is the weather"),
+                _user(),
+                CONVERSATION_ID,
+                STREAM_ID,
+                _StreamState(),
+            )
+
+        recorded.assert_not_awaited()
+
+
+@pytest.mark.unit
 class TestRunChatStreamShortCircuitsOnHandoffResolution:
     """The orchestrator must return without running the agent when the browser-handoff resolver fully handled the turn, and must fall through to the normal turn otherwise."""
 

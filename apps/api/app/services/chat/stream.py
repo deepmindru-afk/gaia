@@ -24,6 +24,7 @@ from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.core.agent import AgentRunOptions, StreamMessageIds, call_agent
+from app.agents.core.background.comms_narrator import record_exchange_in_thread
 from app.agents.core.background.executor_capture import (
     await_executor_done,
     drain_executor_tool_data,
@@ -544,6 +545,9 @@ async def _resolve_pending_browser_handoff_turn(
         return False
 
     state.complete_message = ack
+    # The agent never ran for this reply, so its thread still holds the original
+    # request; without this it voices the run's result against what was cancelled.
+    await record_exchange_in_thread(conversation_id, message, ack)
     state.turn_completed_at = datetime.now(UTC)
     await stream_manager.publish_chunk(stream_id, format_sse_response(ack))
     await stream_manager.publish_chunk(

@@ -250,10 +250,8 @@ class TestRecordPlatformDelivery:
             async with captured_wide_event() as event:
                 await record_platform_delivery(CONVERSATION_ID, "hello")
 
-        (error,) = [e for e in event["errors"] if "platform delivery" in e["msg"]]
-        assert error["msg"] == (
-            f"{LogTag.AGENT} Failed to record platform delivery in conversation thread"
-        )
+        (error,) = [e for e in event["errors"] if "Failed to record" in e["msg"]]
+        assert error["msg"] == (f"{LogTag.AGENT} Failed to record messages in conversation thread")
         assert error["conversation_id"] == CONVERSATION_ID
         assert error["error"] == "checkpoint down"
 
