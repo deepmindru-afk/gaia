@@ -15,6 +15,7 @@ from app.constants.browser import (
     BrowserEventKind,
     BrowserSessionStatus,
     HandoffDecision,
+    HandoffKind,
     HandoffStatus,
     SensitiveCategory,
 )
@@ -120,6 +121,8 @@ class HandoffRecord(BaseModel):
     status: HandoffStatus
     user_id: str
     conversation_id: str
+    #: Defaulted so records written before agent guidance existed still parse.
+    kind: HandoffKind = HandoffKind.USER
     reason: str = ""
     # Optional free-text note the user sends back when continuing ("just grab the
     # photo, skip the login"). Delivered to the agent as guidance on resume.
@@ -165,6 +168,44 @@ class HandoffRequest(BaseModel):
 
     category: SensitiveCategory = SensitiveCategory.NONE
     reason: str
+
+
+class GuidanceElement(BaseModel):
+    """One visible control, exactly as the browser policy saw it when it got stuck."""
+
+    index: int
+    label: str
+    role: str
+
+
+class GuidanceAction(BaseModel):
+    """One recent step, and whether it moved the page at all."""
+
+    action: str
+    page_changed: bool | None = None
+
+
+class AgentGuidanceRequest(BaseModel):
+    """What a blocked run shows the executor that started it, so it can answer with one instruction.
+
+    Bounded on the producing side (see constants BROWSER_GUIDANCE_*) because it
+    is rendered into a single executor tool result.
+    """
+
+    reason: str
+    task: str
+    url: str = ""
+    title: str = ""
+    page_text: str = ""
+    elements: list[GuidanceElement] = Field(default_factory=list)
+    recent_actions: list[GuidanceAction] = Field(default_factory=list)
+
+
+class PendingAgentGuidance(BaseModel):
+    """The in-flight guidance request a joined executor can answer, and the handoff answering it resolves."""
+
+    handoff_id: str
+    request: AgentGuidanceRequest
 
 
 class HandoffDecisionRequest(BaseModel):

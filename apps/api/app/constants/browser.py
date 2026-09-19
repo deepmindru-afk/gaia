@@ -93,6 +93,18 @@ class HandoffDecision(str, Enum):
     CANCEL = "cancel"
 
 
+class HandoffKind(StrEnum):
+    """Who a paused run is waiting on: the user in live view, or the executor that started it.
+
+    USER is the default so records written before agent guidance existed parse.
+    An AGENT record never takes the conversation's pending-handoff key, which is
+    what makes a chat reply resolve a handoff.
+    """
+
+    USER = "user"
+    AGENT = "agent"
+
+
 class BrowserLoginSource(StrEnum):
     """Where a saved login came from.
 
@@ -105,10 +117,11 @@ class BrowserLoginSource(StrEnum):
 # Defined here rather than beside JevOperation because BROWSER_TAKEOVER_PREAMBLE
 # below interpolates it at import time.
 class BrowserHandoffAction(StrEnum):
-    """The two actions GAIA registers with Browser-Use to hand a step to the human."""
+    """The actions GAIA registers with Browser-Use to hand a step off: two to the human, one to the agent that started the run."""
 
     REQUEST_HUMAN_TAKEOVER = "request_human_takeover"
     SOLVE_CAPTCHA_WITH_HELP = "solve_captcha_with_help"
+    REQUEST_AGENT_GUIDANCE = "request_agent_guidance"
 
 
 # --- Redis handoff bridge ---
@@ -181,6 +194,10 @@ BROWSER_RUN_HANDOFF_TIMED_OUT = (
     f"{BROWSER_RUN_STOPPED_LABEL}nobody finished the step in the live browser in time."
 )
 
+# Reaches the user verbatim on the failure card, so it reads like a person. Shared
+# by the Jev BLOCKED action and the run that ends because no guidance arrived.
+BROWSER_RUN_BLOCKED_SUMMARY = "I couldn't find a way to move forward on this page."
+
 # Fixed copy, no exception text: many exceptions stringify to "", which left
 # "...stopped unexpectedly:" dangling in front of the user.
 BROWSER_JOB_CRASHED_SUMMARY = (
@@ -193,6 +210,22 @@ BROWSER_DONE_CAPTION_MAX_CHARS = 80
 # Upper bound on how many times one task may hand off to the human, so a
 # misbehaving agent can't loop the user forever.
 MAX_HANDOFFS_PER_TASK = 5
+
+# --- Agent guidance ---
+
+# Asked of the joined executor instead of failing; bounded so a run that cannot
+# be unstuck does not ping-pong with it.
+BROWSER_AGENT_GUIDANCE_MAX = 3
+BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS = 120
+# The only thing the user sees of the round trip: the step frame's caption.
+BROWSER_AGENT_GUIDANCE_CAPTION = "Working out another way"
+# The pending request a joined executor reads, keyed by job. Not a card frame:
+# the relay would put it on the user's stream, and a replayed feed would fire it twice.
+BROWSER_JOB_GUIDANCE_PREFIX = "browser:job:guidance:"
+# Tighter than JEV_PAGE_TEXT_MAX_CHARS: this rides inside one executor tool result.
+BROWSER_GUIDANCE_PAGE_TEXT_MAX_CHARS = 1500
+BROWSER_GUIDANCE_MAX_ELEMENTS = 40
+BROWSER_GUIDANCE_RECENT_ACTIONS = 6
 
 # Appended to every browser task so the agent uses the takeover action instead
 # of doing sensitive steps itself.
@@ -259,6 +292,14 @@ class JevOperation(StrEnum):
 # Operations that need an observed element; each gets its own speculative
 # target question in the same Jev request (see services/browser/jev/policy.py).
 JEV_TARGET_OPERATIONS = (JevOperation.CLICK, JevOperation.TYPE_TEXT, JevOperation.SELECT)
+
+
+class JevNoteSource(StrEnum):
+    """Who wrote the instruction attached to a step: the user, or the agent that planned the task."""
+
+    USER = "user"
+    AGENT = "agent"
+
 
 # Jev sees the viewport only; this bounds one screen. Measured on Wikipedia:
 # 200 rows is 64,483 bytes, the gateway 400s max_tokens_exceeded from 86,133

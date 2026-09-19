@@ -16,6 +16,7 @@ from app.constants.browser import (
     HANDOFF_KEY_TTL_SECONDS,
     HANDOFF_POLL_INTERVAL_SECONDS,
     HandoffDecision,
+    HandoffKind,
     HandoffStatus,
 )
 from app.constants.log_tags import LogTag
@@ -39,17 +40,27 @@ def _settled_key(handoff_id: str) -> str:
 
 
 async def create_pending_handoff(
-    handoff_id: str, user_id: str, conversation_id: str, reason: str = ""
+    handoff_id: str,
+    user_id: str,
+    conversation_id: str,
+    reason: str = "",
+    kind: HandoffKind = HandoffKind.USER,
 ) -> None:
-    """Persist a new pending handoff and return its id, or None when it already exists."""
+    """Persist a new pending handoff of this kind.
+
+    Only a USER handoff takes the conversation's lookup key: that key is what
+    makes a plain chat reply resolve a handoff, and an agent-guidance pause is
+    not something the user was ever asked about.
+    """
     record = HandoffRecord(
         status=HandoffStatus.PENDING,
         user_id=user_id,
         conversation_id=conversation_id,
+        kind=kind,
         reason=reason,
     )
     await _store(handoff_id, record)
-    if conversation_id:
+    if conversation_id and kind is HandoffKind.USER:
         await redis_cache.set(_conv_key(conversation_id), handoff_id, ttl=HANDOFF_KEY_TTL_SECONDS)
 
 
@@ -140,7 +151,9 @@ async def _settle(
             raise _storage_unavailable(handoff_id)
         return settled.status
     await _store(handoff_id, record.model_copy(update={"status": status, "message": note}))
-    if record.conversation_id:
+    if record.conversation_id and record.kind is HandoffKind.USER:
+        # An AGENT record never wrote this key, so deleting it here would free a
+        # user handoff waiting in the same conversation.
         await redis_cache.delete(_conv_key(record.conversation_id))
     return status
 

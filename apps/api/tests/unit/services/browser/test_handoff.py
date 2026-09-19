@@ -9,6 +9,7 @@ from app.constants.browser import (
     BROWSER_HANDOFF_KEY_PREFIX,
     HANDOFF_KEY_TTL_SECONDS,
     HandoffDecision,
+    HandoffKind,
     HandoffStatus,
 )
 from app.schemas.browser import HandoffRecord
@@ -392,3 +393,49 @@ async def test_resolve_persistence_failure_fails_loud(monkeypatch: pytest.Monkey
     with pytest.raises(BrowserUnavailableError) as exc_info:
         await handoff_mod.resolve_handoff("h10", HandoffDecision.CONTINUE, "user-1")
     assert str(exc_info.value) == "Could not persist handoff h10 (storage unavailable)."
+
+
+async def test_a_record_written_before_agent_guidance_existed_still_parses_as_a_user_handoff():
+    """The kind field is new; a record already in Redis without it must not fail validation and strand a paused run."""
+    record = HandoffRecord.model_validate(
+        {"status": HandoffStatus.PENDING, "user_id": "user-1", "conversation_id": "conv-old"}
+    )
+    assert record.kind is HandoffKind.USER
+
+
+async def test_an_agent_handoff_never_takes_the_conversations_pending_key(fake_redis):
+    """That key is what makes the user's next chat message resolve a handoff; an agent pause the user was never told about must not swallow their reply."""
+    await handoff_mod.create_pending_handoff(
+        "h-agent", "user-1", "conv-agent", "stuck", kind=HandoffKind.AGENT
+    )
+
+    assert await handoff_mod.get_conversation_pending_handoff("conv-agent") is None
+    record = await handoff_mod.get_handoff("h-agent")
+    assert record is not None
+    assert record.kind is HandoffKind.AGENT
+
+
+async def test_resolving_an_agent_handoff_leaves_a_user_handoffs_key_alone(fake_redis):
+    """Settling deletes the conversation key; an agent record never wrote it, so deleting it would free a live user handoff in the same conversation."""
+    await handoff_mod.create_pending_handoff("h-user", "user-1", "conv-both")
+    await handoff_mod.create_pending_handoff(
+        "h-agent2", "user-1", "conv-both", kind=HandoffKind.AGENT
+    )
+
+    await handoff_mod.resolve_handoff("h-agent2", HandoffDecision.CONTINUE, "user-1", "click Next")
+
+    assert await handoff_mod.get_conversation_pending_handoff("conv-both") == "h-user"
+
+
+async def test_an_agent_handoff_carries_the_instruction_back_as_its_message(fake_redis):
+    await handoff_mod.create_pending_handoff(
+        "h-agent3", "user-1", "conv-agent3", kind=HandoffKind.AGENT
+    )
+
+    await handoff_mod.resolve_handoff(
+        "h-agent3", HandoffDecision.CONTINUE, "user-1", "open the Contact tab"
+    )
+
+    outcome = await handoff_mod.await_handoff("h-agent3", timeout_seconds=5)
+    assert outcome.status == HandoffStatus.COMPLETED
+    assert outcome.message == "open the Contact tab"
