@@ -26,6 +26,7 @@ from app.agents.tools import browser_tool
 from app.config.settings import settings
 from app.models.hil_models import HILPreferences
 from app.schemas.browser_job import BrowserJobRequest
+from app.services.browser.exceptions import BrowserHandoffCancelled
 from app.services.browser.jev.chat_model import JevChatModel
 from app.services.browser.jev.gateway import JevChoiceAnswer, JevEvaluation, JevUsage
 from app.workers.tasks import browser_tasks
@@ -49,6 +50,9 @@ class ScriptedStep:
     await_stop: bool = False
     #: Ask the bound Jev policy what to do instead of using this step's actions.
     decide: bool = False
+    #: Wait until an executor has joined the job before deciding, so a journey
+    #: about what a joined executor sees is not a race with the turn's own poll.
+    await_joiner: bool = False
 
 
 class _Action:
@@ -114,6 +118,13 @@ class BrowserDouble:
         #: What each takeover handed back to the agent — the user's note.
         self.takeover_notes: list[str | None] = []
         self.takeover: Callable[[str, str], Any] | None = None
+        #: The reason each blocked step gave when it asked the agent for guidance.
+        self.guidance_reasons: list[str] = []
+        #: What each of those asks handed back — the executor's instruction.
+        self.guidance_notes: list[str] = []
+        self.guidance: Callable[[str], Any] | None = None
+        #: Set once the job reaches the worker; the await_joiner step needs it.
+        self.job_id: str = ""
 
     def agent(self, **kwargs: Any) -> _ScriptedAgent:
         return _ScriptedAgent(self, **kwargs)
@@ -141,8 +152,15 @@ class _ScriptedAgent:
             if self._stopped or await self._should_stop():
                 self._double.stop_observed = True
                 break
+            if step.await_joiner:
+                await self._wait_for_joiner()
             if step.decide:
-                decided = await self._decide()
+                try:
+                    decided = await self._decide()
+                except BrowserHandoffCancelled:
+                    # Browser-Use turns this into an action error and the run's own
+                    # flags decide the outcome; the loop has nothing left to do.
+                    break
                 if decided is None:
                     continue
                 step_actions = [decided]
@@ -163,14 +181,31 @@ class _ScriptedAgent:
         """
         completion = (await self._llm.ainvoke([], JevAgentOutput)).completion
         name, params = next(iter(completion.action[0].model_dump(exclude_none=True).items()))
-        if name != "request_human_takeover":
-            return name, params
-        await self._hand_over(params["reason"], params["category"])
-        return None
+        if name == "request_human_takeover":
+            await self._hand_over(params["reason"], params["category"])
+            return None
+        if name == "request_agent_guidance":
+            await self._ask_the_agent(params["reason"])
+            return None
+        return name, params
 
     async def _hand_over(self, reason: str, category: str) -> None:
         assert self._double.takeover is not None, "the takeover action was never built"
         self._double.takeover_notes.append(await self._double.takeover(reason, category))
+
+    async def _wait_for_joiner(self) -> None:
+        from app.services.browser.jobs import joiner_lease_held
+
+        for _ in range(500):
+            if await joiner_lease_held(self._double.job_id):
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("no executor ever joined the job")
+
+    async def _ask_the_agent(self, reason: str) -> None:
+        assert self._double.guidance is not None, "the guidance action was never built"
+        self._double.guidance_reasons.append(reason)
+        self._double.guidance_notes.append(await self._double.guidance(reason))
 
     async def _wait_for_stop(self) -> None:
         """Sit on the page until the user's stop reaches the agent, as a real run would."""
@@ -256,6 +291,7 @@ async def browser_job_world(
 
     async def _enqueue(pool: Any, name: str, payload: dict[str, Any]) -> object:
         world.enqueued.append(BrowserJobRequest.model_validate(payload))
+        double.job_id = world.enqueued[-1].job_id
         world.jobs.append(asyncio.create_task(browser_tasks.run_browser_job({}, payload)))
         return object()
 
@@ -296,6 +332,9 @@ async def browser_job_world(
         patch.object(browser_tool, "BROWSER_JOB_POLL_INTERVAL_SECONDS", 0.02),
         patch.object(browser_tool, "BROWSER_JOB_JOINER_REFRESH_SECONDS", 0.1),
         patch("app.services.browser.handoff.HANDOFF_POLL_INTERVAL_SECONDS", 0.02),
+        # A guidance request nobody answers must fail the journey in seconds, not
+        # sit out the real two-minute budget.
+        patch("app.services.browser.job_runner.BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS", 2),
         patch.object(browser_use, "Agent", double.agent),
         patch.object(browser_use, "Browser", lambda **kwargs: page),
         patch("app.agents.tools.browser_tool.enqueue_worker_job", _enqueue),
@@ -346,10 +385,16 @@ async def browser_job_world(
 
 
 def _tools_of(double: BrowserDouble) -> Callable[..., object]:
-    """Hand the double the takeover action, which Browser-Use would otherwise own."""
+    """Hand the double the takeover and guidance actions, which Browser-Use would otherwise own."""
 
-    def _build(*, solve_captcha: bool, handle_takeover: Callable[[str, str], Any]) -> object:
+    def _build(
+        *,
+        solve_captcha: bool,
+        handle_takeover: Callable[[str, str], Any],
+        handle_guidance: Callable[[str], Any],
+    ) -> object:
         double.takeover = handle_takeover
+        double.guidance = handle_guidance
         return object()
 
     return _build
@@ -381,6 +426,7 @@ class _JevAction(BaseModel):
     wait: dict[str, Any] | None = None
     done: dict[str, Any] | None = None
     request_human_takeover: dict[str, Any] | None = None
+    request_agent_guidance: dict[str, Any] | None = None
 
 
 class JevAgentOutput(BaseModel):

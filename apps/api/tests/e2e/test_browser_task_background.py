@@ -257,3 +257,175 @@ async def _wait_for_pending_handoff(world: JobWorld) -> str:
             return str(pending[0]["handoff_id"])
         await asyncio.sleep(0.01)
     raise AssertionError("the run never asked the user to take over")
+
+
+# ---------------------------------------------------------------------------
+# A blocked run asks the executor that started it
+# ---------------------------------------------------------------------------
+
+GUIDE = call(
+    "guide_browser_task", {"instruction": "open the Contact tab, the hours are there"}, "g1"
+)
+JOIN_AGAIN = call("wait_for_browser_task", {}, "w2")
+
+BLOCK_THEN_ACT = [
+    ScriptedStep(actions=[], decide=True, await_joiner=True),
+    ScriptedStep(actions=[], decide=True),
+]
+
+
+def _blocked_script(blocks: int = 1) -> JevScript:
+    """Return a Jev script that gives up the given number of times, then types once."""
+    return JevScript(
+        decisions=[("BLOCKED", None)] * blocks + [("TYPE_TEXT", "1")],
+        texts=[{"text": "The opening hours are not on this page."}] * blocks + [{"text": "hours"}],
+    )
+
+
+async def test_a_blocked_run_is_unstuck_by_the_executor_that_started_it() -> None:
+    """A run that ends on BLOCKED throws away everything the executor knows; the whole point is that the instruction reaches the policy deciding the next step."""
+    async with browser_job_world(STREAM, steps=BLOCK_THEN_ACT, jev=_blocked_script()) as world:
+        async with executor_graph([RETRIEVE, START, JOIN, GUIDE, JOIN_AGAIN, "Done."]) as graph:
+            run = await _drive(graph, world)
+
+    asked = run.result_for("wait_for_browser_task") or ""
+    assert "THE BROWSER TASK IS STUCK" in asked
+    assert "The opening hours are not on this page." in asked
+    assert "guide_browser_task" in asked
+    assert world.browser.guidance_notes == ["open the Contact tab, the hours are there"]
+    assert world.jev is not None
+    assert "open the Contact tab, the hours are there" in world.jev.goal(1)
+    assert "book a table for two at 7pm" in world.jev.goal(1)
+    assert (run.results_from("tools") or [])[-1].startswith(
+        "The table is booked for 7pm on Friday."
+    )
+
+
+async def test_the_user_is_never_shown_a_handoff_for_a_question_asked_of_the_executor() -> None:
+    """A handoff card and the conversation's pending key would ask the user to answer something they were never told about, and swallow their next chat message."""
+    from app.services.browser.handoff import get_conversation_pending_handoff
+
+    async with browser_job_world(STREAM, steps=BLOCK_THEN_ACT, jev=_blocked_script()) as world:
+        async with executor_graph([RETRIEVE, START, JOIN, GUIDE, JOIN_AGAIN, "Done."]) as graph:
+            await _drive(graph, world)
+
+        assert [card["kind"] for card in world.cards() if card["kind"] == "handoff"] == []
+        assert await get_conversation_pending_handoff(CONVERSATION) is None
+
+
+async def test_the_join_keeps_its_claim_on_the_result_while_the_executor_answers() -> None:
+    """Dropping the lease on the way out would tell the worker nobody is joined, and it would narrate the run to the user behind the executor's back."""
+    from app.services.browser.jobs import joiner_lease_held
+
+    held: list[bool] = []
+    guide_and_check = call("guide_browser_task", {"instruction": "click Search"}, "g1")
+
+    async with browser_job_world(STREAM, steps=BLOCK_THEN_ACT, jev=_blocked_script()) as world:
+        async with executor_graph(
+            [RETRIEVE, START, JOIN, guide_and_check, JOIN_AGAIN, "Done."]
+        ) as graph:
+            run_task = asyncio.create_task(
+                run_graph(
+                    graph,
+                    "book me a table",
+                    thread_id=CONVERSATION,
+                    user_id=USER,
+                    **_configurable(),
+                )
+            )
+            for _ in range(500):
+                if world.browser.guidance_reasons:
+                    held.append(await joiner_lease_held(world.enqueued[0].job_id))
+                    break
+                await asyncio.sleep(0.01)
+            await run_task
+            await world.settle()
+
+    assert held == [True]
+
+
+async def test_a_blocked_run_with_no_executor_joined_ends_blocked_as_before() -> None:
+    """Asking when nobody is listening would stall the run for the whole guidance timeout and answer nothing."""
+    from app.constants.browser import BROWSER_RUN_BLOCKED_SUMMARY
+
+    steps = [ScriptedStep(actions=[], decide=True)]
+    script = JevScript(decisions=[("BLOCKED", None)], texts=[{"text": "nothing here"}])
+
+    async with browser_job_world(
+        STREAM, steps=steps, jev=script, successful=False, summary=BROWSER_RUN_BLOCKED_SUMMARY
+    ) as world:
+        async with executor_graph([RETRIEVE, START, "I've started on it."]) as graph:
+            await _drive(graph, world)
+
+    assert world.browser.guidance_reasons == []
+    assert _step_actions(world) == [
+        {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}
+    ]
+    results = [card for card in world.cards() if card["kind"] == "result"]
+    assert [card["status"] for card in results] == [BrowserSessionStatus.FAILED.value]
+    assert results[0]["success"] is False
+
+
+def _step_actions(world: JobWorld) -> list[dict[str, Any]]:
+    """Return the action each step card carries, which is what the policy actually decided."""
+    return [
+        {action["name"]: action["inputs"] for action in card["actions"]}
+        for card in world.cards()
+        if card["kind"] == "step" and card["actions"]
+    ]
+
+
+async def test_the_fourth_blocked_step_ends_the_run_instead_of_asking_again() -> None:
+    """Without a budget a run that cannot be unstuck bounces off the executor forever, burning a model call each time."""
+    from app.constants.browser import BROWSER_AGENT_GUIDANCE_MAX, BROWSER_RUN_BLOCKED_SUMMARY
+
+    rounds = BROWSER_AGENT_GUIDANCE_MAX
+    guides = [
+        call("guide_browser_task", {"instruction": f"try route {n}"}, f"g{n}")
+        for n in range(1, rounds + 1)
+    ]
+    joins = [call("wait_for_browser_task", {}, f"w{n}") for n in range(2, rounds + 2)]
+    # Every guidance is followed by one real attempt: BLOCKED is off the table on
+    # the step right after an answer, so a run can only give up again after trying.
+    script = JevScript(
+        decisions=[("BLOCKED", None), ("CLICK", "1")] * rounds + [("BLOCKED", None)],
+        texts=[{"text": "still stuck"}] * rounds,
+    )
+    steps = [ScriptedStep(actions=[], decide=True, await_joiner=True)] + [
+        ScriptedStep(actions=[], decide=True) for _ in range(rounds * 2)
+    ]
+    plan: list[Any] = [RETRIEVE, START, JOIN]
+    for guide, join in zip(guides, joins, strict=True):
+        plan += [guide, join]
+    plan.append("Could not do it.")
+
+    async with browser_job_world(
+        STREAM, steps=steps, jev=script, successful=False, summary=BROWSER_RUN_BLOCKED_SUMMARY
+    ) as world:
+        async with executor_graph(plan) as graph:
+            run = await _drive(graph, world)
+
+    assert len(world.browser.guidance_reasons) == BROWSER_AGENT_GUIDANCE_MAX
+    assert _step_actions(world)[-1] == {
+        "done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}
+    }
+    assert "DID NOT COMPLETE" in ((run.results_from("tools") or [])[-1])
+    assert await get_conversation_slot(CONVERSATION) is None
+
+
+async def test_giving_up_ends_the_run_failed_and_frees_the_conversation() -> None:
+    """An executor that honestly cannot answer must end the run, not leave it waiting out a two-minute timeout on a browser nobody is watching."""
+    give_up = call(
+        "guide_browser_task",
+        {"give_up": True, "reason": "the site needs an account the user does not have"},
+        "g1",
+    )
+    async with browser_job_world(STREAM, steps=BLOCK_THEN_ACT, jev=_blocked_script()) as world:
+        async with executor_graph([RETRIEVE, START, JOIN, give_up, JOIN_AGAIN, "Sorry."]) as graph:
+            run = await _drive(graph, world)
+
+    results = [card for card in world.cards() if card["kind"] == "result"]
+    assert [card["status"] for card in results] == [BrowserSessionStatus.FAILED.value]
+    assert "the site needs an account the user does not have" in results[0]["summary"]
+    assert "DID NOT COMPLETE" in ((run.results_from("tools") or [])[-1])
+    assert await get_conversation_slot(CONVERSATION) is None
