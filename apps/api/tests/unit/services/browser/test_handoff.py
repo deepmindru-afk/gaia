@@ -1,5 +1,6 @@
 """Tests for the Redis handoff bridge — one-time resolution, ownership, timeout."""
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -438,4 +439,35 @@ async def test_an_agent_handoff_carries_the_instruction_back_as_its_message(fake
 
     outcome = await handoff_mod.await_handoff("h-agent3", timeout_seconds=5)
     assert outcome.status == HandoffStatus.COMPLETED
+    assert outcome.message == "open the Contact tab"
+
+
+async def test_a_decision_still_being_written_is_not_returned_without_its_note(
+    fake_cache, monkeypatch
+):
+    """The settle marker is claimed before the record is rewritten; reading it in that window handed the run a bare continue and dropped the instruction sent with it."""
+    monkeypatch.setattr(handoff_mod, "HANDOFF_POLL_INTERVAL_SECONDS", 0.001)
+    await handoff_mod.create_pending_handoff("h-race", "user-1", "conv-race")
+    original_set = fake_cache.set
+    release = asyncio.Event()
+
+    async def stall_the_record_write(key, value, ttl=None, model=None):
+        if key == f"{BROWSER_HANDOFF_KEY_PREFIX}h-race":
+            await release.wait()
+        return await original_set(key, value, ttl, model)
+
+    monkeypatch.setattr(fake_cache, "set", stall_the_record_write)
+    waiter = asyncio.create_task(handoff_mod.await_handoff("h-race", timeout_seconds=5))
+    resolver = asyncio.create_task(
+        handoff_mod.resolve_handoff(
+            "h-race", HandoffDecision.CONTINUE, "user-1", "open the Contact tab"
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    assert not waiter.done(), "the decision was reported before its note was written"
+
+    release.set()
+    await resolver
+    outcome = await waiter
     assert outcome.message == "open the Contact tab"

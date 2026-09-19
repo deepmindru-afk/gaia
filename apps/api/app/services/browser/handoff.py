@@ -86,11 +86,16 @@ async def get_handoff(handoff_id: str) -> HandoffRecord | None:
     died before rewriting the record still counts as settled, so a waiter never
     polls a decided handoff until its timeout.
     """
-    record = await redis_cache.get(_key(handoff_id), model=HandoffRecord)
+    record = await _stored(handoff_id)
     if record is None or record.status != HandoffStatus.PENDING:
         return record
     settled = await redis_cache.get(_settled_key(handoff_id), model=str)
     return record.model_copy(update={"status": HandoffStatus(settled)}) if settled else record
+
+
+async def _stored(handoff_id: str) -> HandoffRecord | None:
+    """Read the record as the resolver last wrote it, with no settle marker over the top."""
+    return await redis_cache.get(_key(handoff_id), model=HandoffRecord)
 
 
 async def get_conversation_pending_handoff(conversation_id: str) -> str | None:
@@ -168,7 +173,10 @@ async def await_handoff(handoff_id: str, timeout_seconds: int) -> HandoffOutcome
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_seconds
     while loop.time() < deadline:
-        record = await get_handoff(handoff_id)
+        # The resolver claims the settle marker before it rewrites the record, so
+        # reading the marker here would return a decision without the note it
+        # carried -- and the note is the whole point of a continue.
+        record = await _stored(handoff_id)
         if record is not None and record.status != HandoffStatus.PENDING:
             return HandoffOutcome(status=record.status, message=record.message)
         await asyncio.sleep(HANDOFF_POLL_INTERVAL_SECONDS)
