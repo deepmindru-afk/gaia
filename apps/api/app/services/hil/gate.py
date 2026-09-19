@@ -43,6 +43,7 @@ from langgraph.errors import GraphBubbleUp
 from langgraph.types import Command, interrupt
 
 from app.agents.tools.core.registry import get_tool_registry
+from app.agents.tools.execute.dispatch import DispatchError, _validate_args
 from app.constants.hil import (
     HIL_EXEMPT_TOOLS,
     HIL_STATUS_KWARG,
@@ -231,6 +232,9 @@ async def _decide_ledger(
                     reason=decision.reason,
                 )
                 return None
+        invalid = await _invalid_args_message(request, context.user_id, call)
+        if invalid is not None:
+            return invalid
         fingerprint = approval_fingerprint(call.name, call.args)
         live = await approval_ledger_repository.find_live(fingerprint, context.conversation_id)
         if live is not None:
@@ -373,6 +377,10 @@ async def _decide(
         if declined is not None:
             log.info(f"{LogTag.HIL} auto-denying : declined earlier this turn", name=call.name)
             return _refusal_message(call, declined)
+
+        invalid = await _invalid_args_message(request, context.user_id, call)
+        if invalid is not None:
+            return invalid
 
         integration_name = await _integration_name_for(call.name)
         summary = build_summary(call.name, call.args, integration_name)
@@ -525,6 +533,34 @@ def _gate_error_message(call: GatedCall) -> ToolMessage:
 def _unpausable_denial_message(call: GatedCall) -> ToolMessage:
     """Tell the model a gated call was refused because this run cannot ask for approval."""
     return _tool_message(call, UNPAUSABLE_DENIAL_TEMPLATE.format(tool=call.name), "denied")
+
+
+async def _invalid_args_message(
+    request: ToolCallRequest, user_id: str, call: GatedCall
+) -> ToolMessage | None:
+    """Fail fast on malformed args before any card exists.
+
+    The user must never approve a call the model will have to retry: validate
+    against the exact schema execution uses (``dispatch._validate_args`` — one
+    function, one name, no drift) and answer with the schema error instead of
+    registering. Unresolvable tools and schemaless tools skip — execution
+    validates authoritatively; the gate only pre-filters what it can read.
+    """
+    try:
+        tool = await gated_tool_object(request, user_id, call.name)
+    except Exception:
+        return None
+    if tool is None:
+        return None
+    validated = _validate_args(tool, call.args)
+    if isinstance(validated, DispatchError):
+        return _tool_message(
+            call,
+            f"Invalid arguments for {call.name}: {validated.detail} "
+            "Fix the arguments and retry — no approval was requested.",
+            "error",
+        )
+    return None
 
 
 def _pending_guidance(approval_id: str) -> str:

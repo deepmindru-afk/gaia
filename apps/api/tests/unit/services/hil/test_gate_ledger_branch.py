@@ -3,6 +3,8 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel
 import pytest
 
 from app.constants.hil import HIL_STATUS_KWARG
@@ -216,3 +218,69 @@ class TestLedgerAutoParity:
         assert result is not None
         assert "PENDING ap_abc1234567" in str(result.content)
         assert "auto-approve did not cover" in str(result.content)
+
+
+class _StrictArgs(BaseModel):
+    to: str
+    subject: str
+
+
+def _strict_tool() -> StructuredTool:
+    return StructuredTool.from_function(
+        func=lambda: None,
+        name="GMAIL_SEND_EMAIL",
+        description="Send.",
+        args_schema=_StrictArgs,
+    )
+
+
+@pytest.mark.unit
+class TestLedgerBranchValidatesArgs:
+    async def test_invalid_args_fail_before_any_card_exists(self) -> None:
+        """No card for malformed args: the user must never approve a call the
+        model will have to retry. Invalid args fail fast with the schema
+        error; nothing registers, nothing publishes, nothing interrupts."""
+        from app.services.hil import gate
+
+        ledger = _ledger()
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}.gated_tool_object", new=AsyncMock(return_value=_strict_tool())),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()) as pub,
+            patch(f"{MODULE}.interrupt") as intr,
+        ):
+            result = await gate.decide_tool_call(_gated_request())
+
+        ledger.register.assert_not_awaited()
+        pub.assert_not_awaited()
+        intr.assert_not_called()
+        assert result is not None
+        assert result.additional_kwargs[HIL_STATUS_KWARG] == "error"
+        assert "subject" in str(result.content)
+        assert "no approval was requested" in str(result.content)
+
+    async def test_unresolvable_tool_skips_validation(self) -> None:
+        """Resolution failure must not gate: execution validates
+        authoritatively, the gate only pre-filters what it can read."""
+        from app.services.hil import gate
+
+        ledger = _ledger()
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}.gated_tool_object", new=AsyncMock(return_value=None)),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()) as pub,
+            patch(f"{MODULE}.interrupt") as intr,
+        ):
+            result = await gate.decide_tool_call(_gated_request())
+
+        ledger.register.assert_awaited_once()
+        pub.assert_awaited_once()
+        intr.assert_not_called()
+        assert result is not None
+        assert "PENDING ap_abc1234567" in str(result.content)
