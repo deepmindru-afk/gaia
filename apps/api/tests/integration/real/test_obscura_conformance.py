@@ -294,8 +294,8 @@ async def test_a_resolved_node_handle_drives_the_live_element(
     at_wiki: tuple[Cdp, str, Evaluate],
 ) -> None:
     # browser/session.py:2647 -- every caller that reaches an element resolves
-    # then calls on it. The handle is a wrapper, not the node, so identity is
-    # false here; writes through it still reach the real element.
+    # then calls on it. The handle is the node itself (a wrapper before Obscura
+    # 8f9c630), and writes through it reach the real element.
     client, session_id, evaluate = at_wiki
     object_id = await _object_id(client, session_id, _VISIBLE)
     identity = await client.ok(
@@ -319,7 +319,7 @@ async def test_a_resolved_node_handle_drives_the_live_element(
         session_id,
     )
 
-    assert identity["result"]["value"] is False
+    assert identity["result"]["value"] is True
     assert (
         await evaluate(f"document.querySelector('{_VISIBLE}').getAttribute('data-probe')") == "xyz"
     )

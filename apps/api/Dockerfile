@@ -95,7 +95,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     clang cmake libclang-dev libssl-dev llvm-dev pkg-config \
     git ca-certificates perl make libunwind-dev build-essential
-ARG OBSCURA_COMMIT=727cc46d56290995245fbe790caed52fc699452a
+ARG OBSCURA_COMMIT=8f9c630b17d655920e13907afd8b498bbb9a2291
 RUN git clone https://github.com/h4ckf0r0day/obscura /obscura \
     && git -C /obscura checkout ${OBSCURA_COMMIT}
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
