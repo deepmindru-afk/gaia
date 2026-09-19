@@ -172,6 +172,30 @@ async def adopt_lock(conversation_id: str, reserved_value: str, lock_value: str)
     return True
 
 
+async def break_holder_lock(conversation_id: str, expected_value: str) -> bool:
+    """Delete the busy lock iff it still carries ``expected_value``.
+
+    Compare-and-delete under WATCH: a live run that re-acquired between the
+    read and the delete changes the value, and the delete aborts instead of
+    stranding it. Returns whether the lock is gone (deleted here or already
+    absent). Falls back to False when Redis is unavailable.
+    """
+    if not redis_cache.client:
+        return False
+    lock_key = f"{EXECUTOR_BUSY_PREFIX}{conversation_id}"
+    async with redis_cache.client.pipeline() as pipe:
+        await pipe.watch(lock_key)
+        if await pipe.get(lock_key) != expected_value:
+            return False
+        pipe.multi()
+        pipe.delete(lock_key)
+        try:
+            await pipe.execute()
+        except WatchError:
+            return False
+    return True
+
+
 async def get_lock_state(conversation_id: str, stream_id: str, task_id: str | None) -> LockState:
     """Classify the busy lock relative to this run.
 

@@ -966,3 +966,93 @@ class TestRedeemSettlesTerminalFrame:
         assert persist.await_args.args[1] == "failed"
         broadcast.assert_awaited_once()
         assert broadcast.await_args.args[1] == "failed"
+
+
+@pytest.mark.unit
+class TestReclaimDeadHolder:
+    async def test_free_lock_means_proceed(self) -> None:
+        from app.services.hil import ledger_decide
+
+        with patch.object(
+            ledger_decide, "get_lock_holder", new=AsyncMock(return_value=None)
+        ):
+            assert await ledger_decide._reclaim_dead_holder("conv-1") is True
+
+    async def test_live_session_means_hold(self) -> None:
+        from app.services.hil import ledger_decide
+
+        with (
+            patch.object(
+                ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")
+            ),
+            patch.object(ledger_decide, "get_session", return_value=MagicMock()),
+        ):
+            assert await ledger_decide._reclaim_dead_holder("conv-1") is False
+
+    async def test_fresh_lock_means_hold(self) -> None:
+        from types import SimpleNamespace
+
+        from app.constants.cache import EXECUTOR_BUSY_TTL
+        from app.services.hil import ledger_decide
+
+        client = SimpleNamespace(ttl=AsyncMock(return_value=EXECUTOR_BUSY_TTL - 10))
+        with (
+            patch.object(
+                ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")
+            ),
+            patch.object(ledger_decide, "get_session", return_value=None),
+            patch.object(ledger_decide, "redis_cache", new=SimpleNamespace(client=client)),
+            patch.object(
+                ledger_decide,
+                "list_pending_for_conversation",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            assert await ledger_decide._reclaim_dead_holder("conv-1") is False
+
+    async def test_paused_records_mean_hold(self) -> None:
+        from types import SimpleNamespace
+
+        from app.services.hil import ledger_decide
+
+        parked = SimpleNamespace(resume_item={"task": "x"}, subagent_thread_id=None)
+        client = SimpleNamespace(ttl=AsyncMock(return_value=100))
+        with (
+            patch.object(
+                ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")
+            ),
+            patch.object(ledger_decide, "get_session", return_value=None),
+            patch.object(ledger_decide, "redis_cache", new=SimpleNamespace(client=client)),
+            patch.object(
+                ledger_decide,
+                "list_pending_for_conversation",
+                new=AsyncMock(return_value=[parked]),
+            ),
+            patch.object(ledger_decide, "break_holder_lock", new=AsyncMock()) as breaker,
+        ):
+            assert await ledger_decide._reclaim_dead_holder("conv-1") is False
+        breaker.assert_not_awaited()
+
+    async def test_dead_holder_is_released(self) -> None:
+        from types import SimpleNamespace
+
+        from app.services.hil import ledger_decide
+
+        client = SimpleNamespace(ttl=AsyncMock(return_value=100))
+        with (
+            patch.object(
+                ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")
+            ),
+            patch.object(ledger_decide, "get_session", return_value=None),
+            patch.object(ledger_decide, "redis_cache", new=SimpleNamespace(client=client)),
+            patch.object(
+                ledger_decide,
+                "list_pending_for_conversation",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                ledger_decide, "break_holder_lock", new=AsyncMock(return_value=True)
+            ) as breaker,
+        ):
+            assert await ledger_decide._reclaim_dead_holder("conv-1") is True
+        breaker.assert_awaited_once_with("conv-1", "s1:t1")

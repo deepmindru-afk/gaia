@@ -643,3 +643,24 @@ class TestRunItemCarriesWorkflowExecution:
         assert prepared is not None
         assert prepared.run.workflow_id == "wf-9"
         assert prepared.run.workflow_execution_id == "exec-42"
+
+
+class TestBreakHolderLock:
+    async def test_deletes_only_on_value_match(self, redis) -> None:
+        from app.agents.core.background.executor_queue import break_holder_lock
+
+        await redis.set(BUSY_KEY, "s1:t1", ex=99)
+        assert await break_holder_lock(CONVERSATION, "s1:t1") is True
+        assert await redis.get(BUSY_KEY) is None
+
+    async def test_mismatched_value_is_never_stolen(self, redis) -> None:
+        from app.agents.core.background.executor_queue import break_holder_lock
+
+        await redis.set(BUSY_KEY, "s1:t1", ex=99)
+        assert await break_holder_lock(CONVERSATION, "s2:t9") is False
+        assert await redis.get(BUSY_KEY) == "s1:t1"
+
+    async def test_missing_key_is_false(self, redis) -> None:
+        from app.agents.core.background.executor_queue import break_holder_lock
+
+        assert await break_holder_lock(CONVERSATION, "s:t") is False
