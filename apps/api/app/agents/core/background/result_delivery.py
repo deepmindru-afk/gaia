@@ -267,13 +267,12 @@ async def _narrate_and_deliver(
         user_msg_content=user_msg_content,
     )
 
-    # Follow-ups are a second LLM call. The web/mobile path delivers the answer
-    # first and generates them in the background so the result isn't gated on
-    # them; workflow/bot-platform paths have no spinner to unblock, so attach inline.
+    # Follow-ups are a second LLM call. The web/mobile and bot paths deliver the
+    # answer first and generate them in the background (a bot user waited 5 to 8s
+    # for suggestions the platform never shows); a workflow run attaches them inline.
     conversation_source = await _get_conversation_source(run.conversation_id, user_id)
-    is_ws_path = not run.workflow_id and not is_bot_platform(conversation_source)
 
-    if not is_ws_path:
+    if run.workflow_id:
         follow_up_actions = await _safe_inline_follow_ups(
             result_type=result_type,
             notification_text=notification_text,
@@ -326,6 +325,13 @@ async def _narrate_and_deliver(
             conversation_id=run.conversation_id,
         )
         transport = "platform"
+        if delivered:
+            _spawn_deferred_follow_ups(
+                bot_message=bot_message,
+                result_type=result_type,
+                tool_data=tool_data,
+                target=target,
+            )
     else:
         # Broadcast the answer NOW so the spinner clears, then generate follow-up
         # actions in the background and push them as a second update on the same

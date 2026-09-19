@@ -101,6 +101,45 @@ async def _deliver(
     return save, platform, ws
 
 
+class TestBotFollowUpsNeverGateTheAnswer:
+    """A bot user waited 5 to 8 s for follow-up suggestions the platform never shows."""
+
+    async def _deliver_to_telegram(self, *, delivered: bool):
+        with (
+            patch.object(
+                rd, "narrate_executor_result", new_callable=AsyncMock, return_value="voiced"
+            ),
+            patch.object(
+                rd, "_safe_inline_follow_ups", new_callable=AsyncMock, return_value=[]
+            ) as inline,
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(
+                rd,
+                "_get_conversation_source",
+                new_callable=AsyncMock,
+                return_value=ConversationSource.TELEGRAM,
+            ),
+            patch.object(
+                rd, "deliver_message_to_platform", new_callable=AsyncMock, return_value=delivered
+            ) as platform,
+            patch.object(rd, "_spawn_deferred_follow_ups") as deferred,
+        ):
+            await rd.deliver_result(_run(), result_text="raw", result_type="final", tool_data=None)
+        return inline, platform, deferred
+
+    async def test_the_answer_is_sent_before_any_follow_up_is_generated(self) -> None:
+        inline, platform, deferred = await self._deliver_to_telegram(delivered=True)
+
+        inline.assert_not_awaited()
+        platform.assert_awaited_once()
+        deferred.assert_called_once()
+
+    async def test_an_undelivered_answer_spawns_no_follow_ups(self) -> None:
+        _, _, deferred = await self._deliver_to_telegram(delivered=False)
+
+        deferred.assert_not_called()
+
+
 class TestDeliverResultRouting:
     @pytest.mark.parametrize(
         "src",
