@@ -19,9 +19,9 @@ Guarantees (mirror ``resolution.py`` for the old path):
 * **Stale clients refresh, never overwrite.** Every render carries the row
   version ``v``; a decide call with a mismatched ``v`` returns the current
   row with ``committed=False``.
-* **Stale approvals never execute.** An approve older than
-  ``LEDGER_APPROVAL_MAX_AGE_SECONDS`` is refused at decide time — the world
-  has moved on, so the model re-proposes fresh instead of acting on old args.
+* **Stale approvals carry their age.** No server refuse: the ticket wake names
+  how old the approval is, and the model judges freshness at redeem — an
+  approval is permission, and only a redeem runs the envelope.
 * **Single-use tickets.** Redeem claims ``APPROVED -> EXECUTING``; the loser
   is refused, never re-run.
 * **No daemon.** Crash recovery (stalled EXECUTING, orphaned APPROVED) runs
@@ -151,8 +151,9 @@ async def decide_ledger(
     if target is LedgerState.DENIED:
         # Denials schedule nothing, but the agent still needs the verdict: it
         # exited on the PENDING message and list_open will never show this row
-        # again. Without the wake "user said no" arrives nowhere.
-        await _wake_agent(row, "DENIED", feedback)
+        # again. A wake alone only reaches a running run — deliver, so an idle
+        # conversation starts one that wraps up and reports what was skipped.
+        await _deliver_verdict(row, "DENIED", feedback)
     elif queued:
         await _wake_agent(row, "QUEUED", f"waiting on {','.join(row.blocked_by)}")
     await reconcile_conversation_ledger(row.conversation_id)
@@ -196,6 +197,41 @@ async def _deliver_ticket(row: ApprovalLedgerDocument) -> None:
         {"user_id": row.user_id or ""},
         _ticket_task(row),
     )
+
+
+async def _deliver_verdict(row: ApprovalLedgerDocument, outcome: str, result: object) -> None:
+    """Steer or start a run with a non-approve verdict (deny today).
+
+    The inbox wake alone only reaches a running run; an idle conversation
+    would never wrap up ("user said no" arrives nowhere). Delivery starts one
+    when needed and degrades to the wake when delivery itself fails — the
+    decision already committed, so this path never raises.
+    """
+    from app.agents.core.background.executor_runner import (  # noqa: PLC0415 -- same cycle guard as _deliver_ticket
+        deliver_to_executor,
+    )
+
+    preview = "" if result is None else str(result)[:500]
+    task = (
+        f"DECISION {row.approval_id}={outcome} {row.summary}"
+        + (f" :: {preview}" if preview else "")
+        + " The user said no — report what you skipped and continue without it. "
+        "Do not re-request it."
+    )
+    try:
+        await deliver_to_executor(
+            row.conversation_id,
+            {"user_id": row.user_id or ""},
+            task,
+        )
+    except Exception as e:
+        log.error(
+            f"{LogTag.HIL} Ledger verdict delivery failed; falling back to inbox wake",
+            approval_id=row.approval_id,
+            outcome=outcome,
+            error_type=type(e).__name__,
+        )
+        await _wake_agent(row, outcome, result)
 
 
 async def redeem_approved(
@@ -359,6 +395,36 @@ async def revoke_ticket(approval_id: str, *, conversation_id: str, caller: str) 
     return f"Revoked '{approval_id}' ({row.summary}). It will never be asked."
 
 
+async def cancel_ledger_approvals(conversation_id: str, user_id: str) -> list[str]:
+    """Withdraw a cancelled run's pending ledger approvals so nothing revives them.
+
+    Ledger twin of ``resolution.cancel_conversation_approvals``: without this a
+    later Approve — from a stale card, another tab, or a bot "yes" — redeems a
+    ticket for work the user stopped. Only user-owned PENDING rows; APPROVED
+    tickets stay (the user explicitly permitted them, and only a redeem runs
+    them). Each revocation tombstones through the full triple.
+    """
+    cancelled: list[str] = []
+    for row in await approval_ledger_repository.list_open(conversation_id):
+        if row.state is not LedgerState.PENDING or row.user_id != user_id:
+            continue
+        if not await approval_ledger_repository.transition(
+            row.approval_id, LedgerState.PENDING, LedgerState.REVOKED
+        ):
+            continue
+        current = await approval_ledger_repository.get_by_approval_id(row.approval_id)
+        if current is not None:
+            await publish_ledger_revocation(current)
+        cancelled.append(row.approval_id)
+    if cancelled:
+        log.info(
+            f"{LogTag.HIL} Withdrew pending ledger approvals for a cancelled run",
+            conversation_id=conversation_id,
+            approval_ids=cancelled,
+        )
+    return cancelled
+
+
 async def reconcile_conversation_ledger(conversation_id: str) -> None:
     """Heal one conversation's ledger as a decide-path side effect.
 
@@ -438,10 +504,13 @@ async def publish_ledger_revocation(row: ApprovalLedgerDocument) -> None:
     other delivery here: the row is the truth, frames are hints.
     """
     if row.proposing_run_id:
-        # Same in-memory flip: revoke typically lands mid-run, before the
-        # message exists in mongo, so the persist below would miss while the
-        # drain resurrects PENDING afterwards.
-        settle_session_approval_frame(row.proposing_run_id, row.approval_id, "revoked")
+        # A revoke before the run ends drops the unshown frame instead of
+        # tombstoning it: a held card never went live, so the user saw
+        # nothing and there is nothing to explain. A frame that already went
+        # live (background run) still flips to the tombstone as before.
+        settle_session_approval_frame(
+            row.proposing_run_id, row.approval_id, "revoked", drop_if_unpublished=True
+        )
     await _persist_decision_status(row, "revoked")
     await _broadcast_decision(row, "revoked", None)
 

@@ -157,7 +157,10 @@ class TestDecideHardening:
 
         repo.transition.assert_not_awaited()
 
-    async def test_deny_wakes_the_agent_with_feedback(self) -> None:
+    async def test_deny_delivers_verdict_to_start_idle_run(self) -> None:
+        """A deny must reach the agent even when the conversation is idle: the
+        inbox wake alone is only read by a running run. Delivery steers or
+        starts one so the agent wraps up instead of going silent."""
         from app.services.hil.ledger_decide import decide_ledger
 
         row = _row()
@@ -165,9 +168,29 @@ class TestDecideHardening:
             patch(f"{MODULE}.approval_ledger_repository", new=_repo(row)),
             patch(f"{MODULE}.publish_ledger_decision", new=AsyncMock()),
             patch(f"{MODULE}._deliver_ticket", new=AsyncMock()),
+            patch(f"{MODULE}._deliver_verdict", new=AsyncMock()) as deliver,
             patch(f"{MODULE}._wake_agent", new=AsyncMock()) as wake,
         ):
-            await decide_ledger("ap_abc", user_id="u1", kind="deny", feedback="nope", v=3)
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="deny", feedback="nope", v=3)
+
+        assert outcome.committed is True
+        deliver.assert_awaited_once()
+        assert deliver.await_args.args[1] == "DENIED"
+        assert "nope" in str(deliver.await_args.args[2])
+        wake.assert_not_awaited()
+
+    async def test_deny_delivery_failure_falls_back_to_wake(self) -> None:
+        from app.services.hil.ledger_decide import _deliver_verdict
+
+        row = _row()
+        with (
+            patch(
+                "app.agents.core.background.executor_runner.deliver_to_executor",
+                new=AsyncMock(side_effect=RuntimeError("redis down")),
+            ),
+            patch(f"{MODULE}._wake_agent", new=AsyncMock()) as wake,
+        ):
+            await _deliver_verdict(row, "DENIED", "nope")
 
         wake.assert_awaited_once_with(row, "DENIED", "nope")
 
@@ -692,6 +715,52 @@ class TestTicketCarriesAge:
 
         assert outcome.committed is True
         assert outcome.state == LedgerState.DENIED
+
+
+@pytest.mark.unit
+class TestCancelLedgerApprovals:
+    async def test_cancel_withdraws_user_pending_rows_only(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import cancel_ledger_approvals
+
+        mine = _row(approval_id="ap_mine")
+        approved = _row(approval_id="ap_ticket", state=LedgerState.APPROVED)
+        foreign = _row(approval_id="ap_theirs", user_id="u2")
+        repo = _repo()
+        repo.list_open = AsyncMock(return_value=[mine, approved, foreign])
+        repo.transition = AsyncMock(return_value=True)
+        repo.get_by_approval_id = AsyncMock(return_value=mine)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(
+                ledger_decide, "publish_ledger_revocation", new=AsyncMock()
+            ) as tombstone,
+        ):
+            cancelled = await cancel_ledger_approvals("conv-1", "u1")
+
+        assert cancelled == ["ap_mine"]
+        repo.transition.assert_awaited_once_with(
+            "ap_mine", LedgerState.PENDING, LedgerState.REVOKED
+        )
+        tombstone.assert_awaited_once()
+
+    async def test_cancel_lost_race_skips_quietly(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import cancel_ledger_approvals
+
+        repo = _repo()
+        repo.list_open = AsyncMock(return_value=[_row()])
+        repo.transition = AsyncMock(return_value=False)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(
+                ledger_decide, "publish_ledger_revocation", new=AsyncMock()
+            ) as tombstone,
+        ):
+            cancelled = await cancel_ledger_approvals("conv-1", "u1")
+
+        assert cancelled == []
+        tombstone.assert_not_awaited()
 
 
 @pytest.mark.unit

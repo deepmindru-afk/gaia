@@ -297,6 +297,9 @@ async def _decide_ledger(
             tool_call=call,
             summary=summary,
             integration_name=integration_name,
+            # Live runs hold the card until the run ends (a mid-run revoke is
+            # never shown); background runs have no watcher, so publish now.
+            live=context.pausable,
         )
         # "allow" returned before this branch, so the only policies left are
         # the two that explain WHY this call is gated — the model deserves
@@ -570,10 +573,10 @@ def _pending_guidance(approval_id: str) -> str:
     drift: the card's lifecycle is identical whichever branch produced it.
     """
     return (
-        "The approval card is already visible to the user in chat (web, mobile, "
-        "desktop) and they decide there; you cannot approve it yourself. "
+        "The approval card appears to the user in chat (web, mobile, "
+        "desktop) when this run ends, and they decide there; you cannot approve it yourself. "
         f'If this step is not needed, withdraw it with execute(tool_name="revoke", '
-        f'data={{"id": "{approval_id}"}}) and continue with other work. '
+        f'data={{"id": "{approval_id}"}}) before the run ends and the user will never see it. '
         "If it is genuinely needed, leave it and move on to independent work "
         "or exit — you will be woken with the approval and run it via "
         'execute(tool_name="approve", data={"id": ...}). '

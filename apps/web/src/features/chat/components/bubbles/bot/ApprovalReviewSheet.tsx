@@ -14,11 +14,13 @@ import type {
   ApprovalDecision,
   ApprovalRequestData,
   ApprovalStatus,
+  BatchDecisionOutcome,
 } from "@shared/chat";
 import { formatApprovalAge } from "@shared/chat";
 import { useState } from "react";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
+import { resolveBatchOutcomeStatus } from "@/features/chat/utils/batchOutcome";
 import { toast } from "@/lib/toast";
 
 interface SheetDecision {
@@ -35,6 +37,41 @@ interface ApprovalReviewSheetProps {
     status: ApprovalStatus,
     feedback: string | null,
   ) => void;
+}
+
+/**
+ * Settle one batch outcome: server truth wins over the tapped button, so a
+ * lost race never paints the wrong verdict. Returns true when the item stays
+ * for review (genuinely stale), false when settled and removed.
+ */
+function settleBatchOutcome(
+  outcome: BatchDecisionOutcome,
+  made: SheetDecision,
+  onSettled: ApprovalReviewSheetProps["onSettled"],
+  removeDecision: (approvalId: string) => void,
+): boolean {
+  if (outcome.resolved) {
+    onSettled(
+      outcome.approval_id,
+      made.decision === "approve" ? "approved" : "denied",
+      made.feedback.trim() || null,
+    );
+    removeDecision(outcome.approval_id);
+    return false;
+  }
+  if (outcome.reason === "not_found") {
+    onSettled(
+      outcome.approval_id,
+      resolveBatchOutcomeStatus(
+        outcome.status,
+        made.decision === "approve" ? "approved" : "denied",
+      ),
+      made.feedback.trim() || null,
+    );
+    removeDecision(outcome.approval_id);
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -89,22 +126,18 @@ export default function ApprovalReviewSheet({
         })),
       });
       markApprovalDecided();
+      const removeDecision = (approvalId: string) => {
+        setDecisions((prev) => {
+          const next = { ...prev };
+          delete next[approvalId];
+          return next;
+        });
+      };
       let stale = 0;
       for (const outcome of response.outcomes) {
         const made = decisions[outcome.approval_id];
         if (!made) continue;
-        if (outcome.resolved || outcome.reason === "not_found") {
-          onSettled(
-            outcome.approval_id,
-            made.decision === "approve" ? "approved" : "denied",
-            made.feedback.trim() || null,
-          );
-          setDecisions((prev) => {
-            const next = { ...prev };
-            delete next[outcome.approval_id];
-            return next;
-          });
-        } else {
+        if (settleBatchOutcome(outcome, made, onSettled, removeDecision)) {
           stale += 1;
         }
       }

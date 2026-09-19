@@ -15,6 +15,7 @@ import fakeredis.aioredis
 import pytest
 
 from app.agents.core.background.executor_queue import LockClaim
+from app.models.hil_models import HILApprovalStatus
 from app.schemas.hil_schemas import BatchDecisionOutcome
 from app.services.hil.resolution import (
     CANCELLED_FEEDBACK,
@@ -197,12 +198,16 @@ class TestUnresumableRecords:
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
             patch(f"{MODULE}.mark_decided", new=AsyncMock()) as decided,
+            patch(f"{MODULE}.publish_decision", new=AsyncMock()) as settle,
             pytest.raises(ApprovalNotResumableError),
         ):
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
 
         assert decided.await_count == 0  # stays pending; the sweep will expire it
         assert resume.prepare.await_count == 0
+        # ...but the card settles so the user stops staring at a live Approve button.
+        settle.assert_awaited_once()
+        assert settle.await_args.args[1] == HILApprovalStatus.ABANDONED
 
     async def test_an_early_decision_on_a_parked_subagent_decides_without_dispatch(
         self, resume: Any

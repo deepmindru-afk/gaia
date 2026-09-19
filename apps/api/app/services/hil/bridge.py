@@ -105,6 +105,7 @@ async def publish_ledger_request(
     summary: str,
     integration_name: str | None,
     rationale: str | None = None,
+    live: bool = True,
 ) -> None:
     """Surface a ledger PENDING card — exactly once per registration.
 
@@ -113,6 +114,13 @@ async def publish_ledger_request(
     changes); the ledger-only fields (rationale, age 0, version 0) ride as
     optional extras old clients ignore. Called only on fresh registration —
     the dedup hit means the card is already up, so the caller skips this.
+
+    On a live run the card is HELD, not streamed: the frame is recorded on
+    the session (so the end-of-run drain persists it) but no SSE chunk or
+    push goes out until the run ends. A revoke before then removes the
+    unshown frame instead of tombstoning it, so the user never sees work
+    the model already withdrew. Background runs hold nothing — nobody is
+    watching, and the push is the only signal.
     """
     log.set(hil={"approval_id": approval_id, "tool": tool_call.name, "stream_id": stream_id})
     entry = _approval_entry(
@@ -125,8 +133,14 @@ async def publish_ledger_request(
     entry.data.rationale = rationale
     entry.data.age_seconds = 0
     entry.data.ledger_version = 0
-    await _publish_entry(stream_id, entry)
-    _schedule_pending_notification(user_id, conversation_id, approval_id, summary)
+    if not live:
+        await _publish_entry(stream_id, entry)
+        _schedule_pending_notification(user_id, conversation_id, approval_id, summary)
+        return
+    frame = {"tool_data": entry.model_dump(), "_held_approval": True}
+    session = get_session(stream_id)
+    if session is not None:
+        session.tool_events.append(frame)
 
 
 async def publish_decision(
@@ -307,7 +321,12 @@ async def _publish_entry(stream_id: str, entry: ApprovalRequestEntry) -> None:
 
 
 def settle_session_approval_frame(
-    stream_id: str, approval_id: str, status: str, feedback: str | None = None
+    stream_id: str,
+    approval_id: str,
+    status: str,
+    feedback: str | None = None,
+    *,
+    drop_if_unpublished: bool = False,
 ) -> bool:
     """Flip an already-recorded card frame to its terminal status, in place.
 
@@ -315,27 +334,40 @@ def settle_session_approval_frame(
     created at drain time, after the run ends) while the stale PENDING frame
     drains back onto it — resurrecting a settled card. Mutating in place
     means the drain upsert is a no-op safety net, not a resurrection path.
-    Best-effort like every other delivery here: returns whether a frame was
-    settled, never raises.
+
+    With ``drop_if_unpublished``, a still-held frame (never streamed live) is
+    removed instead of flipped: a revoke before the run ends means the user
+    never saw the card, so there is nothing to tombstone. Best-effort like
+    every other delivery here: returns whether a frame was settled or
+    dropped, never raises.
     """
     try:
         session = get_session(stream_id)
         if session is None:
             return False
         settled = False
+        kept: list[dict[str, Any]] = []
         for event in session.tool_events:
             tool_data = event.get("tool_data") if isinstance(event, dict) else None
             if not isinstance(tool_data, dict):
+                kept.append(event)
                 continue
             if tool_data.get("tool_name") != APPROVAL_REQUEST_TOOL_NAME:
+                kept.append(event)
                 continue
             data = tool_data.get("data")
             if not isinstance(data, dict) or data.get("approval_id") != approval_id:
+                kept.append(event)
+                continue
+            if drop_if_unpublished and event.get("_held_approval") is True:
+                settled = True
                 continue
             data["status"] = status
             if feedback is not None:
                 data["feedback"] = feedback
+            kept.append(event)
             settled = True
+        session.tool_events[:] = kept
         return settled
     except Exception:
         return False

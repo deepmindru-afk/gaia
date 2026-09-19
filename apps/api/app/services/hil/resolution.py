@@ -16,6 +16,7 @@ Two guarantees:
 """
 
 import asyncio
+import contextlib
 from http import HTTPStatus
 from typing import Any, Literal, cast
 
@@ -43,6 +44,7 @@ from app.services.hil.approvals_store import (
     mark_decided,
     mark_resumed,
 )
+from app.services.hil.bridge import publish_decision
 from app.services.hil.resume_slot import claim_resume_dispatch, release_resume_dispatch
 from app.utils.errors import AppError
 from shared.py.wide_events import log
@@ -289,6 +291,17 @@ async def _resolve_record(
         # a record used to do: it raised and orphaned the record pending.
         if not collector_alive and kind == "approve":
             log.error(f"{LogTag.HIL} No resume context on record", approval_id=record.approval_id)
+            # Settle the card without touching the record: the user sees
+            # finality instead of a live Approve button that 503s forever,
+            # while the record stays pending for the sweep's loud timeout.
+            # Errors already logged inside publish_decision; nothing to add.
+            with contextlib.suppress(Exception):
+                await publish_decision(
+                    record,
+                    HILApprovalStatus.ABANDONED,
+                    stream_id=record.stream_id,
+                    feedback="The paused task cannot be resumed.",
+                )
             raise ApprovalNotResumableError()
 
     decided_by = None if kind == "timeout" else user_id

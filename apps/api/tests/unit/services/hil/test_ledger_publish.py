@@ -78,3 +78,126 @@ class TestLedgerPublish:
         pub.assert_not_awaited()
         assert result is not None
         assert "ap_live" in str(result.content)
+
+
+@pytest.mark.unit
+class TestLedgerPublishHold:
+    """Live runs hold PENDING cards until the run ends; a mid-run revoke is
+    never shown. Background runs publish immediately — nobody is watching."""
+
+    def _session(self, stream_id: str):
+        from app.agents.core.background.session import RunKind, create_session
+
+        return create_session(stream_id, RunKind.LIVE)
+
+    def _teardown(self, stream_id: str) -> None:
+        from app.agents.core.background.session import teardown_session
+
+        teardown_session(stream_id)
+
+    async def test_live_run_holds_sse_and_notify_but_records_session(self) -> None:
+        from app.services.hil.bridge import publish_ledger_request
+        from app.services.hil.utils import GatedCall
+
+        stream_id = "stream-hold-test"
+        self._session(stream_id)
+        try:
+            with (
+                patch(
+                    "app.services.hil.bridge.stream_manager.publish_chunk",
+                    new=AsyncMock(),
+                ) as chunk,
+                patch(
+                    "app.services.hil.bridge._schedule_pending_notification"
+                ) as notify,
+            ):
+                await publish_ledger_request(
+                    approval_id="ap_hold",
+                    stream_id=stream_id,
+                    user_id="u1",
+                    conversation_id="conv-1",
+                    tool_call=GatedCall(name="GMAIL_SEND_EMAIL", id="c1", args={"to": "b@x"}),
+                    summary="Send it",
+                    integration_name="gmail",
+                )
+            chunk.assert_not_awaited()
+            notify.assert_not_called()
+            from app.agents.core.background.session import get_session
+
+            frames = get_session(stream_id).tool_events
+            assert len(frames) == 1
+            assert frames[0]["tool_data"]["data"]["approval_id"] == "ap_hold"
+            assert frames[0]["tool_data"]["data"]["status"] == "pending"
+        finally:
+            self._teardown(stream_id)
+
+    async def test_background_run_publishes_immediately(self) -> None:
+        from app.services.hil.bridge import publish_ledger_request
+        from app.services.hil.utils import GatedCall
+
+        stream_id = "stream-bg-test"
+        self._session(stream_id)
+        try:
+            with (
+                patch(
+                    "app.services.hil.bridge.stream_manager.publish_chunk",
+                    new=AsyncMock(),
+                ) as chunk,
+                patch(
+                    "app.services.hil.bridge._schedule_pending_notification"
+                ) as notify,
+            ):
+                await publish_ledger_request(
+                    approval_id="ap_bg",
+                    stream_id=stream_id,
+                    user_id="u1",
+                    conversation_id="conv-1",
+                    tool_call=GatedCall(name="GMAIL_SEND_EMAIL", id="c1", args={"to": "b@x"}),
+                    summary="Send it",
+                    integration_name="gmail",
+                    live=False,
+                )
+            chunk.assert_awaited_once()
+            notify.assert_called_once()
+        finally:
+            self._teardown(stream_id)
+
+    async def test_revoke_drops_held_frame_instead_of_tombstoning(self) -> None:
+        """A revoke before the run ends removes the unshown frame: the drain
+        persists nothing and the user never knows the card existed."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.bridge import publish_ledger_request
+        from app.services.hil.utils import GatedCall
+
+        stream_id = "stream-drop-test"
+        self._session(stream_id)
+        try:
+            with (
+                patch(
+                    "app.services.hil.bridge.stream_manager.publish_chunk",
+                    new=AsyncMock(),
+                ),
+                patch("app.services.hil.bridge._schedule_pending_notification"),
+            ):
+                await publish_ledger_request(
+                    approval_id="ap_drop",
+                    stream_id=stream_id,
+                    user_id="u1",
+                    conversation_id="conv-1",
+                    tool_call=GatedCall(name="GMAIL_SEND_EMAIL", id="c1", args={"to": "b@x"}),
+                    summary="Send it",
+                    integration_name="gmail",
+                )
+            row = MagicMock()
+            row.approval_id = "ap_drop"
+            row.proposing_run_id = stream_id
+            with (
+                patch.object(ledger_decide, "_persist_decision_status", new=AsyncMock()),
+                patch.object(ledger_decide, "_broadcast_decision", new=AsyncMock()),
+            ):
+                await ledger_decide.publish_ledger_revocation(row)
+            from app.agents.core.background.session import get_session
+
+            assert get_session(stream_id).tool_events == []
+        finally:
+            self._teardown(stream_id)

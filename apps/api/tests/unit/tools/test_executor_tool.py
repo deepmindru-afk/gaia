@@ -189,6 +189,9 @@ def closed_approvals(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     """The HIL boundary (Mongo-backed): which conversations had their approvals closed."""
     mock = AsyncMock(return_value=[])
     monkeypatch.setattr(executor_tool, "cancel_conversation_approvals", mock)
+    monkeypatch.setattr(
+        executor_tool, "cancel_ledger_approvals", AsyncMock(return_value=[])
+    )
     return mock
 
 
@@ -741,6 +744,24 @@ class TestCancelClosesHilApprovals:
         await run_cancel_executor(config=config_for(), task_ids=[])
 
         closed_approvals.assert_awaited_once_with(CONVERSATION_ID, "user-1")
+
+    async def test_stopping_the_running_task_closes_ledger_approvals_too(
+        self,
+        fake_redis: fakeredis.aioredis.FakeRedis,
+        broadcast: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Ledger PENDING rows outlive the run exactly like barrier records: a
+        # later Approve must not re-animate work the user stopped.
+        monkeypatch.setattr(StreamManager, "cancel_stream", AsyncMock())
+        await fake_redis.set(LOCK_KEY, "stream-1:running-task", ex=EXECUTOR_BUSY_TTL)
+
+        await run_cancel_executor(config=config_for(), task_ids=[])
+
+        assert isinstance(executor_tool.cancel_ledger_approvals, AsyncMock)
+        executor_tool.cancel_ledger_approvals.assert_awaited_once_with(
+            CONVERSATION_ID, "user-1"
+        )
 
     async def test_sparing_the_running_task_leaves_its_approvals_alone(
         self,

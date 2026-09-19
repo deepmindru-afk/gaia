@@ -38,6 +38,7 @@ from app.core.stream_manager import StreamManager
 from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
 from app.models.agent_models import AgentConfigurable, agent_configurable
+from app.services.hil.ledger_decide import cancel_ledger_approvals
 from app.services.hil.resolution import cancel_conversation_approvals
 from app.services.workflow.execution_service import get_last_run_brief
 from app.services.workflow.playbook.check import playbook_check_brief
@@ -389,6 +390,7 @@ async def cancel_executor(
             # Only once the RUNNING task is actually gone: a cancel that spared it
             # (queued-only) must leave its approvals alone — it is still waiting on them.
             await cancel_conversation_approvals(conversation_id, configurable.get("user_id", ""))
+            await cancel_ledger_approvals(conversation_id, configurable.get("user_id", ""))
         cancelled += await _cancel_pending_tasks(
             inbox,
             task_ids,

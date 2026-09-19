@@ -10,6 +10,7 @@ import type {
 import { useEffect, useState } from "react";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
+import { resolveBatchOutcomeStatus } from "@/features/chat/utils/batchOutcome";
 import { toast } from "@/lib/toast";
 import ApprovalRequestSection from "./ApprovalRequestSection";
 import { useApprovalResolver } from "./ApprovalResolveContext";
@@ -85,10 +86,19 @@ export default function ApprovalRequestGroup({
       const status: ApprovalStatus =
         decision === "approve" ? "approved" : "denied";
       for (const outcome of response.outcomes) {
-        // "not_found" means it was already resolved elsewhere — settle it here
-        // too so the card doesn't linger; a genuinely failed item stays pending.
-        if (outcome.resolved || outcome.reason === "not_found") {
+        // Settle to the server's reported state, not the tapped button: a
+        // not_found outcome means the row was already decided elsewhere
+        // (lost CAS race, other tab, revoke), and painting the tap would
+        // overwrite the real verdict. Falls back to the tap when the server
+        // sent no state (old path).
+        if (outcome.resolved) {
           settle(outcome.approval_id, status, null);
+        } else if (outcome.reason === "not_found") {
+          settle(
+            outcome.approval_id,
+            resolveBatchOutcomeStatus(outcome.status, status),
+            null,
+          );
         }
       }
       if (

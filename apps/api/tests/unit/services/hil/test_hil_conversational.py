@@ -50,7 +50,9 @@ def resolver():
         patch(f"{MODULE}.resolve_approval", new=AsyncMock()) as resolve,
         patch(f"{MODULE}.abandon_conversation_approvals", new=AsyncMock()) as abandon,
         patch(f"{MODULE}.ainvoke_structured", new=AsyncMock()) as llm,
+        patch(f"{MODULE}.approval_ledger_repository") as ledger,
     ):
+        ledger.list_open = AsyncMock(return_value=[])
         yield {"resolve": resolve, "abandon": abandon, "llm": llm}
 
 

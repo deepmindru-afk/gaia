@@ -122,6 +122,46 @@ describe("ApprovalReviewSheet", () => {
     ).toHaveLength(4);
   });
 
+  it("settles a lost race to the server state, not the tapped button", async () => {
+    const { ApprovalResolveProvider } = await import(
+      "@/features/chat/components/bubbles/bot/ApprovalResolveContext"
+    );
+    const settled: { id: string; status: string }[] = [];
+    vi.mocked(chatApi.postApprovalBatchDecision).mockResolvedValue({
+      outcomes: [
+        {
+          approval_id: "a",
+          resolved: false,
+          reason: "not_found",
+          status: "denied",
+        },
+      ],
+    });
+    render(
+      <ApprovalResolveProvider
+        value={(approvalId, resolved) =>
+          settled.push({ id: approvalId, status: resolved.status })
+        }
+      >
+        <ApprovalRequestGroup
+          items={[card("a", "gmail"), card("b", "cal"), card("c", "gmail")]}
+        />
+      </ApprovalResolveProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /review 3/i }));
+    const dialog = screen.getByRole("dialog");
+    const rows = within(dialog).getAllByTestId("sheet-row");
+    const rowFor = (text: string) =>
+      rows.find((row) => within(row).queryByText(text) !== null) ?? rows[0];
+    fireEvent.click(
+      within(rowFor("Send a")).getByRole("button", { name: /^approve$/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /submit \(1\)/i }));
+    await vi.waitFor(() => expect(settled).toHaveLength(1));
+    // Tapped approve, server says denied — the real verdict wins.
+    expect(settled[0]).toEqual({ id: "a", status: "denied" });
+  });
+
   it("groups rows by integration with honest totals", () => {
     render(
       <ApprovalRequestGroup

@@ -4,10 +4,9 @@ import type {
   ApprovalScope,
   ApprovalStatus,
 } from "@gaia/shared/chat";
-import { approvalOutcomeLabel } from "@gaia/shared/chat";
 import * as Haptics from "expo-haptics";
 import { Button, Chip } from "heroui-native";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import {
   AlertCircleIcon,
@@ -18,36 +17,39 @@ import {
 } from "@/components/icons";
 import { Text } from "@/components/ui/text";
 import { chatApi } from "@/features/chat/api/chat-api";
+import {
+  APPROVAL_RESOLVED_META,
+  approvalOutcomeText,
+} from "@/features/chat/utils/approval-status";
+import { flattenArgsPreview } from "@/features/chat/utils/args-preview";
 
 interface ApprovalRequestCardProps {
   data: ApprovalRequestData;
 }
 
-const RESOLVED: Record<
+/**
+ * Icons per resolved status; labels/colors live in APPROVAL_RESOLVED_META
+ * (single source of truth, covers all nine ledger states).
+ */
+const RESOLVED_ICONS: Record<
   Exclude<ApprovalStatus, "pending">,
-  { icon: typeof Cancel01Icon; label: string; color: string }
+  typeof Cancel01Icon
 > = {
-  auto_approved: {
-    icon: CheckmarkCircle02Icon,
-    label: "Ran automatically",
-    color: "#34d399",
-  },
-  approved: {
-    icon: CheckmarkCircle02Icon,
-    label: "Approved",
-    color: "#34d399",
-  },
-  denied: { icon: Cancel01Icon, label: "Declined", color: "#f87171" },
-  timeout: { icon: Clock01Icon, label: "Timed out", color: "#fbbf24" },
-  abandoned: { icon: Cancel01Icon, label: "Dropped", color: "#a1a1aa" },
+  auto_approved: CheckmarkCircle02Icon,
+  approved: CheckmarkCircle02Icon,
+  denied: Cancel01Icon,
+  timeout: Clock01Icon,
+  abandoned: Cancel01Icon,
+  executed: CheckmarkCircle02Icon,
+  failed: Cancel01Icon,
+  unknown: AlertCircleIcon,
+  revoked: Cancel01Icon,
 };
 
 function ArgsPreview({ args }: { args: Record<string, unknown> }) {
-  const rows = Object.entries(args).filter(
-    ([, v]) =>
-      typeof v === "string" || typeof v === "number" || typeof v === "boolean",
-  );
+  const { rows, omitted } = useMemo(() => flattenArgsPreview(args), [args]);
   if (rows.length === 0) return null;
+  let lastGroup: string | null = null;
   return (
     <View
       style={{
@@ -58,22 +60,47 @@ function ArgsPreview({ args }: { args: Record<string, unknown> }) {
         gap: 6,
       }}
     >
-      {rows.map(([key, value]) => (
-        <View key={key} style={{ flexDirection: "row", gap: 8 }}>
-          <Text style={{ fontSize: 12, color: "#71717a" }}>{key}</Text>
-          <Text
-            style={{
-              flex: 1,
-              fontSize: 12,
-              color: "#d4d4d8",
-              textAlign: "right",
-            }}
-            numberOfLines={1}
-          >
-            {String(value)}
-          </Text>
-        </View>
-      ))}
+      {rows.map((row, index) => {
+        const showGroup = row.group !== null && row.group !== lastGroup;
+        lastGroup = row.group;
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: rows derive from immutable args and never reorder
+          <View key={`${row.group ?? "top"}:${row.key}:${index}`}>
+            {showGroup && row.group !== null ? (
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: "500",
+                  color: "#a1a1aa",
+                  textTransform: "uppercase",
+                  marginBottom: 2,
+                }}
+              >
+                {row.group}
+              </Text>
+            ) : null}
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Text style={{ fontSize: 12, color: "#71717a" }}>
+                {row.key.replace(/^./, (char) => char.toUpperCase())}
+              </Text>
+              <Text
+                style={{
+                  flex: 1,
+                  fontSize: 12,
+                  color: "#d4d4d8",
+                  textAlign: "right",
+                }}
+                numberOfLines={2}
+              >
+                {row.value}
+              </Text>
+            </View>
+          </View>
+        );
+      })}
+      {omitted > 0 ? (
+        <Text style={{ fontSize: 11, color: "#71717a" }}>+{omitted} more</Text>
+      ) : null}
     </View>
   );
 }
@@ -140,17 +167,18 @@ export function ApprovalRequestCard({ data }: ApprovalRequestCardProps) {
   );
 
   if (data.status !== "pending") {
-    const meta = RESOLVED[data.status];
+    const meta = APPROVAL_RESOLVED_META[data.status];
+    const icon = RESOLVED_ICONS[data.status];
     return shell(
       <View style={{ marginTop: 12, gap: 6 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <AppIcon icon={meta.icon} size={18} color={meta.color} />
+          <AppIcon icon={icon} size={18} color={meta.color} />
           <Chip size="sm" variant="soft">
             <Chip.Label>{meta.label}</Chip.Label>
           </Chip>
         </View>
         <Text style={{ fontSize: 12, color: "#a1a1aa" }} numberOfLines={2}>
-          {approvalOutcomeLabel(data)}
+          {approvalOutcomeText(data)}
         </Text>
       </View>,
     );
