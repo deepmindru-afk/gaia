@@ -10,6 +10,12 @@ vi.mock("@/features/chat/api/chatApi", () => ({
   chatApi: { postApprovalDecision: vi.fn() },
 }));
 
+const mockedFetchEventSource = vi.hoisted(() => vi.fn());
+
+vi.mock("@microsoft/fetch-event-source", () => ({
+  fetchEventSource: mockedFetchEventSource,
+}));
+
 vi.mock("@/features/chat/hooks/useMarkApprovalDecided", () => ({
   useMarkApprovalDecided: () => vi.fn(),
 }));
@@ -37,6 +43,7 @@ const card = (
 
 describe("ApprovalRequestSection ledger UX", () => {
   beforeEach(() => {
+    mockedFetchEventSource.mockReset().mockImplementation(() => undefined);
     vi.mocked(chatApi.postApprovalDecision)
       .mockReset()
       .mockResolvedValue({ success: true });
@@ -101,6 +108,39 @@ describe("ApprovalRequestSection ledger UX", () => {
         scope: "once",
         v: 4,
       }),
+    );
+  });
+
+  it("shows a running row after approve until the outcome stream resolves", async () => {
+    const { act } = await import("@testing-library/react");
+    const onDecided = vi.fn();
+    let onmessage: ((event: { data: string }) => void) | null = null;
+    mockedFetchEventSource.mockImplementation(
+      (
+        _url: string,
+        opts: { onmessage: (event: { data: string }) => void },
+      ) => {
+        onmessage = opts.onmessage;
+      },
+    );
+    render(
+      <ApprovalRequestSection
+        data={card({ age_seconds: 5 })}
+        onDecided={onDecided}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^approve$/i }));
+    await vi.waitFor(() =>
+      expect(screen.getByText(/running your approval/i)).toBeDefined(),
+    );
+    expect(onDecided).not.toHaveBeenCalled();
+    act(() => {
+      onmessage?.({
+        data: JSON.stringify({ status: "executed", approval_id: "ap_1" }),
+      });
+    });
+    await vi.waitFor(() =>
+      expect(onDecided).toHaveBeenCalledWith("executed", null),
     );
   });
 });

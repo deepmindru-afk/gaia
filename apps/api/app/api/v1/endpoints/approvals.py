@@ -1,13 +1,16 @@
 """HIL approval endpoints: decision relay + per-user preferences."""
 
-from typing import Annotated
+import asyncio
+import json
+from typing import Annotated, AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 from app.api.v1.dependencies.oauth_dependencies import get_current_user
 from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
-from app.models.hil_models import LedgerState
+from app.models.hil_models import LIVE_LEDGER_STATES, LedgerState
 from app.models.user_models import AuthenticatedUser
 from app.schemas.hil_schemas import (
     ApprovalDecisionRequest,
@@ -95,6 +98,53 @@ async def post_approval_decision(
     )
     log.set(hil={"resolved": True})
     return ApprovalDecisionResponse(success=True)
+
+
+# Poll cadence / ceiling for the per-tap outcome stream below. Module-level so
+# tests pin fast polling without touching production timing.
+APPROVAL_EVENTS_POLL_SECONDS = 1.5
+APPROVAL_EVENTS_TIMEOUT_SECONDS = 90.0
+
+
+@router.get("/{approval_id}/events")
+async def approval_outcome_events(
+    approval_id: str,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> StreamingResponse:
+    """Stream one approval's aftermath: ``running`` now, the terminal outcome
+    when the ledger lands there, then close.
+
+    The tap already settled the card optimistically; without this the client
+    shows nothing until some other stream happens to move. Same ownership
+    checks as the decide route — unknown ids read as gone, foreign rows as
+    forbidden — so the stream leaks nothing the decision route would not.
+    """
+    user_id = user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id is required")
+    log.set(user={"id": user_id}, hil={"approval_id": approval_id, "operation": "events"})
+    row = await approval_ledger_repository.get_by_approval_id(approval_id)
+    if row is None:
+        raise ApprovalRequestNotFoundError()
+    if row.user_id != user_id:
+        raise ApprovalRequestForbiddenError()
+
+    async def _frames() -> AsyncGenerator[str, None]:
+        if row.state not in LIVE_LEDGER_STATES:
+            yield f"data: {json.dumps({'status': str(row.state), 'approval_id': approval_id})}\n\n"
+            return
+        yield f"data: {json.dumps({'status': 'running', 'approval_id': approval_id})}\n\n"
+        waited = 0.0
+        while waited < APPROVAL_EVENTS_TIMEOUT_SECONDS:
+            await asyncio.sleep(APPROVAL_EVENTS_POLL_SECONDS)
+            waited += APPROVAL_EVENTS_POLL_SECONDS
+            current = await approval_ledger_repository.get_by_approval_id(approval_id)
+            if current is None or current.state not in LIVE_LEDGER_STATES:
+                state = str(current.state) if current is not None else "gone"
+                yield f"data: {json.dumps({'status': state, 'approval_id': approval_id})}\n\n"
+                return
+
+    return StreamingResponse(_frames(), media_type="text/event-stream")
 
 
 @router.post("/batch-decision")

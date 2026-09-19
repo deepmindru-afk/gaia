@@ -5,7 +5,8 @@ read/update routes. Service layer is mocked; HTTP status codes, response
 shapes, payload forwarding, and the AppError status mapping are verified.
 """
 
-from unittest.mock import AsyncMock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from httpx import AsyncClient
 
@@ -438,3 +439,80 @@ class TestLedgerStaleVersionHonesty:
         )
         assert resp.status_code == 200
         assert resp.json() == {"success": False, "reason": "not_found", "status": "approved"}
+
+
+# ---------------------------------------------------------------------------
+# GET /approvals/{approval_id}/events
+# ---------------------------------------------------------------------------
+
+
+def _ledger_row(state: str, user_id: str = USER_ID) -> MagicMock:
+    row = MagicMock()
+    row.approval_id = "ap_1"
+    row.user_id = user_id
+    row.state = state
+    row.summary = "Send it"
+    return row
+
+
+def _sse_statuses(body: str) -> list[str]:
+    out = []
+    for line in body.splitlines():
+        if line.startswith("data: "):
+            payload = json.loads(line[len("data: "):])
+            if isinstance(payload, dict):
+                out.append(payload.get("status"))
+    return out
+
+
+class TestApprovalEventsStream:
+    """GET /api/v1/approvals/{id}/events — per-tap outcome stream."""
+
+    async def test_unknown_id_is_gone(self, client: AsyncClient):
+        with patch(
+            "app.api.v1.endpoints.approvals.approval_ledger_repository",
+        ) as repo:
+            repo.get_by_approval_id = AsyncMock(return_value=None)
+            resp = await client.get(f"{APPROVALS_BASE}/ap_1/events")
+        assert resp.status_code == 410
+
+    async def test_foreign_row_is_forbidden(self, client: AsyncClient):
+        with patch(
+            "app.api.v1.endpoints.approvals.approval_ledger_repository",
+        ) as repo:
+            repo.get_by_approval_id = AsyncMock(
+                return_value=_ledger_row("approved", user_id="someone-else")
+            )
+            resp = await client.get(f"{APPROVALS_BASE}/ap_1/events")
+        assert resp.status_code == 403
+
+    async def test_terminal_row_emits_outcome_immediately(self, client: AsyncClient):
+        with patch(
+            "app.api.v1.endpoints.approvals.approval_ledger_repository",
+        ) as repo:
+            repo.get_by_approval_id = AsyncMock(
+                return_value=_ledger_row("executed")
+            )
+            resp = await client.get(f"{APPROVALS_BASE}/ap_1/events")
+        assert resp.status_code == 200
+        assert _sse_statuses(resp.text) == ["executed"]
+
+    async def test_pending_streams_running_then_outcome(self, client: AsyncClient):
+        from unittest.mock import AsyncMock, patch
+
+        with (
+            patch(
+                "app.api.v1.endpoints.approvals.approval_ledger_repository",
+            ) as repo,
+            patch("app.api.v1.endpoints.approvals.APPROVAL_EVENTS_POLL_SECONDS", 0),
+        ):
+            repo.get_by_approval_id = AsyncMock(
+                side_effect=[
+                    _ledger_row("approved"),
+                    _ledger_row("approved"),
+                    _ledger_row("executed"),
+                ]
+            )
+            resp = await client.get(f"{APPROVALS_BASE}/ap_1/events")
+        assert resp.status_code == 200
+        assert _sse_statuses(resp.text) == ["running", "executed"]
