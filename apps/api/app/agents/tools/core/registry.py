@@ -529,10 +529,14 @@ class ToolRegistry:
         )
         # browser_task is gated by HIL: the executor must get user approval before
         # spinning up a browser ("do you want me to use a browser for this?").
-        # The join is not: gating it would ask the user to approve waiting.
+        # The join and the guidance reply are not: both are inside that approval.
         self._add_category(
             "browser",
-            tools=[browser_tool.browser_task, browser_tool.wait_for_browser_task],
+            tools=[
+                browser_tool.browser_task,
+                browser_tool.wait_for_browser_task,
+                browser_tool.guide_browser_task,
+            ],
             risk=CategoryRisk(destructive_tools={"browser_task"}),
         )
         # Desktop-executed tools live in their own space so discovery can be

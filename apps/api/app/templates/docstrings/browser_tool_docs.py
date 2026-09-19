@@ -66,9 +66,41 @@ Returns immediately when no browser task is running in this conversation. If the
 run outlasts the wait, it says so: the result is then delivered to the user as a
 follow-up message, so do not claim an outcome and do not start the task again.
 
+It can also come back saying the browser is STUCK and asking you for one
+instruction, with the page it is on. That is not a result: answer it with
+guide_browser_task(...) and then call this again.
+
 Args:
     timeout (int, optional): Maximum seconds to wait. Default 600.
 
 Returns:
-    str: The run's outcome guidance, or a note that it is still running.
+    str: The run's outcome guidance, a request for one instruction, or a note
+        that it is still running.
+"""
+
+GUIDE_BROWSER_TASK = """
+Answer a stuck browser task with ONE concrete instruction, so it can continue.
+
+Call this only when wait_for_browser_task() came back saying the browser is
+stuck and asked for guidance, then call wait_for_browser_task() again.
+
+Give one next step the browser operator can carry out on the page it described:
+what to click, what to type, where to navigate, or the fact it is missing. Not a
+plan, not several steps. Draw only on the user's request, this conversation and
+your memory; never invent a value, an address, a date or an account detail, and
+never pass a password, a one-time code or a card number (the run hands those to
+the user itself through a live view).
+
+Prefer a different route over repeating what already failed: the request lists
+what the run just tried and whether the page moved at all. If there is no honest
+way forward, say so with give_up=True rather than sending a guess.
+
+Args:
+    instruction (str): The single concrete next step. Required unless giving up.
+    give_up (bool, optional): True when the task cannot honestly be done.
+    reason (str, optional): Why it cannot be done. Only with give_up.
+
+Returns:
+    str: Confirmation that the instruction reached the run, or that nothing was
+        waiting for one.
 """

@@ -125,6 +125,9 @@ async def build_executor_graph(
                 # its answer must not be: a retrieval miss here would strand a
                 # started run with nobody to report it.
                 "wait_for_browser_task",
+                # Same reason: the run pauses on this one, and a retrieval miss
+                # would leave it waiting out its guidance timeout for nothing.
+                "guide_browser_task",
                 # Bound statically, not left to retrieve_tools: the <playbook_check>
                 # and heal briefs name these directly, so semantic retrieval
                 # missing them would leave the instruction unactionable.

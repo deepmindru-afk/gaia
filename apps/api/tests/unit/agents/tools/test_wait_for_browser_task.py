@@ -16,7 +16,11 @@ from app.agents.tools.browser_tool import wait_for_browser_task
 from app.constants.browser import (
     BrowserSessionStatus,
 )
-from app.schemas.browser import BrowserResultSnapshot
+from app.schemas.browser import (
+    AgentGuidanceRequest,
+    BrowserResultSnapshot,
+    PendingAgentGuidance,
+)
 from app.schemas.browser_job import BrowserJobState, BrowserJobStatus
 from app.services.browser.job_runner import agent_result_message
 
@@ -57,6 +61,7 @@ def _install(
     slots: list[str | None],
     states: list[BrowserJobState | None],
     real_sleep: bool = False,
+    guidance: PendingAgentGuidance | None = None,
 ) -> Joiner:
     """Script the slot and the state one answer per poll; the last answer repeats forever."""
     j = Joiner()
@@ -83,6 +88,10 @@ def _install(
     async def _sleep(seconds: float) -> None:
         j.slept += seconds
 
+    async def _guidance(job_id: str) -> PendingAgentGuidance | None:
+        return guidance
+
+    monkeypatch.setattr(tool_mod, "get_guidance_request", _guidance)
     monkeypatch.setattr(tool_mod, "get_conversation_slot", _slot)
     monkeypatch.setattr(tool_mod, "get_job_state", _state)
     monkeypatch.setattr(tool_mod, "take_joiner_lease", _take)
@@ -192,3 +201,38 @@ async def test_a_turn_with_no_stream_still_joins_on_the_conversations_job(
 
     assert out == DONE.agent_message
     assert j.taken == [("job-1", "")]
+
+
+STUCK = PendingAgentGuidance(
+    handoff_id="h-1",
+    request=AgentGuidanceRequest(
+        reason="The booking form rejects every date.",
+        task="book a table",
+        url="https://example.test/book",
+        title="Book",
+    ),
+)
+
+
+async def test_a_run_waiting_on_guidance_comes_back_at_once_with_what_it_needs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run is parked until the executor answers, so polling it to the timeout would burn the whole wait on a question already asked."""
+    _install(monkeypatch, slots=["job-1"], states=[RUNNING], guidance=STUCK)
+
+    out = await wait_for_browser_task.ainvoke({"timeout": 600}, config=UI_CONFIG)
+
+    assert "STUCK" in out
+    assert "The booking form rejects every date." in out
+    assert "guide_browser_task" in out
+
+
+async def test_asking_for_guidance_keeps_this_turns_claim_on_the_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The executor is coming straight back; a dropped lease would let the worker decide nobody is joined and narrate the run itself."""
+    j = _install(monkeypatch, slots=["job-1"], states=[RUNNING], guidance=STUCK)
+
+    await wait_for_browser_task.ainvoke({"timeout": 600}, config=UI_CONFIG)
+
+    assert j.dropped == []

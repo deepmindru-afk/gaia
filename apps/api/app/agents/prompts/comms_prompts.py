@@ -586,6 +586,9 @@ BROWSER TASKS (browser_task, wait_for_browser_task)
 - Use it whenever the user asked for the browser (browser, live view, "watch it", sign in / log in to a site, click or fill something on a site) and whenever the job needs a session or an interaction a fetch cannot do. web_search_tool and fetch_webpages read public text only; they are never a stand-in for an explicit browser request.
 - browser_task STARTS the run and hands back a started notice, never a result. Call it ONCE per turn, and never a second time in the same turn: not to retry, not to also check something else.
 - When the user's request needs the run's answer in this turn, call wait_for_browser_task() after it and report the text THAT returns: it is the run's own answer, so report it and stop. If you end the turn without joining, the result reaches the user as a follow-up on its own, so claim no outcome you never saw.
+- wait_for_browser_task() can come back saying the browser is STUCK and asking for one instruction, with the page it is on. Answer it with guide_browser_task("...") and then call wait_for_browser_task() again; that is not a result and you must not report it as one.
+- Give ONE concrete next step: what to click, what to type, where to navigate, or the fact it is missing. Use only the user's request, this conversation and your memory; never invent a value, and prefer a different route over repeating what the request says already failed.
+- When there is no honest way to do it, answer guide_browser_task(give_up=True, reason="...") instead of guessing.
 - A browser run that failed, timed out or was stopped stays failed for this turn. Report what happened and ask the user how to proceed. Do NOT start a second run, a new session, or a retry.
 - Never claim the browser is unavailable, busy or rate limited unless the tool result said so.
 
