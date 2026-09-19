@@ -20,14 +20,20 @@ from pydantic_core import CoreSchema, core_schema
 
 from app.config.settings import settings
 from app.constants.browser import (
+    BROWSER_GUIDANCE_MAX_ELEMENTS,
+    BROWSER_GUIDANCE_PAGE_TEXT_MAX_CHARS,
+    BROWSER_GUIDANCE_RECENT_ACTIONS,
+    BROWSER_RUN_BLOCKED_SUMMARY,
     JEV_MIN_DONE_CONFIDENCE,
     JEV_TEXT_HELPER_RECENT_ACTIONS,
     JEV_TEXT_VALUE_MAX_CHARS,
     BrowserHandoffAction,
+    JevNoteSource,
     JevOperation,
     SensitiveCategory,
 )
 from app.constants.log_tags import LogTag
+from app.schemas.browser import AgentGuidanceRequest, GuidanceAction, GuidanceElement
 from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev.gateway import JevGatewayClient, JevGatewayError
 from app.services.browser.jev.live_values import read_live_values
@@ -41,11 +47,13 @@ from app.services.browser.jev.policy import (
 from app.services.browser.jev.prompts import (
     CAPTCHA_CHALLENGE,
     DONE_SUMMARY,
+    GUIDANCE_REASON,
     TAKEOVER_REASON,
     TEXT_VALUE,
     URL_VALUE,
 )
 from app.services.browser.jev.viewport import ViewportBox, read_viewport
+from app.services.browser.run_contract import GuidanceGate
 from shared.py.wide_events import log
 
 if TYPE_CHECKING:
@@ -71,9 +79,8 @@ _OPERATIONS_BY_ACTION: dict[str, tuple[JevOperation, ...]] = {
     BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP: (JevOperation.SOLVE_CAPTCHA,),
     "done": (JevOperation.DONE, JevOperation.BLOCKED),
 }
-# Reaches the user verbatim on the failure card, so it reads like a person.
-_BLOCKED_SUMMARY = "I couldn't find a way to move forward on this page."
 _DEFAULT_TAKEOVER_REASON = "Complete this step in the live browser"
+_DEFAULT_GUIDANCE_REASON = "No operation on this page moves the task forward."
 _DEFAULT_CAPTCHA_CHALLENGE = "Solve the CAPTCHA, then continue"
 _USER_REQUEST = re.compile(r"<user_request>\s*(.*?)\s*</user_request>", re.DOTALL)
 # Neither ends the run on a real next action, so neither counts as an alternative
@@ -107,6 +114,10 @@ class JevChatModel:
         self._steps = 0
         self._viewport: dict[int, ViewportBox] = {}
         self._done_suppressed = False
+        self._guidance_allowed: GuidanceGate | None = None
+        self._observation: JevObservation | None = None
+        #: One-shot: guidance just arrived, so this next step may not give up on it.
+        self._blocked_suppressed = False
 
     def viewport_points(self) -> dict[int, tuple[float, float]]:
         """Return the last observation's on-screen centres by Browser-Use index, for the UI pulse."""
@@ -133,10 +144,13 @@ class JevChatModel:
         # Browser-Use stores its model in pydantic settings; the Protocol asks for this.
         return core_schema.any_schema()
 
-    def bind(self, browser: BrowserSession, task: str) -> None:
-        """Give the policy the session whose observations it decides on, and the raw goal."""
+    def bind(
+        self, browser: BrowserSession, task: str, guidance_allowed: GuidanceGate | None = None
+    ) -> None:
+        """Give the policy the session whose observations it decides on, the raw goal, and the gate that says whether a blocked step may ask the agent for guidance."""
         self._browser = browser
         self._task = task
+        self._guidance_allowed = guidance_allowed
 
     @overload
     async def ainvoke(
@@ -170,14 +184,21 @@ class JevChatModel:
         screen = await read_viewport(self._browser, selector_map)
         self._viewport = screen.boxes
         observation = observe(state, await read_live_values(self._browser), screen)
+        self._observation = observation
         self._settle_previous_step(observation)
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
         offered = _offered_operations(registered)
-        if self._latest_note():
+        note = self._latest_note_entry()
+        if note is not None and note.note_source is not JevNoteSource.AGENT:
             # The user answered a takeover with an instruction; handing the same step
             # back ignores what they said, then blames them when it times out.
             offered -= _HANDOFF_OPERATIONS
+        if self._blocked_suppressed:
+            # The agent just said how to proceed; giving up on the same step would
+            # spend a guidance round and never try what it said.
+            offered -= {JevOperation.BLOCKED}
+            self._blocked_suppressed = False
         self._steps += 1
 
         try:
@@ -263,7 +284,7 @@ class JevChatModel:
         action: tuple[dict[str, dict[str, object]], str | None] | None = None
         match decision.operation:
             case JevOperation.DONE | JevOperation.BLOCKED:
-                action = await self._terminal_action(decision, observation, goal)
+                action = await self._terminal_action(decision, observation, goal, registered)
             case JevOperation.REQUEST_HUMAN | JevOperation.SOLVE_CAPTCHA:
                 action = await self._handoff_action(decision, observation, goal)
             case JevOperation.CLICK | JevOperation.TYPE_TEXT | JevOperation.SELECT:
@@ -281,12 +302,26 @@ class JevChatModel:
         return action
 
     async def _terminal_action(
-        self, decision: JevDecision, observation: JevObservation, goal: str
+        self, decision: JevDecision, observation: JevObservation, goal: str, registered: set[str]
     ) -> tuple[dict[str, dict[str, object]], str | None]:
         if decision.operation is JevOperation.BLOCKED:
-            return {"done": {"text": _BLOCKED_SUMMARY, "success": False}}, None
+            return await self._blocked_action(goal, observation, registered)
         summary = await self._field_text(DONE_SUMMARY, goal, observation, None)
         return {"done": {"text": summary or "Completed the task.", "success": True}}, summary
+
+    async def _blocked_action(
+        self, goal: str, observation: JevObservation, registered: set[str]
+    ) -> tuple[dict[str, dict[str, object]], str | None]:
+        """Ask the agent that started the run how to proceed, or end the run failed when nobody can answer."""
+        action = BrowserHandoffAction.REQUEST_AGENT_GUIDANCE
+        if action not in registered or not await self._may_ask_for_guidance():
+            return {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}, None
+        reason = await self._field_text(GUIDANCE_REASON, goal, observation, None)
+        text = reason or _DEFAULT_GUIDANCE_REASON
+        return {action: {"reason": text}}, text
+
+    async def _may_ask_for_guidance(self) -> bool:
+        return self._guidance_allowed is not None and await self._guidance_allowed()
 
     async def _handoff_action(
         self, decision: JevDecision, observation: JevObservation, goal: str
@@ -384,7 +419,7 @@ class JevChatModel:
                 {"action": h.action, "text": h.text}
                 for h in self._history[-JEV_TEXT_HELPER_RECENT_ACTIONS:]
             ],
-            "user_note": self._latest_note(),
+            "latest_note": self._latest_note(),
         }
         try:
             result = await self.text_model.ainvoke(
@@ -402,9 +437,42 @@ class JevChatModel:
         The takeover step is the last history entry: _remember runs inside
         _decide, before Browser-Use executes the action that blocks on the human.
         """
+        self._attach_note(note, JevNoteSource.USER)
+
+    def note_from_agent(self, note: str | None) -> None:
+        """Attach the instruction the agent that started the run sent back to the blocked step that asked for it."""
+        self._attach_note(note, JevNoteSource.AGENT)
+        self._blocked_suppressed = bool(note)
+
+    def _attach_note(self, note: str | None, source: JevNoteSource) -> None:
         if not self._history:
             raise RuntimeError("No step to attach a note to")
-        self._history[-1] = replace(self._history[-1], note=note)
+        self._history[-1] = replace(
+            self._history[-1], note=note, note_source=source if note else None
+        )
+
+    def guidance_request(self, reason: str) -> AgentGuidanceRequest:
+        """Return what the blocked step shows the agent: the page it is on, what it can see, and what it just tried."""
+        observation = self._observation
+        return AgentGuidanceRequest(
+            reason=reason,
+            task=self._task or "",
+            url=observation.url if observation else "",
+            title=observation.title if observation else "",
+            page_text=observation.text[:BROWSER_GUIDANCE_PAGE_TEXT_MAX_CHARS]
+            if observation
+            else "",
+            elements=[
+                GuidanceElement(index=e.index, label=e.label, role=e.role)
+                for e in (observation.elements if observation else ())[
+                    :BROWSER_GUIDANCE_MAX_ELEMENTS
+                ]
+            ],
+            recent_actions=[
+                GuidanceAction(action=h.action, page_changed=h.page_changed)
+                for h in self._history[-BROWSER_GUIDANCE_RECENT_ACTIONS:]
+            ],
+        )
 
     def _settle_previous_step(self, observation: JevObservation) -> None:
         if self._history and self._last_fingerprint is not None:
@@ -420,16 +488,26 @@ class JevChatModel:
 
         Jev and the text helper both read only this, so the note goes first and
         says it overrides -- appended at the end it read as an aside, and the
-        closing answer reported the original task as unfinished instead.
+        closing answer reported the original task as unfinished instead. Agent
+        guidance says how to proceed; only the user's note changes what to do.
         """
         goal = self._task or _goal_from_messages(messages)
-        note = self._latest_note()
-        if not note:
+        entry = self._latest_note_entry()
+        if entry is None or not entry.note:
             return goal
-        return f"Latest instruction from the user, which overrides the task below: {note}\nOriginal task: {goal}"
+        if entry.note_source is JevNoteSource.AGENT:
+            return (
+                "Guidance from the assistant that planned this task, on how to proceed: "
+                f"{entry.note}\nTask, which still stands: {goal}"
+            )
+        return f"Latest instruction from the user, which overrides the task below: {entry.note}\nOriginal task: {goal}"
+
+    def _latest_note_entry(self) -> JevHistoryEntry | None:
+        return next((h for h in reversed(self._history) if h.note), None)
 
     def _latest_note(self) -> str | None:
-        return next((h.note for h in reversed(self._history) if h.note), None)
+        entry = self._latest_note_entry()
+        return entry.note if entry else None
 
     def _remember(self, action: str, kind: str, text: str | None) -> None:
         self._history.append(JevHistoryEntry(action=action, kind=kind, text=text))
@@ -445,7 +523,7 @@ def _idle_action(output_format: type[BaseModel]) -> dict[str, dict[str, object]]
     """Return an action that changes nothing and is valid for this step's schema."""
     if "wait" in _registered_actions(output_format):
         return {"wait": {"seconds": 1}}
-    return {"done": {"text": _BLOCKED_SUMMARY, "success": False}}
+    return {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}
 
 
 def _is_agent_output(output_format: type[BaseModel]) -> bool:

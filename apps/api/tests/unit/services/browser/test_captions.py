@@ -188,4 +188,4 @@ def test_every_handoff_action_has_a_caption() -> None:
     """A handoff with no caption entry falls through to the underscore fallback ("request human takeover"), so the caption table has to cover the enum."""
     for member in BrowserHandoffAction:
         actions = [BrowserAction(name=member.value, inputs={}, target=None)]
-        assert caption_from_action_list(actions) == "Handing this step to you"
+        assert caption_from_action_list(actions) != member.value.replace("_", " ")

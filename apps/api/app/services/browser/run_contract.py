@@ -13,11 +13,17 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from time import perf_counter
 
-from app.schemas.browser import BrowserAction, BrowserActionOutput
+from app.schemas.browser import AgentGuidanceRequest, BrowserAction, BrowserActionOutput
 
 # Per-action results, keyed to the step whose rows the thread mirror emitted.
 # Awaitable: the mirror publishes them, and a publish crosses a process boundary.
 ActionResultsFn = Callable[[int, list[BrowserActionOutput]], Awaitable[None]]
+
+# Whether a blocked step may ask the agent that started the run for guidance:
+# budget left here, a joined agent to answer one process away. Asked per step,
+# never cached — an agent that ended its turn stops being reachable mid-run.
+GuidanceGate = Callable[[], Awaitable[bool]]
+GuidanceFn = Callable[[AgentGuidanceRequest], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,10 @@ class RunHooks:
     takeover: Callable[[str, str], Awaitable[str | None]]
     should_stop: Callable[[], Awaitable[bool]]
     action_results: ActionResultsFn | None = None
+    #: Both or neither: without a gate nothing ever asks, so a run with no agent
+    #: to reach back to ends blocked exactly as it did before guidance existed.
+    guidance_allowed: GuidanceGate | None = None
+    guidance: GuidanceFn | None = None
 
 
 class StepClock:

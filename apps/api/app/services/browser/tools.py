@@ -1,11 +1,12 @@
 """Custom Browser-Use actions the agent can call mid-run.
 
-Two seams the agent reaches for itself: request_human_takeover is the agent's
+Three seams the agent reaches for itself: request_human_takeover is the agent's
 own way to pause for the human at a sensitive step (payment, credentials,
 irreversible); because it is a normal action that blocks and returns a result
 string, Browser-Use resumes its loop natively afterwards with full task
 memory, no dispose or recreate. solve_captcha_with_help hands a CAPTCHA to a
-human takeover since there is no automatic solver.
+human takeover since there is no automatic solver. request_agent_guidance
+pauses the same way but asks the agent that started the run, not the user.
 
 Imports of browser_use are local so the module loads without the package.
 """
@@ -19,22 +20,39 @@ if TYPE_CHECKING:
     from browser_use import Tools
 
 TakeoverFn = Callable[[str, str], Awaitable[str]]
+AgentGuidanceFn = Callable[[str], Awaitable[str]]
 
 
 def build_browser_tools(
     *,
     solve_captcha: bool,
     handle_takeover: TakeoverFn,
+    handle_guidance: AgentGuidanceFn,
 ) -> Tools[None]:
     """Build the Browser-Use Tools the agent can call during a run.
 
     handle_takeover(reason, category) performs the live-view handoff and
     returns a result string to feed back to the agent, or raises to stop the
-    run when the user cancels.
+    run when the user cancels. handle_guidance(reason) asks the agent that
+    started the run instead, on the same contract.
     """
     from browser_use import Tools  # noqa: PLC0415 -- heavy optional dep
 
     tools: Tools[None] = Tools()
+
+    # Registered by function name; BrowserHandoffAction.REQUEST_AGENT_GUIDANCE must spell it the same.
+    @tools.action(
+        description=(
+            "Ask the assistant that gave you this task what to do, when no action on "
+            "this page moves the task forward and no human step is what is missing. "
+            "It answers with ONE concrete instruction and you then continue. `reason` "
+            "says what you tried and what the page does instead; it is read by an "
+            "assistant, not by the user, so write it as a plain statement of fact."
+        )
+    )
+    async def request_agent_guidance(reason: str) -> str:
+        """Return the guidance tool that asks the agent that started the run how to proceed."""
+        return await handle_guidance(reason)
 
     # Registered by function name; BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER must spell it the same.
     @tools.action(

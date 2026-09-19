@@ -234,13 +234,14 @@ class BrowserAgentRun:
             "tools": build_browser_tools(
                 solve_captcha=self._config.solve_captcha,
                 handle_takeover=self._takeover,
+                handle_guidance=self._guidance,
             ),
         }
         if isinstance(self._llm, JevChatModel):
             # Jev reads the structured observation from the session itself, with the
             # raw task (not the takeover preamble) as its goal. Its text helper is the
             # extraction model so Browser-Use meters those tokens under their own name.
-            self._llm.bind(browser, task)
+            self._llm.bind(browser, task, self._hooks.guidance_allowed)
             agent_kwargs["page_extraction_llm"] = self._llm.text_model
         self._agent = Agent(**agent_kwargs)
 
@@ -259,6 +260,18 @@ class BrowserAgentRun:
         if isinstance(self._llm, JevChatModel):
             self._llm.note_from_user(note)
         return note or "The user finished that step in the live browser."
+
+    async def _guidance(self, reason: str) -> str:
+        """Ask the agent that started this run how to proceed, and give its instruction to both readers.
+
+        Only reached when the gate already said an agent is there to answer; the
+        hook raises rather than returning when none arrives, which ends the run.
+        """
+        if self._hooks.guidance is None or not isinstance(self._llm, JevChatModel):
+            raise BrowserUnavailableError("This run has no agent to ask for guidance.")
+        instruction = await self._hooks.guidance(self._llm.guidance_request(reason))
+        self._llm.note_from_agent(instruction)
+        return instruction
 
     def _emit_frame(
         self,

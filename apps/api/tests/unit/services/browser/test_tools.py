@@ -17,6 +17,17 @@ CAPTCHA_DESCRIPTION = (
 )
 
 
+class _FakeGuidance:
+    """Records every call to the agent-guidance seam and returns a canned instruction."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def __call__(self, reason: str) -> str:
+        self.calls.append(reason)
+        return f"guided:{reason}"
+
+
 class _FakeTakeover:
     """Records every call to the takeover seam and returns a canned result."""
 
@@ -40,8 +51,11 @@ async def _call_action(tools, name: str, **kwargs) -> str:
 
 def test_registers_takeover_action_only_when_captcha_disabled() -> None:
     takeover: Callable[[str, str], Awaitable[str]] = _FakeTakeover()
+    guidance = _FakeGuidance()
 
-    tools = build_browser_tools(solve_captcha=False, handle_takeover=takeover)
+    tools = build_browser_tools(
+        solve_captcha=False, handle_takeover=takeover, handle_guidance=guidance
+    )
 
     actions = tools.registry.registry.actions
     assert "request_human_takeover" in actions
@@ -50,8 +64,11 @@ def test_registers_takeover_action_only_when_captcha_disabled() -> None:
 
 def test_registers_both_actions_when_captcha_enabled() -> None:
     takeover: Callable[[str, str], Awaitable[str]] = _FakeTakeover()
+    guidance = _FakeGuidance()
 
-    tools = build_browser_tools(solve_captcha=True, handle_takeover=takeover)
+    tools = build_browser_tools(
+        solve_captcha=True, handle_takeover=takeover, handle_guidance=guidance
+    )
 
     actions = tools.registry.registry.actions
     assert "request_human_takeover" in actions
@@ -60,7 +77,10 @@ def test_registers_both_actions_when_captcha_enabled() -> None:
 
 async def test_takeover_defaults_category_to_irreversible() -> None:
     takeover = _FakeTakeover()
-    tools = build_browser_tools(solve_captcha=False, handle_takeover=takeover)
+    guidance = _FakeGuidance()
+    tools = build_browser_tools(
+        solve_captcha=False, handle_takeover=takeover, handle_guidance=guidance
+    )
 
     result = await _call_action(tools, "request_human_takeover", reason="Enter your password")
 
@@ -70,7 +90,10 @@ async def test_takeover_defaults_category_to_irreversible() -> None:
 
 async def test_takeover_passes_explicit_category_through_unchanged() -> None:
     takeover = _FakeTakeover()
-    tools = build_browser_tools(solve_captcha=False, handle_takeover=takeover)
+    guidance = _FakeGuidance()
+    tools = build_browser_tools(
+        solve_captcha=False, handle_takeover=takeover, handle_guidance=guidance
+    )
 
     result = await _call_action(
         tools, "request_human_takeover", reason="Enter your card number", category="payment"
@@ -87,7 +110,9 @@ async def test_takeover_propagates_cancellation_from_seam() -> None:
     async def raising_takeover(reason: str, category: str) -> str:
         raise _Cancelled("user cancelled")
 
-    tools = build_browser_tools(solve_captcha=False, handle_takeover=raising_takeover)
+    tools = build_browser_tools(
+        solve_captcha=False, handle_takeover=raising_takeover, handle_guidance=_FakeGuidance()
+    )
 
     with pytest.raises(_Cancelled):
         await _call_action(tools, "request_human_takeover", reason="Confirm the purchase")
@@ -95,7 +120,10 @@ async def test_takeover_propagates_cancellation_from_seam() -> None:
 
 async def test_captcha_action_always_uses_none_category() -> None:
     takeover = _FakeTakeover()
-    tools = build_browser_tools(solve_captcha=True, handle_takeover=takeover)
+    guidance = _FakeGuidance()
+    tools = build_browser_tools(
+        solve_captcha=True, handle_takeover=takeover, handle_guidance=guidance
+    )
 
     result = await _call_action(
         tools, "solve_captcha_with_help", challenge="Select all squares with motorcycles"
@@ -107,7 +135,10 @@ async def test_captcha_action_always_uses_none_category() -> None:
 
 def test_takeover_action_description_mentions_all_three_categories() -> None:
     takeover = _FakeTakeover()
-    tools = build_browser_tools(solve_captcha=False, handle_takeover=takeover)
+    guidance = _FakeGuidance()
+    tools = build_browser_tools(
+        solve_captcha=False, handle_takeover=takeover, handle_guidance=guidance
+    )
 
     action = _get_action(tools, "request_human_takeover")
 
@@ -117,12 +148,48 @@ def test_takeover_action_description_mentions_all_three_categories() -> None:
 def test_the_registered_handoff_actions_are_exactly_the_enum() -> None:
     """Keep the enum spelling the same def names Browser-Use registers so the two cannot drift."""
     takeover: Callable[[str, str], Awaitable[str]] = _FakeTakeover()
+    guidance = _FakeGuidance()
 
-    both = build_browser_tools(solve_captcha=True, handle_takeover=takeover)
-    takeover_only = build_browser_tools(solve_captcha=False, handle_takeover=takeover)
+    both = build_browser_tools(
+        solve_captcha=True, handle_takeover=takeover, handle_guidance=guidance
+    )
+    takeover_only = build_browser_tools(
+        solve_captcha=False, handle_takeover=takeover, handle_guidance=guidance
+    )
 
     assert {a.value for a in BrowserHandoffAction} <= set(both.registry.registry.actions)
     registered_handoffs = {a.value for a in BrowserHandoffAction} & set(
         takeover_only.registry.registry.actions
     )
-    assert registered_handoffs == {BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER.value}
+    assert registered_handoffs == {
+        BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER.value,
+        BrowserHandoffAction.REQUEST_AGENT_GUIDANCE.value,
+    }
+
+
+async def test_the_guidance_action_hands_the_reason_to_the_agent_seam() -> None:
+    takeover = _FakeTakeover()
+    guidance = _FakeGuidance()
+    tools = build_browser_tools(
+        solve_captcha=False, handle_takeover=takeover, handle_guidance=guidance
+    )
+
+    result = await _call_action(
+        tools, "request_agent_guidance", reason="The date picker never opens"
+    )
+
+    assert guidance.calls == ["The date picker never opens"]
+    assert result == "guided:The date picker never opens"
+    assert takeover.calls == []
+
+
+def test_the_guidance_action_is_registered_even_with_captcha_off() -> None:
+    """It is not a human handoff, so the captcha switch must not decide whether the run can ask the agent."""
+    takeover = _FakeTakeover()
+    guidance = _FakeGuidance()
+
+    tools = build_browser_tools(
+        solve_captcha=False, handle_takeover=takeover, handle_guidance=guidance
+    )
+
+    assert "request_agent_guidance" in tools.registry.registry.actions

@@ -11,7 +11,11 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
-from app.constants.browser import BROWSER_DONE_CAPTION_MAX_CHARS, BrowserHandoffAction
+from app.constants.browser import (
+    BROWSER_AGENT_GUIDANCE_CAPTION,
+    BROWSER_DONE_CAPTION_MAX_CHARS,
+    BrowserHandoffAction,
+)
 from app.schemas.browser import BrowserAction
 
 # Actions whose whole meaning is the element they hit — a bare verb reads as
@@ -104,6 +108,9 @@ _STATIC_CAPTIONS: dict[str, str] = {
     "wait": "Waiting for the page",
     BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER: "Handing this step to you",
     BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP: "Handing this step to you",
+    # The agent round trip is not the user's business; they see only that the
+    # run is looking for another route.
+    BrowserHandoffAction.REQUEST_AGENT_GUIDANCE: BROWSER_AGENT_GUIDANCE_CAPTION,
 }
 
 

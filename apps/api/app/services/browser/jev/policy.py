@@ -16,6 +16,7 @@ from app.constants.browser import (
     JEV_PROBABILITY_SUM_TOLERANCE,
     JEV_RECENT_ACTIONS,
     JEV_TARGET_OPERATIONS,
+    JevNoteSource,
     JevOperation,
 )
 from app.services.browser.jev.gateway import (
@@ -73,8 +74,10 @@ class JevHistoryEntry:
     kind: str
     text: str | None = None
     page_changed: bool | None = None
-    #: What the user said when they handed the browser back after this step.
+    #: The instruction handed back after this step: the user's after a takeover,
+    #: or the executor's after this step asked it for guidance.
     note: str | None = None
+    note_source: JevNoteSource | None = None
 
     def state_entry(self) -> dict[str, object]:
         return {

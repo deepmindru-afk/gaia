@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any, Union
+from typing import Any, Union, get_args
 from unittest.mock import MagicMock
 
 from browser_use.agent.views import ActionModel, AgentOutput
@@ -22,7 +22,7 @@ from browser_use.tools.views import (
 from pydantic import BaseModel, RootModel, create_model
 import pytest
 
-from app.constants.browser import JevOperation
+from app.constants.browser import BROWSER_RUN_BLOCKED_SUMMARY, JevOperation
 from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev import chat_model as chat_model_mod
@@ -717,3 +717,160 @@ async def test_a_note_with_no_step_to_carry_it_is_a_wiring_error(flights_state) 
 
     with pytest.raises(RuntimeError, match="No step to attach a note to"):
         model.note_from_user("skip the login, just grab the photo")
+
+
+# ---------------------------------------------------------------------------
+# Agent guidance: a blocked step asks the agent that started the run
+# ---------------------------------------------------------------------------
+
+
+def _gate(allowed: bool):
+    async def _allowed() -> bool:
+        return allowed
+
+    return _allowed
+
+
+def _guided_model(flights_state, script, replies=None, allowed: bool = True):
+    gateway = ScriptedGateway(script=list(script))
+    text_model = FakeTextModel(replies=list(replies or []))
+    model = JevChatModel(client=gateway, text_model=text_model)  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
+    model.bind(FakeSession(flights_state), "Fly Zurich to London", _gate(allowed))  # type: ignore[arg-type]  # the test hands a fake session in place of Browser-Use's session
+    return model, gateway, text_model
+
+
+def _guidance_output() -> type[AgentOutput]:
+    """Return the AgentOutput of a run whose tools include the agent-guidance action."""
+    base = _agent_output()
+    fields: dict[str, Any] = {
+        name: (annotation.annotation, None)
+        for name, annotation in get_args(base.model_fields["action"].annotation)[
+            0
+        ].model_fields.items()
+    }
+    fields["request_agent_guidance"] = (Guidance | None, None)
+    actions = create_model("GuidanceActionModel", __base__=ActionModel, **fields)
+    return AgentOutput.type_with_custom_actions_flash_mode(actions)
+
+
+class Guidance(BaseModel):
+    reason: str
+
+
+async def test_a_blocked_step_asks_the_agent_instead_of_ending_the_run(flights_state) -> None:
+    """Ending on BLOCKED throws away a run the agent that asked for it could often unstick with one fact."""
+    model, _, _ = _guided_model(
+        flights_state, [("BLOCKED", None)], [{"text": "The date picker never opens."}]
+    )
+
+    result = await model.ainvoke([], _guidance_output())
+
+    assert _action(result.completion) == {
+        "request_agent_guidance": {"reason": "The date picker never opens."}
+    }
+
+
+async def test_a_blocked_step_with_nobody_to_ask_still_ends_the_run_failed(flights_state) -> None:
+    """The gate is the whole safety of this: with no agent joined, asking would stall the run for two minutes and answer nothing."""
+    model, _, _ = _guided_model(flights_state, [("BLOCKED", None)], allowed=False)
+
+    result = await model.ainvoke([], _guidance_output())
+
+    action = _action(result.completion)
+    assert action["done"]["success"] is False
+    assert action["done"]["text"] == BROWSER_RUN_BLOCKED_SUMMARY
+
+
+async def test_a_blocked_step_on_a_run_without_the_action_registered_ends_failed(
+    flights_state,
+) -> None:
+    """Browser-Use narrows the last step to done only; an action it never registered would be rejected outright."""
+    model, _, _ = _guided_model(flights_state, [("BLOCKED", None)])
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion)["done"]["success"] is False
+
+
+async def test_the_guidance_request_carries_the_page_the_agent_has_to_reason_about(
+    flights_state,
+) -> None:
+    """An agent asked "what now" with no page, no controls and no history can only guess."""
+    model, _, _ = _guided_model(flights_state, [("BLOCKED", None)], [{"text": "No cabin control."}])
+    await model.ainvoke([], _guidance_output())
+
+    request = model.guidance_request("No cabin control.")
+
+    assert request.task == "Fly Zurich to London"
+    assert request.url == "https://x"
+    assert request.title == "X"
+    assert "Where to?" in [element.label for element in request.elements]
+    assert [action.action for action in request.recent_actions] == ["BLOCKED"]
+
+
+async def test_an_agent_note_leaves_the_human_handoffs_on_the_table(flights_state) -> None:
+    """Agent guidance may legitimately be "this needs the user to sign in"; suppressing the handoff would make that instruction unactionable."""
+    model, gateway, _ = _guided_model(
+        flights_state,
+        [("BLOCKED", None), ("CLICK", "4")],
+        [{"text": "stuck"}],
+    )
+    await model.ainvoke([], _guidance_output())
+
+    model.note_from_agent("sign in first, the seat map is behind the account")
+    await model.ainvoke([], _guidance_output())
+
+    offered = set(gateway.requests[1].questions["operation"].criteria)
+    assert {"REQUEST_HUMAN", "SOLVE_CAPTCHA"} <= offered
+
+
+async def test_a_user_note_still_takes_the_human_handoffs_off_the_table(flights_state) -> None:
+    model, gateway, _ = _guided_model(
+        flights_state,
+        [("REQUEST_HUMAN", None), ("CLICK", "4")],
+        [{"text": "Sign in", "category": "credentials"}],
+    )
+    await model.ainvoke([], _guidance_output())
+
+    model.note_from_user("skip the login, just tell me the title")
+    await model.ainvoke([], _guidance_output())
+
+    offered = set(gateway.requests[1].questions["operation"].criteria)
+    assert "REQUEST_HUMAN" not in offered
+
+
+async def test_blocked_is_off_the_table_on_the_step_right_after_guidance(flights_state) -> None:
+    """Giving up on the very step the agent just answered spends a guidance round and never tries what it said."""
+    model, gateway, _ = _guided_model(
+        flights_state,
+        [("BLOCKED", None), ("CLICK", "4"), ("CLICK", "4")],
+        [{"text": "stuck"}],
+    )
+    await model.ainvoke([], _guidance_output())
+
+    model.note_from_agent("click Search, the filters are already set")
+    await model.ainvoke([], _guidance_output())
+    await model.ainvoke([], _guidance_output())
+
+    assert "BLOCKED" not in set(gateway.requests[1].questions["operation"].criteria)
+    assert "BLOCKED" in set(gateway.requests[2].questions["operation"].criteria)
+
+
+async def test_an_agent_note_guides_the_goal_without_replacing_the_users_task(
+    flights_state,
+) -> None:
+    """The user asked for the task; the agent only says how to get there, so an "overrides the task" wording would let the run answer the wrong question."""
+    model, gateway, _ = _guided_model(
+        flights_state, [("BLOCKED", None), ("CLICK", "4")], [{"text": "stuck"}]
+    )
+    await model.ainvoke([], _guidance_output())
+
+    model.note_from_agent("use the mobile site, m.example.test")
+    await model.ainvoke([], _guidance_output())
+
+    goal = gateway.requests[1].questions["operation"].instructions["goal"]
+    assert goal.startswith(
+        "Guidance from the assistant that planned this task, on how to proceed: "
+        "use the mobile site, m.example.test"
+    )
+    assert "Task, which still stands: Fly Zurich to London" in goal

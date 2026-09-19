@@ -12,7 +12,7 @@ import asyncio
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, ClassVar
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock
 
 import browser_use
 import pytest
@@ -1516,7 +1516,7 @@ async def test_a_jev_model_is_bound_to_the_session_and_its_helper_extracts(patch
 
     await _make_runner(emit=emit, overrides=_RunnerOverrides(llm=jev)).run("Book it")
 
-    jev.bind.assert_called_once_with(FakeAgent.last_kwargs["browser"], "Book it")
+    jev.bind.assert_called_once_with(FakeAgent.last_kwargs["browser"], "Book it", ANY)
     assert FakeAgent.last_kwargs["llm"] is jev
     assert FakeAgent.last_kwargs["page_extraction_llm"] is helper
     assert set(FakeAgent.last_kwargs) == AGENT_KWARG_KEYS | {"page_extraction_llm"}

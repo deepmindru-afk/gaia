@@ -18,6 +18,8 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from app.constants.browser import (
+    BROWSER_AGENT_GUIDANCE_MAX,
+    BROWSER_RUN_BLOCKED_SUMMARY,
     BROWSER_RUN_HANDOFF_TIMED_OUT,
     BROWSER_TASK_FAILED_PREFIX,
     MAX_HANDOFFS_PER_TASK,
@@ -27,6 +29,7 @@ from app.constants.browser import (
 )
 from app.constants.log_tags import LogTag
 from app.schemas.browser import (
+    AgentGuidanceRequest,
     BrowserCardSnapshot,
     BrowserResultSnapshot,
     BrowserSessionSnapshot,
@@ -57,6 +60,8 @@ if TYPE_CHECKING:
 EmitFn = Callable[[BrowserCardSnapshot], Awaitable[None]]
 RequestHandoffFn = Callable[[HandoffRequest], Awaitable[HandoffOutcome]]
 IsCancelledFn = Callable[[], Awaitable[bool]]
+RequestGuidanceFn = Callable[[AgentGuidanceRequest], Awaitable[HandoffOutcome]]
+AgentJoinedFn = Callable[[], Awaitable[bool]]
 
 __all__ = [
     "ActionResultsFn",
@@ -74,6 +79,10 @@ class BrowserRunnerCallbacks:
     request_handoff: RequestHandoffFn
     is_cancelled: IsCancelledFn
     action_results: ActionResultsFn | None = None
+    #: Whether an agent is still joined on this run, one process away, and how to
+    #: ask it. Absent on a run nothing can reach back to, which then ends blocked.
+    agent_joined: AgentJoinedFn | None = None
+    request_guidance: RequestGuidanceFn | None = None
 
 
 class BrowserTaskRunner:
@@ -95,6 +104,8 @@ class BrowserTaskRunner:
         self._request_handoff = callbacks.request_handoff
         self._is_cancelled = callbacks.is_cancelled
         self._action_results = callbacks.action_results
+        self._agent_joined = callbacks.agent_joined
+        self._request_guidance = callbacks.request_guidance
         self._config = config
         self._task_timeout = config.task_timeout_seconds
         # A step that hands off waits on the human, so its budget is active work
@@ -110,6 +121,10 @@ class BrowserTaskRunner:
         self._handed_off = False
         self._handoff_timed_out = False
         self._handoffs = 0
+        self._guidances = 0
+        #: Set when a blocked run asked for guidance and got none; the summary the
+        #: user reads, which is the give-up reason when the agent wrote one.
+        self._blocked_summary: str | None = None
         self._last_step = 0
         # CDN URLs that really uploaded, in step order — the recap's frames.
         self._shots: list[str] = []
@@ -125,6 +140,8 @@ class BrowserTaskRunner:
             takeover=self._handle_takeover,
             should_stop=self._should_stop,
             action_results=self._action_results,
+            guidance_allowed=self._guidance_allowed,
+            guidance=self._handle_guidance,
         )
         return BrowserAgentRun(
             session=self._session,
@@ -183,7 +200,9 @@ class BrowserTaskRunner:
         return await self._finish_after_execute(outcome)
 
     async def _finish_from_handoff(self) -> BrowserResultSnapshot:
-        """Judge a run the handoff ended: expired, completed by the user, or stopped."""
+        """Judge a run the handoff ended: blocked with no guidance, expired, completed by the user, or stopped."""
+        if self._blocked_summary:
+            return await self._finish(BrowserSessionStatus.FAILED, False, self._blocked_summary)
         if self._handoff_timed_out:
             return await self._finish(
                 BrowserSessionStatus.FAILED, False, BROWSER_RUN_HANDOFF_TIMED_OUT
@@ -205,6 +224,8 @@ class BrowserTaskRunner:
         and turns it into an action error, so on a timeout the loop returns
         normally and only the flag the takeover hook set still knows.
         """
+        if self._blocked_summary:
+            return await self._finish(BrowserSessionStatus.FAILED, False, self._blocked_summary)
         if self._handoff_timed_out:
             return await self._finish(
                 BrowserSessionStatus.FAILED, False, BROWSER_RUN_HANDOFF_TIMED_OUT
@@ -246,6 +267,29 @@ class BrowserTaskRunner:
         self._stopped = True
         self._handoff_timed_out = outcome.status == HandoffStatus.TIMEOUT
         log.info(f"{LogTag.BROWSER} Browser takeover ended", status=outcome.status.value)
+        raise BrowserHandoffCancelled(outcome.status.value)
+
+    async def _guidance_allowed(self) -> bool:
+        """Whether a blocked step may still ask the agent that started this run."""
+        if self._request_guidance is None or self._agent_joined is None:
+            return False
+        if self._guidances >= BROWSER_AGENT_GUIDANCE_MAX:
+            return False
+        return await self._agent_joined()
+
+    async def _handle_guidance(self, request: AgentGuidanceRequest) -> str:
+        """Ask the joined agent for one instruction; raise to end the run blocked when none comes back."""
+        if self._request_guidance is None:
+            raise BrowserHandoffCancelled("no-guidance-channel")
+        self._guidances += 1
+        outcome = await self._request_guidance(request)
+        instruction = (outcome.message or "").strip()
+        if outcome.status == HandoffStatus.COMPLETED and instruction:
+            log.info(f"{LogTag.BROWSER} Browser run guided by the agent that started it")
+            return instruction
+        self._stopped = True
+        self._blocked_summary = instruction or BROWSER_RUN_BLOCKED_SUMMARY
+        log.info(f"{LogTag.BROWSER} Browser guidance ended the run", status=outcome.status.value)
         raise BrowserHandoffCancelled(outcome.status.value)
 
     def _record_step(self, frame: StepFrame) -> None:
