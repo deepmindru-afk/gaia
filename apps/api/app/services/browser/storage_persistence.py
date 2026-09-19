@@ -10,7 +10,7 @@ counts and the domain.
 import json
 from urllib.parse import urlparse
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from playwright.sync_api import StorageState, StorageStateCookie
 
 from app.config.settings import settings
@@ -100,7 +100,19 @@ async def load_storage_state(user_id: str, domain: str | None) -> StorageState |
     record = await _saved_profile_for(user_id, domain)
     if record is None:
         return None
-    state: StorageState = _decrypt_state(record.storage_state_blob)
+    try:
+        state: StorageState = _decrypt_state(record.storage_state_blob)
+    except (InvalidToken, ValueError) as exc:
+        # A key rotation or a restored DB leaves a blob nobody can read again;
+        # that is "nothing to seed with", exactly what this function already
+        # promises, so drop the dead row instead of failing every task forever.
+        log.warning(
+            f"{LogTag.BROWSER} Saved browser login unreadable, starting fresh",
+            domain=domain,
+            error_type=type(exc).__name__,
+        )
+        await browser_profile_repository.delete_for_user(user_id, record.domain)
+        return None
     log.info(
         f"{LogTag.BROWSER} Loaded saved browser login",
         domain=domain,

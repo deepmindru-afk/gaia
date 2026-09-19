@@ -105,6 +105,23 @@ async def test_load_none_when_nothing_saved(monkeypatch: pytest.MonkeyPatch) -> 
     assert await load_storage_state("u1", "example.com") is None
 
 
+async def test_load_drops_the_row_and_returns_none_when_the_blob_is_undecryptable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blob encrypted under a rotated BROWSER_STATE_ENCRYPTION_KEY must not brick every future task for this user+domain -- an unreadable blob is "nothing to seed with", same as no record at all."""
+    record = MagicMock(storage_state_blob="not-a-valid-fernet-token", domain="example.com")
+    monkeypatch.setattr(
+        sp.browser_profile_repository, "get_for_domain", AsyncMock(return_value=record)
+    )
+    delete = AsyncMock(return_value=1)
+    monkeypatch.setattr(sp.browser_profile_repository, "delete_for_user", delete)
+
+    loaded = await load_storage_state("u1", "example.com")
+
+    assert loaded is None
+    delete.assert_awaited_once_with("u1", "example.com")
+
+
 async def test_load_none_without_user_or_domain(monkeypatch: pytest.MonkeyPatch) -> None:
     get_for_domain = AsyncMock()
     monkeypatch.setattr(sp.browser_profile_repository, "get_for_domain", get_for_domain)
