@@ -304,6 +304,11 @@ class JevNoteSource(StrEnum):
     AGENT = "agent"
 
 
+# The user's own request rides along with the executor's task text, clipped to
+# this many characters; the executor rewrote "tick the second checkbox" into an
+# invented label twice and the browser skipped the step both times.
+BROWSER_USER_WORDS_MAX_CHARS = 1000
+
 # Jev sees the viewport only; this bounds one screen. Measured on Wikipedia:
 # 200 rows is 64,483 bytes, the gateway 400s max_tokens_exceeded from 86,133
 # bytes up, and refuses a question with over 255 choices.

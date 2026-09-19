@@ -22,6 +22,7 @@ from app.constants.browser import (
     BROWSER_JOB_JOINER_REFRESH_SECONDS,
     BROWSER_JOB_POLL_INTERVAL_SECONDS,
     BROWSER_JOB_TASK,
+    BROWSER_USER_WORDS_MAX_CHARS,
     BrowserSessionStatus,
     HandoffDecision,
 )
@@ -77,6 +78,7 @@ class _RunParams:
     root_request_id: str | None
     source_category: str | None
     conversation_source: ConversationSource | None
+    user_request: str | None
 
 
 class _RunConfigurable(BaseModel):
@@ -91,6 +93,7 @@ class _RunConfigurable(BaseModel):
     root_request_id: str | None = None
     source_category: str | None = None
     conversation_source: str | None = None
+    user_request: str | None = None
 
 
 def _run_params(config: RunnableConfig) -> _RunParams:
@@ -105,7 +108,19 @@ def _run_params(config: RunnableConfig) -> _RunParams:
         stream_id=configurable.stream_id,
         root_request_id=configurable.root_request_id,
         source_category=configurable.source_category,
+        user_request=configurable.user_request,
         conversation_source=conv_source,
+    )
+
+
+def _with_the_users_words(task: str, user_request: str | None) -> str:
+    """Append the user's own request to the task, so a rewrite that names a control wrongly cannot lose the step."""
+    words = " ".join((user_request or "").split())[:BROWSER_USER_WORDS_MAX_CHARS]
+    if not words:
+        return task
+    return (
+        f"{task}\n\nThe user's own words, which this task serves and which decide where the "
+        f'two differ: "{words}"'
     )
 
 
@@ -157,6 +172,7 @@ async def browser_task(
             "Call wait_for_browser_task() to collect it before starting another."
         )
 
+    task = _with_the_users_words(task, params.user_request)
     request = _job_request(params, job_id, task, start_url)
     await put_job_state(BrowserJobState(job_id=job_id, status=BrowserJobStatus.QUEUED, task=task))
     if not await _enqueue(request):

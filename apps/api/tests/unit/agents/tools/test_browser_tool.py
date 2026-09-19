@@ -357,3 +357,37 @@ async def test_no_stream_means_no_relay_but_the_job_still_runs(
 
     assert recorder.relays == []
     assert len(recorder.enqueued) == 1
+
+
+async def test_the_users_own_words_ride_along_with_the_executors_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The executor twice rewrote "tick the second checkbox" into an invented label, and the step was skipped."""
+    recorder = _install(monkeypatch)
+    config: RunnableConfig = {
+        "configurable": {
+            "user_id": "u1",
+            "conversation_id": "conv-9",
+            "user_request": "use the browser:   tick the second checkbox\nand submit",
+        }
+    }
+
+    await browser_task.ainvoke(
+        {"task": "Tick the box labeled Checked, then submit."}, config=config
+    )
+
+    task = recorder.request.task
+    assert task.startswith("Tick the box labeled Checked, then submit.")
+    assert "own words" in task
+    assert "use the browser: tick the second checkbox and submit" in task
+
+
+async def test_a_turn_with_no_user_request_leaves_the_task_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _install(monkeypatch)
+    config: RunnableConfig = {"configurable": {"user_id": "u1", "conversation_id": "conv-9"}}
+
+    await browser_task.ainvoke({"task": "book a table"}, config=config)
+
+    assert recorder.request.task == "book a table"
