@@ -97,8 +97,13 @@ _SCREEN_JS = r"""(limit) => {
     const rect = range.getBoundingClientRect();
     if (!rect.width || !rect.height) continue;
     if (rect.bottom <= 0 || rect.top >= h || rect.right <= 0 || rect.left >= w) continue;
-    lines.push(text);
-    total += text.length + 1;
+    // A label the page cut short ("The Road to Little...") carries its full text in title.
+    const stem = text.replace(/(\.\.\.|\u2026)$/, '').trim();
+    const holder = stem !== text ? parent.closest('[title]') : null;
+    const full = holder ? (holder.getAttribute('title') || '').trim() : '';
+    const shown = full.startsWith(stem) ? full : text;
+    lines.push(shown);
+    total += shown.length + 1;
     if (total >= limit) break;
   }
   return {text: lines.join('\n'), url: location.href, title: document.title};
