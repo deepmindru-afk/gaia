@@ -60,7 +60,11 @@ _OPERATION_LABELS: dict[JevOperation, str] = {
     JevOperation.DONE: (
         "Every requirement is visibly satisfied right now: the page that holds the answer is "
         "itself open, and the answer is readable on this screen. A search result, a link title, "
-        "a snippet about the page, or anything you already know is not enough."
+        "a snippet about the page, or anything you already know is not enough. When the goal asks "
+        "for the cheapest, the most, the best, the first, the last, the newest, a count, a total, "
+        "or every item of a list, that whole list must already have been seen: scrolled down until "
+        "nothing new appeared, and paged through to its last page. One screenful of a list is a "
+        "sample, not the list."
     ),
     JevOperation.BLOCKED: "No supported operation can progress.",
 }

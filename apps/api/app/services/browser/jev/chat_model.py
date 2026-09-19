@@ -53,6 +53,7 @@ from app.services.browser.jev.prompts import (
     TEXT_VALUE,
     URL_VALUE,
 )
+from app.services.browser.jev.seen_text import SeenText
 from app.services.browser.jev.viewport import ViewportBox, read_viewport
 from app.services.browser.run_contract import GuidanceGate
 from shared.py.wide_events import log
@@ -117,6 +118,7 @@ class JevChatModel:
         self._done_reasks_left = JEV_DONE_REASK_BUDGET
         self._guidance_allowed: GuidanceGate | None = None
         self._observation: JevObservation | None = None
+        self._seen_text = SeenText()
         #: One-shot: guidance just arrived, so this next step may not give up on it.
         self._blocked_suppressed = False
 
@@ -186,6 +188,7 @@ class JevChatModel:
         self._viewport = screen.boxes
         observation = observe(state, await read_live_values(self._browser), screen)
         self._observation = observation
+        self._seen_text.record(observation.url, observation.text)
         self._settle_previous_step(observation)
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
@@ -306,7 +309,9 @@ class JevChatModel:
     ) -> tuple[dict[str, dict[str, object]], str | None]:
         if decision.operation is JevOperation.BLOCKED:
             return await self._blocked_action(goal, observation, registered)
-        summary = await self._field_text(DONE_SUMMARY, goal, observation, None)
+        summary = await self._field_text(
+            DONE_SUMMARY, goal, observation, None, seen_text=self._seen_text.text
+        )
         return {"done": {"text": summary or "Completed the task.", "success": True}}, summary
 
     async def _blocked_action(
@@ -387,9 +392,16 @@ class JevChatModel:
         return None
 
     async def _field_text(
-        self, instructions: str, goal: str, observation: JevObservation, field: JevElement | None
+        self,
+        instructions: str,
+        goal: str,
+        observation: JevObservation,
+        field: JevElement | None,
+        seen_text: str | None = None,
     ) -> str | None:
-        answer = await self._structured(_TextValue, instructions, goal, observation, field)
+        answer = await self._structured(
+            _TextValue, instructions, goal, observation, field, seen_text
+        )
         value = answer.text if answer else None
         if not value or not value.strip() or len(value) > JEV_TEXT_VALUE_MAX_CHARS:
             return None
@@ -402,6 +414,7 @@ class JevChatModel:
         goal: str,
         observation: JevObservation,
         field: JevElement | None,
+        seen_text: str | None = None,
     ) -> T | None:
         """Goal, field, page and recent actions in; one small JSON value out."""
         from browser_use.llm.messages import (  # noqa: PLC0415 -- heavy optional dep
@@ -409,7 +422,7 @@ class JevChatModel:
             UserMessage,
         )
 
-        context = {
+        context: dict[str, object] = {
             "goal": goal,
             "field": {"label": field.label, "role": field.role, "value": field.value}
             if field
@@ -421,6 +434,8 @@ class JevChatModel:
             ],
             "latest_note": self._latest_note(),
         }
+        if seen_text:
+            context["seen_on_this_page"] = seen_text
         try:
             result = await self.text_model.ainvoke(
                 [SystemMessage(content=instructions), UserMessage(content=json.dumps(context))],

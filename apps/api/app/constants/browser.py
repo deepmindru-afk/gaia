@@ -315,6 +315,9 @@ JEV_GATEWAY_MAX_ATTEMPTS = 3
 # Observation budget: visible page text sent as Jev state, and how much of the
 # run's own action history rides along as context.
 JEV_PAGE_TEXT_MAX_CHARS = 6000
+# What the closing summary may read back from screens of the same page already
+# scrolled past, on top of the current one: three screenfuls of a list.
+JEV_SEEN_TEXT_MAX_CHARS = 18000
 JEV_ELEMENT_LABEL_MAX_CHARS = 120
 JEV_RECENT_ACTIONS = 10
 JEV_TEXT_HELPER_RECENT_ACTIONS = 6

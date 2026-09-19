@@ -40,6 +40,8 @@ from app.services.browser.jev.prompts import (
     URL_VALUE,
 )
 
+from .conftest import FakeNode, make_state
+
 pytestmark = pytest.mark.unit
 
 
@@ -480,6 +482,37 @@ async def test_done_without_a_summary_still_completes(flights_state) -> None:
     result = await model.ainvoke([], _agent_output())
 
     assert _action(result.completion)["done"]["text"] == "Completed the task."
+
+
+async def test_the_closing_summary_reads_every_screen_of_the_page_not_just_the_last(
+    flights_state,
+) -> None:
+    """Regression: DONE named a 36.94 book because the cheapest had already scrolled off screen."""
+    model, _, helper, session = _model(
+        flights_state,
+        [("SCROLL_DOWN", None), ("DONE", None)],
+        [{"text": "The cheapest is The Road to Little Dribbling at 23.21."}],
+    )
+    await model.ainvoke([], _agent_output())
+
+    session.state = make_state({1: FakeNode("DIV", text="The Road to Little Dribbling 23.21")})
+    await model.ainvoke([], _agent_output())
+
+    seen = helper.context(0)["seen_on_this_page"]
+    assert "Search" in seen
+    assert "The Road to Little Dribbling 23.21" in seen
+
+
+async def test_the_summary_memory_drops_what_a_different_page_showed(flights_state) -> None:
+    model, _, helper, session = _model(
+        flights_state, [("CLICK", "4"), ("DONE", None)], [{"text": "Order confirmed."}]
+    )
+    await model.ainvoke([], _agent_output())
+
+    session.state = make_state({1: FakeNode("H1", text="Form submitted")}, url="https://x/thanks")
+    await model.ainvoke([], _agent_output())
+
+    assert "Search" not in helper.context(0)["seen_on_this_page"]
 
 
 async def test_history_carries_page_changed_and_typed_text_into_the_next_request(
