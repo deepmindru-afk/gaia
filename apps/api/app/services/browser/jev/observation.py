@@ -22,7 +22,7 @@ from app.constants.browser import (
 )
 from app.constants.log_tags import LogTag
 from app.services.browser.jev.live_values import LiveValues
-from app.services.browser.jev.viewport import ViewportRead
+from app.services.browser.jev.viewport import ViewportRead, normalize_page_text
 from shared.py.wide_events import log
 
 if TYPE_CHECKING:
@@ -218,7 +218,7 @@ def _page_text(state: BrowserStateSummary) -> str:
         return ""
     # The serialiser emits the source HTML's entities; the screen text path,
     # which walks text nodes, never does. Jev and the user read the same string.
-    return html.unescape(str(text))[:JEV_PAGE_TEXT_MAX_CHARS]
+    return normalize_page_text(html.unescape(str(text)))[:JEV_PAGE_TEXT_MAX_CHARS]
 
 
 def _fingerprint(observation: JevObservation) -> str:

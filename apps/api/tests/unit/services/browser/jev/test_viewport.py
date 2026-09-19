@@ -291,3 +291,12 @@ async def test_a_text_read_that_fails_leaves_the_text_unknown(monkeypatch) -> No
     # The element table survives a text failure; only the text is lost.
     assert screen.boxes == {7: ViewportBox(on_screen=True, cx=0.5, cy=0.5)}
     logger.warning.assert_called_once()
+
+
+async def test_the_screens_text_is_stripped_of_zero_width_and_doubled_spaces() -> None:
+    """Regression: a delivered sentence read "January  <ZWSP>1,  <ZWSP>1992"."""
+    client = _ScreenClient(text="January  \u200b1,  \u200b1992\nNext\u00a0line  here")
+
+    screen = await read_viewport(_screen_browser(client), {7: _node("html/body/a")})
+
+    assert screen.text == "January 1, 1992\nNext line here"

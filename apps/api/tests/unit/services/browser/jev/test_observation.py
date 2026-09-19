@@ -312,3 +312,11 @@ def test_html_entities_in_the_fallback_page_text_are_decoded(flights_state) -> N
     flights_state.dom_state.llm_representation = lambda: "Grace Hopper (n&#233;e Murray)"
 
     assert observe(flights_state).text == "Grace Hopper (née Murray)"
+
+
+def test_zero_width_and_doubled_spaces_in_the_fallback_page_text_are_normalised(
+    flights_state,
+) -> None:
+    flights_state.dom_state.llm_representation = lambda: "January  \u200b1,  1992"
+
+    assert observe(flights_state).text == "January 1, 1992"

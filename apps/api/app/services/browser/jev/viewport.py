@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field, replace
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 from app.constants.browser import JEV_PAGE_TEXT_MAX_CHARS
@@ -104,6 +105,19 @@ _SCREEN_JS = r"""(limit) => {
 }"""
 
 
+# Zero-width characters survive a JS \s+ collapse and reach the user's answer
+# as stray gaps ("January  <ZWSP>1,  <ZWSP>1992"); NBSP becomes a plain space.
+_INVISIBLE = str.maketrans(
+    {"\u200b": None, "\u200c": None, "\u200d": None, "\ufeff": None, "\u00a0": " "}
+)
+_SPACE_RUN = re.compile(r"[ \t]+")
+
+
+def normalize_page_text(text: str) -> str:
+    """Return page text a person can read: no zero-width characters, one space per run, lines kept."""
+    return _SPACE_RUN.sub(" ", text.translate(_INVISIBLE))
+
+
 @dataclass(frozen=True)
 class _Target:
     index: int
@@ -192,7 +206,7 @@ async def _screen(session: CDPSession) -> ViewportRead:
         return ViewportRead()
     text = value.get("text")
     return ViewportRead(
-        text=str(text)[:JEV_PAGE_TEXT_MAX_CHARS] if isinstance(text, str) else None,
+        text=normalize_page_text(text)[:JEV_PAGE_TEXT_MAX_CHARS] if isinstance(text, str) else None,
         url=_field(value, "url"),
         title=_field(value, "title"),
     )
