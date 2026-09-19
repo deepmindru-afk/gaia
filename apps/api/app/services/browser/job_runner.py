@@ -70,6 +70,12 @@ from shared.py.wide_events import log
 #: Where one already-shaped stream frame goes: the job's own replayable feed.
 FramePublisher = Callable[[dict[str, Any]], Awaitable[None]]
 
+# Many exceptions stringify to "", which left "...unexpectedly:" dangling.
+# Fixed copy, no exception text. TODO(browser-constants): move to constants/browser.py.
+_JOB_CRASHED_SUMMARY = (
+    "the browser task stopped unexpectedly, and nothing else changed; you can ask me to try again"
+)
+
 # Screenshots stream into the chat live, so the reply must never narrate them.
 _NO_META = (
     "The step-by-step screenshots were already shown to the user in this chat, so do "
@@ -519,10 +525,10 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
         log.error(
             f"{LogTag.BROWSER} Browser job crashed",
             error_type=type(exc).__name__,
+            error=str(exc),
             browser={"job_id": request.job_id},
+            exc_info=True,
         )
-        return await _terminal_failure(
-            emitter, f"the browser task stopped unexpectedly: {exc}", session_id
-        )
+        return await _terminal_failure(emitter, _JOB_CRASHED_SUMMARY, session_id)
     finally:
         reset_fingerprint_seed(seed_token)

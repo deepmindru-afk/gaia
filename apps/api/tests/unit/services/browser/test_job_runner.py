@@ -459,14 +459,42 @@ async def test_a_crash_inside_the_run_is_one_failed_card_on_the_feed(
 
     out = await _run(h, _request(task="x"))
 
-    summary = "the browser task stopped unexpectedly: the page exploded"
+    summary = jr._JOB_CRASHED_SUMMARY
     assert [c for c in h.cards if c["kind"] == "result"] == [_failed_card(summary)]
     assert out == _failed_message(summary)
+    assert not summary.endswith(":")
+    assert "None" not in summary
     fake_log.error.assert_called_once_with(
         f"{LogTag.BROWSER} Browser job crashed",
         error_type="RuntimeError",
+        error="the page exploded",
         browser={"job_id": "job-1"},
+        exc_info=True,
     )
+
+
+@pytest.mark.regression
+async def test_a_crash_with_an_empty_str_exception_still_reads_as_a_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """cryptography.fernet.InvalidToken and friends stringify to "" -- the old f"...unexpectedly: {exc}" left a dangling colon with nothing after it."""
+
+    class _SilentError(Exception):
+        def __str__(self) -> str:
+            return ""
+
+    async def _boom(h: Harness) -> BrowserResultSnapshot:
+        raise _SilentError
+
+    h = _install(monkeypatch, run_body=_boom)
+
+    out = await _run(h, _request(task="x"))
+
+    summary = jr._JOB_CRASHED_SUMMARY
+    assert [c for c in h.cards if c["kind"] == "result"] == [_failed_card(summary)]
+    assert out == _failed_message(summary)
+    assert not summary.rstrip().endswith(":")
+    assert "None" not in summary
 
 
 async def test_a_cancelled_run_emits_the_failed_card_and_still_propagates(
@@ -871,7 +899,7 @@ async def test_handoff_keepalive_is_cancelled_when_await_handoff_raises(
     out = await _run(h, _request())
     await asyncio.sleep(0)
 
-    assert out == _failed_message("the browser task stopped unexpectedly: redis down")
+    assert out == _failed_message(jr._JOB_CRASHED_SUMMARY)
     assert len(tasks) == 1
     assert tasks[0].cancelled()
 
