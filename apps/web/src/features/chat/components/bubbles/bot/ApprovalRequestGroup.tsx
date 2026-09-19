@@ -114,7 +114,6 @@ export default function ApprovalRequestGroup({
           <Button
             color="primary"
             size="sm"
-            isLoading={batchSubmitting === "approve"}
             isDisabled={batchSubmitting !== null}
             onPress={() => decideAll("approve")}
           >
@@ -123,7 +122,6 @@ export default function ApprovalRequestGroup({
           <Button
             variant="flat"
             size="sm"
-            isLoading={batchSubmitting === "deny"}
             isDisabled={batchSubmitting !== null}
             onPress={() => decideAll("deny")}
           >

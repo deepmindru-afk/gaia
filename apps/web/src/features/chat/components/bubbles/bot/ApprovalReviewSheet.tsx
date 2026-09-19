@@ -231,7 +231,6 @@ export default function ApprovalReviewSheet({
           </span>
           <Button
             color="primary"
-            isLoading={submitting}
             isDisabled={decidedIds.length === 0 || submitting}
             onPress={submit}
           >

@@ -14,7 +14,7 @@ import type {
   ApprovalStatus,
 } from "@shared/chat";
 import { formatApprovalAge, RECONFIRM_AGE_SECONDS } from "@shared/chat";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { ShieldAlertIcon } from "@/components/shared/icons";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
@@ -51,11 +51,7 @@ function ArgsPreview({ args }: { args: Record<string, unknown> }) {
   );
 }
 
-/** Pre-commit pause on approve taps: the decision hasn't touched the ledger
- * yet, so regret costs nothing. A client constant, never ledger state. */
-const COMMIT_GRACE_MS = 4000;
-
-type Phase = "idle" | "reconfirm" | "grace" | "submitting";
+type Phase = "idle" | "reconfirm" | "submitting";
 
 export default function ApprovalRequestSection({
   data,
@@ -68,16 +64,8 @@ export default function ApprovalRequestSection({
   // A stale-v tap committed nothing; the next submit omits v so the CAS —
   // not the version check — decides. v is an optimization, never a gate.
   const [versionConflict, setVersionConflict] = useState(false);
-  const graceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locked = submitting !== null || disabled || phase === "submitting";
   const markApprovalDecided = useMarkApprovalDecided();
-
-  useEffect(
-    () => () => {
-      if (graceTimer.current !== null) clearTimeout(graceTimer.current);
-    },
-    [],
-  );
 
   const needsReconfirm = (data.age_seconds ?? 0) >= RECONFIRM_AGE_SECONDS;
 
@@ -133,16 +121,9 @@ export default function ApprovalRequestSection({
       setPhase("reconfirm");
       return;
     }
-    setPhase("grace");
-    graceTimer.current = setTimeout(() => submit("approve"), COMMIT_GRACE_MS);
-  };
-
-  const cancelGrace = () => {
-    if (graceTimer.current !== null) {
-      clearTimeout(graceTimer.current);
-      graceTimer.current = null;
-    }
-    setPhase("idle");
+    // No commit grace: the tap IS the decision. The ledger CAS makes a
+    // double tap harmless, so there is nothing a waiting room would protect.
+    void submit("approve");
   };
 
   if (data.status !== "pending") return null;
@@ -167,21 +148,6 @@ export default function ApprovalRequestSection({
           </Button>
           <Button variant="flat" size="sm" onPress={() => setPhase("idle")}>
             Back
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === "grace") {
-    return (
-      <div className="w-full max-w-md rounded-2xl bg-zinc-800 p-4 text-white">
-        <div className="text-sm leading-snug text-zinc-100">
-          Sending your approval…
-        </div>
-        <div className="mt-3 flex items-center gap-2">
-          <Button variant="flat" size="sm" onPress={cancelGrace}>
-            Cancel
           </Button>
         </div>
       </div>
@@ -230,7 +196,6 @@ export default function ApprovalRequestSection({
         <Button
           color="primary"
           size="sm"
-          isLoading={submitting === "approve"}
           isDisabled={locked}
           onPress={onApproveTap}
         >
@@ -239,7 +204,6 @@ export default function ApprovalRequestSection({
         <Button
           variant="flat"
           size="sm"
-          isLoading={submitting === "deny"}
           isDisabled={locked}
           onPress={() => submit("deny")}
         >

@@ -39,6 +39,12 @@ function WaitingForApprovalPill() {
 }
 
 // A settled decision rides its tool's own row — one place tells the whole story.
+// The receipt (execution outcome, denial reason) travels as feedback so the
+// row shows not just "Approved" but what the approval did.
+export interface ApprovalOutcome {
+  status: ApprovalStatus;
+  feedback: string | null;
+}
 const APPROVAL_CHIP: Record<
   string,
   { label: string; color: "success" | "danger" | "warning" }
@@ -50,18 +56,27 @@ const APPROVAL_CHIP: Record<
   abandoned: { label: "Expired", color: "warning" },
 };
 
-function ApprovalOutcomeChip({ status }: Readonly<{ status: ApprovalStatus }>) {
-  const chip = APPROVAL_CHIP[status];
+function ApprovalOutcomeChip({
+  outcome,
+}: Readonly<{ outcome: ApprovalOutcome }>) {
+  const chip = APPROVAL_CHIP[outcome.status];
   if (!chip) return null;
   return (
-    <Chip
-      size="sm"
-      variant="flat"
-      color={chip.color}
-      className="ml-2 h-5 text-[10px]"
-    >
-      {chip.label}
-    </Chip>
+    <span className="ml-2 inline-flex min-w-0 items-center gap-1.5">
+      <Chip
+        size="sm"
+        variant="flat"
+        color={chip.color}
+        className="h-5 shrink-0 text-[10px]"
+      >
+        {chip.label}
+      </Chip>
+      {outcome.feedback && (
+        <span className="truncate text-[10px] text-zinc-500">
+          {outcome.feedback}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -122,7 +137,7 @@ function ToolCallRow({
   getIconUrl,
   getIntegrationName,
   awaitingApproval,
-  approvalStatus,
+  approvalOutcome,
 }: Readonly<{
   call: ToolCallEntry;
   isLast: boolean;
@@ -131,7 +146,7 @@ function ToolCallRow({
   /** This tool call is blocked on a pending HIL approval. */
   awaitingApproval: boolean;
   /** Settled HIL outcome for this call, rendered as a chip on the row. */
-  approvalStatus?: ApprovalStatus;
+  approvalOutcome?: ApprovalOutcome;
 }>) {
   const [expanded, setExpanded] = useState(false);
 
@@ -230,7 +245,9 @@ function ToolCallRow({
                 <WaitingForApprovalPill />
               </span>
             )}
-            {approvalStatus && <ApprovalOutcomeChip status={approvalStatus} />}
+            {approvalOutcome && (
+              <ApprovalOutcomeChip outcome={approvalOutcome} />
+            )}
           </div>
           {hasCategoryText && (
             <p className="text-[11px] text-zinc-600 leading-tight">
@@ -344,12 +361,12 @@ export function StepRow(
     getIconUrl: (c: ToolCallEntry) => string | undefined;
     getIntegrationName: (c: ToolCallEntry) => string | undefined;
     pendingApprovalToolCallIds: Set<string>;
-    approvalStatusByToolCallId?: Map<string, ApprovalStatus>;
+    approvalOutcomeByToolCallId?: Map<string, ApprovalOutcome>;
   }>,
 ) {
   const {
     pendingApprovalToolCallIds,
-    approvalStatusByToolCallId,
+    approvalOutcomeByToolCallId,
     ...rowProps
   } = props;
   if (props.call.reasoning != null) {
@@ -360,14 +377,14 @@ export function StepRow(
   const awaitingApproval =
     !!props.call.tool_call_id &&
     pendingApprovalToolCallIds.has(props.call.tool_call_id);
-  const approvalStatus = props.call.tool_call_id
-    ? approvalStatusByToolCallId?.get(props.call.tool_call_id)
+  const approvalOutcome = props.call.tool_call_id
+    ? approvalOutcomeByToolCallId?.get(props.call.tool_call_id)
     : undefined;
   return (
     <ToolCallRow
       {...rowProps}
       awaitingApproval={awaitingApproval}
-      approvalStatus={approvalStatus}
+      approvalOutcome={approvalOutcome}
     />
   );
 }
@@ -381,7 +398,7 @@ export function SubagentRow({
   getIconUrl,
   getIntegrationName,
   pendingApprovalToolCallIds,
-  approvalStatusByToolCallId,
+  approvalOutcomeByToolCallId,
 }: Readonly<{
   group: EnrichedSubagentGroup;
   isLast: boolean;
@@ -394,7 +411,7 @@ export function SubagentRow({
   /** tool_call_ids blocked on a pending HIL approval — surfaces "Waiting for
    *  approval" on the matching step and this subagent's header. */
   pendingApprovalToolCallIds: Set<string>;
-  approvalStatusByToolCallId?: Map<string, ApprovalStatus>;
+  approvalOutcomeByToolCallId?: Map<string, ApprovalOutcome>;
 }>) {
   // Running only while the stream is open: completed_at is null both for a
   // genuinely-running subagent AND for one whose end event never arrived, so
@@ -486,7 +503,7 @@ export function SubagentRow({
                       getIconUrl={getIconUrl}
                       getIntegrationName={getIntegrationName}
                       pendingApprovalToolCallIds={pendingApprovalToolCallIds}
-                      approvalStatusByToolCallId={approvalStatusByToolCallId}
+                      approvalOutcomeByToolCallId={approvalOutcomeByToolCallId}
                     />
                   ))}
                 </div>
@@ -571,7 +588,9 @@ export function SubagentRow({
                         getIconUrl={getIconUrl}
                         getIntegrationName={getIntegrationName}
                         pendingApprovalToolCallIds={pendingApprovalToolCallIds}
-                        approvalStatusByToolCallId={approvalStatusByToolCallId}
+                        approvalOutcomeByToolCallId={
+                          approvalOutcomeByToolCallId
+                        }
                       />
                     ))}
                   </div>
@@ -588,7 +607,9 @@ export function SubagentRow({
                         getIconUrl={getIconUrl}
                         getIntegrationName={getIntegrationName}
                         pendingApprovalToolCallIds={pendingApprovalToolCallIds}
-                        approvalStatusByToolCallId={approvalStatusByToolCallId}
+                        approvalOutcomeByToolCallId={
+                          approvalOutcomeByToolCallId
+                        }
                       />
                     ))}
                   </div>

@@ -37,7 +37,6 @@ const card = (
 
 describe("ApprovalRequestSection ledger UX", () => {
   beforeEach(() => {
-    vi.useRealTimers();
     vi.mocked(chatApi.postApprovalDecision)
       .mockReset()
       .mockResolvedValue({ success: true });
@@ -54,7 +53,6 @@ describe("ApprovalRequestSection ledger UX", () => {
   });
 
   it("asks in place before submitting a day-old approval", async () => {
-    vi.useFakeTimers();
     render(
       <ApprovalRequestSection
         data={card({ age_seconds: 259200 })}
@@ -66,13 +64,12 @@ describe("ApprovalRequestSection ledger UX", () => {
     expect(screen.getByText(/still want this/i)).toBeDefined();
     expect(chatApi.postApprovalDecision).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /yes, still/i }));
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(chatApi.postApprovalDecision).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
+    await vi.waitFor(() =>
+      expect(chatApi.postApprovalDecision).toHaveBeenCalledTimes(1),
+    );
   });
 
-  it("holds a fresh approve behind commit grace and cancels cleanly", async () => {
-    vi.useFakeTimers();
+  it("submits immediately on approve tap — no waiting room", async () => {
     render(
       <ApprovalRequestSection
         data={card({ age_seconds: 5 })}
@@ -80,16 +77,15 @@ describe("ApprovalRequestSection ledger UX", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /^approve$/i }));
-    expect(chatApi.postApprovalDecision).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /cancel/i })).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(chatApi.postApprovalDecision).not.toHaveBeenCalled();
-    vi.useRealTimers();
+    // No "Sending your approval" interstitial, no cancel button.
+    expect(screen.queryByText(/sending your approval/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
+    await vi.waitFor(() =>
+      expect(chatApi.postApprovalDecision).toHaveBeenCalledTimes(1),
+    );
   });
 
   it("submits the rendered row version with the decision", async () => {
-    vi.useFakeTimers();
     const onDecided = vi.fn();
     render(
       <ApprovalRequestSection
@@ -98,13 +94,13 @@ describe("ApprovalRequestSection ledger UX", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /^approve$/i }));
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(chatApi.postApprovalDecision).toHaveBeenCalledWith("ap_1", {
-      decision: "approve",
-      feedback: undefined,
-      scope: "once",
-      v: 4,
-    });
-    vi.useRealTimers();
+    await vi.waitFor(() =>
+      expect(chatApi.postApprovalDecision).toHaveBeenCalledWith("ap_1", {
+        decision: "approve",
+        feedback: undefined,
+        scope: "once",
+        v: 4,
+      }),
+    );
   });
 });
