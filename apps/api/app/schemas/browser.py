@@ -202,6 +202,9 @@ class AgentGuidanceRequest(BaseModel):
     page_text: str = ""
     elements: list[GuidanceElement] = Field(default_factory=list)
     recent_actions: list[GuidanceAction] = Field(default_factory=list)
+    # Instructions the user sent mid-run. Without them the executor guides
+    # toward the original task and sends the run back to a step they declined.
+    user_notes: list[str] = Field(default_factory=list)
 
 
 class PendingAgentGuidance(BaseModel):

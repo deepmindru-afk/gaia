@@ -896,3 +896,79 @@ async def test_an_agent_note_guides_the_goal_without_replacing_the_users_task(
         "use the mobile site, m.example.test"
     )
     assert "Task, which still stands: Fly Zurich to London" in goal
+
+
+@pytest.mark.regression
+async def test_an_agent_note_after_a_user_note_still_keeps_the_handoffs_off_the_table(
+    flights_state,
+) -> None:
+    """Regression: the agent's guidance landed after the note, so the run re-asked the login the user had cancelled."""
+    model, gateway, _ = _guided_model(
+        flights_state,
+        [("REQUEST_HUMAN", None), ("BLOCKED", None), ("CLICK", "4"), ("CLICK", "4")],
+        [{"text": "Sign in to your Reddit account", "category": "credentials"}, {"text": "stuck"}],
+    )
+    await model.ainvoke([], _guidance_output())
+    model.note_from_user("skip the upvote, just tell me the title of the top post")
+    await model.ainvoke([], _guidance_output())
+
+    model.note_from_agent("sign in with the saved password")
+    await model.ainvoke([], _guidance_output())
+    await model.ainvoke([], _guidance_output())
+
+    for request in gateway.requests[1:]:
+        offered = set(request.questions["operation"].criteria)
+        assert "REQUEST_HUMAN" not in offered
+        assert "SOLVE_CAPTCHA" not in offered
+
+
+@pytest.mark.regression
+async def test_the_goal_leads_with_the_user_note_and_still_carries_the_agents_guidance(
+    flights_state,
+) -> None:
+    """Regression: the later agent note replaced the user's instruction, so Jev was told the original task still stood."""
+    model, gateway, _ = _guided_model(
+        flights_state,
+        [("REQUEST_HUMAN", None), ("BLOCKED", None), ("CLICK", "4")],
+        [{"text": "Sign in", "category": "credentials"}, {"text": "stuck"}],
+    )
+    await model.ainvoke([], _guidance_output())
+    model.note_from_user("skip the login, just tell me the page title")
+    await model.ainvoke([], _guidance_output())
+
+    model.note_from_agent("use the mobile site, m.example.test")
+    await model.ainvoke([], _guidance_output())
+
+    goal = gateway.requests[2].questions["operation"].instructions["goal"]
+    assert goal.index("skip the login, just tell me the page title") < goal.index(
+        "use the mobile site, m.example.test"
+    )
+    assert goal.index("use the mobile site, m.example.test") < goal.index("Fly Zurich to London")
+    assert goal.startswith("Latest instruction from the user, which overrides the task below: ")
+    assert "Original task: Fly Zurich to London" in goal
+
+
+@pytest.mark.regression
+async def test_the_guidance_request_carries_what_the_user_changed_mid_run(flights_state) -> None:
+    """Regression: the executor guided toward the original task because nothing told it the user had changed it."""
+    model, _, _ = _guided_model(
+        flights_state,
+        [("REQUEST_HUMAN", None), ("BLOCKED", None)],
+        [{"text": "Sign in", "category": "credentials"}, {"text": "stuck"}],
+    )
+    await model.ainvoke([], _guidance_output())
+    model.note_from_user("skip the login, just tell me the page title")
+    await model.ainvoke([], _guidance_output())
+
+    assert model.guidance_request("stuck").user_notes == [
+        "skip the login, just tell me the page title"
+    ]
+
+
+async def test_a_guidance_request_on_a_run_nobody_redirected_carries_no_notes(
+    flights_state,
+) -> None:
+    model, _, _ = _guided_model(flights_state, [("BLOCKED", None)], [{"text": "stuck"}])
+    await model.ainvoke([], _guidance_output())
+
+    assert model.guidance_request("stuck").user_notes == []

@@ -190,10 +190,10 @@ class JevChatModel:
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
         offered = _offered_operations(registered)
-        note = self._latest_note_entry()
-        if note is not None and note.note_source is not JevNoteSource.AGENT:
+        if self._latest_note_from(JevNoteSource.USER):
             # The user answered a takeover with an instruction; handing the same step
-            # back ignores what they said, then blames them when it times out.
+            # back ignores what they said, then blames them when it times out. A later
+            # agent note says how to proceed and never restores what they declined.
             offered -= _HANDOFF_OPERATIONS
         if self._blocked_suppressed:
             # The agent just said how to proceed; giving up on the same step would
@@ -472,6 +472,9 @@ class JevChatModel:
                 GuidanceAction(action=h.action, page_changed=h.page_changed)
                 for h in self._history[-BROWSER_GUIDANCE_RECENT_ACTIONS:]
             ],
+            user_notes=[
+                h.note for h in self._history if h.note and h.note_source is JevNoteSource.USER
+            ],
         )
 
     def _settle_previous_step(self, observation: JevObservation) -> None:
@@ -484,30 +487,38 @@ class JevChatModel:
         self._last_fingerprint = observation.fingerprint
 
     def _effective_goal(self, messages: list[BaseMessage]) -> str:
-        """Return the goal to decide and answer against: the latest instruction first, then the task.
+        """Return the goal to decide and answer against: what the user changed, how to proceed, then the task.
 
-        Jev and the text helper both read only this, so the note goes first and
-        says it overrides -- appended at the end it read as an aside, and the
-        closing answer reported the original task as unfinished instead. Agent
-        guidance says how to proceed; only the user's note changes what to do.
+        The user's instruction leads and says it overrides -- appended at the end
+        it read as an aside, and the closing answer reported the original task as
+        unfinished instead. Agent guidance only says how to proceed, so it never
+        displaces what the user asked for.
         """
         goal = self._task or _goal_from_messages(messages)
-        entry = self._latest_note_entry()
-        if entry is None or not entry.note:
+        user_note = self._latest_note_from(JevNoteSource.USER)
+        agent_note = self._latest_note_from(JevNoteSource.AGENT)
+        if not user_note and not agent_note:
             return goal
-        if entry.note_source is JevNoteSource.AGENT:
-            return (
-                "Guidance from the assistant that planned this task, on how to proceed: "
-                f"{entry.note}\nTask, which still stands: {goal}"
+        lines = []
+        if user_note:
+            lines.append(
+                f"Latest instruction from the user, which overrides the task below: {user_note}"
             )
-        return f"Latest instruction from the user, which overrides the task below: {entry.note}\nOriginal task: {goal}"
+        if agent_note:
+            lines.append(
+                "Guidance from the assistant that planned this task, on how to proceed: "
+                f"{agent_note}"
+            )
+        lines.append(f"{'Original task' if user_note else 'Task, which still stands'}: {goal}")
+        return "\n".join(lines)
 
-    def _latest_note_entry(self) -> JevHistoryEntry | None:
-        return next((h for h in reversed(self._history) if h.note), None)
+    def _latest_note_from(self, source: JevNoteSource) -> str | None:
+        return next(
+            (h.note for h in reversed(self._history) if h.note and h.note_source is source), None
+        )
 
     def _latest_note(self) -> str | None:
-        entry = self._latest_note_entry()
-        return entry.note if entry else None
+        return next((h.note for h in reversed(self._history) if h.note), None)
 
     def _remember(self, action: str, kind: str, text: str | None) -> None:
         self._history.append(JevHistoryEntry(action=action, kind=kind, text=text))

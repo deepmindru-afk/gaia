@@ -303,6 +303,57 @@ async def test_a_blocked_run_is_unstuck_by_the_executor_that_started_it() -> Non
     )
 
 
+@pytest.mark.regression
+async def test_guidance_after_a_note_never_asks_the_user_for_the_step_they_declined() -> None:
+    """Regression: the note was resolved, the next step blocked, and the guidance sent the run back to the login, which then timed out blaming the user."""
+    from app.constants.browser import HandoffDecision, HandoffStatus
+    from app.services.browser.handoff import resolve_handoff
+
+    note = "skip the login, just tell me the opening hours"
+    script = JevScript(
+        decisions=[("REQUEST_HUMAN", None), ("BLOCKED", None), ("TYPE_TEXT", "1")],
+        texts=[
+            {"text": "Sign in and come back", "category": "credentials"},
+            {"text": "The opening hours are not on this page."},
+            {"text": "hours"},
+        ],
+    )
+    steps = [
+        ScriptedStep(actions=[], decide=True),
+        ScriptedStep(actions=[], decide=True, await_joiner=True),
+        ScriptedStep(actions=[], decide=True),
+    ]
+
+    async with browser_job_world(STREAM, steps=steps, jev=script) as world:
+        async with executor_graph([RETRIEVE, START, JOIN, GUIDE, JOIN_AGAIN, "Done."]) as graph:
+            run_task = asyncio.create_task(
+                run_graph(
+                    graph,
+                    "book me a table",
+                    thread_id=CONVERSATION,
+                    user_id=USER,
+                    **_configurable(),
+                )
+            )
+            handoff_id = await _wait_for_pending_handoff(world)
+            assert await resolve_handoff(handoff_id, HandoffDecision.CONTINUE, USER, note) == (
+                HandoffStatus.COMPLETED
+            )
+            run = await run_task
+            await world.settle()
+
+    asked = run.result_for("wait_for_browser_task") or ""
+    assert "THE BROWSER TASK IS STUCK" in asked
+    assert note in asked
+    assert asked.index(note) < asked.index("book a table for two at 7pm")
+    # One handoff for the whole run: the second was the regression.
+    handoffs = [card for card in world.cards() if card["kind"] == "handoff"]
+    assert [card["status"] for card in handoffs] == ["pending", "completed"]
+    assert world.browser.takeover_notes == [note]
+    assert world.jev is not None
+    assert note in world.jev.goal(2)
+
+
 async def test_the_user_is_never_shown_a_handoff_for_a_question_asked_of_the_executor() -> None:
     """A handoff card and the conversation's pending key would ask the user to answer something they were never told about, and swallow their next chat message."""
     from app.services.browser.handoff import get_conversation_pending_handoff

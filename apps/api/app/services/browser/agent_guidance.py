@@ -41,6 +41,7 @@ def guidance_message(request: AgentGuidanceRequest) -> str:
     sections = [
         "THE BROWSER TASK IS STUCK and is waiting for one instruction from you.",
         f"Why it is stuck: {request.reason}",
+        _changed_instruction(request),
         f"Task it is working on: {request.task}",
         f"Page it is on: {request.title or 'untitled'} ({request.url or 'no url'})",
         _recent_actions(request),
@@ -57,6 +58,18 @@ def guidance_message(request: AgentGuidanceRequest) -> str:
         ),
     ]
     return "\n\n".join(section for section in sections if section)
+
+
+def _changed_instruction(request: AgentGuidanceRequest) -> str:
+    """State the instruction the user replaced the task with, above the task it overrides."""
+    if not request.user_notes:
+        return ""
+    changed = ", then ".join(f'"{note}"' for note in request.user_notes)
+    return (
+        f"MID-RUN THE USER CHANGED THE INSTRUCTION to {changed}. That is what your guidance "
+        "must serve. Where the task below conflicts with it, the task is no longer wanted, "
+        "and you must never send the run back to a step the user declined."
+    )
 
 
 def _recent_actions(request: AgentGuidanceRequest) -> str:
