@@ -6,7 +6,6 @@ import {
   DropdownTrigger,
 } from "@heroui/dropdown";
 import { Input } from "@heroui/input";
-import { Spinner } from "@heroui/spinner";
 import { MoreHorizontalIcon } from "@icons";
 import type {
   ApprovalDecision,
@@ -15,10 +14,9 @@ import type {
   ApprovalStatus,
 } from "@shared/chat";
 import { formatApprovalAge, RECONFIRM_AGE_SECONDS } from "@shared/chat";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ShieldAlertIcon } from "@/components/shared/icons";
 import { chatApi } from "@/features/chat/api/chatApi";
-import { useApprovalOutcomeStream } from "@/features/chat/hooks/useApprovalOutcomeStream";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
 import { flattenArgsPreview } from "@/features/chat/utils/argsPreview";
 import { formatToolName } from "@/features/chat/utils/chatUtils";
@@ -78,35 +76,9 @@ export default function ApprovalRequestSection({
   // not the version check — decides. v is an optimization, never a gate.
   const [versionConflict, setVersionConflict] = useState(false);
   const markApprovalDecided = useMarkApprovalDecided();
-  const outcomeStream = useApprovalOutcomeStream();
-  const locked =
-    submitting !== null ||
-    disabled ||
-    phase === "submitting" ||
-    outcomeStream.phase === "running";
+  const locked = submitting !== null || disabled || phase === "submitting";
 
   const needsReconfirm = (data.age_seconds ?? 0) >= RECONFIRM_AGE_SECONDS;
-
-  // The outcome stream resolves the tap: settle to the server's verdict so
-  // the tool-row chip carries the real state, then unmount like any settle.
-  useEffect(() => {
-    if (outcomeStream.phase !== "done" || outcomeStream.outcome === null)
-      return;
-    const known: ApprovalStatus[] = [
-      "approved",
-      "denied",
-      "revoked",
-      "executed",
-      "failed",
-      "unknown",
-    ];
-    onDecided(
-      known.includes(outcomeStream.outcome)
-        ? outcomeStream.outcome
-        : "approved",
-      null,
-    );
-  }, [outcomeStream.phase, outcomeStream.outcome, onDecided]);
 
   const submit = async (
     decision: ApprovalDecision,
@@ -145,17 +117,16 @@ export default function ApprovalRequestSection({
         }
         return;
       }
-      // Approve streams its aftermath: keep the card mounted on a running
-      // row until the outcome lands, instead of vanishing into silence.
-      // Deny runs nothing, so it settles immediately as before.
+      // Settle locally: the resolved frame arrives over the websocket
+      // broadcast (or reload truth), which flips the card to the real
+      // outcome — executed, failed, unknown. A 410 surfaces as not_found
+      // and takes the refresh path above; reaching the catch means the
+      // submit genuinely failed.
       markApprovalDecided();
-      if (decision === "approve") {
-        setSubmitting(null);
-        setPhase("idle");
-        outcomeStream.start(data.approval_id);
-        return;
-      }
-      onDecided("denied", attachedFeedback);
+      onDecided(
+        decision === "approve" ? "approved" : "denied",
+        attachedFeedback,
+      );
     } catch {
       toast.error("Couldn't submit your decision — please try again");
       setSubmitting(null);
@@ -174,24 +145,6 @@ export default function ApprovalRequestSection({
   };
 
   if (data.status !== "pending") return null;
-
-  if (outcomeStream.phase === "running") {
-    return (
-      <div className="w-full max-w-md rounded-2xl bg-zinc-800 p-4 text-white">
-        <div className="flex items-center gap-2.5">
-          <Spinner size="sm" color="primary" aria-label="Approval running" />
-          <div className="min-w-0 flex-1">
-            <div className="text-sm leading-snug text-zinc-100">
-              Running your approval…
-            </div>
-            <div className="mt-0.5 truncate text-[11px] text-zinc-500">
-              {data.summary}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (phase === "reconfirm") {
     return (
