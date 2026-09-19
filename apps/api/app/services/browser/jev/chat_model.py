@@ -20,6 +20,7 @@ from pydantic_core import CoreSchema, core_schema
 
 from app.config.settings import settings
 from app.constants.browser import (
+    JEV_MIN_DONE_CONFIDENCE,
     JEV_TEXT_HELPER_RECENT_ACTIONS,
     JEV_TEXT_VALUE_MAX_CHARS,
     BrowserHandoffAction,
@@ -75,6 +76,9 @@ _BLOCKED_SUMMARY = "I couldn't find a way to move forward on this page."
 _DEFAULT_TAKEOVER_REASON = "Complete this step in the live browser"
 _DEFAULT_CAPTCHA_CHALLENGE = "Solve the CAPTCHA, then continue"
 _USER_REQUEST = re.compile(r"<user_request>\s*(.*?)\s*</user_request>", re.DOTALL)
+# Neither ends the run on a real next action, so neither counts as an alternative
+# to an unconfident DONE.
+_TERMINAL_OPERATIONS = frozenset({JevOperation.DONE, JevOperation.BLOCKED})
 
 
 class _TextValue(BaseModel):
@@ -101,6 +105,7 @@ class JevChatModel:
         self._last_fingerprint: str | None = None
         self._steps = 0
         self._viewport: dict[int, ViewportBox] = {}
+        self._done_suppressed = False
 
     def viewport_points(self) -> dict[int, tuple[float, float]]:
         """Return the last observation's on-screen centres by Browser-Use index, for the UI pulse."""
@@ -171,7 +176,7 @@ class JevChatModel:
         self._steps += 1
 
         try:
-            decision = await choose(self._client, observation, goal, self._history, offered)
+            decision = await self._choose(observation, goal, offered)
         except JevDecisionError as exc:
             # Nothing executes on a malformed answer; a WAIT keeps the loop honest
             # and the failure shows up in Jev's next recent_actions. On the step
@@ -217,6 +222,33 @@ class JevChatModel:
             )
             if usage
             else None,
+        )
+
+    async def _choose(
+        self, observation: JevObservation, goal: str, offered: frozenset[JevOperation]
+    ) -> JevDecision:
+        """Ask Jev for this step, re-asking once without DONE when it finishes unconfidently.
+
+        A DONE under the floor ends the run on whatever page is showing, and the
+        closing summary then reads like a confident answer to a goal never met.
+        """
+        decision = await choose(self._client, observation, goal, self._history, offered)
+        suppressed, self._done_suppressed = self._done_suppressed, False
+        if (
+            decision.operation is not JevOperation.DONE
+            or decision.confidence >= JEV_MIN_DONE_CONFIDENCE
+            or suppressed
+            or not offered - _TERMINAL_OPERATIONS
+        ):
+            return decision
+        log.info(
+            f"{LogTag.BROWSER} Jev DONE below the confidence floor; re-asking without it",
+            step=self._steps,
+            confidence=round(decision.confidence, 3),
+        )
+        self._done_suppressed = True
+        return await choose(
+            self._client, observation, goal, self._history, offered - {JevOperation.DONE}
         )
 
     async def _action_for(

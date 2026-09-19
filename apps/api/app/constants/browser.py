@@ -264,6 +264,11 @@ JEV_TEXT_VALUE_MAX_CHARS = 2000
 # Probability mass across a choice question must sum to ~1; the gateway rounds.
 JEV_PROBABILITY_SUM_TOLERANCE = 0.02
 
+# Below this, a chosen DONE is re-asked once with DONE withheld. Measured: DONE
+# at 0.49 and 0.44 both finished runs whose goal was never met, and the closing
+# summary then invented an answer from whatever page happened to be showing.
+JEV_MIN_DONE_CONFIDENCE = 0.6
+
 
 # ---------------------------------------------------------------------------
 # Background browser job

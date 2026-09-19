@@ -56,7 +56,11 @@ _OPERATION_LABELS: dict[JevOperation, str] = {
     JevOperation.GO_BACK: "Go back to the previous page.",
     JevOperation.REQUEST_HUMAN: REQUEST_HUMAN_CRITERION,
     JevOperation.SOLVE_CAPTCHA: SOLVE_CAPTCHA_CRITERION,
-    JevOperation.DONE: "Every requirement is visibly satisfied.",
+    JevOperation.DONE: (
+        "Every requirement is visibly satisfied right now: the page that holds the answer is "
+        "itself open, and the answer is readable on this screen. A search result, a link title, "
+        "a snippet about the page, or anything you already know is not enough."
+    ),
     JevOperation.BLOCKED: "No supported operation can progress.",
 }
 

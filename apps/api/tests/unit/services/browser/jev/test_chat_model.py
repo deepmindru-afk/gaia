@@ -83,12 +83,12 @@ def _agent_output(
     return AgentOutput.type_with_custom_actions_flash_mode(actions)
 
 
-def _answer(choice: str, keys: list[str]) -> JevChoiceAnswer:
-    rest = (1 - 0.8) / (len(keys) - 1) if len(keys) > 1 else 0
+def _answer(choice: str, keys: list[str], confidence: float = 0.8) -> JevChoiceAnswer:
+    rest = (1 - confidence) / (len(keys) - 1) if len(keys) > 1 else 0
     return JevChoiceAnswer(
         type="choice",
         choice=choice,
-        probabilities={k: (0.8 if k == choice else rest) for k in keys},
+        probabilities={k: (confidence if k == choice else rest) for k in keys},
     )
 
 
@@ -99,12 +99,13 @@ class ScriptedGateway:
     script: list[tuple[str, str | None]]
     model: str = "typesafe-ai/jev"
     requests: list[Any] = field(default_factory=list)
+    confidence: float = 0.8
 
     async def evaluate(self, request):
         self.requests.append(request)
         operation, target = self.script.pop(0)
         ops = list(request.questions["operation"].criteria)
-        answers = {"operation": _answer(operation, ops)}
+        answers = {"operation": _answer(operation, ops, self.confidence)}
         if target is not None:
             head = f"{operation.lower()}_target"
             answers[head] = _answer(target, list(request.questions[head].criteria))
@@ -171,9 +172,9 @@ class FakeSession:
 
 
 def _model(
-    flights_state, script, replies=None
+    flights_state, script, replies=None, confidence: float = 0.8
 ) -> tuple[JevChatModel, ScriptedGateway, FakeTextModel, FakeSession]:
-    gateway = ScriptedGateway(script=list(script))
+    gateway = ScriptedGateway(script=list(script), confidence=confidence)
     text_model = FakeTextModel(replies=list(replies or []))
     model = JevChatModel(client=gateway, text_model=text_model)  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
     session = FakeSession(flights_state)
@@ -408,6 +409,47 @@ async def test_done_reports_the_helpers_summary_of_the_page(flights_state) -> No
         }
     }
     assert helper.system_prompt() == DONE_SUMMARY
+
+
+async def test_an_unconfident_done_is_re_asked_without_done_offered(flights_state) -> None:
+    """Regression: DONE at p=0.49 finished the run and summarised whatever page was showing."""
+    model, gateway, _, _ = _model(flights_state, [("DONE", None), ("CLICK", "4")], confidence=0.49)
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion) == {"click": {"index": 40}}
+    assert "DONE" not in gateway.requests[1].questions["operation"].criteria
+    assert "CLICK" in gateway.requests[1].questions["operation"].criteria
+
+
+async def test_a_confident_done_is_never_re_asked(flights_state) -> None:
+    model, gateway, _, _ = _model(
+        flights_state, [("DONE", None)], [{"text": "The article says 2008."}], confidence=0.8
+    )
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion)["done"]["success"] is True
+    assert len(gateway.requests) == 1
+
+
+async def test_a_second_unconfident_done_in_a_row_is_accepted(flights_state) -> None:
+    """Suppressing DONE forever would loop; one suppressed step is the whole budget."""
+    model, _, _, _ = _model(
+        flights_state,
+        [("DONE", None), ("CLICK", "4"), ("DONE", None)],
+        [{"text": "The article says 2008."}],
+        confidence=0.49,
+    )
+
+    await model.ainvoke([], _agent_output())
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion)["done"] == {
+        "text": "The article says 2008.",
+        "success": True,
+        "files_to_display": [],
+    }
 
 
 async def test_done_without_a_summary_still_completes(flights_state) -> None:
