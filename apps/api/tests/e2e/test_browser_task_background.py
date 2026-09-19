@@ -240,9 +240,11 @@ async def test_a_handoff_note_reaches_the_run_and_the_policy_deciding_it() -> No
     assert "book a table for two at 7pm" in world.jev.goal(1)
     handoffs = [card for card in world.cards() if card["kind"] == "handoff"]
     assert [card["status"] for card in handoffs] == ["pending", "completed"]
-    assert (run.result_for("wait_for_browser_task") or "").startswith(
-        "The table is booked for 7pm on Friday."
-    )
+    joined = run.result_for("wait_for_browser_task") or ""
+    assert joined.startswith("The table is booked for 7pm on Friday.")
+    # The closing reply is written against the original booking otherwise, and
+    # confirms a table nobody booked.
+    assert note in joined
 
 
 async def _wait_for_pending_handoff(world: JobWorld) -> str:

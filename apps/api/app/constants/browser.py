@@ -139,6 +139,9 @@ HANDOFF_POLL_INTERVAL_SECONDS = 1.0
 # the manual resolution always races it; debounced so a transient redirect doesn't fire it early.
 HANDOFF_AUTORESOLVE_POLL_SECONDS = 2.0
 HANDOFF_AUTORESOLVE_STABLE_POLLS = 2
+# Why the run woke up when nobody tapped "done". The run tells it apart from a
+# note the user typed, which redirects the task and the closing reply with it.
+HANDOFF_AUTORESOLVED_NOTE = "Signed in, resuming automatically."
 HANDOFF_KEY_TTL_SECONDS = 3600
 # How often the paused run touches the host session so the idle reaper (default
 # 300s TTL) never disposes a browser the user was asked to come back to.

@@ -22,6 +22,7 @@ from app.constants.browser import (
     BROWSER_RUN_BLOCKED_SUMMARY,
     BROWSER_RUN_HANDOFF_TIMED_OUT,
     BROWSER_TASK_FAILED_PREFIX,
+    HANDOFF_AUTORESOLVED_NOTE,
     MAX_HANDOFFS_PER_TASK,
     BrowserSessionStatus,
     HandoffStatus,
@@ -119,6 +120,8 @@ class BrowserTaskRunner:
         self._root_request_id = root_request_id
         self._stopped = False
         self._handed_off = False
+        #: What the user told the run to do instead when they took over.
+        self._user_notes: list[str] = []
         self._handoff_timed_out = False
         self._handoffs = 0
         self._guidances = 0
@@ -263,7 +266,12 @@ class BrowserTaskRunner:
         if outcome.status == HandoffStatus.COMPLETED:
             self._handed_off = True
             log.info(f"{LogTag.BROWSER} Browser takeover completed by user; agent continuing.")
-            return (outcome.message or "").strip() or None
+            note = (outcome.message or "").strip() or None
+            # The auto-resolver's own resume note is not an instruction the user
+            # typed, so it must never redirect the task or the closing reply.
+            if note and note != HANDOFF_AUTORESOLVED_NOTE:
+                self._user_notes.append(note)
+            return note
         self._stopped = True
         self._handoff_timed_out = outcome.status == HandoffStatus.TIMEOUT
         log.info(f"{LogTag.BROWSER} Browser takeover ended", status=outcome.status.value)
@@ -362,6 +370,7 @@ class BrowserTaskRunner:
             summary=summary,
             steps=self._last_step,
             replay_url=replay_url,
+            user_notes=list(self._user_notes),
         )
         await self._emit(result)
         return result

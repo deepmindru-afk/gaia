@@ -80,6 +80,7 @@ def _failed_card(summary: str) -> dict[str, Any]:
         "summary": summary,
         "steps": 0,
         "replay_url": None,
+        "user_notes": [],
     }
 
 
@@ -95,11 +96,18 @@ NO_META = (
 )
 
 
+ONLY_THE_SUMMARY = (
+    "Report only what the summary states. Never claim an action it does not explicitly "
+    "report: a login, a purchase, a vote, a message sent, a form submitted."
+)
+
+
 def _completed_message(summary: str) -> str:
     return (
         f"{summary}\n\n"
         "The browser task finished, and the text above is its own final answer. "
-        f"Reply with a short, natural confirmation of what you found or did. {NO_META}"
+        f"Reply with a short, natural confirmation of what you found or did. "
+        f"{ONLY_THE_SUMMARY} {NO_META}"
     )
 
 
@@ -108,7 +116,7 @@ def _failed_message(summary: str) -> str:
         f"BROWSER TASK DID NOT COMPLETE. Last state: {summary}.\n\n"
         "Do not run the browser again for this request; tell the user what happened. "
         f"Tell the user honestly and briefly that it couldn't be finished, and why "
-        f"if it's clear. Do not fabricate a result. {NO_META}"
+        f"if it's clear. Do not fabricate a result. {ONLY_THE_SUMMARY} {NO_META}"
     )
 
 
@@ -143,6 +151,51 @@ def test_a_done_runs_own_answer_is_what_the_executor_hears() -> None:
 
     assert answer in out
     assert out.startswith(answer)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        _result(BrowserSessionStatus.COMPLETED, True, "The top post is 'Saturday Daily Thread'."),
+        _result(BrowserSessionStatus.FAILED, False, "Login wall"),
+        _result(BrowserSessionStatus.CANCELLED, False, "half done"),
+    ],
+)
+def test_every_result_forbids_claiming_an_action_the_summary_does_not_report(
+    result: BrowserResultSnapshot,
+) -> None:
+    """Regression: after the user cancelled the upvote, the reply said the browser signed in and upvoted."""
+    out = jr.agent_result_message(result)
+
+    assert "Never claim an action" in out
+    assert "a login, a purchase, a vote" in out
+
+
+def test_a_mid_run_instruction_change_is_what_the_assistant_is_told_to_answer() -> None:
+    note = "skip the upvote, just tell me the title of the top post"
+    result = _result(BrowserSessionStatus.COMPLETED, True, "The top post is 'Saturday Daily'.")
+    result.user_notes = [note]
+
+    out = jr.agent_result_message(result)
+
+    assert note in out
+    assert "NOT carried out" in out
+
+
+def test_a_run_nobody_redirected_is_told_nothing_about_a_changed_instruction() -> None:
+    out = jr.agent_result_message(_result(BrowserSessionStatus.COMPLETED, True, "Done"))
+
+    assert "NOT carried out" not in out
+
+
+def test_every_mid_run_instruction_reaches_the_closing_reply() -> None:
+    result = _result(BrowserSessionStatus.FAILED, False, "Could not finish.")
+    result.user_notes = ["skip the login", "just read the headline"]
+
+    out = jr.agent_result_message(result)
+
+    assert "skip the login" in out
+    assert "just read the headline" in out
 
 
 def test_result_message_completed_without_success_reports_failure() -> None:

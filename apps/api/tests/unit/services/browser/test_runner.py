@@ -19,6 +19,7 @@ import pytest
 
 from app.constants.browser import (
     BROWSER_RUN_HANDOFF_TIMED_OUT,
+    HANDOFF_AUTORESOLVED_NOTE,
     BrowserEventKind,
     BrowserSessionStatus,
     HandoffStatus,
@@ -1115,6 +1116,35 @@ async def test_a_takeover_hands_the_note_back_verbatim() -> None:
     assert await runner._handle_takeover("Log in", "credentials") == "just grab the photo"
 
 
+def _runner_answering_a_takeover_with(message: str) -> BrowserTaskRunner:
+    _, emit = _collector()
+    return _make_runner(
+        emit=emit,
+        request_handoff=AsyncMock(
+            return_value=HandoffOutcome(status=HandoffStatus.COMPLETED, message=message)
+        ),
+    )
+
+
+async def test_the_note_the_user_left_rides_on_the_result() -> None:
+    """Regression: the reply confirmed the original "upvote it" after the user cancelled the upvote."""
+    runner = _runner_answering_a_takeover_with("skip the upvote, just tell me the title")
+    await runner._handle_takeover("Log in", "credentials")
+
+    result = await runner._finish(BrowserSessionStatus.COMPLETED, True, "The top post is X.")
+
+    assert result.user_notes == ["skip the upvote, just tell me the title"]
+
+
+async def test_the_auto_resolvers_own_resume_note_is_not_a_user_instruction() -> None:
+    runner = _runner_answering_a_takeover_with(HANDOFF_AUTORESOLVED_NOTE)
+    await runner._handle_takeover("Log in", "credentials")
+
+    result = await runner._finish(BrowserSessionStatus.COMPLETED, True, "Signed in.")
+
+    assert result.user_notes == []
+
+
 @pytest.mark.parametrize("message", [None, "   "])
 async def test_a_takeover_with_no_note_hands_back_none(message: str | None) -> None:
     _, emit = _collector()
@@ -1350,6 +1380,7 @@ async def test_unreadable_history_reports_an_honest_failure() -> None:
         "summary": "Could not complete the browser task.",
         "steps": 0,
         "replay_url": None,
+        "user_notes": [],
     }
     assert events == [result]
 
@@ -1368,6 +1399,7 @@ async def test_a_history_that_breaks_midway_still_reports_what_it_read() -> None
         "summary": "Booked seat 14C.",
         "steps": 0,
         "replay_url": None,
+        "user_notes": [],
     }
     assert events == [result]
 
@@ -1502,7 +1534,16 @@ AGENT_KWARG_KEYS = {
     "step_timeout",
     "tools",
     "extend_system_message",
+    "use_judge",
 }
+
+
+async def test_browser_uses_own_judge_is_off(patch_browser) -> None:
+    """Nothing reads its verdict, it bills a whole extra call, and it judged a cancelled instruction as a failed run."""
+    _, emit = _collector()
+    await _make_runner(emit=emit).run("x")
+
+    assert FakeAgent.last_kwargs["use_judge"] is False
 
 
 async def test_a_jev_model_is_bound_to_the_session_and_its_helper_extracts(patch_browser) -> None:

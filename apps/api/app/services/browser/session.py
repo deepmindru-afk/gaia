@@ -19,6 +19,7 @@ from app.constants.browser import (
     BROWSER_HANDOFF_KEEPALIVE_SECONDS,
     HANDOFF_AUTORESOLVE_POLL_SECONDS,
     HANDOFF_AUTORESOLVE_STABLE_POLLS,
+    HANDOFF_AUTORESOLVED_NOTE,
     HandoffDecision,
 )
 from app.constants.log_tags import LogTag
@@ -147,7 +148,7 @@ async def auto_resolve_handoff_on_navigation(
                 handoff_id,
                 HandoffDecision.CONTINUE,
                 user_id,
-                "Signed in, resuming automatically.",
+                HANDOFF_AUTORESOLVED_NOTE,
             )
             return
 

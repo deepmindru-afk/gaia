@@ -228,6 +228,10 @@ class BrowserAgentRun:
             "register_should_stop_callback": self._hooks.should_stop,
             # Jev decides from structured state; no model on this path takes images.
             "use_vision": False,
+            # Browser-Use's post-run judge bills a whole extra call and nothing
+            # here reads its verdict; it also judged against an instruction the
+            # user had already cancelled and logged the run as a failure.
+            "use_judge": False,
             "flash_mode": self._config.flash_mode,
             "max_actions_per_step": self._config.max_actions_per_step,
             "step_timeout": self._step_timeout,

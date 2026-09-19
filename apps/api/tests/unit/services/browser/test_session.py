@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.constants.browser import HANDOFF_AUTORESOLVED_NOTE
 from app.services.browser import session as session_mod
 from app.services.browser.exceptions import BrowserUnavailableError
 
@@ -490,7 +491,7 @@ class TestAutoResolveHandoffOnNavigation:
 
         await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
 
-        assert resolve.await_args[0][3] == "Signed in, resuming automatically."
+        assert resolve.await_args[0][3] == HANDOFF_AUTORESOLVED_NOTE
 
     async def test_a_slow_sign_in_is_still_detected_after_idling_on_the_login_page(
         self, monkeypatch: pytest.MonkeyPatch

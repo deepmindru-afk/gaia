@@ -108,6 +108,9 @@ class BrowserResultSnapshot(BaseModel):
     steps: int = 0
     # A recap slideshow of every step's screenshot — surfaced on success or failure.
     replay_url: str | None = None
+    # Instructions the user sent mid-run when they took over. The closing reply is
+    # written against the original request otherwise, and confirms what it asked for.
+    user_notes: list[str] = Field(default_factory=list)
 
 
 BrowserCardSnapshot = (
