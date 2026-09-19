@@ -1,29 +1,44 @@
 """Give Browser-Use's screenshot and state-read events a budget this engine can meet.
 
 Measured on Obscura 2026-09-19: the first Page.captureScreenshot of a very long
-page (de.wikipedia.org/wiki/Berlin, 85,000px, 14,000 nodes) takes 24 to 35s, and
+page (de.wikipedia.org/wiki/Berlin, 85,000px, 14,000 nodes) took 24 to 35s, and
 about 2s once rendered. Browser-Use allows a screenshot 15s and the state read
 that contains it 30s, so the capture errored, was retried, and the user sat
 through a minute of silence for a page that had loaded in 3.5s. A slow render
 that completes costs less than a timeout plus a retry.
 
-Browser-Use reads each budget from the environment when it builds the event, so
-an operator's own value wins over these defaults.
+Only the defaults move: Browser-Use's own TIMEOUT_<Event> environment override
+still wins, read through its own parser.
+
+Pinned to browser-use==0.11.13; the import fails loudly if the events move.
 """
 
-import os
+from collections.abc import Callable
+
+from browser_use.browser import events
+from browser_use.browser.events import BrowserStateRequestEvent, ScreenshotEvent
+from bubus import BaseEvent
 
 # The state read carries the screenshot, so its budget has to sit above it.
-_EVENT_BUDGET_SECONDS = {
-    "TIMEOUT_ScreenshotEvent": "60",
-    "TIMEOUT_BrowserStateRequestEvent": "90",
-}
+_SCREENSHOT_SECONDS = 60.0
+_STATE_READ_SECONDS = 90.0
+
+
+def _budget(env_var: str, seconds: float) -> Callable[[], float | None]:
+    return lambda: events._get_timeout(env_var, seconds)
+
+
+def _set_default_budget(event: type[BaseEvent[object]], env_var: str, seconds: float) -> None:
+    event.model_fields["event_timeout"].default_factory = _budget(env_var, seconds)
+    event.model_rebuild(force=True)
 
 
 def apply() -> None:
-    """Set each budget unless the environment already names one."""
-    for name, seconds in _EVENT_BUDGET_SECONDS.items():
-        os.environ.setdefault(name, seconds)
+    """Raise the two default budgets, leaving the environment override in charge."""
+    _set_default_budget(ScreenshotEvent, "TIMEOUT_ScreenshotEvent", _SCREENSHOT_SECONDS)
+    _set_default_budget(
+        BrowserStateRequestEvent, "TIMEOUT_BrowserStateRequestEvent", _STATE_READ_SECONDS
+    )
 
 
 apply()
