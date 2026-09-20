@@ -138,6 +138,29 @@ class TestVetoes:
         assert decision.aligned is True
 
 
+class TestReject:
+    """The judge can refuse outright — no card, no retry — with a reason.
+
+    A refusal is not an authorization, so it needs no grounding quote; and a
+    reject must survive even a fully clean signal set, or "reject" is decor.
+    """
+
+    async def test_reject_verdict_refuses_without_needing_a_quote(self) -> None:
+        decision, _ = await judge(verdict(verdict="reject", authorizing_quote=""))
+        assert decision.outcome == "reject"
+        assert decision.aligned is False
+
+    async def test_reject_beats_clean_signals(self) -> None:
+        decision, _ = await judge(verdict(verdict="reject"))
+        assert decision.outcome == "reject"
+
+    async def test_the_reject_reason_reaches_the_decision(self) -> None:
+        decision, _ = await judge(
+            verdict(verdict="reject", reason="You denied this exact call twice.")
+        )
+        assert decision.reason == "You denied this exact call twice."
+
+
 class TestFailsTowardAsking:
     async def test_no_user_turns_asks_without_ever_calling_the_llm(self) -> None:
         # No turns to verify against — spending a judge call here would be wasteful and
