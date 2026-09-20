@@ -129,6 +129,10 @@ class CommonSettings(BaseAppSettings):
     # return instead of parking the run on an interrupt. Off keeps the
     # interrupt-and-resume barrier.
     ENABLE_HIL_LEDGER: bool = False
+    # Experiment: JEV choice judge for auto mode — a structured decision call
+    # classifies first; the LLM intent judge stays as the transport-failure
+    # fallback. Off keeps the LLM judge for every auto decision.
+    ENABLE_HIL_JEV_JUDGE: bool = False
 
     @field_validator("HOST", "FRONTEND_URL", mode="after")
     @classmethod

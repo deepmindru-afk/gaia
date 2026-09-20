@@ -40,6 +40,16 @@ HIL_JUDGE_MIN_QUOTE_WORDS = 3
 # tool-execution timeout does not cover. Unbounded, a hung provider holds the executor's busy lock forever.
 HIL_LLM_TIMEOUT_SECONDS = 30
 
+# JEV choice judge (auto mode v2): model, endpoint, and decision lines. Lines
+# come from the offline sweep over the hil-judge calibration journal (see
+# scripts/evals/sweep_hil_judge.py) — the 0.50 plateau scored 49/50 with zero
+# dangerous accepts. Retune via the eval, never by hand here.
+HIL_JEV_MODEL_NAME = "typesafe/jev-1.13"
+HIL_JEV_URL = "https://openrouter.ai/api/alpha/decisions"
+HIL_JEV_TIMEOUT_SECONDS = 15
+HIL_JEV_ACCEPT_LINE = 0.50
+HIL_JEV_REJECT_FLOOR = 0.50
+
 # The only statuses a `Command(resume=...)` payload may carry. Anything else
 # is treated as a denial. "abandoned" is absent: resolution.py maps it to a deny before sending.
 HIL_RESUMABLE_STATUSES: frozenset[str] = frozenset({"approved", "denied", "timeout"})

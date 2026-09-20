@@ -75,6 +75,7 @@ async def publish_approval_request(
     tool_call: GatedCall,
     summary: str,
     integration_name: str | None,
+    auto_reason: str | None = None,
 ) -> None:
     """Record the pending approval and surface its card — exactly once.
 
@@ -104,7 +105,12 @@ async def publish_approval_request(
     await _publish_entry(
         stream_id,
         _approval_entry(
-            approval_id, tool_call, HILApprovalStatus.PENDING, summary, integration_name
+            approval_id,
+            tool_call,
+            HILApprovalStatus.PENDING,
+            summary,
+            integration_name,
+            auto_reason=auto_reason,
         ),
     )
     _schedule_pending_notification(user_id, conversation_id, approval_id, summary)
@@ -120,6 +126,7 @@ async def publish_ledger_request(
     summary: str,
     integration_name: str | None,
     rationale: str | None = None,
+    auto_reason: str | None = None,
     live: bool = True,
 ) -> None:
     """Surface a ledger PENDING card — exactly once per registration.
@@ -144,6 +151,7 @@ async def publish_ledger_request(
         HILApprovalStatus.PENDING,
         summary,
         integration_name,
+        auto_reason=auto_reason,
     )
     entry.data.rationale = rationale
     entry.data.age_seconds = 0

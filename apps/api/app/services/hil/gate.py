@@ -35,7 +35,8 @@ from app.constants.hil import (
 from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus, LedgerState
-from app.services.feature_flags import is_hil_ledger_enabled
+from app.services.feature_flags import is_hil_ledger_enabled, is_jev_judge_enabled
+from app.services.hil.jev_judge import JevIntentJudge
 from app.services.hil.approvals_store import approval_id_for, get_approval
 from app.services.hil.bridge import (
     ApprovalOutcome,
@@ -218,6 +219,7 @@ async def _decide_ledger(
         if declined is not None:
             log.info(f"{LogTag.HIL} auto-denying : declined earlier this turn", name=call.name)
             return _auto_reject_message(call, declined.feedback or "") if declined.auto else _refusal_message(call, declined)
+        auto_note = ""
         if policy == "auto":
             integration_name = await _integration_name_for(call.name)
             summary = build_summary(call.name, call.args, integration_name)
@@ -237,6 +239,13 @@ async def _decide_ledger(
                         reason=decision.reason,
                     )
                     return await _auto_reject(context, call, decision.reason)
+                auto_note = (
+                    f" Auto mode wasn't sure: {decision.reason}"
+                    if decision.outcome == "ask" and decision.reason
+                    else ""
+                )
+            else:
+                auto_note = ""
         invalid = await _invalid_args_message(request, context.user_id, call)
         if invalid is not None:
             return invalid
@@ -314,6 +323,7 @@ async def _decide_ledger(
             tool_call=call,
             summary=summary,
             integration_name=integration_name,
+            auto_reason=auto_note.strip() or None,
             # Live runs hold the card until the run ends (a mid-run revoke is
             # never shown); background runs have no watcher, so publish now.
             live=context.pausable,
@@ -328,7 +338,8 @@ async def _decide_ledger(
         )
         return _tool_message(
             call,
-            f"PENDING {ap_id}: {summary} queued — {why}. {_pending_guidance(ap_id)}{deny_note}",
+            f"PENDING {ap_id}: {summary} queued — {why}. "
+            f"{_pending_guidance(ap_id)}{deny_note}{auto_note}",
             "pending",
         )
     except GraphBubbleUp:
@@ -438,6 +449,11 @@ async def _decide(
             )
             return await _auto_reject(context, call, decision.reason)
 
+        auto_reason = (
+            f"Auto mode wasn't sure: {decision.reason}"
+            if decision is not None and decision.outcome == "ask" and decision.reason
+            else None
+        )
         await publish_approval_request(
             approval_id=approval_id,
             stream_id=context.stream_id,
@@ -446,6 +462,7 @@ async def _decide(
             tool_call=call,
             summary=summary,
             integration_name=integration_name,
+            auto_reason=auto_reason,
         )
         return _Pending(approval_id, call.name, summary, integration_name)
     except GraphBubbleUp:
@@ -504,9 +521,14 @@ async def _judge(
         return None
     history = await _auto_history(context.user_id, call.name)
     never_auto = await _never_auto_tools(context.user_id)
+    judge = None
+    if await is_jev_judge_enabled(context.user_id):
+        # JEV classifies first, LLM stays as its transport-failure fallback.
+        judge = JevIntentJudge()
     return await judge_intent(
         user_id=context.user_id,
         user_messages=context.user_messages,
+        judge=judge,
         call=JudgedCall(
             tool_name=call.name,
             # The REAL tool's description — for an execute-proxied call the

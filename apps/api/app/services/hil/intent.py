@@ -340,6 +340,69 @@ def _history_blocks(history: AutoHistory) -> bool:
     return history.approved_recent <= history.denied_recent
 
 
+def ungrounded_targets(
+    args: dict[str, Any], user_text: str, prior_calls: list[PriorCall]
+) -> list[str]:
+    """Target-like arg values with no provenance in the user's words or priors.
+
+    The grounding backstop for judges that produce no authorizing quote (JEV):
+    an email, id, or amount that appears from nowhere blocks auto-accept. Prose
+    bodies are not targets — the choice criteria already judge those.
+    """
+    normalized_user = _normalize(user_text)
+    normalized_priors = _normalize(
+        "\n".join(f"{call.name} {args_preview(call.args)}" for call in prior_calls)
+    )
+    return [
+        target
+        for target in _target_values(args)
+        if _normalize(target) not in normalized_user
+        and _normalize(target) not in normalized_priors
+    ]
+
+
+def _target_values(args: object) -> list[str]:
+    """Collect the arg values that name a target: emails, ids, amounts.
+
+    Datetimes are deliberately NOT targets: "tomorrow at 2pm" never matches
+    its ISO rendering textually, so requiring it would ask on every
+    legitimately-derived time. The choice criteria judge whether a derivation
+    is faithful; provenance here covers only values the agent must copy
+    verbatim (who, which record, how much).
+    """
+    found: list[str] = []
+    if isinstance(args, dict):
+        for value in args.values():
+            found += _target_values(value)
+    elif isinstance(args, list):
+        for value in args:
+            found += _target_values(value)
+    elif isinstance(args, str):
+        candidate = _target_string(args.strip())
+        if candidate is not None:
+            found.append(candidate)
+    elif isinstance(args, (int, float)):
+        found.append(str(args))
+    return [target for target in found if len(target) >= 2]
+
+
+def _target_string(value: str) -> str | None:
+    """Return value when it looks like a copied target, else None."""
+    if "@" in value:
+        return value
+    if re.search(r"\d{4}-\d{2}-\d{2}", value):
+        return None
+    if len(value.split()) > 2:
+        return None
+    if value.replace(",", "").replace(".", "").replace("$", "").strip().isdigit():
+        return value
+    if len(value) < 24 and (
+        any(char.isdigit() for char in value) or value.startswith(("evt-", "#"))
+    ):
+        return value
+    return None
+
+
 def _outcome(verdict: _Verdict, user_text: str, tool_name: str) -> AutoOutcome:
     """Map the model's verdict through the checks it is not trusted to apply.
 

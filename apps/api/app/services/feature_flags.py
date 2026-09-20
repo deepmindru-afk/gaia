@@ -40,6 +40,7 @@ class FeatureFlag(StrEnum):
     COMMS_OPENUI = "COMMS_OPENUI"
     CODE_MODE = "CODE_MODE"
     HIL_LEDGER = "HIL_LEDGER"
+    HIL_JEV_JUDGE = "HIL_JEV_JUDGE"
 
 
 # Human description per flag, kept next to the key so the dashboard setup and
@@ -57,6 +58,10 @@ FEATURE_FLAG_DESCRIPTIONS: dict[FeatureFlag, str] = {
         "Gated calls register PENDING in the approval ledger and return "
         "instead of parking the run; off keeps the interrupt barrier."
     ),
+    FeatureFlag.HIL_JEV_JUDGE: (
+        "Auto mode classifies with the JEV choice judge first, falling back "
+        "to the LLM intent judge on transport failure; off keeps the LLM judge."
+    ),
 }
 
 
@@ -70,6 +75,8 @@ def _default(flag: FeatureFlag) -> bool:
             return bool(settings.ENABLE_CODE_MODE)
         case FeatureFlag.HIL_LEDGER:
             return bool(settings.ENABLE_HIL_LEDGER)
+        case FeatureFlag.HIL_JEV_JUDGE:
+            return bool(settings.ENABLE_HIL_JEV_JUDGE)
 
 
 def _coerce_result(result: Any, default: bool) -> bool:  # noqa: ANN401 -- posthog SDK returns untyped flag values; validated here
@@ -192,3 +199,9 @@ async def is_hil_ledger_enabled(user_id: str | None) -> bool:
     """Whether ``user_id``'s gated calls register PENDING in the approval
     ledger and return instead of parking the run. Off keeps the barrier."""
     return await is_enabled(FeatureFlag.HIL_LEDGER, user_id)
+
+
+async def is_jev_judge_enabled(user_id: str | None) -> bool:
+    """Whether ``user_id``'s auto mode classifies with JEV first (LLM fallback
+    on transport failure). Off keeps the LLM intent judge for every decision."""
+    return await is_enabled(FeatureFlag.HIL_JEV_JUDGE, user_id)

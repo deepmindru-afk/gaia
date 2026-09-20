@@ -240,6 +240,42 @@ async def test_auto_reject_registers_no_card_and_arms_decline_memory() -> None:
     )
 
 
+async def test_ask_carries_auto_mode_reason_to_card_and_model() -> None:
+    # The ask contract: same async flow, but the card and the PENDING text say
+    # auto mode was unsure and why — never a bare "needs your decision".
+    from app.services.hil import gate
+
+    ledger = _auto_ledger()
+    with (
+        patch("app.services.hil.gate.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+        patch("app.services.hil.gate.resolve_policy", new=AsyncMock(return_value="auto")),
+        patch("app.services.hil.gate.approval_ledger_repository", new=ledger),
+        patch(
+            "app.services.hil.gate._integration_name_for",
+            new=AsyncMock(return_value="gmail"),
+        ),
+        patch(
+            "app.services.hil.gate._judge",
+            new=AsyncMock(
+                return_value=IntentDecision(outcome="ask", reason="vague scope")
+            ),
+        ),
+        patch(
+            "app.services.hil.gate.publish_ledger_request", new=AsyncMock()
+        ) as pub,
+        patch("app.services.hil.gate.interrupt") as intr,
+    ):
+        result = await gate.decide_tool_call(_auto_request())
+
+    from app.constants.hil import HIL_STATUS_KWARG
+
+    assert result is not None
+    assert result.additional_kwargs[HIL_STATUS_KWARG] == "pending"
+    assert "Auto mode wasn't sure: vague scope" in result.content
+    assert pub.await_args.kwargs["auto_reason"] == "Auto mode wasn't sure: vague scope"
+    intr.assert_not_called()
+
+
 async def test_remembered_auto_reject_refuses_a_retry_without_rejudge_or_card() -> None:
     from app.services.hil import gate
     from app.services.hil.bridge import ApprovalOutcome
