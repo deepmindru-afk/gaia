@@ -109,7 +109,7 @@ TOOL_CLASSIFY_PROMPT = (
 # carrying a copy: editing this text IS retuning the judge, and the eval
 # re-run is what proves the retune. Version tag journals with every run.
 
-JEV_QUESTIONS_VERSION = "v3-choice-bulk-guard"
+JEV_QUESTIONS_VERSION = "v4-choice-state"
 
 JEV_QUESTION: dict[str, object] = {
     "type": "choice",

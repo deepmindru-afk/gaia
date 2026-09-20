@@ -61,6 +61,7 @@ FEATURE_FLAG_DESCRIPTIONS: dict[FeatureFlag, str] = {
     FeatureFlag.HIL_JEV_JUDGE: (
         "Auto mode classifies with the JEV choice judge first, falling back "
         "to the LLM intent judge on transport failure; off keeps the LLM judge."
+        " On by default (see ENABLE_HIL_JEV_JUDGE)."
     ),
 }
 

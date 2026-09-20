@@ -7,7 +7,6 @@ test_hil_intent.py.
 """
 
 from typing import Any
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from app.services.hil.intent import (
@@ -238,6 +237,26 @@ async def test_auto_reject_registers_no_card_and_arms_decline_memory() -> None:
     remember.assert_awaited_once_with(
         "stream-1", "GMAIL_SEND_EMAIL", {"to": "b@x"}, "stop spamming", auto=True
     )
+
+
+async def test_a_throwing_judge_fails_closed_to_ask() -> None:
+    # The bottom of the cascade: JEV mapping code, the LLM fallback, anything —
+    # an exception out of ANY judge is a card, never a run and never a crash.
+
+    class _Boom:
+        async def decide(self, **kwargs: Any) -> IntentDecision:
+            raise RuntimeError("judge exploded")
+
+    with patch(f"{MODULE}.ainvoke_structured", new=AsyncMock()) as llm:
+        d = await judge_intent(
+            user_id="u",
+            user_messages=["please send the deck to bob now"],
+            call=_call(),
+            prior_calls=[],
+            judge=_Boom(),  # type: ignore[arg-type]
+        )
+    assert d.outcome == "ask"
+    assert llm.await_count == 0
 
 
 async def test_ask_carries_auto_mode_reason_to_card_and_model() -> None:

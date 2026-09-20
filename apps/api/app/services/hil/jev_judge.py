@@ -13,6 +13,8 @@ never by hand here.
 
 import httpx
 
+from datetime import UTC, datetime
+
 from app.config.settings import settings
 from app.constants.hil import (
     HIL_JEV_ACCEPT_LINE,
@@ -66,11 +68,17 @@ async def ask_jev(
         raise RuntimeError("OPENROUTER_API_KEY unset; cannot reach the JEV judge")
     state = {
         "user_messages": user_messages,
-        "pending_action": {"tool": call.tool_name, "args": call.args},
+        "pending_action": {
+            "tool": call.tool_name,
+            "description": call.description,
+            "summary": call.summary,
+            "args": call.args,
+        },
         "prior_actions": [
             {"tool": prior.name, "args": prior.args} for prior in prior_calls
         ],
         "recent_history": history_line(history, call.tool_name),
+        "now": datetime.now(UTC).isoformat(),
     }
     async with httpx.AsyncClient(timeout=HIL_JEV_TIMEOUT_SECONDS) as client:
         resp = await client.post(

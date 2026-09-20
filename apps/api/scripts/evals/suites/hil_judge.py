@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Mapping
+from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
@@ -162,11 +163,17 @@ class JudgeTransport:
             raise ProviderError(provider.name, "OPENROUTER_API_KEY unset")
         state = {
             "user_messages": [str(t) for t in setup.get("turns", [])],
-            "pending_action": {"tool": setup.get("tool"), "args": setup.get("args")},
+            "pending_action": {
+                "tool": setup.get("tool"),
+                "description": str(setup.get("desc") or f"Tool {setup.get('tool')}."),
+                "summary": f"{setup.get('tool')} call",
+                "args": setup.get("args"),
+            },
             "prior_actions": [
                 {"tool": p.get("tool"), "args": p.get("args")} for p in setup.get("prior", [])
             ],
             "recent_history": "no recent decisions",
+            "now": datetime.now(UTC).isoformat(),
         }
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:

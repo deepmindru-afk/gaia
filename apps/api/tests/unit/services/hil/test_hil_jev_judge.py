@@ -235,6 +235,13 @@ class TestWire:
             "pending_action",
             "prior_actions",
             "recent_history",
+            "now",
+        }
+        assert set(posted["state"]["pending_action"]) == {
+            "tool",
+            "description",
+            "summary",
+            "args",
         }
         assert posted["questions"]["decision"]["type"] == "choice"
 
