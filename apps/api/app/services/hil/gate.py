@@ -214,6 +214,10 @@ async def _decide_ledger(
     Returns ``None`` only for the auto-aligned case (the tool may run).
     """
     try:
+        declined = await recall_declined_call(context.stream_id, call.name, call.args)
+        if declined is not None:
+            log.info(f"{LogTag.HIL} auto-denying : declined earlier this turn", name=call.name)
+            return _auto_reject_message(call, declined.feedback or "") if declined.auto else _refusal_message(call, declined)
         if policy == "auto":
             integration_name = await _integration_name_for(call.name)
             summary = build_summary(call.name, call.args, integration_name)
@@ -232,7 +236,7 @@ async def _decide_ledger(
                         call_name=call.name,
                         reason=decision.reason,
                     )
-                    return _auto_reject_message(call, decision.reason)
+                    return await _auto_reject(context, call, decision.reason)
         invalid = await _invalid_args_message(request, context.user_id, call)
         if invalid is not None:
             return invalid
@@ -391,6 +395,8 @@ async def _decide(
         declined = await recall_declined_call(context.stream_id, call.name, call.args)
         if declined is not None:
             log.info(f"{LogTag.HIL} auto-denying : declined earlier this turn", name=call.name)
+            if declined.auto:
+                return _auto_reject_message(call, declined.feedback or "")
             return _refusal_message(call, declined)
 
         invalid = await _invalid_args_message(request, context.user_id, call)
@@ -430,7 +436,7 @@ async def _decide(
                 call_name=call.name,
                 reason=decision.reason,
             )
-            return _auto_reject_message(call, decision.reason)
+            return await _auto_reject(context, call, decision.reason)
 
         await publish_approval_request(
             approval_id=approval_id,
@@ -579,6 +585,26 @@ def _auto_reject_message(call: GatedCall, reason: str) -> ToolMessage:
     return _tool_message(
         call, AUTO_REJECT_TEMPLATE.format(tool=call.name, reason=reason), "denied"
     )
+
+
+async def _auto_reject(context: GateContext, call: GatedCall, reason: str) -> ToolMessage:
+    """Refuse with the reason and arm decline memory against a retry.
+
+    The memory write is best-effort: losing it degrades to re-judging the
+    retry, never to running it — the refusal itself is the decision.
+    """
+    try:
+        await remember_declined_call(
+            context.stream_id, call.name, call.args, reason, auto=True
+        )
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} decline memory write failed; the retry will re-judge",
+            tool_name=call.name,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+    return _auto_reject_message(call, reason)
 
 
 def _refusal_message(call: GatedCall, outcome: ApprovalOutcome) -> ToolMessage:

@@ -61,6 +61,9 @@ class ApprovalOutcome:
     status: HILApprovalStatus
     feedback: str | None = None
     scope: str = "once"
+    # True when the refusal came from auto mode, never from the user — the
+    # retry message must not claim the user declined something they never saw.
+    auto: bool = False
 
 
 async def publish_approval_request(
@@ -242,12 +245,16 @@ async def publish_auto_approval(
 
 
 async def remember_declined_call(
-    stream_id: str, tool_name: str, args: Mapping[str, object], feedback: str | None
+    stream_id: str,
+    tool_name: str,
+    args: Mapping[str, object],
+    feedback: str | None,
+    auto: bool = False,
 ) -> None:
-    """Record that the user declined this exact call for the rest of the turn."""
+    """Record that this exact call was declined for the rest of the turn."""
     if not redis_cache.redis:
         return
-    record: DeclinedCallRecord = {"feedback": feedback}
+    record: DeclinedCallRecord = {"feedback": feedback, "auto": auto}
     await redis_cache.set(
         _declined_key(stream_id, tool_name, args),
         record,
@@ -269,7 +276,11 @@ async def recall_declined_call(
         return None
     # Correct by construction: the only writer is ``remember_declined_call`` above.
     record: DeclinedCallRecord = cast(DeclinedCallRecord, raw)
-    return ApprovalOutcome(status=HILApprovalStatus.DENIED, feedback=record.get("feedback"))
+    return ApprovalOutcome(
+        status=HILApprovalStatus.DENIED,
+        feedback=record.get("feedback"),
+        auto=record.get("auto", False),
+    )
 
 
 def build_summary(tool_name: str, args: Mapping[str, object], integration_name: str | None) -> str:

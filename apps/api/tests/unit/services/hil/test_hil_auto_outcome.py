@@ -7,6 +7,7 @@ test_hil_intent.py.
 """
 
 from typing import Any
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from app.services.hil.intent import (
@@ -170,3 +171,107 @@ async def test_unreadable_prefs_do_not_take_the_judge_down() -> None:
     ):
         await gate._judge(request, context, gate.unpack_tool_call(request), None, "s")
     assert judge.await_args.kwargs["never_auto_tools"] == frozenset()
+
+
+def _auto_request():
+    from .conftest import CONVERSATION_ID, STREAM_ID, USER_ID, make_request
+
+    return make_request(
+        name="GMAIL_SEND_EMAIL",
+        args={"to": "b@x"},
+        configurable={
+            "stream_id": STREAM_ID,
+            "user_id": USER_ID,
+            "conversation_id": CONVERSATION_ID,
+            "user_messages": ["send it"],
+        },
+    )
+
+
+def _auto_ledger() -> Any:
+    from unittest.mock import MagicMock
+
+    ledger = MagicMock()
+    ledger.find_live = AsyncMock(return_value=None)
+    ledger.find_latest_denied = AsyncMock(return_value=None)
+    ledger.register = AsyncMock(return_value="ap_abc1234567")
+    return ledger
+
+
+async def test_auto_reject_registers_no_card_and_arms_decline_memory() -> None:
+    # A refusal is not a question: no row, no card — but the retry must refuse
+    # without spending another judge call.
+    from app.services.hil import gate
+
+    ledger = _auto_ledger()
+    with (
+        patch("app.services.hil.gate.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+        patch("app.services.hil.gate.resolve_policy", new=AsyncMock(return_value="auto")),
+        patch("app.services.hil.gate.approval_ledger_repository", new=ledger),
+        patch(
+            "app.services.hil.gate._integration_name_for",
+            new=AsyncMock(return_value="gmail"),
+        ),
+        patch(
+            "app.services.hil.gate._judge",
+            new=AsyncMock(
+                return_value=IntentDecision(outcome="reject", reason="stop spamming")
+            ),
+        ),
+        patch("app.services.hil.gate.publish_ledger_request", new=AsyncMock()) as pub,
+        patch(
+            "app.services.hil.gate.remember_declined_call", new=AsyncMock()
+        ) as remember,
+        patch("app.services.hil.gate.interrupt") as intr,
+    ):
+        result = await gate.decide_tool_call(_auto_request())
+
+    from app.constants.hil import HIL_STATUS_KWARG
+
+    assert result is not None
+    assert result.additional_kwargs[HIL_STATUS_KWARG] == "denied"
+    assert "Auto-approve declined" in result.content
+    assert "stop spamming" in result.content
+    ledger.register.assert_not_awaited()
+    pub.assert_not_awaited()
+    intr.assert_not_called()
+    remember.assert_awaited_once_with(
+        "stream-1", "GMAIL_SEND_EMAIL", {"to": "b@x"}, "stop spamming", auto=True
+    )
+
+
+async def test_remembered_auto_reject_refuses_a_retry_without_rejudge_or_card() -> None:
+    from app.services.hil import gate
+    from app.services.hil.bridge import ApprovalOutcome
+    from app.services.hil.intent import IntentDecision
+    from app.models.hil_models import HILApprovalStatus
+
+    ledger = _auto_ledger()
+    declined = ApprovalOutcome(
+        status=HILApprovalStatus.DENIED, feedback="stop spamming", auto=True
+    )
+    with (
+        patch("app.services.hil.gate.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+        patch("app.services.hil.gate.resolve_policy", new=AsyncMock(return_value="auto")),
+        patch("app.services.hil.gate.approval_ledger_repository", new=ledger),
+        patch(
+            "app.services.hil.gate.recall_declined_call",
+            new=AsyncMock(return_value=declined),
+        ),
+        patch("app.services.hil.gate._judge", new=AsyncMock()) as judge,
+        patch("app.services.hil.gate.publish_ledger_request", new=AsyncMock()) as pub,
+        patch("app.services.hil.gate.interrupt") as intr,
+    ):
+        result = await gate.decide_tool_call(_auto_request())
+
+    from app.constants.hil import HIL_STATUS_KWARG
+
+    assert result is not None
+    assert result.additional_kwargs[HIL_STATUS_KWARG] == "denied"
+    # The user was never asked — the retry must not claim they declined.
+    assert "Auto-approve declined" in result.content
+    assert "The user declined" not in result.content
+    judge.assert_not_awaited()
+    ledger.register.assert_not_awaited()
+    pub.assert_not_awaited()
+    intr.assert_not_called()

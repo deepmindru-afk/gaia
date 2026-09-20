@@ -345,6 +345,31 @@ class TestDeclineMemory:
             await recall_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"}) is None
         )
 
+    async def test_an_auto_refusal_round_trips_its_provenance(self) -> None:
+        # The retry message differs ("auto declined" vs "the user declined"), so
+        # the provenance must survive the Redis round trip.
+        await remember_declined_call(
+            STREAM_ID, "send_email", {"to": "bob@example.com"}, "stop spamming", auto=True
+        )
+
+        outcome = await recall_declined_call(
+            STREAM_ID, "send_email", {"to": "bob@example.com"}
+        )
+
+        assert outcome is not None
+        assert outcome.auto is True
+        assert outcome.feedback == "stop spamming"
+
+    async def test_a_user_decline_still_reads_as_user_made(self) -> None:
+        await remember_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"}, "no")
+
+        outcome = await recall_declined_call(
+            STREAM_ID, "send_email", {"to": "bob@example.com"}
+        )
+
+        assert outcome is not None
+        assert outcome.auto is False
+
     async def test_unserializable_arguments_do_not_crash_the_gate(self) -> None:
         # Tool args come from an LLM and are only loosely typed. A key derivation that
         # raises here would fail the gate closed on every call carrying an odd value.
