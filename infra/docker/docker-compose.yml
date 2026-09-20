@@ -753,8 +753,9 @@ services:
   # Downloads are denied per browser context; the CDP proxy allowlists
   # navigation to http(s) and resolves every explicit navigation target,
   # refusing loopback, private, link-local (169.254.169.254) and other
-  # non-public addresses (see app/browser_host/proxy.py); Obscura runs without
-  # private-network access unless BROWSER_HOST_ALLOW_PRIVATE_NETWORK is set.
+  # non-public addresses (see app/browser_host/proxy.py); Obscura always runs
+  # without private-network access. There is no switch to disable either gate:
+  # in-page redirects, subresources and scripts are covered the same way.
   # Without that flag Obscura's own SSRF gate (obscura-net validate_url plus its
   # DNS resolver guard, re-checked on every redirect hop and mirrored into JS
   # fetch/iframe loads) also refuses private targets the proxy never sees:
@@ -783,7 +784,6 @@ services:
       # under /opt/browsers, which is also installed in the image.
       BROWSER_ENGINE: ${BROWSER_ENGINE:-obscura}
       PLAYWRIGHT_BROWSERS_PATH: /opt/browsers
-      BROWSER_HOST_PORT: "8930"
       # Shared secret the API/worker must present to every host endpoint — the
       # host renders attacker-controlled pages in-container, so a page could
       # otherwise hit the control plane on localhost. Empty in dev is allowed.

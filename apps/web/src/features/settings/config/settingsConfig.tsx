@@ -25,7 +25,7 @@ export interface SettingsMenuItem {
   action?: () => void;
   color?: "danger" | "default";
   external?: boolean;
-  beta?: boolean;
+  isNew?: boolean;
 }
 
 export const settingsPageItems: SettingsMenuItem[] = [
@@ -100,13 +100,14 @@ export const settingsPageItems: SettingsMenuItem[] = [
     label: "Devices",
     icon: ComputerIcon,
     href: "/settings/devices",
-    beta: true,
+    isNew: true,
   },
   {
     key: "browser",
     label: "Browser",
     icon: AiWebBrowsingIcon,
     href: "/settings/browser",
+    isNew: true,
   },
   // Only rendered inside the Electron app (filtered in SettingsSidebar).
   {

@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from app.browser_host.pumps import pump_until_first_close
-from app.config.settings import settings
 from app.constants.log_tags import LogTag
 from app.utils.url_safety import assert_public_http_url
 from shared.py.wide_events import log
@@ -116,9 +115,8 @@ async def _refused_private_target(message: dict[str, Any]) -> str | None:
     an address past an earlier check. The first line of SSRF defence for a
     model- or user-supplied URL; the deployment egress firewall stays the second,
     because in-page redirects and subresources never pass through this proxy.
+    There is no switch to disable this guard: private targets are always refused.
     """
-    if settings.BROWSER_HOST_ALLOW_PRIVATE_NETWORK:
-        return None
     url = _navigation_url(message)
     if url is None or urlsplit(url).scheme.lower() not in _ALLOWED_NAVIGATION_SCHEMES:
         return None  # relative URLs stay on the current document; foreign schemes are refused above

@@ -143,11 +143,6 @@ main() {
     success "Installed ${BIN}"
   fi
 
-  if [ -n "${GAIA_CONNECT_INSTALL_ONLY:-}" ]; then
-    echo "$BIN"
-    exit 0
-  fi
-
   trap - EXIT INT TERM
   rm -rf "$TMP_DIR"
   exec "$BIN" "$@"

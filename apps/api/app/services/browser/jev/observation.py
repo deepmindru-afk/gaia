@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 import hashlib
 import html
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, cast
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.constants.browser import (
     JEV_ELEMENT_LABEL_MAX_CHARS,
@@ -39,6 +41,29 @@ _NON_TEXT_INPUT_TYPES = frozenset(
 _TEXT_ROLES = frozenset({"textbox", "searchbox", "combobox"})
 _ROLE_BY_TAG = {"a": "link", "button": "button", "select": "combobox", "textarea": "textbox"}
 _ROLE_BY_INPUT_TYPE = {"checkbox": "checkbox", "radio": "radio", "search": "searchbox"}
+
+
+class _DomAttributes(BaseModel):
+    """The DOM attributes this module reads, as the page reported them."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    type: str | None = None
+    role: str | None = None
+    value: str | None = None
+    contenteditable: str | None = None
+    aria_checked: str | None = Field(default=None, alias="aria-checked")
+    aria_expanded: str | None = Field(default=None, alias="aria-expanded")
+    aria_selected: str | None = Field(default=None, alias="aria-selected")
+    aria_readonly: str | None = Field(default=None, alias="aria-readonly")
+
+
+class _AxProperties(TypedDict, total=False):
+    """The AX property bag, read only for the flags and text this module names."""
+
+    readonly: object
+    disabled: object
+    valuetext: object
 
 
 @dataclass(frozen=True)
@@ -258,16 +283,19 @@ def _element(
 ) -> JevElement | None:
     try:
         attributes: dict[str, str] = getattr(node, "attributes", None) or {}
+        attrs = _DomAttributes.model_validate(attributes)
         tag = (getattr(node, "node_name", "") or "").lower()
         ax = getattr(node, "ax_node", None)
         properties = _ax_properties(ax)
         label = _label(node, ax, attributes)
         if not label and tag not in ("input", "select", "textarea"):
             return None
-        input_type = attributes.get("type", "text").lower() if tag == "input" else ""
+        input_type = (
+            (attrs.type if attrs.type is not None else "text").lower() if tag == "input" else ""
+        )
         role = (
             getattr(ax, "role", None)
-            or attributes.get("role")
+            or attrs.role
             or _ROLE_BY_INPUT_TYPE.get(input_type)
             or _ROLE_BY_TAG.get(tag)
             or ("textbox" if tag == "input" else tag)
@@ -283,9 +311,7 @@ def _element(
         checked = (
             True
             if node_id in live.checked
-            else _flag(
-                properties, "checked", attributes.get("aria-checked"), "checked" in attributes
-            )
+            else _flag(properties, "checked", attrs.aria_checked, "checked" in attributes)
         )
         return JevElement(
             index=index,
@@ -296,8 +322,8 @@ def _element(
             value=value,
             in_viewport=in_viewport,
             checked=checked,
-            expanded=_flag(properties, "expanded", attributes.get("aria-expanded"), None),
-            selected=_flag(properties, "selected", attributes.get("aria-selected"), None),
+            expanded=_flag(properties, "expanded", attrs.aria_expanded, None),
+            selected=_flag(properties, "selected", attrs.aria_selected, None),
             options=options,
         )
     except Exception as exc:  # an unfamiliar node shape loses one row, not the step
@@ -333,11 +359,13 @@ def _accepts_text(
     attributes: dict[str, str],
     properties: dict[str, object],
 ) -> bool:
-    if "readonly" in attributes or attributes.get("aria-readonly") == "true":
+    attrs = _DomAttributes.model_validate(attributes)
+    typed_properties: _AxProperties = cast(_AxProperties, properties)
+    if "readonly" in attributes or attrs.aria_readonly == "true":
         return False
-    if properties.get("readonly") is True or properties.get("disabled") is True:
+    if typed_properties.get("readonly") is True or typed_properties.get("disabled") is True:
         return False
-    if tag == "textarea" or attributes.get("contenteditable") == "true":
+    if tag == "textarea" or attrs.contenteditable == "true":
         return True
     if tag == "input":
         return input_type not in _NON_TEXT_INPUT_TYPES
@@ -355,19 +383,20 @@ def _select_options(
     def walk(current: EnhancedDOMTreeNode) -> None:
         nonlocal selected, selected_live
         for child in getattr(current, "children_nodes", None) or []:
-            child_attributes = getattr(child, "attributes", None) or {}
+            raw_child_attributes: dict[str, str] = getattr(child, "attributes", None) or {}
+            child_attrs = _DomAttributes.model_validate(raw_child_attributes)
             if (getattr(child, "node_name", "") or "").lower() == "option":
-                if "disabled" in child_attributes:
+                if "disabled" in raw_child_attributes:
                     continue
                 label = " ".join(child.get_all_children_text().split())
-                value = child_attributes.get("value", label)
+                value = child_attrs.value if child_attrs.value is not None else label
                 option = JevSelectOption(
                     target=f"{index}:{len(options) + 1}", label=label or value, value=value
                 )
                 options.append(option)
                 if getattr(child, "backend_node_id", None) in live.selected_options:
                     selected, selected_live = option, True
-                elif "selected" in child_attributes and not selected_live:
+                elif "selected" in raw_child_attributes and not selected_live:
                     selected = option
             else:
                 walk(child)
@@ -384,17 +413,19 @@ def _value(
     live_value: str | None,
     selected: JevSelectOption | None,
 ) -> str | None:
+    attrs = _DomAttributes.model_validate(attributes)
+    typed_properties: _AxProperties = cast(_AxProperties, properties)
     if tag == "select":
         if selected is not None:
             return selected.label
-        current = attributes.get("value")
+        current = attrs.value
         chosen = next((o.label for o in options if o.value == current), None)
         return chosen or current or (options[0].label if options else "")
-    if tag in ("input", "textarea") or attributes.get("contenteditable") == "true":
+    if tag in ("input", "textarea") or attrs.contenteditable == "true":
         if live_value is not None:
             return live_value
-        valuetext = properties.get("valuetext")
-        return attributes.get("value") or (str(valuetext) if valuetext else "")
+        valuetext = typed_properties.get("valuetext")
+        return attrs.value or (str(valuetext) if valuetext else "")
     return None
 
 

@@ -15,9 +15,10 @@ import base64
 from dataclasses import replace
 import json
 import re
-from typing import TYPE_CHECKING, TypeVar, get_args, overload
+from typing import TYPE_CHECKING, TypedDict, TypeVar, cast, get_args, overload
 
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 from pydantic_core import CoreSchema, core_schema
 
 from app.config.settings import settings
@@ -69,6 +70,25 @@ if TYPE_CHECKING:
 
 T = TypeVar("T", bound=BaseModel)
 
+
+class _WaitAction(TypedDict, total=False):
+    """One Browser-Use action, read only for whether it fell back to waiting."""
+
+    wait: dict[str, object]
+
+
+class _ActionField(TypedDict):
+    """AgentOutput's fields, read only for the action model they carry."""
+
+    action: FieldInfo
+
+
+class _RootField(TypedDict, total=False):
+    """A RootModel's fields, read only for the union member it wraps."""
+
+    root: FieldInfo
+
+
 # Browser-Use action name → the Jev operations it makes available. Text entry
 # is `input` in Browser-Use 0.11 and `input_text` before it; both are known.
 _OPERATIONS_BY_ACTION: dict[str, tuple[JevOperation, ...]] = {
@@ -92,6 +112,7 @@ _USER_REQUEST = re.compile(r"<user_request>\s*(.*?)\s*</user_request>", re.DOTAL
 # to an unconfident DONE.
 _TERMINAL_OPERATIONS = frozenset({JevOperation.DONE, JevOperation.BLOCKED})
 _HANDOFF_OPERATIONS = frozenset({JevOperation.REQUEST_HUMAN, JevOperation.SOLVE_CAPTCHA})
+_JEV_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 
 
 class _TextValue(BaseModel):
@@ -234,9 +255,10 @@ class JevChatModel:
             )
 
         action, text = await self._action_for(decision, observation, goal, registered)
+        wait_action: _WaitAction = cast(_WaitAction, action)
         kind = (
             "error"
-            if action.get("wait") and decision.operation is not JevOperation.WAIT
+            if wait_action.get("wait") and decision.operation is not JevOperation.WAIT
             else (decision.operation.value.lower())
         )
         self._remember(decision.label, kind, text)
@@ -604,8 +626,9 @@ def _registered_actions(output_format: type[BaseModel]) -> set[str]:
     Browser-Use builds that model two ways: one model with an optional field per
     action, or (0.11+) a RootModel over a union of single-field models.
     """
-    action_model = get_args(output_format.model_fields["action"].annotation)[0]
-    fields = getattr(action_model, "model_fields", {})
+    action_fields: _ActionField = cast(_ActionField, output_format.model_fields)
+    action_model = get_args(action_fields["action"].annotation)[0]
+    fields: _RootField = cast(_RootField, getattr(action_model, "model_fields", {}))
     if "root" not in fields:
         return set(fields)
     members = get_args(fields["root"].annotation) or (fields["root"].annotation,)
@@ -641,7 +664,7 @@ def build_jev_chat_model(*, text_model: BaseChatModel) -> JevChatModel:
     client = JevGatewayClient(
         api_key=api_key,
         model=settings.BROWSER_USE_JEV_MODEL,
-        url=settings.BROWSER_USE_JEV_DECISIONS_URL,
+        url=_JEV_DECISIONS_URL,
     )
     return JevChatModel(client=client, text_model=text_model)
 

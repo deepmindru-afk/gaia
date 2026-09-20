@@ -140,18 +140,7 @@ def test_headless_shell_beside_prefers_first_binary_name(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
-def test_resolve_chromium_path_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    override = tmp_path / "my-chromium"
-    monkeypatch.setattr(settings, "BROWSER_HOST_CHROMIUM_PATH", str(override))
-    assert _resolve_chromium_path() == str(override)
-
-
-@pytest.mark.unit
-def test_resolve_chromium_path_uses_headless_shell_when_present(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_CHROMIUM_PATH", None)
-
+def test_resolve_chromium_path_uses_headless_shell_when_present() -> None:
     fake_full = Path("/tmp/cache/ms-playwright/chromium-1187/chrome-linux/chrome")
 
     mock_playwright = MagicMock()
@@ -174,10 +163,7 @@ def test_resolve_chromium_path_uses_headless_shell_when_present(
 
 
 @pytest.mark.unit
-def test_resolve_chromium_path_falls_back_to_full_when_no_shell(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_CHROMIUM_PATH", None)
+def test_resolve_chromium_path_falls_back_to_full_when_no_shell() -> None:
     fake_full = Path("/tmp/cache/ms-playwright/chromium-1187/chrome-linux/chrome")
     mock_playwright = MagicMock()
     mock_playwright.chromium.executable_path = str(fake_full)
@@ -478,7 +464,7 @@ def test_get_internal_returns_session() -> None:
 
 @pytest.mark.unit
 async def test_reserve_slot_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 2)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 2)
     host = ChromiumHost()
     await host._reserve_slot()
     assert host._pending_slots == 1
@@ -488,7 +474,7 @@ async def test_reserve_slot_ok(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.unit
 async def test_reserve_slot_at_capacity_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 1)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 1)
     host = ChromiumHost()
     await host._reserve_slot()
     from app.browser_host.chromium import AtCapacityError
@@ -499,7 +485,7 @@ async def test_reserve_slot_at_capacity_raises(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.unit
 async def test_reserve_slot_counts_existing_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 2)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 2)
     host = ChromiumHost()
     s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     host._sessions["s1"] = s
@@ -519,7 +505,7 @@ async def test_reserve_slot_admits_past_the_old_static_cap_when_memory_is_ample(
 ) -> None:
     """With headroom (and the count backstop disabled), admission isn't capped at a small count."""
     monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (100.0, 100_000.0))
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 0)  # 0 = no count backstop
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 0)  # 0 = no count backstop
     host = ChromiumHost()
     for _ in range(50):
         await host._reserve_slot()
@@ -547,7 +533,7 @@ async def test_reserve_slot_reserves_for_pending_creates_so_a_burst_cannot_overs
     """Each in-flight create is charged an estimate, so a burst can't all pass at once."""
     monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (700.0, 1000.0))
     monkeypatch.setattr(settings, "BROWSER_HOST_MEMORY_HIGH_WATERMARK", 0.85)  # hard = 850
-    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 50)
+    monkeypatch.setattr(chromium, "_SESSION_COST_FLOOR_MB", 50)
     host = ChromiumHost()
     from app.browser_host.chromium import AtCapacityError
 
@@ -564,7 +550,7 @@ async def test_reserve_slot_reserves_for_pending_creates_so_a_burst_cannot_overs
 async def test_estimate_session_cost_is_measured_average_floored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 50)
+    monkeypatch.setattr(chromium, "_SESSION_COST_FLOOR_MB", 50)
     host = ChromiumHost()
     host._base_memory_mb = 100.0
     host._sessions = {
@@ -584,7 +570,7 @@ async def test_estimate_session_cost_ignores_memory_the_engine_did_not_take(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Regression: a long-lived host on a busy machine refused every create with a 429."""
-    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 50)
+    monkeypatch.setattr(chromium, "_SESSION_COST_FLOOR_MB", 50)
     host = ChromiumHost()
     host._base_memory_mb = 100.0
     host._sessions = {
@@ -601,7 +587,7 @@ async def test_estimate_session_cost_ignores_memory_the_engine_did_not_take(
 async def test_estimate_session_cost_falls_back_to_the_floor_without_a_sampler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 50)
+    monkeypatch.setattr(chromium, "_SESSION_COST_FLOOR_MB", 50)
     host = ChromiumHost()
     host._sessions = {
         "s1": make_session(session_id="s1", context_id="c", target_id="t", last_activity_at=0)
@@ -1285,7 +1271,7 @@ async def test_stop_no_reaper_still_shuts_down() -> None:
 
 @pytest.mark.unit
 async def test_create_context_without_storage_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(
         monkeypatch,
         {
@@ -1305,7 +1291,7 @@ async def test_create_context_without_storage_state(monkeypatch: pytest.MonkeyPa
 async def test_create_context_with_storage_state_seeds_cookies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(
         monkeypatch,
         {
@@ -1340,7 +1326,7 @@ async def test_create_context_with_storage_state_seeds_cookies(
 async def test_create_context_failure_disposes_context_and_releases_slot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(
         monkeypatch,
         {"Target.createBrowserContext": {"browserContextId": "ctx-1"}},
@@ -1355,7 +1341,7 @@ async def test_create_context_failure_disposes_context_and_releases_slot(
 
 @pytest.mark.unit
 async def test_create_context_at_capacity_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 1)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 1)
     host = make_host()
     host._sessions["existing"] = make_session(
         session_id="existing", context_id="ctx0", target_id="t0", last_activity_at=0
@@ -1420,7 +1406,7 @@ async def test_launch_builds_correct_args_headed_false_shell(
     fake_path.write_text("x")
     host._chromium_path = str(fake_path)
     host._user_data_dir = None
-    monkeypatch.setattr(settings, "BROWSER_HOST_JS_HEAP_MB", 512)
+    monkeypatch.setattr(chromium, "_JS_HEAP_MB", 512)
     monkeypatch.setattr(settings, "BROWSER_HOST_HEADED", False)
     monkeypatch.setattr(chromium, "CHROME_DEFAULT_ARGS", ("--no-first-run",))
     monkeypatch.setattr(chromium, "_HOST_EXTRA_ARGS", ("--no-sandbox",))
@@ -1453,7 +1439,7 @@ async def test_launch_headed_false_full_browser_uses_headless_new(
     fake_path = tmp_path / "chrome"
     fake_path.write_text("x")
     host._chromium_path = str(fake_path)
-    monkeypatch.setattr(settings, "BROWSER_HOST_JS_HEAP_MB", 256)
+    monkeypatch.setattr(chromium, "_JS_HEAP_MB", 256)
     monkeypatch.setattr(settings, "BROWSER_HOST_HEADED", False)
     monkeypatch.setattr(chromium, "CHROME_DEFAULT_ARGS", ())
     monkeypatch.setattr(chromium, "_HOST_EXTRA_ARGS", ())
@@ -1479,7 +1465,7 @@ async def test_launch_headed_true_no_headless_flag(
     fake_path = tmp_path / "chrome"
     host._chromium_path = str(fake_path)
     monkeypatch.setattr(settings, "BROWSER_HOST_HEADED", True)
-    monkeypatch.setattr(settings, "BROWSER_HOST_JS_HEAP_MB", 256)
+    monkeypatch.setattr(chromium, "_JS_HEAP_MB", 256)
     monkeypatch.setattr(chromium, "CHROME_DEFAULT_ARGS", ())
     monkeypatch.setattr(chromium, "_HOST_EXTRA_ARGS", ())
     monkeypatch.setattr(chromium.tempfile, "mkdtemp", lambda prefix: str(tmp_path / "udir3"))
@@ -2133,7 +2119,7 @@ async def test_cdp_call_timeout_raises_and_logs() -> None:
 
 @pytest.mark.unit
 async def test_create_context_end_to_end_real_stack(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(
         monkeypatch,
         {
@@ -2157,7 +2143,7 @@ async def test_create_context_end_to_end_real_stack(monkeypatch: pytest.MonkeyPa
 async def test_create_context_with_storage_state_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(monkeypatch)
     state: dict[str, object] = {
         "cookies": [
@@ -2187,7 +2173,7 @@ async def test_create_context_with_storage_state_end_to_end(
 async def test_create_context_empty_storage_state_does_not_seed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(monkeypatch)
     state = {"cookies": [], "origins": []}
     await host.create_context(state)
@@ -2199,7 +2185,7 @@ async def test_create_context_empty_storage_state_does_not_seed(
 async def test_create_context_failure_before_context_id_no_dispose(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
 
     host, mux = _host_and_mux(monkeypatch)
     mux.fail_on_first_call["Target.createBrowserContext"] = RuntimeError("early boom")
@@ -2477,7 +2463,7 @@ async def test_launch_real_arg_composition_headed_false_shell(
     fake = tmp_path / "headless_shell"
     fake.write_text("x")
     host._chromium_path = str(fake)
-    monkeypatch.setattr(settings, "BROWSER_HOST_JS_HEAP_MB", 512)
+    monkeypatch.setattr(chromium, "_JS_HEAP_MB", 512)
     monkeypatch.setattr(settings, "BROWSER_HOST_HEADED", False)
     monkeypatch.setattr(chromium, "CHROME_DEFAULT_ARGS", ("--no-first-run",))
     monkeypatch.setattr(chromium, "_HOST_EXTRA_ARGS", ("--no-sandbox",))
@@ -2701,7 +2687,7 @@ async def test_cdp_call_timeout_log_names_the_method_and_the_budget() -> None:
 async def test_create_context_sends_the_exact_cdp_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(
         monkeypatch,
         {
@@ -2724,7 +2710,7 @@ async def test_create_context_sends_the_exact_cdp_conversation(
 async def test_create_context_registers_a_session_stamped_now(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     monkeypatch.setattr(chromium, "time", SimpleNamespace(monotonic=lambda: 4242.0))
     host, mux = _host_and_mux(monkeypatch)
 
@@ -2747,7 +2733,7 @@ async def test_create_context_registers_a_session_stamped_now(
 
 @pytest.mark.unit
 async def test_create_context_logs_the_new_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(monkeypatch)
 
     with patch.object(chromium, "log") as mock_log:
@@ -2763,7 +2749,7 @@ async def test_create_context_logs_the_new_session(monkeypatch: pytest.MonkeyPat
 async def test_create_context_seeds_the_converted_cookies_into_the_new_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(
         monkeypatch, {"Target.createBrowserContext": {"browserContextId": "ctx-seed"}}
     )
@@ -2814,7 +2800,7 @@ async def test_create_context_drops_the_orphan_connection_when_the_target_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A connection opened before the failure has no session to carry it — drop it."""
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(
         monkeypatch,
         {"Target.createBrowserContext": {"browserContextId": "ctx-orphan"}},
@@ -3217,7 +3203,7 @@ async def test_launch_composes_the_full_argv_in_order(
     host._chromium_path = str(binary)
     monkeypatch.setattr(chromium, "CHROME_DEFAULT_ARGS", ("--default-a",))
     monkeypatch.setattr(chromium, "_HOST_EXTRA_ARGS", ("--extra-b",))
-    monkeypatch.setattr(settings, "BROWSER_HOST_JS_HEAP_MB", 512)
+    monkeypatch.setattr(chromium, "_JS_HEAP_MB", 512)
     monkeypatch.setattr(settings, "BROWSER_HOST_HEADED", False)
     user_dir = str(tmp_path / "udir-argv")
     prefixes: list[str] = []
@@ -3593,9 +3579,9 @@ async def test_reserve_slot_backs_off_and_admits_once_the_reaper_frees_room(
 ) -> None:
     """Over the watermark the create waits out the budget instead of 429-ing at once."""
     monkeypatch.setattr(settings, "BROWSER_HOST_MEMORY_HIGH_WATERMARK", 0.85)
-    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 50)
-    monkeypatch.setattr(settings, "BROWSER_HOST_ADMISSION_WAIT_SECONDS", 5)
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 10)
+    monkeypatch.setattr(chromium, "_SESSION_COST_FLOOR_MB", 50)
+    monkeypatch.setattr(chromium, "_ADMISSION_WAIT_SECONDS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 10)
     readings = [(900.0, 1000.0), (700.0, 1000.0)]
     monkeypatch.setattr(chromium, "memory_usage_mb", lambda: readings.pop(0))
     slept: list[float] = []
@@ -3618,9 +3604,9 @@ async def test_reserve_slot_refuses_immediately_when_the_wait_budget_is_already_
 ) -> None:
     """A zero wait budget means give up on the first look, not back off once more."""
     monkeypatch.setattr(settings, "BROWSER_HOST_MEMORY_HIGH_WATERMARK", 0.85)
-    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 50)
-    monkeypatch.setattr(settings, "BROWSER_HOST_ADMISSION_WAIT_SECONDS", 0)
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 10)
+    monkeypatch.setattr(chromium, "_SESSION_COST_FLOOR_MB", 50)
+    monkeypatch.setattr(chromium, "_ADMISSION_WAIT_SECONDS", 0)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 10)
     monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (900.0, 1000.0))
     monkeypatch.setattr(chromium, "time", SimpleNamespace(monotonic=lambda: 1000.0))
 
@@ -3645,7 +3631,7 @@ def test_a_new_host_has_no_memory_baseline_to_subtract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Before start() the baseline is zero, so the estimate is the engine's whole RSS."""
-    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 1)
+    monkeypatch.setattr(chromium, "_SESSION_COST_FLOOR_MB", 1)
     host = ChromiumHost()
     host._sampler = _sampler_reading(100.0)
     host._sessions = {"s1": make_session()}
@@ -3658,7 +3644,7 @@ async def test_start_takes_the_baseline_from_used_memory_not_the_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The baseline is the engine's RSS at launch, so the estimate measures only growth."""
-    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 1)
+    monkeypatch.setattr(chromium, "_SESSION_COST_FLOOR_MB", 1)
     monkeypatch.setattr(chromium.asyncio, "to_thread", AsyncMock(return_value="/tmp/chrome"))
     host = ChromiumHost()
     sampler = _sampler_reading(300.0)
@@ -3861,7 +3847,7 @@ async def test_shutdown_drops_the_sampler_so_later_samples_are_silent_no_ops() -
 async def test_create_context_records_a_resource_sample_for_the_new_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
     host, mux = _host_and_mux(monkeypatch)
     host._sampler = _FixedSampler((42.0, 7.0))  # type: ignore[assignment]  # a ProcessSampler stub
 

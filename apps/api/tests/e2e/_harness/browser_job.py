@@ -23,7 +23,6 @@ from pydantic import BaseModel
 
 from app.agents.core.background.session import RunKind, create_session
 from app.agents.tools import browser_tool
-from app.config.settings import settings
 from app.models.hil_models import HILPreferences
 from app.schemas.browser_job import BrowserJobRequest
 from app.services.browser.exceptions import BrowserHandoffCancelled
@@ -323,7 +322,6 @@ async def browser_job_world(
 
     patches = [
         patch("app.db.redis.redis_cache.redis", redis),
-        patch.object(settings, "BROWSER_USE_ENABLED", True),
         # The real waits are tens of seconds of polling. Shrunk, not removed: the
         # poll loops are what the join and the delivery hand-off are made of.
         patch.object(browser_tasks, "BROWSER_JOB_JOINER_LEASE_SECONDS", 0.2),

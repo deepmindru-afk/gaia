@@ -24,7 +24,6 @@ import pytest
 from app.browser_host import chromium, proxy, screencast
 from app.browser_host.cdp_mux import CdpMux, sinks_for
 from app.browser_host.chromium import ChromiumHost, HostSession
-from app.config.settings import settings
 
 FAKE_ROOT_WS_URL = "ws://127.0.0.1:9222/devtools/browser/fake"
 # Longer than any test runs: the live view's paced capture must only fire for the
@@ -47,7 +46,7 @@ def _park_the_live_view_pull(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _ample_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (100.0, 100_000.0))
-    monkeypatch.setattr(settings, "BROWSER_HOST_ADMISSION_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr(chromium, "_ADMISSION_WAIT_SECONDS", 0.0)
 
 
 class FakeMux:

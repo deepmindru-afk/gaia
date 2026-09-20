@@ -47,5 +47,5 @@ No TUI, flags in, JSON out — decoupled from the View for programmatic use:
     ./gaia-connect --json --browser Arc --list         # {"sessions":[{site,cookies}]}
     ./gaia-connect --json --browser Arc --sites github.com,x.com --token CODE
 
-`GAIA_CONNECT_JSON=1` also enables robot mode; `ACCESSIBLE=1` switches the
+`GAIA_CONNECT_ACCESSIBLE=1` switches the
 interactive form to its screen-reader-friendly renderer.

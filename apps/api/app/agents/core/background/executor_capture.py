@@ -14,7 +14,6 @@ import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 from types import CoroutineType, FrameType
-from typing import Any
 
 from app.agents.core.background.session import (
     RunKind,
@@ -137,7 +136,7 @@ def drain_executor_tool_data(stream_id: str) -> list[ToolDataEntry]:
     return tool_data_from_events(session.tool_events)
 
 
-def tool_data_from_events(events: Sequence[dict[str, Any]]) -> list[ToolDataEntry]:
+def tool_data_from_events(events: Sequence[dict[str, object]]) -> list[ToolDataEntry]:
     """Reconstruct grouped tool_data from a sequence of raw collector events.
 
     Only tool_calls_data entries get their output backfilled. The events need
@@ -148,7 +147,7 @@ def tool_data_from_events(events: Sequence[dict[str, Any]]) -> list[ToolDataEntr
     # The accumulator envelope is an open bag; only "tool_data" has a fixed
     # shape, and it's this list object throughout, rebound by
     # reconstruct_subagent_groups, hence the re-read at the end.
-    accumulated: dict[str, Any] = {"tool_data": entries}
+    accumulated: dict[str, object] = {"tool_data": entries}
     outputs: dict[str, str] = {}
     for evt in events:
         # Hooks emit raw field payloads like {"email_fetch_data": [...]};

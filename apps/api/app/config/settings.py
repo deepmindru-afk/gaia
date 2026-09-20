@@ -173,9 +173,9 @@ class CommonSettings(BaseAppSettings):
         return max(CRAWL4AI_MIN_MAX_BROWSERS, parsed)
 
     # --- Browser-Use (autonomous browser automation) ---
-    # Opt-in: disabled by default until BROWSER_HOST_URL is configured; when
-    # false the tool reports unavailable instead of spinning up a browser.
-    BROWSER_USE_ENABLED: bool = False
+    # Always on: the tool is part of the product in every environment.
+    # A host that cannot be reached fails loudly at task time instead of
+    # the tool reporting itself unavailable up front.
 
     # Strips thinking/evaluation_previous_goal/next_goal/plan from step output.
     # On by default: measured ~26% fewer prompt tokens, per-step cost roughly
@@ -200,7 +200,6 @@ class CommonSettings(BaseAppSettings):
     # Jev "System One" decision policy (TypeSafe AI, served by OpenRouter): each
     # step's decision is a single Jev evaluation over the page's indexed element
     # table, not a generative chat completion. Screenshots are never sent to Jev.
-    BROWSER_USE_JEV_DECISIONS_URL: str = "https://openrouter.ai/api/alpha/decisions"
     BROWSER_USE_JEV_MODEL: str = "~typesafe/jev-latest"
     # Text helper for the loop, called only when a decision needs a typed value.
     # gemini-3.5-flash-lite is the verified model: mercury-2.5 returned empty
@@ -232,45 +231,20 @@ class CommonSettings(BaseAppSettings):
     # CDP with an authenticated screencast live view. Reached internally by
     # service name; override locally to http://localhost:8930.
     BROWSER_HOST_URL: str = "http://browser-host:8930"  # NOSONAR python:S5332 — internal docker service, plain HTTP on the private network by design (TLS terminates at the edge)
-    # Port the host binds inside its container.
-    BROWSER_HOST_PORT: int = 8930
-    # Address the host binds. All interfaces by default — the host runs in its own
-    # container on the internal overlay network and this port is never published; a
-    # value from settings also makes the bind configurable for local runs.
-    BROWSER_HOST_BIND: str = "0.0.0.0"  # noqa: S104  # nosec B104 — internal overlay only, port never published
     # Shared secret the API/worker must present to every host endpoint. Required
     # in production: the host renders attacker-controlled pages in the SAME
     # container, so a page could otherwise reach the control plane on localhost.
     BROWSER_HOST_KEY: str | None = None
-    # Absolute anti-runaway backstop on concurrent contexts, NOT the real gate:
-    # admission is memory-based (see the watermarks below), so this only guards
-    # against a pathological leak spawning unbounded contexts. 0 disables it.
-    BROWSER_HOST_MAX_SESSIONS: int = 200
     # Memory-based admission reading the cgroup's used/limit: admits while a new
     # session's projected cost stays under HIGH_WATERMARK, sheds idle sessions
     # between SOFT and HIGH. LIMIT_MB pins the budget when the cgroup is unreadable.
     BROWSER_HOST_MEMORY_LIMIT_MB: int | None = None
     BROWSER_HOST_MEMORY_HIGH_WATERMARK: float = 0.85
     BROWSER_HOST_MEMORY_SOFT_WATERMARK: float = 0.75
-    # Conservative floor reserved for each in-flight/next session so a burst of
-    # concurrent creates cannot collectively overshoot the watermark before their
-    # memory materializes; the live estimate rises above this as real cost shows.
-    BROWSER_HOST_SESSION_COST_FLOOR_MB: int = 50
-    # Under pressure a create waits up to this long for memory to free (idle reap,
-    # other disposals) before returning 429 — graceful slowdown, not instant refusal.
-    BROWSER_HOST_ADMISSION_WAIT_SECONDS: float = 5.0
     # Dispose a context after this many seconds with no activity and no live viewer.
     BROWSER_HOST_IDLE_TTL_SECONDS: int = 300
     # Run Chromium headed (under Xvfb) instead of --headless=new, for anti-bot.
     BROWSER_HOST_HEADED: bool = False
-    # Dev only: let the agent's browser reach loopback/private/link-local hosts.
-    # Off, the CDP proxy refuses them and Obscura gets no private-network access.
-    BROWSER_HOST_ALLOW_PRIVATE_NETWORK: bool = False
-    # Override the Chromium binary; when unset the host resolves Playwright's bundled one.
-    BROWSER_HOST_CHROMIUM_PATH: str | None = None
-    # Per-renderer V8 heap ceiling. One runaway page must not be able to eat the
-    # whole host's budget and OOM every other user's session with it.
-    BROWSER_HOST_JS_HEAP_MB: int = 512
     # Which engine the host launches. Obscura (a low-RAM Rust CDP server) is the
     # default; Chromium (headless-shell) is the flag-selectable break-glass engine
     # over the same CDP plane. Set BROWSER_ENGINE=chromium to fall back.

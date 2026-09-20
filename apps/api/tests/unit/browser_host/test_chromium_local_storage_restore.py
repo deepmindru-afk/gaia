@@ -18,7 +18,6 @@ from typing import Any
 import pytest
 
 from app.browser_host.chromium import _build_local_storage_restore_js
-from app.config.settings import settings
 from tests.unit.browser_host.conftest import FakeMux, install_mux, make_host
 
 _ORIGIN = "https://example.com"
@@ -159,7 +158,6 @@ async def test_seed_local_storage_detaches_even_when_a_script_add_fails() -> Non
 async def test_create_context_registers_restore_when_origins_carry_local_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
     mux = install_mux(
         monkeypatch,
         FakeMux(
@@ -189,7 +187,6 @@ async def test_create_context_registers_restore_when_origins_carry_local_storage
 async def test_create_context_skips_restore_when_no_local_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
     mux = install_mux(
         monkeypatch,
         FakeMux(

@@ -16,6 +16,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from app.agents.core.background.executor_queue import (
+    ExecutorRunItem,
     build_lock_value,
     build_run_item,
     decode_raw_item,
@@ -126,7 +127,7 @@ async def call_executor(
     The executor runs in the background and posts its result to the
     conversation as a new bot message when it completes.
     """
-    base_configurable = agent_configurable(config)
+    base_configurable: AgentConfigurable = agent_configurable(config)
     # Shallow-copy so the executor's overrides (todo binding) never mutate the
     # comms agent's live RunnableConfig. The model is inherited from the comms
     # configurable (set by per-plan routing).
@@ -149,18 +150,17 @@ async def call_executor(
     # replayed transcript. Empty for interactive chat and for a first run.
     workflow_id = base_configurable.get("workflow_id")
     user_id = base_configurable.get("user_id")
-    is_workflow_run = bool(workflow_id and user_id)
-    last_run = await get_last_run_brief(workflow_id, user_id) if is_workflow_run else ""
-    # Asked here, not at narration time: write_playbook is an executor tool that
-    # comms (which narrates the result) cannot reach. The stopped-replay record
-    # rides along verbatim for the same reason as the request: comms paraphrases.
-    playbook_check = (
-        await playbook_check_brief(
+    if workflow_id and user_id:
+        last_run = await get_last_run_brief(workflow_id, user_id)
+        # Asked here, not at narration time: write_playbook is an executor tool that
+        # comms (which narrates the result) cannot reach. The stopped-replay record
+        # rides along verbatim for the same reason as the request: comms paraphrases.
+        playbook_check = await playbook_check_brief(
             workflow_id, user_id, fallback_note=base_configurable.get("playbook_fallback")
         )
-        if is_workflow_run
-        else ""
-    )
+    else:
+        last_run = ""
+        playbook_check = ""
 
     composed_task = compose_executor_brief(
         task,
@@ -357,7 +357,7 @@ async def cancel_executor(
     question, or saying "nevermind" about a NEW request. Only the USER
     decides to cancel.
     """
-    configurable = agent_configurable(config)
+    configurable: AgentConfigurable = agent_configurable(config)
     conversation_id = configurable.get("thread_id", "")
 
     if not conversation_id:
@@ -520,17 +520,21 @@ async def _remove_queued_by_ids(
     target_ids = set(task_ids)
 
     for raw_item in all_items:
+        item: ExecutorRunItem | None = None
         try:
-            item = json.loads(raw_item)
+            loaded: ExecutorRunItem = json.loads(raw_item)
+            item = loaded
         except ValueError:
             item = None
         # Anything that isn't a JSON object is unreadable to us — keep it rather
         # than letting it abort the whole cancellation. A bare `item.get(...)`
         # raised AttributeError on a JSON scalar, which escaped this handler.
-        if isinstance(item, dict) and item.get("task_id") in target_ids:
-            cancelled.append(item["task_id"])
-        else:
-            keep.append(decode_raw_item(raw_item))
+        if isinstance(item, dict):
+            queued_id = item.get("task_id")
+            if queued_id is not None and queued_id in target_ids:
+                cancelled.append(queued_id)
+                continue
+        keep.append(decode_raw_item(raw_item))
 
     if cancelled:
         await redis_cache.client.delete(queue_key)

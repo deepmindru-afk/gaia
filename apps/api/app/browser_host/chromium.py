@@ -74,6 +74,20 @@ _ADMISSION_POLL_SECONDS = 0.25
 # the floor) so idle sessions are reclaimed faster to make room for new ones.
 _PRESSURE_IDLE_TTL_DIVISOR = 4
 _MIN_PRESSURE_IDLE_TTL_SECONDS = 30.0
+# Absolute anti-runaway backstop on concurrent contexts, NOT the real gate:
+# admission is memory-based (memory watermarks below), so this only guards
+# against a pathological leak spawning unbounded contexts. 0 disables it.
+_MAX_SESSIONS = 200
+# Conservative floor reserved for each in-flight/next session so a burst of
+# concurrent creates cannot collectively overshoot the watermark before their
+# memory materializes; the live estimate rises above this as real cost shows.
+_SESSION_COST_FLOOR_MB = 50
+# Under pressure a create waits up to this long for memory to free (idle reap,
+# other disposals) before returning 429 — graceful slowdown, not instant refusal.
+_ADMISSION_WAIT_SECONDS = 5.0
+# Per-renderer V8 heap ceiling. One runaway page must not be able to eat the
+# whole host's budget and OOM every other user's session with it.
+_JS_HEAP_MB = 512
 
 
 @dataclass(slots=True)
@@ -94,7 +108,7 @@ class HostSession:
 
 
 class AtCapacityError(RuntimeError):
-    """Raised when the host already holds BROWSER_HOST_MAX_SESSIONS contexts."""
+    """Raised when the host already holds _MAX_SESSIONS contexts."""
 
 
 class SessionNotFoundError(KeyError):
@@ -148,17 +162,13 @@ def _headless_shell_beside(chromium: Path) -> Path | None:
 
 
 def _resolve_chromium_path() -> str:
-    """Resolve the browser binary: the configured override, else Playwright's headless shell.
+    """Resolve the browser binary: Playwright's headless shell.
 
     The shell build drops the browser-UI layer: at the same Chrome revision with
     three contexts open, 702 MB versus 1419 MB. Falls back to the full browser
     when the shell is absent. Playwright's resolver uses its sync API, which
     refuses to run inside a running event loop, so call this in a worker thread.
     """
-    override = settings.BROWSER_HOST_CHROMIUM_PATH
-    if override:
-        return str(override)
-
     with sync_playwright() as p:
         full = Path(p.chromium.executable_path)
     shell = _headless_shell_beside(full)
@@ -285,7 +295,7 @@ class ChromiumHost:
     async def create_context(self, storage_state: StorageState | None) -> HostSession:
         """Create an isolated context, plus one blank page, optionally seeding cookies.
 
-        Fails fast with :class:AtCapacityError once BROWSER_HOST_MAX_SESSIONS
+        Fails fast with :class:AtCapacityError once _MAX_SESSIONS
         contexts are live, so a caller gets a clean 429 instead of a Chromium that
         slowly runs out of memory.
         """
@@ -505,7 +515,7 @@ class ChromiumHost:
         per-session cost as sessions run; the floor keeps a burst of concurrent
         creates from collectively overshooting before their memory materializes.
         """
-        floor = float(settings.BROWSER_HOST_SESSION_COST_FLOOR_MB)
+        floor = float(_SESSION_COST_FLOOR_MB)
         sessions = len(self._sessions)
         # Only the engine tree is what sessions cost: charging them for everything
         # else that grew since launch made a long-lived host 429 every create.
@@ -522,8 +532,8 @@ class ChromiumHost:
         watermark; else wait for disposals and raise AtCapacityError only once the
         wait budget is spent. The lock guards the registry, never the CDP calls.
         """
-        deadline = time.monotonic() + settings.BROWSER_HOST_ADMISSION_WAIT_SECONDS
-        ceiling = settings.BROWSER_HOST_MAX_SESSIONS
+        deadline = time.monotonic() + _ADMISSION_WAIT_SECONDS
+        ceiling = _MAX_SESSIONS
         while True:
             used, limit = memory_usage_mb()
             estimate = self._estimate_session_cost_mb()
@@ -706,7 +716,7 @@ class ChromiumHost:
         # Cap V8 per renderer so one heavy page cannot exhaust a shared host.
         # This bounds the JS heap only — DOM, images and raster buffers live
         # outside V8 — so it is a ceiling on the worst case, not a saving.
-        args.append(f"--js-flags=--max-old-space-size={settings.BROWSER_HOST_JS_HEAP_MB}")
+        args.append(f"--js-flags=--max-old-space-size={_JS_HEAP_MB}")
         # Size the window to the viewport so pages paint edge-to-edge instead of into
         # an 800x600 default (which leaves whitespace around the content in the view).
         args.append(f"--window-size={BROWSER_VIEWPORT_WIDTH},{BROWSER_VIEWPORT_HEIGHT}")
@@ -721,8 +731,8 @@ class ChromiumHost:
         """Obscura's argv. It is a CDP *server* — serve, not a chrome debug flag.
 
         It publishes its DevTools endpoint at /json/version on the port we
-        name (never ephemeral, so we can poll for it), stealthed, and kept off
-        the private network unless BROWSER_HOST_ALLOW_PRIVATE_NETWORK says otherwise.
+        name (never ephemeral, so we can poll for it), stealthed, and always kept
+        off the private network.
         """
         return obscura_serve_argv(settings.OBSCURA_PORT)
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+from typing import TypedDict, cast
 
 from app.constants.browser import (
     JEV_PROBABILITY_SUM_TOLERANCE,
@@ -40,6 +41,18 @@ from app.services.browser.jev.prompts import (
 
 class JevDecisionError(ValueError):
     """Jev's answer did not name an offered operation/target; no action executed."""
+
+
+class _OperationAnswers(TypedDict):
+    """The gateway's answers, read only for the operation head (target heads use variable keys)."""
+
+    operation: JevChoiceAnswer
+
+
+class _OperationQuestions(TypedDict):
+    """The request's questions, read only for the operation head."""
+
+    operation: JevChoiceQuestion
 
 
 _OPERATION_LABELS: dict[JevOperation, str] = {
@@ -171,9 +184,9 @@ def resolve(
     request: JevEvaluationRequest, evaluation: JevEvaluation, observation: JevObservation
 ) -> JevDecision:
     """Validate the operation head, then only the target head that operation selects."""
-    operation_answer = _validate_choice(
-        evaluation.answers.get("operation"), request.questions["operation"].criteria
-    )
+    answers: _OperationAnswers = cast(_OperationAnswers, evaluation.answers)
+    questions: _OperationQuestions = cast(_OperationQuestions, request.questions)
+    operation_answer = _validate_choice(answers.get("operation"), questions["operation"].criteria)
     operation = JevOperation(operation_answer.choice)
     if operation not in JEV_TARGET_OPERATIONS:
         return JevDecision(

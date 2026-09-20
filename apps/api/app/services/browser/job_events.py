@@ -7,7 +7,7 @@ and shows the run from step 1.
 """
 
 import json
-from typing import Any
+from typing import TypedDict
 
 from app.constants.browser import (
     BROWSER_JOB_EVENTS_MAXLEN,
@@ -20,14 +20,20 @@ from shared.py.wide_events import log
 
 #: Closes a job's feed. Not a card: the relay stops on it without having to
 #: re-read the job state on every frame, and the worker is the only publisher.
-JOB_TERMINAL_FRAME: dict[str, Any] = {"browser_job_done": True}
+JOB_TERMINAL_FRAME: dict[str, object] = {"browser_job_done": True}
+
+
+class _StreamFields(TypedDict, total=False):
+    """One Redis stream entry's fields, as this module writes them."""
+
+    payload: str
 
 
 def _key(job_id: str) -> str:
     return f"{BROWSER_JOB_EVENTS_PREFIX}{job_id}"
 
 
-async def publish_job_event(job_id: str, payload: dict[str, Any]) -> None:
+async def publish_job_event(job_id: str, payload: dict[str, object]) -> None:
     """Append one already-normalized stream frame to the job's replayable card feed."""
     key = _key(job_id)
     await redis_cache.client.xadd(
@@ -41,7 +47,7 @@ async def publish_job_event(job_id: str, payload: dict[str, Any]) -> None:
 
 async def read_job_events(
     job_id: str, cursor: str, block_ms: int
-) -> list[tuple[str, dict[str, Any]]]:
+) -> list[tuple[str, dict[str, object]]]:
     """Read frames after cursor; returns (entry_id, payload) pairs.
 
     block_ms of 0 reads whatever is already there instead of blocking forever,
@@ -50,16 +56,17 @@ async def read_job_events(
     results = await redis_cache.client.xread(
         {_key(job_id): cursor}, block=block_ms if block_ms > 0 else None
     )
-    events: list[tuple[str, dict[str, Any]]] = []
+    events: list[tuple[str, dict[str, object]]] = []
     for _stream, entries in results:
         for entry_id, fields in entries:
-            payload = _decode(entry_id, fields.get("payload", ""))
+            typed_fields: _StreamFields = fields
+            payload = _decode(entry_id, typed_fields.get("payload", ""))
             if payload is not None:
                 events.append((entry_id, payload))
     return events
 
 
-def _decode(entry_id: str, raw: str) -> dict[str, Any] | None:
+def _decode(entry_id: str, raw: str) -> dict[str, object] | None:
     # A frame nobody can read is dropped, never raised: one poisoned entry must
     # not end the relay and cost the user every remaining card.
     try:

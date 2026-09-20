@@ -8,7 +8,6 @@ waiting, this task otherwise.
 
 import asyncio
 from collections.abc import Mapping
-from typing import Any
 
 from app.agents.core.background.comms_narrator import narrate_executor_result
 from app.agents.core.background.executor_capture import tool_data_from_events
@@ -40,7 +39,7 @@ from shared.py.wide_events import log
 
 async def run_browser_job(
     ctx: Mapping[str, object],  # noqa: ARG001 -- ARQ injects ctx positionally into every registered task
-    payload: dict[str, Any],
+    payload: dict[str, object],
 ) -> str:
     """Run one browser task to completion off the request path.
 

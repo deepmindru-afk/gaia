@@ -9,7 +9,6 @@ import pytest
 
 from app.agents.tools import browser_tool as tool_mod
 from app.agents.tools.browser_tool import browser_task
-from app.config.settings import settings
 from app.constants.browser import BROWSER_JOB_TASK
 from app.models.chat_models import ConversationSource
 from app.schemas.browser_job import BrowserJobRequest, BrowserJobState, BrowserJobStatus
@@ -97,26 +96,12 @@ def _install(
     monkeypatch.setattr(
         tool_mod.RedisPoolManager, "get_pool", AsyncMock(return_value=MagicMock(name="pool"))
     )
-    monkeypatch.setattr(tool_mod.settings, "BROWSER_USE_ENABLED", True)
     return recorder
 
 
 # ---------------------------------------------------------------------------
 # the gates — what never reaches the queue at all
 # ---------------------------------------------------------------------------
-
-
-async def test_disabled_message_is_exact_and_no_job_is_claimed_or_queued(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    recorder = _install(monkeypatch)
-    monkeypatch.setattr(tool_mod.settings, "BROWSER_USE_ENABLED", False)
-
-    out = await browser_task.ainvoke({"task": "do it"}, config=UI_CONFIG)
-
-    assert out == "Browser automation is currently disabled."
-    assert recorder.claims == []
-    assert recorder.enqueued == []
 
 
 async def test_a_private_start_url_is_refused_before_any_job_exists(
@@ -136,19 +121,6 @@ async def test_a_private_start_url_is_refused_before_any_job_exists(
     )
     assert recorder.claims == []
     assert recorder.enqueued == []
-
-
-async def test_the_private_network_switch_lets_a_local_start_url_through(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    recorder = _install(monkeypatch)
-    monkeypatch.setattr(settings, "BROWSER_HOST_ALLOW_PRIVATE_NETWORK", True)
-
-    await browser_task.ainvoke(
-        {"task": "check the dev site", "start_url": "http://127.0.0.1:3000"}, config=UI_CONFIG
-    )
-
-    assert recorder.request.start_url == "http://127.0.0.1:3000"
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,6 @@ from app.browser_host.proxy import (
     _refused_navigation_url,
     _refused_private_target,
 )
-from app.config.settings import settings
 
 
 @pytest.mark.unit
@@ -141,16 +140,6 @@ async def test_non_navigations_relative_urls_and_foreign_schemes_skip_the_resolv
         {"id": 4, "method": "Page.navigate", "params": {"url": "about:blank"}},
     ):
         assert await _refused_private_target(message) is None
-    guard.assert_not_awaited()
-
-
-async def test_the_private_network_switch_disables_the_guard(monkeypatch) -> None:
-    guard = AsyncMock(side_effect=ValueError("non-public"))
-    monkeypatch.setattr(proxy, "assert_public_http_url", guard)
-    monkeypatch.setattr(settings, "BROWSER_HOST_ALLOW_PRIVATE_NETWORK", True)
-
-    message = {"id": 3, "method": "Page.navigate", "params": {"url": "http://10.0.0.5/admin"}}
-    assert await _refused_private_target(message) is None
     guard.assert_not_awaited()
 
 

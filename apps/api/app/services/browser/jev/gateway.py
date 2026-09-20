@@ -31,6 +31,23 @@ class JevGatewayError(BrowserAutomationError):
     """The gateway refused or failed the evaluation; no action was executed."""
 
 
+class _GatewayErrorDetail(BaseModel):
+    """One error object in a failed decisions response, read only for its message."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    message: str | None = None
+    type: str | None = None
+
+
+class _GatewayErrorBody(BaseModel):
+    """A failed decisions response, read only for the error it carries."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    error: _GatewayErrorDetail | None = None
+
+
 class JevChoiceQuestion(BaseModel):
     """One ``choice`` question: pick an option name from ``criteria``."""
 
@@ -119,7 +136,9 @@ class JevGatewayClient:
 
 def _error_message(response: httpx.Response) -> str:
     try:
-        error = response.json().get("error", {})
+        error = _GatewayErrorBody.model_validate(response.json()).error
     except ValueError:
         return response.text[:200]
-    return str(error.get("message") or error.get("type") or response.text[:200])
+    if error is None:
+        return response.text[:200]
+    return str(error.message or error.type or response.text[:200])

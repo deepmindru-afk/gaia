@@ -10,7 +10,6 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from functools import partial
 from time import perf_counter
-from typing import Any
 import uuid
 
 from app.config.settings import settings
@@ -77,7 +76,7 @@ from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log
 
 #: Where one already-shaped stream frame goes: the job's own replayable feed.
-FramePublisher = Callable[[dict[str, Any]], Awaitable[None]]
+FramePublisher = Callable[[dict[str, object]], Awaitable[None]]
 
 # Screenshots stream into the chat live, so the reply must never narrate them.
 _NO_META = (
@@ -148,7 +147,7 @@ def agent_result_message(result: BrowserResultSnapshot) -> str:
     )
 
 
-async def publish_frame_to_job(job_id: str, payload: dict[str, Any]) -> None:
+async def publish_frame_to_job(job_id: str, payload: dict[str, object]) -> None:
     """Normalize a raw frame once, here at the producer, and append it to the job's feed."""
     await publish_job_event(job_id, normalize_custom_event(payload))
 

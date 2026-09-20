@@ -17,7 +17,6 @@ from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict
 
-from app.config.settings import settings
 from app.constants.browser import (
     BROWSER_JOB_JOINER_REFRESH_SECONDS,
     BROWSER_JOB_POLL_INTERVAL_SECONDS,
@@ -156,9 +155,7 @@ async def browser_task(
     params = _run_params(config)
     log.set(browser={"operation": "task", "source_category": params.source_category})
 
-    if not settings.BROWSER_USE_ENABLED:
-        return "Browser automation is currently disabled."
-    if start_url and not settings.BROWSER_HOST_ALLOW_PRIVATE_NETWORK:
+    if start_url:
         try:
             assert_safe_url_shape(start_url)
         except ValueError as exc:

@@ -20,15 +20,10 @@ from app.constants.browser import BrowserEngine
 
 
 @pytest.mark.unit
-def test_private_network_access_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The flag that lets Obscura reach loopback/private hosts follows the one switch."""
+def test_private_targets_are_always_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No switch disables the guard: Obscura never gets private-network access."""
     monkeypatch.setattr(settings, "OBSCURA_BIN", "/opt/obscura/obscura")
-
-    monkeypatch.setattr(settings, "BROWSER_HOST_ALLOW_PRIVATE_NETWORK", False)
     assert "--allow-private-network" not in obscura_serve_argv(9931)
-
-    monkeypatch.setattr(settings, "BROWSER_HOST_ALLOW_PRIVATE_NETWORK", True)
-    assert obscura_serve_argv(9931)[-1] == "--allow-private-network"
 
 
 @pytest.mark.unit

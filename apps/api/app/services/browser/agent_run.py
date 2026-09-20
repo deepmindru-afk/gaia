@@ -6,7 +6,7 @@ RunHooks, and the agent's history is read into a RunOutcome.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from app.constants.browser import (
     BROWSER_TAKEOVER_PREAMBLE,
@@ -47,6 +47,12 @@ _OUTPUT_MAX_CHARS = 200
 #: errored or whose observation stalled. It lives here rather than in
 #: captions.py, which only ever names an action the agent actually chose.
 STEP_ERROR_CAPTION = "That didn't respond, trying again"
+
+
+class _ActionInputs(TypedDict, total=False):
+    """One Browser-Use action's arguments, read only for the element it targets."""
+
+    index: int
 
 
 def _element_label(state: BrowserStateSummary, index: object) -> str | None:
@@ -94,14 +100,15 @@ def _extract_actions(
     for action in getattr(agent_output, "action", None) or []:
         dumped = action.model_dump(exclude_none=True) if hasattr(action, "model_dump") else {}
         for action_name, params in dumped.items():
-            inputs = params if isinstance(params, dict) else {}
-            index = inputs.get("index")
+            raw_inputs = params if isinstance(params, dict) else {}
+            typed_inputs: _ActionInputs = raw_inputs
+            index = typed_inputs.get("index")
             target = _element_label(state, index) if state is not None else None
             # The centre the page itself reported for this element this step; the
             # snapshot's own boxes are fabricated on some engines (see jev/viewport.py).
             point = (points or {}).get(index) if isinstance(index, int) else None
             actions.append(
-                BrowserAction(name=action_name, inputs=inputs, target=target, point=point)
+                BrowserAction(name=action_name, inputs=raw_inputs, target=target, point=point)
             )
     return actions
 

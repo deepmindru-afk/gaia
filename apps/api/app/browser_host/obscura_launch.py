@@ -31,8 +31,6 @@ def obscura_serve_argv(port: int) -> list[str]:
     if not obscura_bin:
         raise RuntimeError("Obscura requires OBSCURA_BIN to be set")
     argv = [obscura_bin, "serve", "--port", str(port), "--stealth"]
-    if settings.BROWSER_HOST_ALLOW_PRIVATE_NETWORK:
-        argv.append("--allow-private-network")
     return argv
 
 

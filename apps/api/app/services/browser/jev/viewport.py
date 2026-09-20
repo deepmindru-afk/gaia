@@ -12,11 +12,11 @@ the text nodes the viewport actually shows.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, TypedDict
 
 from app.constants.browser import JEV_PAGE_TEXT_MAX_CHARS
 from app.constants.log_tags import LogTag
@@ -126,6 +126,48 @@ def normalize_page_text(text: str) -> str:
     return _SPACE_RUN.sub(" ", text.translate(_INVISIBLE))
 
 
+class _CdpResult(TypedDict, total=False):
+    """One CDP response's result object, read only for the value the page returned."""
+
+    value: object
+
+
+class _CdpResponse(TypedDict, total=False):
+    """A CDP Runtime response, read only for a page error or its result."""
+
+    exceptionDetails: object
+    result: _CdpResult
+
+
+class _ScreenValue(TypedDict, total=False):
+    """The viewport's own text, url, title and bottom flag, as the page reported them."""
+
+    text: str
+    url: str
+    title: str
+    at_bottom: bool
+
+
+class _ViewportRow(TypedDict, total=False):
+    """One element's measured box, as the page reported it."""
+
+    on_screen: bool
+    cx: float
+    cy: float
+
+
+class _ResolveObject(TypedDict, total=False):
+    """A resolveNode result's object, read only for its handle."""
+
+    objectId: str
+
+
+class _ResolveResult(TypedDict, total=False):
+    """A DOM.resolveNode response, read only for the handle it resolved."""
+
+    object: _ResolveObject
+
+
 @dataclass(frozen=True)
 class _Target:
     index: int
@@ -227,7 +269,7 @@ async def _measure(
 async def _screen(session: CDPSession) -> ViewportRead:
     """Return the viewport's own text, url and title; every field None when the page could not answer."""
     try:
-        response: dict[str, Any] = dict(
+        response: _CdpResponse = dict(
             await session.cdp_client.send.Runtime.evaluate(
                 params={
                     "expression": f"({_SCREEN_JS})({JEV_PAGE_TEXT_MAX_CHARS})",
@@ -246,9 +288,11 @@ async def _screen(session: CDPSession) -> ViewportRead:
             f"{LogTag.BROWSER} Jev viewport text read raised in the page", error_type="JSError"
         )
         return ViewportRead()
-    value = (response.get("result") or {}).get("value")
-    if not isinstance(value, dict):
+    result: _CdpResult = response.get("result") or {}
+    raw_value = result.get("value")
+    if not isinstance(raw_value, dict):
         return ViewportRead()
+    value: _ScreenValue = raw_value
     text = value.get("text")
     return ViewportRead(
         text=normalize_page_text(text)[:JEV_PAGE_TEXT_MAX_CHARS] if isinstance(text, str) else None,
@@ -258,7 +302,7 @@ async def _screen(session: CDPSession) -> ViewportRead:
     )
 
 
-def _field(value: dict[str, Any], key: str) -> str | None:
+def _field(value: Mapping[str, object], key: str) -> str | None:
     read = value.get(key)
     return read if isinstance(read, str) and read else None
 
@@ -284,7 +328,7 @@ async def _by_xpath(session: CDPSession, targets: list[_Target]) -> dict[int, Vi
     pairs = [[t.index, t.xpath] for t in targets if t.xpath]
     if not pairs:
         return {}
-    response: dict[str, Any] = dict(
+    response: _CdpResponse = dict(
         await session.cdp_client.send.Runtime.evaluate(
             params={
                 "expression": f"({_MEASURE_JS})({json.dumps(pairs)})",
@@ -321,8 +365,9 @@ async def _by_backend_node(
                     error_type=type(exc).__name__,
                 )
                 return None
-        payload: dict[str, Any] = dict(resolved)
-        object_id = (payload.get("object") or {}).get("objectId")
+        payload: _ResolveResult = dict(resolved)
+        resolved_object: _ResolveObject = payload.get("object") or {}
+        object_id = resolved_object.get("objectId")
         if not object_id:
             return None
         handles.put(target.backend_node_id, str(object_id))
@@ -349,7 +394,7 @@ async def _by_backend_node(
 async def _measure_batch(
     session: CDPSession, batch: list[tuple[int, str]]
 ) -> dict[int, ViewportBox]:
-    response: dict[str, Any] = dict(
+    response: _CdpResponse = dict(
         await session.cdp_client.send.Runtime.callFunctionOn(
             params={
                 "functionDeclaration": _MEASURE_HANDLES_JS,
@@ -362,9 +407,12 @@ async def _measure_batch(
     )
     if response.get("exceptionDetails"):
         return {}
-    values = (response.get("result") or {}).get("value") or []
+    batch_result: _CdpResult = response.get("result") or {}
+    raw_values = batch_result.get("value") or []
+    if not isinstance(raw_values, list):
+        return {}
     return _boxes_from_rows(
-        {str(index): value for (index, _), value in zip(batch, values, strict=False) if value}
+        {str(index): value for (index, _), value in zip(batch, raw_values, strict=False) if value}
     )
 
 
@@ -379,17 +427,21 @@ def _inside_iframe(node: EnhancedDOMTreeNode) -> bool:
     return False
 
 
-def _parse(response: dict[str, Any]) -> dict[int, ViewportBox]:
+def _parse(response: _CdpResponse) -> dict[int, ViewportBox]:
     if response.get("exceptionDetails"):
         log.warning(f"{LogTag.BROWSER} Jev viewport read raised in the page", error_type="JSError")
         return {}
-    value = (response.get("result") or {}).get("value")
+    parse_result: _CdpResult = response.get("result") or {}
+    value = parse_result.get("value")
     return _boxes_from_rows(value) if isinstance(value, dict) else {}
 
 
-def _boxes_from_rows(rows: dict[str, Any]) -> dict[int, ViewportBox]:
+def _boxes_from_rows(rows: Mapping[str, object]) -> dict[int, ViewportBox]:
     boxes: dict[int, ViewportBox] = {}
-    for index, box in rows.items():
+    for index, raw_box in rows.items():
+        if not isinstance(raw_box, dict):
+            continue
+        box: _ViewportRow = raw_box
         try:
             boxes[int(index)] = ViewportBox(
                 on_screen=bool(box["on_screen"]), cx=float(box["cx"]), cy=float(box["cy"])

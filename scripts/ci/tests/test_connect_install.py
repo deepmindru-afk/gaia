@@ -208,13 +208,6 @@ def test_tampered_binary_is_rejected_and_nothing_is_installed(run, release: Path
     assert not (run.home / ".gaia" / "bin").exists()
 
 
-def test_install_only_does_not_run_the_binary(run) -> None:
-    result = run(env={"GAIA_CONNECT_INSTALL_ONLY": "1"})
-    assert result.returncode == 0, result.stderr
-    assert "gaia-connect-ran" not in result.stdout
-    assert result.stdout.strip().endswith("gaia-connect-0.6.0")
-
-
 def test_windows_points_at_the_npx_path(run) -> None:
     result = run(uname_s="MINGW64_NT-10.0", uname_m="x86_64")
     assert result.returncode != 0

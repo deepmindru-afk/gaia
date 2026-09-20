@@ -9,6 +9,7 @@ import {
   AiWebBrowsingIcon,
   Comment01Icon,
   Delete02Icon,
+  ImageNotFound01Icon,
   PlayIcon,
 } from "@icons";
 import Image from "next/image";
@@ -40,27 +41,41 @@ function MetaDot() {
   return <span className="size-[3px] rounded-full bg-zinc-600" />;
 }
 
+// Brand mark for tasks that ran from Telegram, shown when a task has no
+// recap frame to thumbnail.
+const TELEGRAM_LOGO_URL =
+  "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Telegram_black_logo.svg/960px-Telegram_black_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=index&utm_content=thumbnail&_=20251118201653";
+
 function TaskThumb({
   thumb,
   hasRecap,
+  source,
 }: {
   thumb: string | undefined;
   hasRecap: boolean;
+  source: string;
 }) {
+  const [failed, setFailed] = useState(false);
+  const src = thumb ?? (source === "telegram" ? TELEGRAM_LOGO_URL : undefined);
   return (
     <div className="relative size-11 shrink-0 overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5">
-      {thumb ? (
+      {src && !failed ? (
         <Image
-          src={thumb}
+          src={src}
           alt=""
           width={64}
           height={64}
           className="size-full object-cover"
           unoptimized
+          onError={() => setFailed(true)}
         />
       ) : (
-        <div className="flex size-full items-center justify-center">
-          <AiWebBrowsingIcon className="size-4 text-zinc-600" />
+        <div className="flex size-full items-center justify-center bg-zinc-800">
+          {failed ? (
+            <ImageNotFound01Icon className="size-4 text-zinc-500" />
+          ) : (
+            <AiWebBrowsingIcon className="size-4 text-zinc-600" />
+          )}
         </div>
       )}
       {hasRecap && (
@@ -176,7 +191,11 @@ function TaskRow({
         role={hasRecap ? "button" : undefined}
         tabIndex={hasRecap ? 0 : undefined}
       >
-        <TaskThumb thumb={task.frames[0]?.url} hasRecap={hasRecap} />
+        <TaskThumb
+          thumb={task.frames[0]?.url}
+          hasRecap={hasRecap}
+          source={task.source}
+        />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-zinc-100">
             {task.task}

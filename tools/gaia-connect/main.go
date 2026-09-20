@@ -62,9 +62,6 @@ func parseFlags() options {
 	var o options
 	fs := flagSet(&o)
 	_ = fs.Parse(os.Args[1:])
-	if o.jsonMode || os.Getenv("GAIA_CONNECT_JSON") != "" {
-		o.jsonMode = true
-	}
 	return o
 }
 
@@ -189,7 +186,7 @@ func selectBrowser(browsers []Browser) (Browser, error) {
 	var choice string
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Which browser's logins?").Options(options...).Height(browserListHeight).Value(&choice),
-	)).WithAccessible(os.Getenv("ACCESSIBLE") != "")
+	)).WithAccessible(os.Getenv("GAIA_CONNECT_ACCESSIBLE") != "")
 	if err := form.Run(); err != nil {
 		return Browser{}, err
 	}
@@ -207,7 +204,7 @@ func selectProfile(profiles []Profile) (Profile, error) {
 	var choice string
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Which profile?").Options(options...).Height(profileListHeight).Value(&choice),
-	)).WithAccessible(os.Getenv("ACCESSIBLE") != "")
+	)).WithAccessible(os.Getenv("GAIA_CONNECT_ACCESSIBLE") != "")
 	if err := form.Run(); err != nil {
 		return Profile{}, err
 	}
@@ -233,7 +230,7 @@ func selectSites(sites []HostSummary) ([]string, error) {
 			Filterable(true).
 			Height(sessionListHeight).
 			Value(&picked),
-	)).WithAccessible(os.Getenv("ACCESSIBLE") != "")
+	)).WithAccessible(os.Getenv("GAIA_CONNECT_ACCESSIBLE") != "")
 	if err := form.Run(); err != nil {
 		return nil, err
 	}
