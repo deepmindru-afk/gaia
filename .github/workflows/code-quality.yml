@@ -1950,6 +1950,7 @@ jobs:
       - components-per-file
       - duplicates
       - package-hygiene
+      - go-connect
       - type-check
       - python-static
       - python-mypy
