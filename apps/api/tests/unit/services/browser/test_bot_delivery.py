@@ -174,7 +174,7 @@ class TestBotProgressDeliverySession:
 
 
 class TestBotProgressDeliveryStep:
-    async def test_blank_tab_skipped(self, delivery):
+    async def test_blank_tab_sends_label_as_text_not_photo(self, delivery):
         snap = BrowserStepSnapshot(
             index=1, goal="Open", url="about:blank", screenshot="https://cdn/1.png"
         )
@@ -188,9 +188,10 @@ class TestBotProgressDeliveryStep:
         ):
             await delivery.step(snap)
             mp.assert_not_awaited()
-            mm.assert_not_awaited()
+            mm.assert_awaited_once()
+            assert mm.call_args[0][2] == ["Step 1 · Open"]
 
-    async def test_none_url_skipped(self, delivery):
+    async def test_blank_tab_label_text(self, delivery):
         snap = BrowserStepSnapshot(index=1, goal="Open", url=None, screenshot="https://cdn/1.png")
         with (
             patch(
@@ -202,7 +203,8 @@ class TestBotProgressDeliveryStep:
         ):
             await delivery.step(snap)
             mp.assert_not_awaited()
-            mm.assert_not_awaited()
+            mm.assert_awaited_once()
+            assert mm.call_args[0][2] == ["Step 1 · Open"]
 
     async def test_photo_sent_when_eligible(self, delivery):
         snap = BrowserStepSnapshot(
@@ -321,7 +323,7 @@ class TestBotProgressDeliveryStep:
             mm.assert_awaited_once()
             assert mm.call_args[0][2][0] == "Step 1 · Open"
 
-    async def test_chrome_newtab_skipped(self, delivery):
+    async def test_chrome_newtab_label_text(self, delivery):
         snap = BrowserStepSnapshot(
             index=1, goal="Open", url="chrome://newtab/", screenshot="https://cdn/shot.png"
         )
@@ -335,7 +337,8 @@ class TestBotProgressDeliveryStep:
         ):
             await delivery.step(snap)
             mp.assert_not_awaited()
-            mm.assert_not_awaited()
+            mm.assert_awaited_once()
+            assert mm.call_args[0][2] == ["Step 1 · Open"]
 
 
 class TestBotProgressDeliveryHandoff:
@@ -684,7 +687,7 @@ class TestOneLinkPerRun:
 
 
 async def test_the_first_step_the_user_sees_is_step_one(delivery, monkeypatch) -> None:
-    """The blank-tab navigate is never shown, so numbering from the run's own index opened every run at Step 2."""
+    """The blank-tab navigate sends its label as text (no photo to show), so numbering still opens at Step 1."""
     sent: list[str] = []
 
     async def _message(platform, user_id, blocks) -> bool:
@@ -698,7 +701,7 @@ async def test_the_first_step_the_user_sees_is_step_one(delivery, monkeypatch) -
     await delivery.step(BrowserStepSnapshot(index=2, goal="Searching", url="https://example.com"))
     await delivery.step(BrowserStepSnapshot(index=3, goal="Reading", url="https://example.com/a"))
 
-    assert [line.split(" · ")[0] for line in sent] == ["Step 1", "Step 2"]
+    assert [line.split(" · ")[0] for line in sent] == ["Step 1", "Step 2", "Step 3"]
 
 
 async def test_a_run_of_identical_steps_reaches_the_user_once(delivery, monkeypatch) -> None:

@@ -27,6 +27,7 @@ from app.schemas.browser import (
 from app.services.browser.captions import caption_from_action_list
 from app.services.browser.live_view import create_live_view_link
 from app.services.outbound_delivery import publish_outbound_message, publish_outbound_photo
+from shared.py.wide_events import log
 
 # A photo caption should be a glanceable phrase, not a paragraph of the agent's goal.
 _CAPTION_MAX_CHARS = 90
@@ -72,9 +73,14 @@ class BotProgressDelivery:
 
     async def step(self, snapshot: BrowserStepSnapshot) -> None:
         """Emit a per-step progress event to the conversation."""
-        # Skip the pre-navigation blank tab: its screenshot is an empty white
-        # page and "Empty Tab" tells the user nothing.
+        # The pre-navigation blank tab has no photo worth sending (empty white
+        # page), but its label still says where the run is headed: send that
+        # as text so step 1 is never silence.
         if _is_blank_tab(snapshot.url):
+            label = _step_label(snapshot.goal, snapshot.actions)
+            if label:
+                self._steps_shown += 1
+                await self.note(f"Step {self._steps_shown} · {label}")
             return
         # A run of identical steps (scrolling a long list) is one update, not a
         # photo a second; the first of the run already told the user what is going on.
