@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.models.integration_models import StoredIntegrationTool
 from app.models.oauth_models import IntegrationContent
 from app.services.integrations.integration_inference_service import (
     _is_complete,
@@ -42,12 +43,14 @@ def mock_llm():
 
 class TestToolsSummary:
     def test_joins_first_n_names(self):
-        tools = [{"name": "a"}, {"name": "b"}, {"name": "c"}, {"name": "d"}]
+        tools = [StoredIntegrationTool(name=n) for n in ("a", "b", "c", "d")]
 
         assert _tools_summary(tools, 2) == "a, b"
 
     def test_skips_nameless_tools(self):
-        assert _tools_summary([{"name": "a"}, {"description": "x"}], 5) == "a"
+        tools = [StoredIntegrationTool(name="a"), StoredIntegrationTool(name="", description="x")]
+
+        assert _tools_summary(tools, 5) == "a"
 
     def test_none_when_empty(self):
         assert _tools_summary([], 5) == "None"
@@ -72,7 +75,11 @@ class TestInferIntegrationCategory:
         mock_llm.invoke.return_value = SimpleNamespace(text="Productivity")
 
         category = await infer_integration_category(
-            "My Tool", "desc", [{"name": "a"}], "https://x.example", user_id="u1"
+            "My Tool",
+            "desc",
+            [StoredIntegrationTool(name="a")],
+            "https://x.example",
+            user_id="u1",
         )
 
         assert category == "productivity"
@@ -134,7 +141,7 @@ class TestInferIntegrationContent:
         result = await infer_integration_content(
             "My Tool",
             "desc",
-            [{"name": "a"}],
+            [StoredIntegrationTool(name="a")],
             "https://x.example",
             "productivity",
             user_id="u-1",

@@ -1364,7 +1364,7 @@ class TestCustomIntegrationNewEvents:
             patch(f"{CUSTOM}.publish_custom_integration", new_callable=AsyncMock) as m,
             patch(_CUSTOM_CAPTURE) as mock_capture,
         ):
-            m.return_value = {"integration_id": "i1", "public_url": "https://x/y"}
+            m.return_value = "https://x/y"
             resp = await client.post("/api/v1/integrations/custom/i1/publish")
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(AnalyticsEvents.INTEGRATION_CUSTOM_PUBLISHED)
@@ -1374,7 +1374,7 @@ class TestCustomIntegrationNewEvents:
             patch(f"{CUSTOM}.unpublish_custom_integration", new_callable=AsyncMock) as m,
             patch(_CUSTOM_CAPTURE) as mock_capture,
         ):
-            m.return_value = {"integration_id": "i1"}
+            m.return_value = None
             resp = await client.post("/api/v1/integrations/custom/i1/unpublish")
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(AnalyticsEvents.INTEGRATION_CUSTOM_UNPUBLISHED)

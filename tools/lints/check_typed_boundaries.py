@@ -70,7 +70,13 @@ PROTOCOL_MAP_ATTRIBUTES = ("headers", "query_params", "path_params", "cookies")
 # A key read on a TypedDict is a declared shape, not a guess: mypy checks the key
 # (apps/api/CLAUDE.md, Type Safety item 6). Repo TypedDicts are discovered from
 # ``class X(TypedDict)``; these come from libraries and cannot be discovered.
-EXTERNAL_TYPEDDICTS = ("ToolCall", "RunnableConfig")
+EXTERNAL_TYPEDDICTS = (
+    "ToolCall",
+    "RunnableConfig",
+    "UsageMetadata",
+    "InputTokenDetails",
+    "OutputTokenDetails",
+)
 
 _BASELINE_HEADER = """\
 # typed-boundaries grandfather baseline.

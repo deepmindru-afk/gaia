@@ -30,8 +30,7 @@ apps/api/app/agents/core/nodes/memory_node.py	TB002
 apps/api/app/agents/core/subagents/call_record.py	TB002
 apps/api/app/agents/core/subagents/subagent_runner.py	TB001
 apps/api/app/agents/core/subagents/subagent_runner.py	TB002
-apps/api/app/agents/llm/client.py	TB001
-apps/api/app/agents/llm/client.py	TB002
+apps/api/app/agents/llm/client.py	TB001	deferred-until=2026-12-31; the 4 remaining Any are LangChain's own contract — two ainvoke/invoke returns and **_kwargs overriding Runnable/BaseCallbackHandler signatures typed Any upstream, plus _requested_model taking any Runnable shape (CLAUDE.md Type Safety item 14). Every TB002 in the file was fixed in #1194 (decided 2026-09-20)
 apps/api/app/agents/llm/lane.py	TB001
 apps/api/app/agents/llm/lane.py	TB002
 apps/api/app/agents/llm/model_catalog.py	TB001
@@ -168,7 +167,6 @@ apps/api/app/models/composio_schemas/github_tools.py	TB002
 apps/api/app/models/composio_schemas/slack_tools.py	TB002
 apps/api/app/models/mail_models.py	TB001
 apps/api/app/models/memory_models.py	TB002
-apps/api/app/models/onboarding_models.py	TB001
 apps/api/app/models/playbook_models.py	TB001
 apps/api/app/models/playbook_models.py	TB002
 apps/api/app/models/trigger_configs.py	TB001
@@ -245,13 +243,10 @@ apps/api/app/services/integrations/community_service.py	TB002
 apps/api/app/services/integrations/custom_crud.py	TB001
 apps/api/app/services/integrations/custom_crud.py	TB002
 apps/api/app/services/integrations/integration_connection_service.py	TB002
-apps/api/app/services/integrations/integration_inference_service.py	TB001
-apps/api/app/services/integrations/integration_inference_service.py	TB002
 apps/api/app/services/integrations/integration_status.py	TB002
 apps/api/app/services/integrations/marketplace.py	TB001
 apps/api/app/services/integrations/marketplace.py	TB002
 apps/api/app/services/integrations/my_integrations.py	TB002
-apps/api/app/services/integrations/publish_service.py	TB001
 apps/api/app/services/integrations/user_integrations.py	TB001
 apps/api/app/services/integrations/user_integrations.py	TB002
 apps/api/app/services/llm_metering.py	TB001

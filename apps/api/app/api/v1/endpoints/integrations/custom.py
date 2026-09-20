@@ -195,13 +195,13 @@ async def publish_integration(
             user={"id": user_id},
             integration={"id": integration_id},
         )
-        result = await publish_custom_integration(integration_id, user_id)
+        public_url = await publish_custom_integration(integration_id, user_id)
         log.set(outcome="success")
         capture_context_event(AnalyticsEvents.INTEGRATION_CUSTOM_PUBLISHED)
         return PublishIntegrationResponse(
             message="Integration published successfully",
-            integration_id=result["integration_id"],
-            public_url=result["public_url"],
+            integration_id=integration_id,
+            public_url=public_url,
         )
     except PublishError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
@@ -228,12 +228,12 @@ async def unpublish_integration(
             user={"id": user_id},
             integration={"id": integration_id},
         )
-        result = await unpublish_custom_integration(integration_id, user_id)
+        await unpublish_custom_integration(integration_id, user_id)
         log.set(outcome="success")
         capture_context_event(AnalyticsEvents.INTEGRATION_CUSTOM_UNPUBLISHED)
         return UnpublishIntegrationResponse(
             message="Integration unpublished successfully",
-            integration_id=result["integration_id"],
+            integration_id=integration_id,
         )
     except PublishError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e

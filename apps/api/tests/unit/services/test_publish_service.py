@@ -87,10 +87,7 @@ class TestPublishCustomIntegration:
 
         result = await publish_custom_integration(INTEGRATION_ID, USER_ID)
 
-        assert result == {
-            "integration_id": INTEGRATION_ID,
-            "public_url": "/marketplace/my-integration",
-        }
+        assert result == "/marketplace/my-integration"
         assert mock_deps.repo.ensure_unique_slug.await_args.kwargs == {
             "name": "My Integration",
             "category": "productivity",
@@ -179,9 +176,8 @@ class TestUnpublishCustomIntegration:
     async def test_unpublishes_and_cleans_marketplace(self, mock_deps):
         mock_deps.repo.get.return_value = _integration(is_public=True)
 
-        result = await unpublish_custom_integration(INTEGRATION_ID, USER_ID)
+        await unpublish_custom_integration(INTEGRATION_ID, USER_ID)
 
-        assert result == {"integration_id": INTEGRATION_ID}
         mock_deps.repo.unpublish.assert_awaited_once_with(INTEGRATION_ID)
         mock_deps.remove.assert_awaited_once_with(INTEGRATION_ID)
         mock_deps.clear.assert_awaited_once_with("marketplace:community:*")

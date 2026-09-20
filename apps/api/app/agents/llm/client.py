@@ -12,6 +12,7 @@ from langchain_core.language_models.chat_models import (
     BaseChatModel,
 )
 from langchain_core.messages import AIMessage
+from langchain_core.messages.ai import InputTokenDetails, OutputTokenDetails, UsageMetadata
 from langchain_core.outputs import LLMResult
 from langchain_core.runnables import (
     Runnable,
@@ -64,6 +65,7 @@ from app.constants.llm import (
 )
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider, providers
+from app.models.agent_config import AgentConfigurable
 from app.models.agent_models import agent_configurable
 from app.services.llm_metering import (
     LLMCallContext,
@@ -361,8 +363,8 @@ def init_llm(
 
     log.set(
         llm={
-            "model": PROVIDER_MODELS.get(primary_provider["name"], primary_provider["name"]),
-            "provider": primary_provider["name"],
+            "model": PROVIDER_MODELS.get(primary_provider.name, primary_provider.name),
+            "provider": primary_provider.name,
             "is_free": False,
         }
     )
@@ -446,16 +448,16 @@ def _create_configurable_llm(
     """Create a configurable LLM instance with fallback alternatives."""
     if not alternatives:
         # Return primary instance directly if no alternatives
-        return primary["instance"]
+        return primary.instance
 
     # Keyword-expanded below, so the keys must be plain str, not enum members.
-    alternatives_mapping = {str(alt["name"]): alt["instance"] for alt in alternatives}
+    alternatives_mapping = {str(alt.name): alt.instance for alt in alternatives}
 
-    primary_instance = primary["instance"]
+    primary_instance = primary.instance
 
     return primary_instance.configurable_alternatives(
         ConfigurableField(id="provider"),
-        default_key=primary["name"],
+        default_key=primary.name,
         prefix_keys=False,
         **alternatives_mapping,
     )
@@ -487,7 +489,30 @@ def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChat
     return _build_default_llm(temperature)
 
 
-def _provider_order_kwargs() -> dict[str, Any]:
+class _ProviderRouting(TypedDict):
+    """OpenRouter's provider-routing preference block."""
+
+    order: list[str]
+    allow_fallbacks: bool
+
+
+class _ProviderModelKwargs(TypedDict):
+    """The model_kwargs payload carrying the routing block."""
+
+    provider: _ProviderRouting
+
+
+class _ProviderOrderKwargs(TypedDict, total=False):
+    """Constructor kwargs for a routed client; empty when no order is configured.
+
+    model_kwargs is the shape ChatOpenRouter declares (dict[str, Any]); the
+    routing block it carries is _ProviderModelKwargs, built below.
+    """
+
+    model_kwargs: dict[str, Any]
+
+
+def _provider_order_kwargs() -> _ProviderOrderKwargs:
     """OpenRouter provider-routing preference, from OPENROUTER_PROVIDER_ORDER.
 
     allow_fallbacks=False binds the order, so OpenRouter raises for with_llm_retry rather than
@@ -500,7 +525,8 @@ def _provider_order_kwargs() -> dict[str, Any]:
     order = [slug.strip() for slug in raw.split(",") if slug.strip()]
     if not order:
         return {}
-    return {"model_kwargs": {"provider": {"order": order, "allow_fallbacks": False}}}
+    routing: _ProviderModelKwargs = {"provider": {"order": order, "allow_fallbacks": False}}
+    return {"model_kwargs": dict(routing)}
 
 
 @cache
@@ -677,7 +703,8 @@ def _sticky_session_id(config: RunnableConfig | None, *, auxiliary: bool) -> str
     resolve through here, so a fallback cannot quietly drop the suffix and re-pin the
     conversation.
     """
-    session_id = agent_configurable(config).get("session_id")
+    configurable: AgentConfigurable = agent_configurable(config)
+    session_id = configurable.get("session_id")
     if not session_id:
         return None
     return f"{session_id}{AUX_SESSION_SUFFIX}" if auxiliary else str(session_id)
@@ -710,7 +737,7 @@ def _invoke_context(
     Shared by the auxiliary success path and the failure path so a call that
     fails is described the same way as one that succeeds.
     """
-    configurable = agent_configurable(config)
+    configurable: AgentConfigurable = agent_configurable(config)
     conversation_id = configurable.get("conversation_id")
     thread_id = configurable.get("thread_id")
     workflow_id = configurable.get("workflow_id")
@@ -783,7 +810,8 @@ async def ainvoke_llm(
     )
     usage_handler = UsageMetadataCallbackHandler() if opts.meter_auxiliary else None
     generation_handler = _GenerationIdCallback() if opts.meter_auxiliary else None
-    user_id = (config or {}).get("configurable", {}).get("user_id")
+    call_configurable: AgentConfigurable = agent_configurable(config)
+    user_id = call_configurable.get("user_id")
     # Wall time of the whole provider interaction, including retries and the
     # fallback attempt. Started before the timeout scope so a killed call still
     # reports how long it burned.
@@ -923,6 +951,31 @@ def silent_metered_config(user_id: str) -> RunnableConfig:
     )
 
 
+class _TokenUsageOutput(TypedDict, total=False):
+    """The token_usage sub-dict of an LLMResult.llm_output, as OpenRouter fills it."""
+
+    cost: object
+
+
+class _LLMOutput(TypedDict, total=False):
+    """The provider-owned llm_output bag, limited to the keys this module reads.
+
+    total=False throughout: every key is absent on some lane (streaming leaves
+    token_usage on the message instead, and only OpenRouter reports a price).
+    """
+
+    id: object
+    cost: object
+    token_usage: _TokenUsageOutput
+
+
+class _GenerationInfo(TypedDict, total=False):
+    """The generation_info bag of one Generation, limited to the keys read here."""
+
+    id: object
+    finish_reason: object
+
+
 def _reported_cost(response: LLMResult) -> float | None:
     """Return what OpenRouter charged for this call, from whichever shape carries it.
 
@@ -930,15 +983,15 @@ def _reported_cost(response: LLMResult) -> float | None:
     message's response_metadata. None means the lane reported no price and the
     caller falls back to the pricing table.
     """
-    llm_output = response.llm_output or {}
-    token_usage = llm_output.get("token_usage") or {}
+    llm_output: _LLMOutput = cast(_LLMOutput, response.llm_output or {})
+    token_usage: _TokenUsageOutput = llm_output.get("token_usage") or {}
     for candidate in (llm_output.get("cost"), token_usage.get("cost")):
         if candidate is not None:
             # A price that won't parse, is negative, or non-finite is skipped
             # rather than failing an already-succeeded call — the next shape
             # (then the table) answers instead.
             with suppress(TypeError, ValueError):
-                parsed = float(candidate)
+                parsed = float(cast(str | float, candidate))
                 if math.isfinite(parsed) and parsed >= 0.0:
                     return parsed
     for generations in response.generations:
@@ -1020,13 +1073,15 @@ class _GenerationIdCallback(BaseCallbackHandler):
             self._priced_attempts += 1
             self._cost_total += reported
         self._read_response_facts(response)
-        llm_output = response.llm_output or {}
+        llm_output: _LLMOutput = cast(_LLMOutput, response.llm_output or {})
         if llm_output.get("id"):
             self.generation_id = str(llm_output["id"])
             return
         for generations in response.generations or []:
             for generation in generations:
-                info = getattr(generation, "generation_info", None) or {}
+                info: _GenerationInfo = cast(
+                    _GenerationInfo, getattr(generation, "generation_info", None) or {}
+                )
                 if info.get("id"):
                     self.generation_id = str(info["id"])
                     return
@@ -1055,7 +1110,7 @@ class _GenerationIdCallback(BaseCallbackHandler):
                 # ``generation_info`` is where the NON-streaming path leaves the
                 # finish reason — it never reaches the message, so it wins as
                 # the more specific source.
-                info = generation.generation_info or {}
+                info: _GenerationInfo = cast(_GenerationInfo, generation.generation_info or {})
                 if info.get("finish_reason"):
                     self.finish_reason = str(info["finish_reason"])
 
@@ -1066,9 +1121,9 @@ def _with_call_label(config: RunnableConfig | None, label: str) -> RunnableConfi
     Never mutates the caller's object; TTFT callbacks attribute per-call
     samples by that label.
     """
-    merged: dict[str, Any] = dict(config) if config else {}
+    merged: RunnableConfig = cast(RunnableConfig, dict(config) if config else {})
     merged["metadata"] = {**(merged.get("metadata") or {}), LLM_LABEL_METADATA_KEY: label}
-    return cast(RunnableConfig, merged)
+    return merged
 
 
 def _with_usage_handler(
@@ -1082,7 +1137,7 @@ def _with_usage_handler(
     """
     if handler is None:
         return config if config is not None else RunnableConfig()
-    merged: dict[str, Any] = dict(config) if config else {}
+    merged: RunnableConfig = cast(RunnableConfig, dict(config) if config else {})
     existing = merged.get("callbacks")
     if existing is None:
         merged["callbacks"] = [handler]
@@ -1092,7 +1147,7 @@ def _with_usage_handler(
         manager = existing.copy()
         manager.add_handler(handler, inherit=True)
         merged["callbacks"] = manager
-    return cast(RunnableConfig, merged)
+    return merged
 
 
 async def _record_auxiliary_usage(
@@ -1119,14 +1174,15 @@ async def _record_auxiliary_usage(
     # Same rule for the upstream: a fan-out cannot say which model any one
     # provider served, and naming the wrong one is worse than naming none.
     booked_provider = facts.provider if attributable else None
-    for model_name, usage in handler.usage_metadata.items():
+    for model_name, model_usage in handler.usage_metadata.items():
+        usage: UsageMetadata = model_usage
         input_tokens = int(usage.get("input_tokens", 0) or 0)
         output_tokens = int(usage.get("output_tokens", 0) or 0)
         if not (input_tokens or output_tokens):
             continue
-        details = usage.get("input_token_details") or {}
+        details: InputTokenDetails = usage.get("input_token_details") or {}
         cached_tokens = int(details.get("cache_read", 0) or 0)
-        output_details = usage.get("output_token_details") or {}
+        output_details: OutputTokenDetails = usage.get("output_token_details") or {}
         reasoning_tokens = int(output_details.get("reasoning", 0) or 0)
 
         if user_id is None:

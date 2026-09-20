@@ -60,6 +60,7 @@ from app.agents.llm.client import (
     register_llm_providers,
 )
 from app.agents.llm.exceptions import LLM_FALLBACK_EXCEPTIONS, LLMNotConfiguredError
+from app.agents.llm.types import LLMProvider
 from app.constants.llm import (
     AUX_MODEL_NAME,
     DEFAULT_GEMINI_MODEL_NAME,
@@ -101,8 +102,8 @@ def _make_fake_provider(name: str = "fake") -> MagicMock:
     return mock
 
 
-def _make_llm_provider(name: str) -> dict[str, Any]:
-    return {"name": name, "instance": _make_fake_provider(name)}
+def _make_llm_provider(name: str) -> LLMProvider:
+    return LLMProvider(name=cast(LLMProviderName, name), instance=_make_fake_provider(name))
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +242,7 @@ class TestGetOrderedProviders:
         ordered = _get_ordered_providers(available, preferred_provider=None, fallback_enabled=True)
 
         # Should follow PROVIDER_PRIORITY: 1=gemini, 2=openrouter
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["openrouter", "gemini"]
 
     def test_preferred_provider_is_first(self) -> None:
@@ -254,7 +255,7 @@ class TestGetOrderedProviders:
             available, preferred_provider="openai", fallback_enabled=True
         )
 
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names[0] == "openai"
         # Remaining follow priority order (gemini before openrouter)
         assert names[1:] == ["openrouter", "gemini"]
@@ -268,7 +269,7 @@ class TestGetOrderedProviders:
         )
 
         # openai not available, fallback picks gemini
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["gemini"]
 
     def test_preferred_provider_not_available_fallback_disabled(self) -> None:
@@ -282,7 +283,7 @@ class TestGetOrderedProviders:
         # openai not in available, fallback disabled but ordered is empty so
         # the branch `if fallback_enabled or not ordered` fires.
         # The code adds remaining by priority when ordered is empty even if fallback disabled.
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["gemini"]
 
     def test_no_fallback_only_preferred(self) -> None:
@@ -295,7 +296,7 @@ class TestGetOrderedProviders:
         )
 
         # Preferred is available and fallback disabled -> only preferred provider
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["openai"]
 
     def test_no_preferred_no_fallback(self) -> None:
@@ -306,7 +307,7 @@ class TestGetOrderedProviders:
         ordered = _get_ordered_providers(available, preferred_provider=None, fallback_enabled=False)
 
         # No preferred, ordered is empty, so all providers by priority added
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["openrouter", "gemini"]
 
     def test_empty_available(self) -> None:
@@ -323,7 +324,7 @@ class TestGetOrderedProviders:
             available, preferred_provider="gemini", fallback_enabled=True
         )
 
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         # gemini first (preferred), openrouter from priority; gemini not duplicated
         assert names == ["gemini", "openrouter"]
 
@@ -336,19 +337,19 @@ class TestGetOrderedProviders:
 class TestCreateConfigurableLlm:
     def test_no_alternatives_returns_primary_instance(self) -> None:
         primary = _make_llm_provider("gemini")
-        result = _create_configurable_llm(primary, [])  # type: ignore[arg-type]  # stub provider dict stands in for an LLMProvider
+        result = _create_configurable_llm(primary, [])
 
-        assert result is primary["instance"]
+        assert result is primary.instance
 
     def test_with_alternatives_calls_configurable_alternatives(self) -> None:
         primary = _make_llm_provider("gemini")
         alt1 = _make_llm_provider("openai")
         alt2 = _make_llm_provider("openrouter")
 
-        _create_configurable_llm(primary, [alt1, alt2])  # type: ignore[arg-type, list-item]  # stub provider dicts stand in for LLMProvider entries
+        _create_configurable_llm(primary, [alt1, alt2])
 
-        primary["instance"].configurable_alternatives.assert_called_once()
-        call_args = primary["instance"].configurable_alternatives.call_args
+        primary.instance.configurable_alternatives.assert_called_once()
+        call_args = primary.instance.configurable_alternatives.call_args
         # Check that both alternatives are passed as keyword arguments
         kwargs = call_args.kwargs
         assert "openai" in kwargs
@@ -377,8 +378,8 @@ class TestInitLlm:
         primary = _make_llm_provider("gemini")
         alt = _make_llm_provider("openai")
         mock_available.return_value = {
-            "gemini": primary["instance"],
-            "openai": alt["instance"],
+            "gemini": primary.instance,
+            "openai": alt.instance,
         }
         mock_ordered.return_value = [primary, alt]
         mock_create.return_value = MagicMock()
@@ -429,7 +430,7 @@ class TestInitLlm:
         mock_log: MagicMock,
     ) -> None:
         primary = _make_llm_provider("openrouter")
-        mock_available.return_value = {"openrouter": primary["instance"]}
+        mock_available.return_value = {"openrouter": primary.instance}
         mock_ordered.return_value = [primary]
         mock_create.return_value = MagicMock()
 
@@ -450,7 +451,7 @@ class TestInitLlm:
         mock_log: MagicMock,
     ) -> None:
         primary = _make_llm_provider("gemini")
-        mock_available.return_value = {"gemini": primary["instance"]}
+        mock_available.return_value = {"gemini": primary.instance}
         mock_ordered.return_value = [primary]
         mock_create.return_value = MagicMock()
 
@@ -470,7 +471,7 @@ class TestInitLlm:
         mock_log: MagicMock,
     ) -> None:
         primary = _make_llm_provider("openrouter")
-        mock_available.return_value = {"openrouter": primary["instance"]}
+        mock_available.return_value = {"openrouter": primary.instance}
         mock_ordered.return_value = [primary]
         mock_create.return_value = MagicMock()
 
