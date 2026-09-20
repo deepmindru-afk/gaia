@@ -2,6 +2,12 @@
 
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
+import {
+  Dropdown,
+  DropdownItem,
+  DropdownMenu,
+  DropdownTrigger,
+} from "@heroui/dropdown";
 import { Input } from "@heroui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@heroui/popover";
 import { ScrollShadow } from "@heroui/react";
@@ -10,9 +16,12 @@ import {
   ArcBrowserIcon,
   ChromeIcon,
   Clock01Icon,
+  DatabaseImportIcon,
   Delete02Icon,
   GlobalIcon,
   Location01Icon,
+  MoreVerticalIcon,
+  RefreshIcon,
   SafariIcon,
   Search01Icon,
 } from "@icons";
@@ -239,47 +248,79 @@ export function SavedLogins() {
 
   return (
     <section>
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-zinc-200">Saved sites</h3>
           <p className="mt-0.5 text-xs text-zinc-500">
             Encrypted session data GAIA keeps for sites it visits, so it stays
             signed in where you've logged in.
           </p>
         </div>
-        {logins.length > 0 && (
-          <Button
-            size="sm"
-            color="danger"
-            variant="light"
-            className="h-7"
-            isLoading={isClearingAll}
-            onPress={() => void handleClearAll()}
-          >
-            Clear all
-          </Button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {logins.length > 0 && (
+            <Input
+              size="sm"
+              radius="lg"
+              value={query}
+              onValueChange={setQuery}
+              isClearable
+              onClear={() => setQuery("")}
+              placeholder="Search saved sites…"
+              startContent={<Search01Icon className="size-4 text-zinc-500" />}
+              className="max-w-52"
+              classNames={{ inputWrapper: "bg-zinc-800" }}
+            />
+          )}
+          <Dropdown placement="bottom-end">
+            <DropdownTrigger>
+              <Button
+                isIconOnly
+                aria-label="Saved sites actions"
+                size="sm"
+                variant="light"
+              >
+                <MoreVerticalIcon className="size-4" />
+              </Button>
+            </DropdownTrigger>
+            <DropdownMenu aria-label="Saved sites actions">
+              <DropdownItem
+                key="import"
+                textValue="Import from browser"
+                startContent={
+                  <DatabaseImportIcon className="size-4 text-zinc-400" />
+                }
+                onPress={() => setConnectOpen(true)}
+              >
+                Import from browser
+              </DropdownItem>
+              <DropdownItem
+                key="refresh"
+                textValue="Refresh"
+                startContent={<RefreshIcon className="size-4 text-zinc-400" />}
+                onPress={() => void refetch()}
+              >
+                Refresh
+              </DropdownItem>
+              <DropdownItem
+                key="clear"
+                textValue="Clear all"
+                color="danger"
+                className="text-danger"
+                isDisabled={logins.length === 0 || isClearingAll}
+                startContent={<Delete02Icon className="size-4" />}
+                onPress={() => void handleClearAll()}
+              >
+                Clear all
+              </DropdownItem>
+            </DropdownMenu>
+          </Dropdown>
+        </div>
       </div>
 
       {!isLoading && !error && logins.length > 0 && (
         <div className="mb-3">
           <ConnectBrowserBanner onConnect={() => setConnectOpen(true)} />
         </div>
-      )}
-
-      {logins.length > 0 && (
-        <Input
-          size="sm"
-          radius="lg"
-          value={query}
-          onValueChange={setQuery}
-          isClearable
-          onClear={() => setQuery("")}
-          placeholder="Search saved sites…"
-          startContent={<Search01Icon className="size-4 text-zinc-500" />}
-          className="mb-2"
-          classNames={{ inputWrapper: "bg-zinc-800" }}
-        />
       )}
 
       {isLoading ? (

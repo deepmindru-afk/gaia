@@ -126,7 +126,7 @@ class TestStepCaption:
 
 
 class TestBotProgressDeliverySession:
-    async def test_emits_live_view_link(self, delivery):
+    async def test_session_is_silent_link_comes_at_handoff(self, delivery):
         snapshot = BrowserSessionSnapshot(
             task="do thing",
             status="running",
@@ -135,18 +135,16 @@ class TestBotProgressDeliverySession:
         with (
             patch(
                 "app.services.browser.bot_delivery.create_live_view_link",
-                new=AsyncMock(return_value="https://live.example.com/abc"),
+                new=AsyncMock(),
             ) as mock_link,
             patch(
                 "app.services.browser.bot_delivery.publish_outbound_message",
-                new=AsyncMock(return_value="published"),
+                new=AsyncMock(),
             ) as mock_pub,
         ):
             await delivery.session(snapshot)
-            mock_link.assert_awaited_once_with("sess-1", "user-1")
-            mock_pub.assert_awaited_once()
-            args = mock_pub.call_args
-            assert "https://live.example.com/abc" in args[0][2][0]
+            mock_link.assert_not_awaited()
+            mock_pub.assert_not_awaited()
 
     async def test_no_session_id_does_nothing(self, delivery):
         snapshot = BrowserSessionSnapshot(task="t", status="running", session_id=None)
@@ -380,13 +378,13 @@ class TestBotProgressDeliveryHandoff:
             mock_link.assert_awaited_once_with("sess-1", "user-1")
             msg = mock_pub.call_args[0][2][0]
             assert msg == (
-                "I need you to take over for this step: Payment needed\n"
-                "Open the live browser: https://live.example.com/link\n"
+                "I need you to take over for this step: Payment needed\n\n"
+                "Open the live browser: https://live.example.com/link\n\n"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
             )
 
-    async def test_handoff_is_one_delivery_call_with_no_blank_line_breaks(self, delivery):
-        """The bot's outbound splitter breaks a message at every blank line; a handoff with a credentials note and a link must stay one paragraph or it arrives as four separate messages."""
+    async def test_handoff_is_one_delivery_call_with_blank_line_bubbles(self, delivery):
+        """The bot's outbound splitter turns each blank-line block into its own bubble: ask, link and reply instruction arrive as three readable messages, still in a single delivery call."""
         from app.constants.browser import SensitiveCategory
 
         snap = BrowserHandoffSnapshot(
@@ -409,7 +407,7 @@ class TestBotProgressDeliveryHandoff:
             mp.assert_awaited_once()
             text_parts = mp.call_args[0][2]
             assert len(text_parts) == 1
-            assert "\n\n" not in text_parts[0]
+            assert text_parts[0].count("\n\n") == 2
 
     async def test_credentials_handoff_reassures_the_login_is_saved(self, delivery):
         """A sign-in handoff tells the user the session will be saved encrypted — it is true (storage_persistence.py) and it is what makes a login worth doing once."""
@@ -458,8 +456,8 @@ class TestBotProgressDeliveryHandoff:
             assert mp.call_args[0][2][0] == (
                 "I need you to take over for this step: "
                 "Enter your password and click Sign in.\n"
-                f"{BROWSER_CREDENTIALS_SAVED_NOTE}\n"
-                "Open the live browser: https://live/x\n"
+                f"{BROWSER_CREDENTIALS_SAVED_NOTE}\n\n"
+                "Open the live browser: https://live/x\n\n"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
             )
 
@@ -500,7 +498,7 @@ class TestBotProgressDeliveryHandoff:
             ml.assert_not_awaited()
             msg = mp.call_args[0][2][0]
             assert msg == (
-                "I need you to take over for this step: Need creds\n"
+                "I need you to take over for this step: Need creds\n\n"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
             )
 

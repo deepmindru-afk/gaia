@@ -55,13 +55,13 @@ class BotProgressDelivery:
         self._last_label = ""
 
     async def session(self, snapshot: BrowserSessionSnapshot) -> None:
-        """Emit a session lifecycle event to the conversation."""
-        # Surface the live-view link up front so the user can watch the run as it
-        # happens, and is already oriented if a handoff comes later. The link
-        # only exists once the session is allocated, which is exactly now.
-        if not snapshot.session_id:
-            return
-        await self.note(f"On it. Watch along live here:\n{await self._link(snapshot.session_id)}")
+        """Session lifecycle event: deliberately silent.
+
+        Screenshots already stream per step, so an auto-injected "watch live"
+        line is noise, not orientation. The live-view link is handed over at
+        the handoff instead — the one moment the user actually needs it.
+        """
+        return
 
     async def _link(self, session_id: str) -> str:
         """One live-view link per session: every mint is a different code for the same browser, and a second link reads as a second browser."""
@@ -113,16 +113,18 @@ class BotProgressDelivery:
         if snapshot.status != HandoffStatus.PENDING:
             return
 
-        # One paragraph, single newlines only: the bot's outbound splitter breaks
-        # a message into separate sends at every blank line, and four sends for
-        # one takeover request buried the actual ask in a burst of bubbles.
-        lines = [f"I need you to take over for this step: {snapshot.reason}"]
+        # Blank-line separated blocks: the bot's outbound splitter turns each
+        # into its own bubble, so the ask, the link and the reply instruction
+        # arrive as three readable messages instead of one wall of lines.
+        # (One paragraph was tried before; distinct lines in a single bubble
+        # are harder to scan than short separate bubbles.)
+        blocks = [f"I need you to take over for this step: {snapshot.reason}"]
         if snapshot.category == SensitiveCategory.CREDENTIALS:
-            lines.append(BROWSER_CREDENTIALS_SAVED_NOTE)
+            blocks[0] += f"\n{BROWSER_CREDENTIALS_SAVED_NOTE}"
         if snapshot.session_id:
-            lines.append(f"Open the live browser: {await self._link(snapshot.session_id)}")
-        lines.append('Reply "done" when you\'ve finished, or "stop" to cancel.')
-        await self.note("\n".join(lines))
+            blocks.append(f"Open the live browser: {await self._link(snapshot.session_id)}")
+        blocks.append('Reply "done" when you\'ve finished, or "stop" to cancel.')
+        await self.note("\n\n".join(blocks))
 
     async def result(self, snapshot: BrowserResultSnapshot) -> None:
         """Emit the final task result to the conversation."""
