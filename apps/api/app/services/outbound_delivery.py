@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from pydantic import ValidationError
+
 from app.constants.outbound import (
     OUTBOUND_QUEUES,
     OUTBOUND_TTL_SECONDS_DEFAULT,
@@ -243,11 +245,21 @@ async def publish_outbound_photo(
         return False
     queue_name, destination_id, publisher = prep
 
-    envelope = OutboundMessageEnvelope(
-        platform=platform.value,
-        destination_id=destination_id,
-        attachment=OutboundAttachment(url=url, filename=filename, caption=caption),
-    )
+    try:
+        envelope = OutboundMessageEnvelope(
+            platform=platform.value,
+            destination_id=destination_id,
+            attachment=OutboundAttachment(url=url, filename=filename, caption=caption),
+        )
+    except ValidationError:
+        # A rejected URL (non-https, non-own-API origin) must degrade to the
+        # caption text, never to silence: the caller falls back on False.
+        log.warning(
+            "publish_outbound_photo: attachment URL rejected",
+            platform=platform.value,
+            filename=filename,
+        )
+        return False
     try:
         await publisher.publish_outbound(queue_name, envelope.model_dump_json().encode())
     except Exception as e:

@@ -106,6 +106,22 @@ async def live_view_page(
     return HTMLResponse(content=render_live_view_page(session_id))
 
 
+@router.get("/{code}", response_class=HTMLResponse, responses=HTML_ROUTE_ERROR_RESPONSES)
+async def live_view_short_link(
+    code: str,
+    request: Request,
+    t: Annotated[str | None, Query()] = None,
+) -> HTMLResponse:
+    """Bare-code form of the live view (``/{code}`` instead of ``/live/{code}``).
+
+    Registered last so it never shadows the routes above. Exists because the
+    bot link uses the short form whenever a live-view base URL is configured,
+    and outside the prod vhost rewrite there is nothing translating it: opened
+    directly against this API it must resolve the same way.
+    """
+    return await live_view_page(code, request, t)
+
+
 @router.websocket("/live/{code}")
 async def live_view_ws(
     websocket: WebSocket,
