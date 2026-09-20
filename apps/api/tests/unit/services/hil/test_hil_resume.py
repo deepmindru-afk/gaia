@@ -94,12 +94,11 @@ class TestResumeAfterApproval:
 
 
 class TestResumeTodo:
-    async def test_receipt_logged_and_todo_reenqueued(self) -> None:
-        import app.services.hil.resume as resume_module
+    async def test_resume_enqueues_into_the_parked_conversation(self) -> None:
+        # Lazy imports inside _resume_todo bind at call time: patch the source
+        # modules, never the resume module's namespace.
         from app.services.hil.resume import _resume_todo
 
-        service = MagicMock()
-        service.append_activity_entry = AsyncMock(return_value=True)
         pool = MagicMock()
         enqueued: dict[str, Any] = {}
 
@@ -107,10 +106,6 @@ class TestResumeTodo:
             enqueued.update(fn=fn, args=args)
 
         with (
-            patch(
-                "app.services.tracked_todo_service.tracked_todo_service",
-                service,
-            ),
             patch(
                 "app.utils.redis_utils.RedisPoolManager.get_pool",
                 new=AsyncMock(return_value=pool),
@@ -121,11 +116,10 @@ class TestResumeTodo:
             ),
         ):
             await _resume_todo(_row(owner_run_type="todo", owner_id="todo-9"))
-        entry = service.append_activity_entry.await_args.kwargs["entry"]
-        assert "ap_bg1" in entry
-        assert "todo-9" in service.append_activity_entry.await_args.kwargs["todo_id"]
-        assert enqueued["fn"] == "execute_tracked_todo"
-        assert enqueued["args"] == ("todo-9",)
+        # The parked conversation — never a fresh session. A fresh uuid would
+        # orphan the parked run's thread, checkpoint, and partial results.
+        assert enqueued["fn"] == "resume_tracked_todo"
+        assert enqueued["args"] == ("todo-9", "conv-bg", "ap_bg1", "Send briefing")
 
 
 class TestResumeWorkflow:

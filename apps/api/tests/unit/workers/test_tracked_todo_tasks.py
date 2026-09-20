@@ -56,6 +56,7 @@ from app.workers.tasks.tracked_todo_tasks import (
     _mark_todo_failed,
     _run_execution,
     execute_tracked_todo,
+    resume_tracked_todo,
     safety_net_check_orphaned_todos,
 )
 
@@ -1512,3 +1513,92 @@ class TestSafetyNet:
 
         run_ats = {c.kwargs["_defer_until"] for c in pool.enqueue_job.call_args_list}
         assert len(run_ats) > 1
+
+
+# resume_tracked_todo
+# ---------------------------------------------------------------------------
+
+
+class TestResumeTrackedTodo:
+    def _patches(self, *, agent, doc=None, lock=True):
+        repo = MagicMock()
+        repo.get_by_id = AsyncMock(return_value=doc or _doc())
+        timeline = AsyncMock(return_value=True)
+        return (
+            patch(f"{MODULE}.RedisPoolManager.get_pool", AsyncMock(return_value=_pool())),
+            patch(f"{MODULE}.todo_repository", repo),
+            patch(
+                f"{MODULE}._load_user_with_tz",
+                AsyncMock(return_value=(AuthenticatedUser(user_id="user-1"), MagicMock())),
+            ),
+            patch(f"{MODULE}.call_agent_silent", agent),
+            patch(f"{MODULE}.tracked_todo_service.append_activity_entry", timeline),
+            patch(f"{MODULE}.enqueue_worker_job", AsyncMock()),
+        ), repo, timeline
+
+    def _entries(self, timeline):
+        return [c.kwargs["entry"] for c in timeline.call_args_list]
+
+    async def test_continues_the_parked_conversation_not_a_fresh_one(self):
+        """The parked run's thread holds its reasoning and partial results —
+        a fresh uuid would orphan all of it. The resume inherits the thread
+        the way a user follow-up continues a chat."""
+        agent = AsyncMock(
+            return_value=SilentRunResult(message="Briefing sent.", tool_data=[])
+        )
+        patches, _repo, timeline = self._patches(agent=agent)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            result = await resume_tracked_todo(
+                {}, "todo-1", "conv-parked", "ap_1", "Send briefing"
+            )
+
+        assert result == "resumed:todo-1"
+        assert agent.await_args.kwargs["conversation_id"] == "conv-parked"
+        request = agent.await_args.kwargs["request"]
+        assert "ap_1" in request.message
+        assert "Send briefing" in request.message
+        trigger = agent.await_args.kwargs["options"].trigger_context
+        assert trigger["resume_from_approval"] == "ap_1"
+        assert trigger["active_todo_id"] == "todo-1"
+        assert trigger["execution_mode"] == "background"
+        start, end = self._entries(timeline)
+        assert "ap_1" in start and "resume started" in start
+        assert "resume finished" in end
+
+    async def test_completed_todo_needs_no_resume(self):
+        agent = AsyncMock()
+        patches, _repo, _timeline = self._patches(
+            agent=agent, doc=_doc(completed=True)
+        )
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            result = await resume_tracked_todo(
+                {}, "todo-1", "conv-parked", "ap_1", "Send briefing"
+            )
+
+        assert result == "completed:todo-1"
+        agent.assert_not_called()
+
+    async def test_lock_held_defers_then_drops_loudly(self):
+        from app.workers.tasks.tracked_todo_tasks import resume_tracked_todo as resume
+
+        held = _pool()
+        held.set = AsyncMock(return_value=False)
+        agent = AsyncMock()
+        with (
+            patch(f"{MODULE}.RedisPoolManager.get_pool", AsyncMock(return_value=held)),
+            patch(f"{MODULE}.todo_repository", MagicMock()),
+            patch(
+                f"{MODULE}._load_user_with_tz",
+                AsyncMock(return_value=(AuthenticatedUser(user_id="user-1"), MagicMock())),
+            ),
+            patch(f"{MODULE}.call_agent_silent", agent),
+            patch(f"{MODULE}.tracked_todo_service.append_activity_entry", AsyncMock()),
+            patch(f"{MODULE}.enqueue_worker_job", AsyncMock()) as enqueue,
+        ):
+            deferred = await resume({}, "todo-1", "conv-x", "ap_1", "r", 0)
+            dropped = await resume({}, "todo-1", "conv-x", "ap_1", "r", 99)
+
+        assert deferred.startswith("resume_deferred:")
+        assert dropped.startswith("resume_dropped:")
+        agent.assert_not_called()
+        enqueue.assert_awaited_once()

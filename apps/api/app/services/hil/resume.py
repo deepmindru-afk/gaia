@@ -86,23 +86,21 @@ async def record_owner_deny(row: ApprovalLedgerDocument, feedback: str | None) -
 
 
 async def _resume_todo(row: ApprovalLedgerDocument) -> None:
-    """Append the receipt and re-enqueue the todo. The next execution reads
-    the activity log and continues; the lock/defer machinery stays the
+    """Resume in the PARKED conversation: the receipt joins the run's own
+    thread instead of a fresh session. The lock/defer machinery stays the
     arbiter of concurrency, exactly like a scheduled fire."""
-    from app.services.tracked_todo_service import tracked_todo_service
     from app.utils.redis_utils import RedisPoolManager
     from app.workers.queue import enqueue_worker_job
 
-    await tracked_todo_service.append_activity_entry(
-        todo_id=row.owner_id,
-        user_id=row.user_id,
-        entry=(
-            f"Approval {row.approval_id} granted: {row.summary} ran. "
-            "Continuing the run from here."
-        ),
-    )
     pool = await RedisPoolManager.get_pool()
-    await enqueue_worker_job(pool, "execute_tracked_todo", row.owner_id)
+    await enqueue_worker_job(
+        pool,
+        "resume_tracked_todo",
+        row.owner_id,
+        row.conversation_id,
+        row.approval_id,
+        row.summary,
+    )
 
 
 async def _resume_workflow(row: ApprovalLedgerDocument) -> None:
