@@ -94,6 +94,10 @@ class AutoHistory:
     denied_recent: int = 0
     last_deny_feedback: str | None = None
     last_deny_at: datetime | None = None
+    # Recipients/targets from the user's own approved runs (bounded) — a
+    # repeat send to a known address is not "an address from nowhere". Mined
+    # from the same rows as the counts: no extra query, no extra latency.
+    known_targets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -174,11 +178,24 @@ def summarize_history(rows: list[ApprovalLedgerDocument]) -> AutoHistory:
         denied_recent=len(denies),
         last_deny_feedback=latest.feedback if latest else None,
         last_deny_at=latest.decided_at if latest else None,
+        known_targets=tuple(
+            dict.fromkeys(
+                target
+                for row in rows
+                if row.state in _APPROVED_LEDGER_STATES
+                for target in _target_values(row.args)
+            )
+        )[:20],
     )
 
 
 def history_line(history: AutoHistory, tool_name: str) -> str:
-    """One line of memory for the judge prompt — counts, never args content."""
+    """One line of memory for the judge prompt: counts plus known targets.
+
+    Known targets are recipient/id values from the user's own approved runs —
+    the same args the judge already sees in full, so no new exposure, just
+    the repeat pattern made explicit.
+    """
     if history.approved_recent == 0 and history.denied_recent == 0:
         return f"No recent decisions on {tool_name}."
     line = (
@@ -187,6 +204,8 @@ def history_line(history: AutoHistory, tool_name: str) -> str:
     )
     if history.last_deny_feedback:
         line += f" Latest deny reason: {history.last_deny_feedback!r}."
+    if history.known_targets:
+        line += f" Known from past runs: {', '.join(history.known_targets[:8])}."
     return line
 
 
@@ -341,24 +360,43 @@ def _history_blocks(history: AutoHistory) -> bool:
 
 
 def ungrounded_targets(
-    args: dict[str, Any], user_text: str, prior_calls: list[PriorCall]
+    args: dict[str, Any],
+    user_text: str,
+    prior_calls: list[PriorCall],
+    known: frozenset[str] | None = None,
 ) -> list[str]:
     """Target-like arg values with no provenance in the user's words or priors.
 
     The grounding backstop for judges that produce no authorizing quote (JEV):
     an email, id, or amount that appears from nowhere blocks auto-accept. Prose
-    bodies are not targets — the choice criteria already judge those.
+    bodies are not targets — the choice criteria already judge those. Targets
+    from the user's own approved runs (``known``) are provenance, not novelty.
     """
     normalized_user = _normalize(user_text)
     normalized_priors = _normalize(
         "\n".join(f"{call.name} {args_preview(call.args)}" for call in prior_calls)
     )
+    normalized_known = {_normalize(target) for target in known or frozenset()}
+    user_tokens = set(normalized_user.split())
     return [
         target
         for target in _target_values(args)
         if _normalize(target) not in normalized_user
         and _normalize(target) not in normalized_priors
+        and _normalize(target) not in normalized_known
+        and _local_part(target) not in user_tokens
     ]
+
+
+def _local_part(target: str) -> str:
+    """The email local part ("sarah" of "sarah@x.com"), else "".
+
+    "Reply yes to Sarah's thread" grounds sarah@x.com: the name matches, only
+    the domain was resolved. Equality on the local part — a "bob" in the text
+    never grounds "bobby@evil.com".
+    """
+    local, _, _ = target.partition("@")
+    return local if "@" in target else ""
 
 
 def _target_values(args: object) -> list[str]:

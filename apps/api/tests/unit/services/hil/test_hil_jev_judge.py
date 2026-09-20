@@ -135,6 +135,29 @@ class TestGrounding:
         priors = [PriorCall(name="FIND", args={"id": "d123"})]
         assert ungrounded_targets({"id": "d123"}, "delete it", priors) == []
 
+    async def test_a_name_in_words_grounds_its_email(self) -> None:
+        # "Sarah's" grounds sarah@x.com; the domain was resolved, not chosen.
+        assert (
+            ungrounded_targets(
+                {"to": "sarah@x.com"}, "reply yes to sarah's thread", []
+            )
+            == []
+        )
+
+    async def test_a_name_prefix_never_grounds_a_longer_address(self) -> None:
+        # "bob" must not ground bobby@evil.com — equality on the local part.
+        assert ungrounded_targets({"to": "bobby@evil.com"}, "email bob now", []) == [
+            "bobby@evil.com"
+        ]
+
+    async def test_a_known_address_is_provenance_not_novelty(self) -> None:
+        assert (
+            ungrounded_targets(
+                {"to": "bob@x.com"}, "yes, send it", [], known=frozenset({"bob@x.com"})
+            )
+            == []
+        )
+
     async def test_prose_bodies_are_not_targets(self) -> None:
         # The body is judged by the choice criteria, not by provenance.
         assert ungrounded_targets({"body": "hello world 123"}, "send it", []) == []

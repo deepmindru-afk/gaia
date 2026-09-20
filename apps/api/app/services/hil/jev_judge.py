@@ -150,50 +150,73 @@ class JevIntentJudge:
                 prior_calls=prior_calls,
                 history=history,
             )
-        log.info(
-            f"{LogTag.HIL} JEV judge : {choice}",
-            tool_name=call.tool_name,
-            hil={
-                "choice": choice,
-                "confidence": round(confidence, 3),
-                "version": JEV_QUESTIONS_VERSION,
-            },
+        return decide_from_verdict(
+            choice=choice,
+            confidence=confidence,
+            user_messages=user_messages,
+            call=call,
+            prior_calls=prior_calls,
+            history=history,
         )
-        outcome = map_jev_choice(
-            choice,
-            confidence,
-            accept_line=HIL_JEV_ACCEPT_LINE,
-            reject_floor=HIL_JEV_REJECT_FLOOR,
+
+
+def decide_from_verdict(
+    *,
+    choice: str,
+    confidence: float,
+    user_messages: list[str],
+    call: JudgedCall,
+    prior_calls: list[PriorCall],
+    history: AutoHistory,
+) -> IntentDecision:
+    """Map one JEV verdict through the code vetoes. Pure — shared by prod and eval."""
+    log.info(
+        f"{LogTag.HIL} JEV judge : {choice}",
+        tool_name=call.tool_name,
+        hil={
+            "choice": choice,
+            "confidence": round(confidence, 3),
+            "version": JEV_QUESTIONS_VERSION,
+        },
+    )
+    outcome = map_jev_choice(
+        choice,
+        confidence,
+        accept_line=HIL_JEV_ACCEPT_LINE,
+        reject_floor=HIL_JEV_REJECT_FLOOR,
+    )
+    if outcome == "reject":
+        return IntentDecision(
+            "reject",
+            "Auto mode held this off: your messages argue against this "
+            f"{call.tool_name} call.",
         )
-        if outcome == "reject":
+    if outcome == "accept":
+        if _history_blocks(history):
             return IntentDecision(
-                "reject",
-                "Auto mode held this off: your messages argue against this "
-                f"{call.tool_name} call.",
+                "ask",
+                f"You denied {history.denied_recent} recent "
+                f"{call.tool_name} call(s), so this one needs your "
+                "go-ahead even though it looks authorized.",
             )
-        if outcome == "accept":
-            if _history_blocks(history):
-                return IntentDecision(
-                    "ask",
-                    f"You denied {history.denied_recent} recent "
-                    f"{call.tool_name} call(s), so this one needs your "
-                    "go-ahead even though it looks authorized.",
-                )
-            missing = ungrounded_targets(
-                call.args, "\n".join(user_messages), prior_calls
-            )
-            if missing:
-                return IntentDecision(
-                    "ask",
-                    f"the target ({', '.join(missing[:3])}) doesn't trace to "
-                    "your words.",
-                )
+        missing = ungrounded_targets(
+            call.args,
+            "\n".join(user_messages),
+            prior_calls,
+            frozenset(history.known_targets),
+        )
+        if missing:
             return IntentDecision(
-                "accept",
-                f"Auto mode matched this to your request ({choice} {confidence:.2f}).",
+                "ask",
+                f"the target ({', '.join(missing[:3])}) doesn't trace to "
+                "your words.",
             )
         return IntentDecision(
-            "ask",
-            f"this {call.tool_name} call may not match your request "
-            f"({choice} {confidence:.2f}).",
+            "accept",
+            f"Auto mode matched this to your request ({choice} {confidence:.2f}).",
         )
+    return IntentDecision(
+        "ask",
+        f"this {call.tool_name} call may not match your request "
+        f"({choice} {confidence:.2f}).",
+    )
