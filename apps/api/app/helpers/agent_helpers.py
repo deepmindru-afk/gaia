@@ -454,30 +454,30 @@ def background_authorization(
     *,
     execution_mode: str,
     workflow_title: str = "",
-    workflow_prompt: str = "",
-    workflow_steps: Sequence[str] | None = None,
+    workflow_description: str = "",
     todo_title: str = "",
 ) -> list[str]:
     """Append a background run's schedule text as standing authorization.
 
     A scheduled workflow/todo is a standing directive the user set up, so its
-    definition authorizes the same way their words do in a live turn: the
-    judge grounds calls against these lines verbatim. Interactive runs pass
-    through untouched. Everything appended is clipped like any other turn,
-    and lines already covered by the prompt are not duplicated.
+    human-written display fields authorize the same way their words do in a
+    live turn: the judge grounds calls against these lines verbatim.
+    Deliberately display fields ONLY (title, description): step lists and
+    execution prompts may be LLM-generated (see GeneratedStep), and generated
+    text never authorizes — the same invariant as agent prose. Interactive
+    runs pass through untouched. Everything appended is clipped like any
+    other turn, and lines already covered by the prompt are not duplicated.
     """
     if execution_mode != "background":
         return turns
     extra: list[str] = []
     title = workflow_title.strip()
-    prompt = workflow_prompt.strip()
-    steps = [step.strip() for step in (workflow_steps or []) if step.strip()][:10]
-    if title or prompt or steps:
+    description = workflow_description.strip()
+    if title or description:
         extra.append(
             "Scheduled workflow"
             + (f": {title}" if title else "")
-            + (f". Instructions: {prompt}" if prompt else "")
-            + (f". Steps: {'; '.join(steps)}" if steps else "")
+            + (f". {description}" if description else "")
         )
     label = todo_title.strip()
     if label and not any(label in turn for turn in turns):

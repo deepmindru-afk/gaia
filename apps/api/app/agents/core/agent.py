@@ -216,8 +216,7 @@ async def _core_agent_logic(
                 recent_user_messages(request.messages, request.message),
                 execution_mode=str(execution_mode),
                 workflow_title=_workflow_text(request.selectedWorkflow, "title"),
-                workflow_prompt=_workflow_text(request.selectedWorkflow, "prompt"),
-                workflow_steps=_workflow_steps(request.selectedWorkflow),
+                workflow_description=_workflow_text(request.selectedWorkflow, "description"),
                 todo_title=str((trigger_context or {}).get("todo_title") or ""),
             ),
             user_request=request.message,
@@ -275,15 +274,6 @@ def _workflow_text(selected_workflow: object, field: str) -> str:
     """Read one text field off the run's workflow card, or "" without one."""
     value = getattr(selected_workflow, field, "")
     return value if isinstance(value, str) else ""
-
-
-def _workflow_steps(selected_workflow: object) -> list[str]:
-    """Read the workflow card's step titles, or [] without a card."""
-    steps = getattr(selected_workflow, "steps", None)
-    if not isinstance(steps, list):
-        return []
-    titles = [getattr(step, "title", "") for step in steps]
-    return [title for title in titles if isinstance(title, str) and title.strip()]
 
 
 async def call_agent(

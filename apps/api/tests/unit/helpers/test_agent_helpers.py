@@ -3,6 +3,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
+import inspect
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from posthog.ai.langchain import CallbackHandler as PostHogCallbackHandler
@@ -938,12 +939,19 @@ class TestBackgroundAuthorization:
             ["Execute workflow: Morning briefing"],
             execution_mode="background",
             workflow_title="Morning briefing",
-            workflow_prompt="Email me my calendar and top emails",
-            workflow_steps=["Fetch calendar", "Summarize inbox"],
+            workflow_description="Emails my calendar and top emails",
         )
         assert out[0] == "Execute workflow: Morning briefing"
-        assert "Email me my calendar" in out[1]
-        assert "Fetch calendar" in out[1]
+        assert out[1] == "Scheduled workflow: Morning briefing. Emails my calendar and top emails"
+
+    def test_generated_content_never_authorizes(self) -> None:
+        # Steps and execution prompts may be LLM-generated (GeneratedStep),
+        # so the function does not even accept them — only human-written
+        # display fields travel. A generated step naming a recipient grounds
+        # nothing.
+        params = set(inspect.signature(background_authorization).parameters)
+        assert "workflow_steps" not in params
+        assert "workflow_prompt" not in params
 
     def test_todo_title_is_added_unless_the_prompt_covers_it(self) -> None:
         assert background_authorization(
