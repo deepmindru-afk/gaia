@@ -251,6 +251,7 @@ jobs:
             if [[ "$AFFECTED_FILES" == "__FULL__" ]]; then
               ALERTS=true
               API_SCHEMA=true
+              GO=true
             else
               if echo "$AFFECTED_FILES" | grep -qE '^(infra/docker/observability/grafana/provisioning/alerting/|tools/alert-rules/|config/pint\.hcl$)'; then
                 ALERTS=true
@@ -261,6 +262,13 @@ jobs:
                 API_SCHEMA=true
               else
                 API_SCHEMA=false
+              fi
+              # The Go tool is a standalone module outside the nx graph, so it is
+              # path-scoped the same way the alert rules are.
+              if echo "$AFFECTED_FILES" | grep -qE '^tools/gaia-connect/'; then
+                GO=true
+              else
+                GO=false
               fi
             fi
           fi
