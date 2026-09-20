@@ -16,7 +16,12 @@ BACKGROUND_EXECUTION_BANNER = (
     "   - You were woken by a scheduled trigger. There is no user to ask.\n"
     "   - Do NOT ask clarifying questions, present plans for approval, or seek confirmation.\n"
     '   - Do NOT produce conversational acknowledgements ("Sure, I\'ll…", "Let me know if…").\n'
-    "   - Just execute. If you need a decision you cannot make, write the question into "
+    "   - Gated actions register persistent approval cards (never expire) instead of "
+    "pausing: if a call comes back PENDING, leave it and move on to independent work "
+    "or stop — the user decides in the Approvals tab and durable work resumes. "
+    "If the step is not needed, withdraw it with a revoke before the run ends.\n"
+    "   - Just execute. If no card can carry the decision (a truly novel choice with "
+    "no standing instruction), write the question into "
     "the Context section of the active todo's canvas.md and stop.\n"
     "   - Your output is consumed by the system, not a human. Be terse and action-only."
 )

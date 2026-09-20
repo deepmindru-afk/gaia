@@ -29,6 +29,7 @@ from app.helpers.agent_helpers import (
     _stamp_langfuse,
     build_agent_config,
     build_initial_state,
+    background_authorization,
     execute_graph_silent,
     execute_graph_streaming,
     get_handoff_metadata,
@@ -915,6 +916,46 @@ class TestRecentUserMessages:
         ]
 
         assert recent_user_messages(history, "send it") == ["draft an email to Bob", "send it"]
+
+
+class TestBackgroundAuthorization:
+    """Schedule text authorizes background runs the way words authorize live turns."""
+
+    def test_interactive_runs_pass_through_untouched(self) -> None:
+        turns = ["send it"]
+        assert (
+            background_authorization(
+                turns,
+                execution_mode="interactive",
+                workflow_title="Morning briefing",
+                todo_title="Brief me",
+            )
+            is turns
+        )
+
+    def test_workflow_definition_is_appended_as_standing_authorization(self) -> None:
+        out = background_authorization(
+            ["Execute workflow: Morning briefing"],
+            execution_mode="background",
+            workflow_title="Morning briefing",
+            workflow_prompt="Email me my calendar and top emails",
+            workflow_steps=["Fetch calendar", "Summarize inbox"],
+        )
+        assert out[0] == "Execute workflow: Morning briefing"
+        assert "Email me my calendar" in out[1]
+        assert "Fetch calendar" in out[1]
+
+    def test_todo_title_is_added_unless_the_prompt_covers_it(self) -> None:
+        assert background_authorization(
+            ["check calendar and brief me"], execution_mode="background", todo_title="Brief me"
+        ) == ["check calendar and brief me", "Tracked todo: Brief me"]
+        assert background_authorization(
+            ["Brief me on today"], execution_mode="background", todo_title="Brief me"
+        ) == ["Brief me on today"]
+
+    def test_a_run_with_no_schedule_text_is_unchanged(self) -> None:
+        turns = ["health check"]
+        assert background_authorization(turns, execution_mode="background") is turns
 
     def test_with_all_selections(self):
         request = MagicMock()

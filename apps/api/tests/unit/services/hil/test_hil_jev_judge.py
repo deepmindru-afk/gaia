@@ -13,7 +13,11 @@ from app.services.hil.intent import AutoHistory, JudgedCall
 from app.services.hil.jev_judge import (
     JevIntentJudge,
     ask_jev,
+    decide_from_verdict,
+    decisive_forbidden,
+    forbid_tripwire,
     map_jev_choice,
+    needs_forbid_check,
     ungrounded_targets,
 )
 from app.services.hil.utils import PriorCall
@@ -33,14 +37,18 @@ def _call(**overrides: Any) -> JudgedCall:
     )
 
 
-def _answer(choice: str, confidence: float) -> dict[str, Any]:
+def _answer(
+    choice: str, confidence: float, probs: dict[str, float] | None = None
+) -> dict[str, Any]:
     return {
         "answers": {
             "decision": {
                 "type": "choice",
                 "choice": choice,
                 "confidence": confidence,
-                "probabilities": {choice: confidence},
+                "probabilities": probs
+                if probs is not None
+                else {choice: confidence},
             }
         },
         "usage": {"input_tokens": 300, "output_tokens": 20},
@@ -117,6 +125,127 @@ class TestMapping:
         assert map_jev_choice("maybe", 1.0, accept_line=0.5, reject_floor=0.5) == "ask"
 
 
+class TestDecisiveForbidden:
+    """A runaway forbidden wins whatever its absolute number.
+
+    One-sided by design: over-rejecting is silent (no card), over-accepting
+    runs the action — so only refusal gets the margin rule.
+    """
+
+    async def test_runaway_forbidden_rejects_below_the_floor(self) -> None:
+        assert (
+            decisive_forbidden(
+                "forbidden", {"forbidden": 0.48, "unclear": 0.06, "authorized": 0.0}
+            )
+            is True
+        )
+
+    async def test_close_race_does_not_reject(self) -> None:
+        assert (
+            decisive_forbidden(
+                "forbidden", {"forbidden": 0.48, "unclear": 0.40, "authorized": 0.12}
+            )
+            is False
+        )
+
+    async def test_just_under_the_margin_does_not_reject(self) -> None:
+        # 0.37 margin: the journal band where temporary-boundary asks
+        # (bg-boundary, r-hold) sit — the margin must clear them.
+        assert (
+            decisive_forbidden(
+                "forbidden", {"forbidden": 0.43, "unclear": 0.06, "authorized": 0.0}
+            )
+            is False
+        )
+
+    async def test_margin_never_accepts(self) -> None:
+        # The accept side keeps its absolute line plus grounding, always.
+        assert (
+            decisive_forbidden(
+                "authorized", {"authorized": 0.9, "unclear": 0.05, "forbidden": 0.0}
+            )
+            is False
+        )
+
+    async def test_empty_probabilities_do_not_reject(self) -> None:
+        assert decisive_forbidden("forbidden", {}) is False
+
+    async def test_decisive_forbidden_rejects_through_decide(self) -> None:
+        d = await _decide(
+            _answer(
+                "forbidden",
+                0.22,
+                {"forbidden": 0.50, "unclear": 0.06, "authorized": 0.0},
+            )
+        )
+        assert d.outcome == "reject"
+
+
+class TestForbidTripwire:
+    """The tripwire only ever downgrades an accept into a double-check."""
+
+    async def test_forbid_without_lift_trips(self) -> None:
+        assert forbid_tripwire(["keep everything for now", "delete thread t5"]) is True
+        assert forbid_tripwire(["never pay anyone", "pay $10 now"]) is True
+
+    async def test_lift_language_clears_the_tripwire(self) -> None:
+        assert (
+            forbid_tripwire(["don't send anything yet", "actually, go ahead and send"])
+            is False
+        )
+
+    async def test_clean_history_never_trips(self) -> None:
+        assert forbid_tripwire(["draft an email to bob", "looks good, send it"]) is False
+
+    async def test_check_runs_only_on_would_accept(self) -> None:
+        assert needs_forbid_check("accept", ["never email alice", "email alice"]) is True
+        assert needs_forbid_check("ask", ["never email alice", "email alice"]) is False
+        assert needs_forbid_check("accept", ["send the deck"]) is False
+        assert needs_forbid_check("reject", ["never email alice"]) is False
+
+    async def test_forbidden_double_check_rejects(self) -> None:
+        d = decide_from_verdict(
+            choice="authorized",
+            confidence=0.9,
+            probabilities={"authorized": 0.9},
+            user_messages=["send it"],
+            call=_call(),
+            prior_calls=[],
+            history=AutoHistory(),
+            forbid="forbidden",
+        )
+        assert d.outcome == "reject"
+
+    async def test_permitted_double_check_floors_accept_to_ask(self) -> None:
+        # The tripwire fired (forbid words present) but the check cleared it:
+        # contradictory turns still need the human — a card, never a run.
+        d = decide_from_verdict(
+            choice="authorized",
+            confidence=0.9,
+            probabilities={"authorized": 0.9},
+            user_messages=["don't send anything yet", "send it"],
+            call=_call(),
+            prior_calls=[],
+            history=AutoHistory(),
+            forbid="permitted",
+        )
+        assert d.outcome == "ask"
+        assert "earlier message" in d.reason
+
+    async def test_failed_double_check_floors_accept_to_ask(self) -> None:
+        d = decide_from_verdict(
+            choice="authorized",
+            confidence=0.9,
+            probabilities={"authorized": 0.9},
+            user_messages=["don't send anything yet", "send it"],
+            call=_call(),
+            prior_calls=[],
+            history=AutoHistory(),
+            forbid="unclear-forbid",
+        )
+        assert d.outcome == "ask"
+
+
 class TestGrounding:
     async def test_an_address_from_the_users_words_is_grounded(self) -> None:
         assert (
@@ -157,6 +286,11 @@ class TestGrounding:
             )
             == []
         )
+
+    async def test_boolean_flags_are_never_targets(self) -> None:
+        # Python's bool subclasses int: without the guard, create_meeting_room
+        # becomes the target "True" and every meet-link booking asks forever.
+        assert ungrounded_targets({"create_meeting_room": True}, "book it", []) == []
 
     async def test_prose_bodies_are_not_targets(self) -> None:
         # The body is judged by the choice criteria, not by provenance.

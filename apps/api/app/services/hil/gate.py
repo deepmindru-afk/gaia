@@ -263,7 +263,8 @@ async def _decide_ledger(
             return _tool_message(
                 call,
                 f"PENDING {live.approval_id}: {live.summary} already requested and "
-                f"awaiting the user's decision. {_pending_guidance(live.approval_id)}",
+                f"awaiting the user's decision. "
+                f"{_pending_guidance(live.approval_id, background=not context.pausable)}",
                 "pending",
             )
         denied = await approval_ledger_repository.find_latest_denied(
@@ -339,7 +340,8 @@ async def _decide_ledger(
         return _tool_message(
             call,
             f"PENDING {ap_id}: {summary} queued — {why}. "
-            f"{_pending_guidance(ap_id)}{deny_note}{auto_note}",
+            f"{_pending_guidance(ap_id, background=not context.pausable)}"
+            f"{deny_note}{auto_note}",
             "pending",
         )
     except GraphBubbleUp:
@@ -678,15 +680,22 @@ async def _invalid_args_message(
     return None
 
 
-def _pending_guidance(approval_id: str) -> str:
+def _pending_guidance(approval_id: str, *, background: bool = False) -> str:
     """What the model can and cannot do about a pending card.
 
     Shared by the fresh-register and live-dedup branches so the two never
     drift: the card's lifecycle is identical whichever branch produced it.
+    Background runs get the park wording: nobody is watching this stream, so
+    the card lives in the Approvals tab and durable work resumes off it.
     """
+    where = (
+        "the Approvals tab (this run has no watcher; nothing here will wake it)"
+        if background
+        else "chat (web, mobile, desktop) when this run ends"
+    )
     return (
-        "The approval card appears to the user in chat (web, mobile, "
-        "desktop) when this run ends, and they decide there; you cannot approve it yourself. "
+        f"The approval card appears to the user in {where}, and they decide there; "
+        "you cannot approve it yourself. "
         f'If this step is not needed, withdraw it with execute(tool_name="revoke", '
         f'data={{"id": "{approval_id}"}}) before the run ends and the user will never see it. '
         "If it is genuinely needed, leave it and move on to independent work "

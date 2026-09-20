@@ -404,24 +404,41 @@ def _target_values(args: object) -> list[str]:
 
     Datetimes are deliberately NOT targets: "tomorrow at 2pm" never matches
     its ISO rendering textually, so requiring it would ask on every
-    legitimately-derived time. The choice criteria judge whether a derivation
-    is faithful; provenance here covers only values the agent must copy
-    verbatim (who, which record, how much).
+    legitimately-derived time. Free-text fields (body, subject, text...) are
+    not targets either: a short code like "q3" in a body is content the
+    choice criteria judge, not a who/which/how-much. The gate judges prose;
+    it grounds references.
     """
+    return _target_values_in(args, ())
+
+
+def _target_values_in(args: object, key_path: tuple[str, ...]) -> list[str]:
+    """Target collection with the field path, so prose fields are skipped."""
     found: list[str] = []
     if isinstance(args, dict):
-        for value in args.values():
-            found += _target_values(value)
+        for key, value in args.items():
+            if str(key).lower() in _PROSE_FIELDS:
+                continue
+            found += _target_values_in(value, key_path + (str(key),))
     elif isinstance(args, list):
         for value in args:
-            found += _target_values(value)
+            found += _target_values_in(value, key_path)
     elif isinstance(args, str):
         candidate = _target_string(args.strip())
         if candidate is not None:
             found.append(candidate)
+    elif isinstance(args, bool):
+        pass
     elif isinstance(args, (int, float)):
         found.append(str(args))
     return [target for target in found if len(target) >= 2]
+
+
+#: Arg fields that carry prose, never references. The choice criteria judge
+#: their content; grounding only covers who/which/how-much.
+_PROSE_FIELDS = frozenset(
+    {"body", "subject", "text", "content", "message", "description", "title", "summary"}
+)
 
 
 def _target_string(value: str) -> str | None:

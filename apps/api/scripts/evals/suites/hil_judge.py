@@ -38,7 +38,8 @@ from scripts.evals.core.types import Case, CaseRun, ProviderError
 # Canonical question + mapping live in app (prompts.py, jev_judge.py) — the
 # suite imports them so editing the judge text IS retuning, and every run
 # journals the questions version it graded.
-from app.services.hil.jev_judge import map_jev_choice
+from app.services.hil.jev_judge import decide_from_verdict
+from app.constants.hil import HIL_JEV_ACCEPT_LINE, HIL_JEV_REJECT_FLOOR
 from app.services.hil.prompts import JEV_QUESTIONS_VERSION
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "hil-judge"
@@ -101,6 +102,10 @@ class JudgeTransport:
         end_state: dict[str, Any] = {
             "outcome": outcome,
             "questions_version": JEV_QUESTIONS_VERSION if self._backend == "jev" else "llm",
+            # The full grading input: offline re-scoring replays decide_from_verdict
+            # exactly (mapping + grounding + history), so threshold experiments
+            # never need another model call.
+            "setup": setup,
             **detail_state(detail),
         }
         return CaseRun(
@@ -155,7 +160,13 @@ class JudgeTransport:
     ) -> tuple[str, str, tuple[int, int]]:
         from app.config.settings import get_settings
         from app.services.hil.intent import history_line
-        from app.services.hil.jev_judge import ask_jev, decide_from_verdict
+        from app.services.hil.jev_judge import (
+            ask_jev,
+            ask_jev_forbid,
+            decide_from_verdict,
+            map_jev_choice,
+            needs_forbid_check,
+        )
         from app.services.hil.intent import JudgedCall
         from app.services.hil.utils import PriorCall
 
@@ -183,34 +194,84 @@ class JudgeTransport:
             )
         except httpx.HTTPError as e:
             raise ProviderError(provider.name, f"decisions API failed: {e}") from e
+        # Mirror prod: mapped accept + tripped forbid language earns the
+        # focused double-check (its own metered JEV call, journaled for the sweep).
+        forbid: str | None = None
+        forbid_conf = 0.0
+        forbid_in, forbid_out = 0, 0
+        if needs_forbid_check(
+            map_jev_choice(
+                choice,
+                confidence,
+                accept_line=HIL_JEV_ACCEPT_LINE,
+                reject_floor=HIL_JEV_REJECT_FLOOR,
+            ),
+            turns,
+        ):
+            try:
+                forbid, forbid_conf, forbid_in, forbid_out = await ask_jev_forbid(
+                    user_messages=turns, call=call
+                )
+            except httpx.HTTPError as e:
+                raise ProviderError(
+                    provider.name, f"forbid double-check failed: {e}"
+                ) from e
+            except Exception:
+                forbid, forbid_conf = "unclear-forbid", 0.0
         # Grade the PROD path (mapping + grounding vetoes), not just the choice.
         decision = decide_from_verdict(
             choice=choice,
             confidence=confidence,
+            probabilities=probs,
             user_messages=turns,
             call=call,
             prior_calls=priors,
             history=history,
+            forbid=(
+                forbid
+                if forbid != "forbidden" or forbid_conf >= HIL_JEV_REJECT_FLOOR
+                else "permitted"
+            ),
         )
         history_text = history_line(history, str(setup.get("tool")))
         detail = (
             f"{choice} conf={confidence:.2f} "
-            f"probs={json.dumps(probs)} -> {decision.outcome} "
-            f"[{history_text[:80]}]"
+            f"probs={json.dumps(probs)} forbid={forbid}:{forbid_conf:.2f} "
+            f"-> {decision.outcome} [{history_text[:80]}]"
         )
-        return decision.outcome, detail, (tokens_in, tokens_out)
+        return decision.outcome, detail, (
+            tokens_in + forbid_in,
+            tokens_out + forbid_out,
+        )
 
 
 def detail_state(detail: str) -> dict[str, Any]:
     """Split the journaled detail back into fields the sweep reads offline."""
+    import re as _re
+
     parts: dict[str, Any] = {"detail": detail}
-    head, _, _ = detail.partition(" probs=")
+    head, _, probs_raw = detail.partition(" probs=")
     choice, _, conf = head.partition(" conf=")
     parts["choice"] = choice.strip()
     try:
         parts["confidence"] = float(conf.strip())
     except ValueError:
         parts["confidence"] = 0.0
+    forbid_match = _re.search(r"forbid=([a-z-]+):([\d.]+)", detail)
+    parts["forbid_choice"] = forbid_match.group(1) if forbid_match else None
+    try:
+        parts["forbid_conf"] = float(forbid_match.group(2)) if forbid_match else 0.0
+    except ValueError:
+        parts["forbid_conf"] = 0.0
+    try:
+        probs = json.loads(
+            probs_raw.partition(" forbid=")[0].partition(" -> ")[0] or "{}"
+        )
+        parts["probabilities"] = (
+            {str(k): float(v) for k, v in probs.items()} if isinstance(probs, dict) else {}
+        )
+    except (ValueError, AttributeError):
+        parts["probabilities"] = {}
     return parts
 
 
@@ -229,6 +290,45 @@ def sweep_journal(run_dir: Path) -> str:
             if line:
                 rows.append(json.loads(line))
     rows = [r for r in rows if (r.get("end_state") or {}).get("choice")]
+    from app.services.hil.utils import PriorCall
+
+    from scripts.evals.suites.hil_judge import _eval_history  # noqa: PLC0415 -- sweep reuses the transport's history builder so lines are the only variable
+
+    def _regrade(row: dict[str, Any], accept: float, reject: float) -> str:
+        """Full pipeline outcome for one journaled case: mapping + vetoes."""
+        from app.services.hil.intent import JudgedCall
+        from app.services.hil.utils import PriorCall
+
+        es = row["end_state"]
+        setup = es.get("setup") or {}
+        call = JudgedCall(
+            tool_name=str(setup.get("tool")),
+            description="",
+            args=dict(setup.get("args") or {}),
+            summary="",
+        )
+        priors = [
+            PriorCall(name=str(p.get("tool")), args=dict(p.get("args") or {}))
+            for p in setup.get("prior", [])
+        ]
+        forbid = es.get("forbid_choice")
+        return decide_from_verdict(
+            choice=str(es["choice"]),
+            confidence=float(es["confidence"]),
+            probabilities=dict(es.get("probabilities") or {}),
+            user_messages=[str(t) for t in setup.get("turns", [])],
+            call=call,
+            prior_calls=priors,
+            history=_eval_history(setup),
+            accept_line=accept,
+            reject_floor=reject,
+            forbid=(
+                forbid
+                if forbid != "forbidden" or float(es.get("forbid_conf") or 0.0) >= reject
+                else "permitted"
+            ),
+        ).outcome
+
     graded = sum(
         1
         for r in rows
@@ -242,11 +342,7 @@ def sweep_journal(run_dir: Path) -> str:
             score = 0
             dangerous = 0
             for r in rows:
-                es = r["end_state"]
-                c, conf = str(es["choice"]), float(es["confidence"])
-                out = map_jev_choice(
-                    c, conf, accept_line=accept, reject_floor=reject
-                )
+                out = _regrade(r, accept, reject)
                 want = str((r.get("expected") or {}).get("outcome"))
                 score += out == want
                 dangerous += out == "accept" and want != "accept"

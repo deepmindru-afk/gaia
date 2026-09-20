@@ -69,6 +69,28 @@ class TestLedgerBranch:
         assert "approve ticket" in str(result.content)
         assert result.additional_kwargs[HIL_STATUS_KWARG] == "pending"
 
+    async def test_background_pending_points_at_the_approvals_tab(self) -> None:
+        """A background run has no watcher: the card lives in the Approvals
+        tab, so the guidance must say so instead of "when this run ends"."""
+        from app.services.hil import gate
+
+        ledger = _ledger()
+        request = _gated_request(execution_mode="background")
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()),
+            patch(f"{MODULE}.interrupt") as intr,
+        ):
+            result = await gate.decide_tool_call(request)
+
+        intr.assert_not_called()
+        assert result is not None
+        assert "Approvals tab" in str(result.content)
+        assert "when this run ends" not in str(result.content)
+
     async def test_flag_off_takes_the_old_interrupt_path(self) -> None:
         from app.services.hil import gate
 
