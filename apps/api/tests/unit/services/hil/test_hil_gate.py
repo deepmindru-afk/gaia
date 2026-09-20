@@ -322,7 +322,7 @@ class TestWhatTheIntentJudgeIsAskedAbout:
             pausable=True,
         )
         call = GatedCall(name="send_email", id="call-1", args={"to": "bob@example.com"})
-        allowed = IntentDecision(True, "You asked me to send Bob the deck.")
+        allowed = IntentDecision(outcome="accept", reason="You asked me to send Bob the deck.")
 
         with (
             patch(f"{MODULE}.has_pausing_sibling", new=AsyncMock(return_value=False)),

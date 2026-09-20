@@ -121,6 +121,16 @@ TIMEOUT_TEMPLATE = (
     "needs their go-ahead."
 )
 
+# Auto mode declined on its own: the judge's verdict was reject, so no card was
+# ever shown. Like GATE_ERROR it must never read as a decision the user made —
+# the recovery is the user asking explicitly, which re-proposes through a card.
+AUTO_REJECT_TEMPLATE = (
+    "Auto-approve declined to run `{tool}`: {reason} The action was NOT "
+    "performed and the user was NOT asked. Do not retry it in this run, and do "
+    "not use another tool to produce the same effect. If the user explicitly "
+    "asks for this action, say you held off and why."
+)
+
 # A gate that cannot determine whether a call is safe must not run it — but the refusal
 # has to read as a system failure, never as a decision the user made. The model must not
 # tell the user they declined something they were never shown.

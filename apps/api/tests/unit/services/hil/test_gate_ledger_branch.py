@@ -205,7 +205,7 @@ class TestLedgerAutoParity:
             patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
             patch(
                 f"{MODULE}._judge",
-                new=AsyncMock(return_value=IntentDecision(aligned=True, reason="asked")),
+                new=AsyncMock(return_value=IntentDecision(outcome="accept", reason="asked")),
             ),
             patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()) as pub,
             patch(f"{MODULE}.interrupt") as intr,
@@ -229,7 +229,7 @@ class TestLedgerAutoParity:
             patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
             patch(
                 f"{MODULE}._judge",
-                new=AsyncMock(return_value=IntentDecision(aligned=False, reason="unclear")),
+                new=AsyncMock(return_value=IntentDecision(outcome="ask", reason="unclear")),
             ),
             patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()),
             patch(f"{MODULE}.interrupt") as intr,

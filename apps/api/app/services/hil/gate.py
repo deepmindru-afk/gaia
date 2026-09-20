@@ -57,6 +57,7 @@ from app.services.hil.policy import (
 )
 from app.services.hil.preferences import set_tool_override
 from app.services.hil.prompts import (
+    AUTO_REJECT_TEMPLATE,
     DENIED_TEMPLATE,
     GATE_ERROR_TEMPLATE,
     TIMEOUT_TEMPLATE,
@@ -211,13 +212,21 @@ async def _decide_ledger(
             integration_name = await _integration_name_for(call.name)
             summary = build_summary(call.name, call.args, integration_name)
             decision = await _judge(request, context, call, None, summary)
-            if decision is not None and decision.aligned:
-                log.info(
-                    f"{LogTag.HIL} auto-approved (ledger path)",
-                    call_name=call.name,
-                    reason=decision.reason,
-                )
-                return None
+            if decision is not None:
+                if decision.outcome == "accept":
+                    log.info(
+                        f"{LogTag.HIL} auto-approved (ledger path)",
+                        call_name=call.name,
+                        reason=decision.reason,
+                    )
+                    return None
+                if decision.outcome == "reject":
+                    log.info(
+                        f"{LogTag.HIL} auto-rejected (ledger path)",
+                        call_name=call.name,
+                        reason=decision.reason,
+                    )
+                    return _auto_reject_message(call, decision.reason)
         invalid = await _invalid_args_message(request, context.user_id, call)
         if invalid is not None:
             return invalid
@@ -389,7 +398,7 @@ async def _decide(
         if policy == "auto":
             decision = await _judge(request, context, call, record, summary)
 
-        if decision is not None and decision.aligned:
+        if decision is not None and decision.outcome == "accept":
             log.info(
                 f"{LogTag.HIL} auto-approved",
                 call_name=call.name,
@@ -408,6 +417,14 @@ async def _decide(
                 reason=decision.reason,
             )
             return None
+
+        if decision is not None and decision.outcome == "reject":
+            log.info(
+                f"{LogTag.HIL} auto-rejected",
+                call_name=call.name,
+                reason=decision.reason,
+            )
+            return _auto_reject_message(call, decision.reason)
 
         await publish_approval_request(
             approval_id=approval_id,
@@ -508,6 +525,13 @@ def _outcome_from_record(record: HILApprovalRecord) -> ApprovalOutcome:
 
 
 # --- what a blocked call tells the model (text lives in prompts.py) ---------------------
+
+
+def _auto_reject_message(call: GatedCall, reason: str) -> ToolMessage:
+    """Tell the model auto mode declined the call — refused, not asked."""
+    return _tool_message(
+        call, AUTO_REJECT_TEMPLATE.format(tool=call.name, reason=reason), "denied"
+    )
 
 
 def _refusal_message(call: GatedCall, outcome: ApprovalOutcome) -> ToolMessage:

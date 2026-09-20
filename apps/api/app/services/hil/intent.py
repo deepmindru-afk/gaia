@@ -73,12 +73,27 @@ class JudgedCall:
     summary: str
 
 
+# What auto mode decided about one call: accept runs it, reject refuses it with
+# the reason (no card, no retry), ask registers the normal approval card.
+AutoOutcome = Literal["accept", "reject", "ask"]
+
+
 @dataclass(frozen=True)
 class IntentDecision:
-    """The judge's call, plus the why — shown to the user on the auto-approval receipt."""
+    """The judge's call, plus the why — shown to the user on receipts and refusals.
 
-    aligned: bool
+    Ternary, not boolean: ``accept`` runs the call, ``reject`` refuses it with
+    the reason (no card, no retry), ``ask`` registers the normal approval card.
+    """
+
+    outcome: AutoOutcome
     reason: str
+
+    @property
+    def aligned(self) -> bool:
+        """Compat: the gate's accept check. New code reads ``outcome``."""
+
+        return self.outcome == "accept"
 
 
 class _Verdict(BaseModel):
@@ -131,7 +146,7 @@ async def judge_intent(
             f"{LogTag.HIL} intent judge : nothing to verify against; asking",
             tool_name=call.tool_name,
         )
-        return IntentDecision(False, _NO_REQUEST_REASON)
+        return IntentDecision("ask", _NO_REQUEST_REASON)
 
     try:
         verdict = await _ask_judge(user_id, turns, call, prior_calls)
@@ -142,7 +157,7 @@ async def judge_intent(
             error=str(e),
             error_type=type(e).__name__,
         )
-        return IntentDecision(False, _JUDGE_FAILED_REASON)
+        return IntentDecision("ask", _JUDGE_FAILED_REASON)
 
     # Grounded against EVERY user turn, not just the latest: "looks good, send it" is
     # authorized by the earlier "draft an email to Bob about the deck".
@@ -159,7 +174,7 @@ async def judge_intent(
             "injected": verdict.injected_instructions,
         },
     )
-    return IntentDecision(aligned, verdict.reason)
+    return IntentDecision("accept" if aligned else "ask", verdict.reason)
 
 
 async def _ask_judge(
