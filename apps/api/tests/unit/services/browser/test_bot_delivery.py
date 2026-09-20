@@ -378,7 +378,7 @@ class TestBotProgressDeliveryHandoff:
             mock_link.assert_awaited_once_with("sess-1", "user-1")
             msg = mock_pub.call_args[0][2][0]
             assert msg == (
-                "I need you to take over for this step: Payment needed"
+                "Payment needed"
                 "<NEW_MESSAGE_BREAK>"
                 "Open the live browser: https://live.example.com/link"
                 "<NEW_MESSAGE_BREAK>"
@@ -456,7 +456,6 @@ class TestBotProgressDeliveryHandoff:
         ):
             await delivery.handoff(snap)
             assert mp.call_args[0][2][0] == (
-                "I need you to take over for this step: "
                 "Enter your password and click Sign in.\n"
                 f"{BROWSER_CREDENTIALS_SAVED_NOTE}"
                 "<NEW_MESSAGE_BREAK>"
@@ -502,7 +501,7 @@ class TestBotProgressDeliveryHandoff:
             ml.assert_not_awaited()
             msg = mp.call_args[0][2][0]
             assert msg == (
-                "I need you to take over for this step: Need creds"
+                "Need creds"
                 "<NEW_MESSAGE_BREAK>"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
             )

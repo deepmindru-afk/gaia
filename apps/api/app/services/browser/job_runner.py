@@ -308,10 +308,12 @@ class ProgressEmitter:
         publish: FramePublisher,
         thread_mirror: BrowserThreadMirror,
         bot_delivery: BotProgressDelivery | None,
+        lease_held: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         self._publish = publish
         self._thread_mirror = thread_mirror
         self._bot_delivery = bot_delivery
+        self._lease_held = lease_held
         # Captions for the recap ("what's going on" per step), keyed by step index.
         self.step_goals: dict[int, str] = {}
         # Only the screenshots that actually reached the CDN. A step whose upload
@@ -333,7 +335,25 @@ class ProgressEmitter:
             if snapshot.screenshot and snapshot.screenshot.startswith("http"):
                 self.step_shots[snapshot.index] = snapshot.screenshot
         if self._bot_delivery is not None:
+            if isinstance(snapshot, BrowserResultSnapshot) and await self._covered_by_joiner():
+                return
             await _deliver_snapshot_to_bot(self._bot_delivery, snapshot)
+
+    async def _covered_by_joiner(self) -> bool:
+        """Whether a live turn is joining on this run and will narrate the result itself.
+
+        Fail-open: on any error the canned mirror still fires, so the user never loses the closing line.
+        """
+        if self._lease_held is None:
+            return False
+        try:
+            return await self._lease_held()
+        except Exception as e:
+            log.warning(
+                f"{LogTag.BROWSER} Joiner-lease check failed; keeping canned result mirror",
+                error_type=type(e).__name__,
+            )
+            return False
 
 
 def _handoff_snapshot(
@@ -501,7 +521,12 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
     """
     emit_frame = partial(publish_frame_to_job, request.job_id)
     thread_mirror = BrowserThreadMirror(emit_frame)
-    emitter = ProgressEmitter(emit_frame, thread_mirror, _build_bot_delivery(request))
+    emitter = ProgressEmitter(
+        emit_frame,
+        thread_mirror,
+        _build_bot_delivery(request),
+        lease_held=partial(joiner_lease_held, request.job_id),
+    )
 
     try:
         llm = build_browser_llm()

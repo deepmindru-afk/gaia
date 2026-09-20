@@ -55,7 +55,7 @@ class BotProgressDelivery:
         self._steps_shown = 0
         self._last_label = ""
 
-    async def session(self, snapshot: BrowserSessionSnapshot) -> None:
+    async def session(self, _snapshot: BrowserSessionSnapshot) -> None:
         """Session lifecycle event: deliberately silent.
 
         Screenshots already stream per step, so an auto-injected "watch live"
@@ -114,14 +114,9 @@ class BotProgressDelivery:
         if snapshot.status != HandoffStatus.PENDING:
             return
 
-        # Token-separated blocks: the bot splitter turns each into its own
-        # bubble, so the ask, the link and the reply instruction arrive as
-        # three readable messages instead of one wall of lines. Blank lines
-        # do NOT split (single newlines separate lines inside one bubble),
-        # so the token carries every break here.
-        # (One paragraph was tried before; distinct lines in a single bubble
-        # are harder to scan than short separate bubbles.)
-        blocks = [f"I need you to take over for this step: {snapshot.reason}"]
+        # The ask is the model's own words (request_human_takeover's reason),
+        # shown verbatim as the first bubble; link and reply instruction follow.
+        blocks = [snapshot.reason]
         if snapshot.category == SensitiveCategory.CREDENTIALS:
             blocks[0] += f"\n{BROWSER_CREDENTIALS_SAVED_NOTE}"
         if snapshot.session_id:

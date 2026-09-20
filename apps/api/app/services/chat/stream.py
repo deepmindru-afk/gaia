@@ -33,11 +33,6 @@ from app.agents.core.background.executor_capture import (
 )
 from app.agents.core.background.session import get_session
 from app.constants.artifacts import ARTIFACT_FORWARDER_SUBSCRIBE_TIMEOUT
-from app.constants.browser import (
-    BROWSER_HANDOFF_ACK_CANCEL,
-    BROWSER_HANDOFF_ACK_CONTINUE,
-    BROWSER_HANDOFF_ACK_REDIRECT,
-)
 from app.constants.cache import EXECUTOR_WAIT_TIMEOUT, VOICE_EXECUTOR_RESULT_TIMEOUT_S
 from app.constants.chat import (
     EMPTY_RESPONSE_FALLBACK,
@@ -321,10 +316,10 @@ async def _run_chat_stream(
         # Same idea for a paused browser task: a chat reply ("I paid, continue" /
         # "stop") resolves its live-view handoff — the text-channel equivalent of
         # the card's Continue/Cancel buttons, working on web and bots alike.
-        if await _resolve_pending_browser_handoff_turn(
+        # Always falls through to the normal turn: comms voices the ack itself.
+        await _resolve_pending_browser_handoff_turn(
             body, user, conversation_id, stream_id, state
-        ):
-            return
+        )
 
         # Starts only after the conversation row exists (_publish_init_chunk);
         # starting earlier races the insert and the $set description update can
@@ -504,27 +499,20 @@ async def _resolve_pending_approval_turn(
     return True
 
 
-# A reply the classifier read as anything else (unrelated, nothing pending)
-# leaves the handoff alone and runs as a normal turn.
-_BROWSER_HANDOFF_ACKS: dict[str, str] = {
-    "continue": BROWSER_HANDOFF_ACK_CONTINUE,
-    "redirect": BROWSER_HANDOFF_ACK_REDIRECT,
-    "cancel": BROWSER_HANDOFF_ACK_CANCEL,
-}
-
-
 async def _resolve_pending_browser_handoff_turn(
     body: MessageRequestWithHistory,
     user: AuthenticatedUser,
     conversation_id: str,
-    stream_id: str,
-    state: _StreamState,
+    _stream_id: str,
+    _state: _StreamState,
 ) -> bool:
     """Resolve a paused browser task's handoff from the user's chat reply.
 
-    Returns True when the reply continued, redirected or cancelled the handoff,
-    so the caller must not run the agent (the paused task resumes on its own
-    stream). False when nothing was pending, so the normal turn runs.
+    Records the resolution into the thread and always runs the normal turn,
+    so comms voices the ack with full context instead of a canned line. The
+    paused task resumes on its own stream. Returns False in every case; True
+    is gone with the short-circuit. Only None/unrelated (nothing pending or
+    addressed) skips the recording.
     """
     user_id = user.user_id
     message = user_message_content_from(body)
@@ -540,24 +528,16 @@ async def _resolve_pending_browser_handoff_turn(
         )
         return False
 
-    ack = _BROWSER_HANDOFF_ACKS.get(action or "")
-    if ack is None:
+    if action not in ("continue", "redirect", "cancel"):
         return False
 
-    state.complete_message = ack
-    # The agent never ran for this reply, so its thread still holds the original
-    # request; without this it voices the run's result against what was cancelled.
-    await record_exchange_in_thread(conversation_id, message, ack)
-    state.turn_completed_at = datetime.now(UTC)
-    await stream_manager.publish_chunk(stream_id, format_sse_response(ack))
-    await stream_manager.publish_chunk(
-        stream_id,
-        format_sse_data(MainResponseCompleteFrame(main_response_complete=True).model_dump()),
+    # The thread still holds the original request; without this the turn would
+    # answer blind to the handoff that just resolved. Recorded as fact, voiced
+    # by comms — never a canned ack bubble.
+    await record_exchange_in_thread(
+        conversation_id, message, f"[Browser handoff resolved: {action}]"
     )
-    await _persist_turn(stream_id, body, user, conversation_id, state)
-    await stream_manager.publish_chunk(stream_id, "data: [DONE]\n\n")
-    await stream_manager.complete_stream(stream_id)
-    return True
+    return False
 
 
 def _set_stream_log_context(

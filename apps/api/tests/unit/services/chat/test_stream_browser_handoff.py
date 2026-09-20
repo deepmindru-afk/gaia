@@ -2,27 +2,18 @@
 
 _resolve_pending_browser_handoff_turn is the text-channel equivalent of the
 browser handoff card's Continue/Cancel buttons: a chat reply on a conversation
-with a pending handoff can continue or cancel the paused browser task instead
-of running as a normal turn. _run_chat_stream must short-circuit the whole
-turn when that resolution fires, and fall through to the normal agent run
-otherwise.
+with a pending handoff resolves it then runs as a normal turn, so comms voices
+the ack with full context instead of a canned line.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.constants.browser import (
-    BROWSER_HANDOFF_ACK_CANCEL,
-    BROWSER_HANDOFF_ACK_CONTINUE,
-    BROWSER_HANDOFF_ACK_REDIRECT,
-)
 from app.constants.log_tags import LogTag
 from app.models.message_models import MessageRequestWithHistory
-from app.models.stream_events import MainResponseCompleteFrame
 from app.models.user_models import AuthenticatedUser
 from app.services.chat import stream as chat_stream
 from app.services.chat.stream import (
@@ -30,7 +21,6 @@ from app.services.chat.stream import (
     _run_chat_stream,
     _StreamState,
 )
-from app.utils.agent_utils import format_sse_data, format_sse_response
 
 CONVERSATION_ID = "conv-1"
 STREAM_ID = "stream-1"
@@ -216,7 +206,7 @@ class TestLookupFailureDegradesToNormalTurn:
 
 @pytest.mark.unit
 class TestContinueResolution:
-    async def test_publishes_the_exact_continue_ack(
+    async def test_resolved_continue_runs_the_normal_turn(
         self, published: list[str], persist: AsyncMock
     ) -> None:
         with patch.object(
@@ -226,18 +216,13 @@ class TestContinueResolution:
                 _body(), _user(), CONVERSATION_ID, STREAM_ID, _StreamState()
             )
 
-        assert result is True
-        assert published[0] == format_sse_response(BROWSER_HANDOFF_ACK_CONTINUE)
-        # Pins the destination stream, not just the payload — a mutant that
-        # publishes the ack to the wrong stream (e.g. None) leaves the payload
-        # assertion above green while the user's browser never sees the reply.
-        assert chat_stream.stream_manager.publish_chunk.await_args_list[0].args[0] == STREAM_ID
+        assert result is False
+        assert not published
 
-    async def test_state_is_stamped_with_the_ack_and_completion_time(
+    async def test_state_is_left_for_the_normal_turn(
         self, published: list[str], persist: AsyncMock
     ) -> None:
         state = _StreamState()
-        before = datetime.now(UTC)
 
         with patch.object(
             chat_stream, "resolve_handoff_from_message", AsyncMock(return_value="continue")
@@ -246,11 +231,10 @@ class TestContinueResolution:
                 _body(), _user(), CONVERSATION_ID, STREAM_ID, state
             )
 
-        assert state.complete_message == BROWSER_HANDOFF_ACK_CONTINUE
-        assert state.turn_completed_at is not None
-        assert state.turn_completed_at >= before
+        assert state.complete_message == ""
+        assert state.turn_completed_at is None
 
-    async def test_persists_and_terminates_the_stream_in_order(
+    async def test_neither_persists_nor_terminates_the_stream(
         self, published: list[str], persist: AsyncMock
     ) -> None:
         body = _body()
@@ -264,18 +248,15 @@ class TestContinueResolution:
                 body, user, CONVERSATION_ID, STREAM_ID, state
             )
 
-        assert result is True
-        persist.assert_awaited_once_with(STREAM_ID, body, user, CONVERSATION_ID, state)
-        assert published[-1] == "data: [DONE]\n\n"
-        # Pins the destination stream of the closing [DONE] chunk — a mutant
-        # that sends it to None instead of STREAM_ID never reaches the client.
-        assert chat_stream.stream_manager.publish_chunk.await_args_list[-1].args[0] == STREAM_ID
-        chat_stream.stream_manager.complete_stream.assert_awaited_once_with(STREAM_ID)
+        assert result is False
+        persist.assert_not_awaited()
+        assert not published
+        chat_stream.stream_manager.complete_stream.assert_not_awaited()
 
 
 @pytest.mark.unit
 class TestCancelResolution:
-    async def test_publishes_the_exact_cancel_ack(
+    async def test_resolved_cancel_runs_the_normal_turn(
         self, published: list[str], persist: AsyncMock
     ) -> None:
         with patch.object(
@@ -285,43 +266,10 @@ class TestCancelResolution:
                 _body(), _user(), CONVERSATION_ID, STREAM_ID, _StreamState()
             )
 
-        assert result is True
-        assert published[0] == format_sse_response(BROWSER_HANDOFF_ACK_CANCEL)
-
-    async def test_state_is_stamped_with_the_cancel_ack(
-        self, published: list[str], persist: AsyncMock
-    ) -> None:
-        state = _StreamState()
-
-        with patch.object(
-            chat_stream, "resolve_handoff_from_message", AsyncMock(return_value="cancel")
-        ):
-            await _resolve_pending_browser_handoff_turn(
-                _body(), _user(), CONVERSATION_ID, STREAM_ID, state
-            )
-
-        assert state.complete_message == BROWSER_HANDOFF_ACK_CANCEL
-
-    async def test_completion_frame_is_published_before_persist(
-        self, published: list[str], persist: AsyncMock
-    ) -> None:
-        with patch.object(
-            chat_stream, "resolve_handoff_from_message", AsyncMock(return_value="cancel")
-        ):
-            await _resolve_pending_browser_handoff_turn(
-                _body(), _user(), CONVERSATION_ID, STREAM_ID, _StreamState()
-            )
-
-        assert len(published) == 3
-        assert published[1] == format_sse_data(
-            MainResponseCompleteFrame(main_response_complete=True).model_dump()
-        )
-        assert published[2] == "data: [DONE]\n\n"
-        # Every publish in the turn must target the resolved stream, not just
-        # carry the right payload — a mutant swapping the stream_id argument
-        # for None on any of these three calls silently drops the chunk.
-        call_args_list = chat_stream.stream_manager.publish_chunk.await_args_list
-        assert [call.args[0] for call in call_args_list] == [STREAM_ID, STREAM_ID, STREAM_ID]
+        assert result is False
+        assert not published
+        persist.assert_not_awaited()
+        chat_stream.stream_manager.complete_stream.assert_not_awaited()
 
 
 @pytest.mark.unit
@@ -329,7 +277,7 @@ class TestRedirectResolution:
     """A reply that declines the paused step but says what to do instead resumes the run."""
 
     @pytest.mark.regression
-    async def test_publishes_the_exact_redirect_ack_and_short_circuits(
+    async def test_redirect_resolves_then_runs_the_normal_turn(
         self, published: list[str], persist: AsyncMock
     ) -> None:
         state = _StreamState()
@@ -344,19 +292,18 @@ class TestRedirectResolution:
                 state,
             )
 
-        assert result is True
-        assert published[0] == format_sse_response(BROWSER_HANDOFF_ACK_REDIRECT)
-        assert state.complete_message == BROWSER_HANDOFF_ACK_REDIRECT
-        assert published[-1] == "data: [DONE]\n\n"
-        persist.assert_awaited_once()
+        assert result is False
+        assert not published
+        assert state.complete_message == ""
+        persist.assert_not_awaited()
 
 
 @pytest.mark.unit
 class TestTheAgentsThreadLearnsWhatTheUserSaid:
-    """The reply never runs the agent, so without this the thread that later voices the run's result still believes the original request stands."""
+    """The resolution is recorded factually so the normal turn that follows answers with context."""
 
     @pytest.mark.parametrize("action", ["continue", "redirect", "cancel"])
-    async def test_the_reply_and_its_ack_are_recorded_in_the_conversations_thread(
+    async def test_the_reply_and_its_resolution_are_recorded_in_the_conversations_thread(
         self, action: str, published: list[str], persist: AsyncMock
     ) -> None:
         recorded = AsyncMock()
@@ -378,7 +325,7 @@ class TestTheAgentsThreadLearnsWhatTheUserSaid:
         conversation_id, user_message, reply = recorded.await_args.args
         assert conversation_id == CONVERSATION_ID
         assert user_message == "never mind the login, just tell me the headline"
-        assert reply == published[0].removeprefix("data: ").strip() or reply
+        assert reply == f"[Browser handoff resolved: {action}]"
 
     async def test_an_unrelated_reply_records_nothing(self, published: list[str]) -> None:
         recorded = AsyncMock()
@@ -400,8 +347,8 @@ class TestTheAgentsThreadLearnsWhatTheUserSaid:
 
 
 @pytest.mark.unit
-class TestRunChatStreamShortCircuitsOnHandoffResolution:
-    """The orchestrator must return without running the agent when the browser-handoff resolver fully handled the turn, and must fall through to the normal turn otherwise."""
+class TestRunChatStreamNeverShortCircuitsOnHandoffResolution:
+    """Handoff resolution records into the thread and the agent always runs: no canned ack ever ends the turn early."""
 
     def _patched(self, *, handoff_resolved: bool):
         """Mock every collaborator of _run_chat_stream except the handoff resolution branch under test."""
@@ -430,7 +377,7 @@ class TestRunChatStreamShortCircuitsOnHandoffResolution:
             capture_event=MagicMock(),
         )
 
-    async def test_returns_early_without_running_the_agent(self) -> None:
+    async def test_always_runs_the_agent_even_when_a_handoff_resolved(self) -> None:
         body = _body()
         user = _user()
         with self._patched(handoff_resolved=True):
@@ -441,7 +388,7 @@ class TestRunChatStreamShortCircuitsOnHandoffResolution:
                 conversation_id=CONVERSATION_ID,
             )
 
-            chat_stream._consume_agent_stream.assert_not_awaited()
+            chat_stream._consume_agent_stream.assert_awaited_once()
             # Full positional args, not just call-count — pins arg order/identity
             # against a swap mutant (e.g. body<->user, conversation_id<->stream_id).
             handoff_call = chat_stream._resolve_pending_browser_handoff_turn.await_args
@@ -453,8 +400,8 @@ class TestRunChatStreamShortCircuitsOnHandoffResolution:
             register_call = chat_stream.register_executor_capture.call_args
             assert register_call == ((STREAM_ID,), {"voice_mode": body.voice_mode})
 
-            # the finally block still tears the stream down even on the short-circuit
-            # path, threading the SAME state object built at the top of the function.
+            # the finally block still tears the stream down on the normal path,
+            # threading the SAME state object built at the top of the function.
             chat_stream._finalize_stream.assert_awaited_once()
             finalize_call = chat_stream._finalize_stream.await_args
             assert finalize_call is not None
