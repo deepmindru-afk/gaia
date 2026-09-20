@@ -1,7 +1,7 @@
 """Custom integration CRUD operations."""
 
 from datetime import UTC, datetime
-from typing import Any, Literal, TypedDict, cast
+from typing import Literal, TypedDict, cast
 import uuid
 
 from mcp_use.client.exceptions import OAuthAuthenticationError
@@ -25,7 +25,7 @@ from app.models.integration_models import (
     IntegrationUpdate,
     UpdateCustomIntegrationRequest,
 )
-from app.models.mcp_config import MCPConfig
+from app.models.mcp_config import MCPConfig, McpProbeResult
 from app.services.device.device_service import (
     deregister_device_server_for_integration,
 )
@@ -350,7 +350,7 @@ async def create_and_connect_custom_integration(
         )
 
     # Probe for auth requirements
-    probe_result = await _probe_connection_safely(mcp_client, request.server_url)
+    probe_result: McpProbeResult = await _probe_connection_safely(mcp_client, request.server_url)
     if probe_result.get("error"):
         return integration, {"status": "failed", "error": probe_result["error"]}
 
@@ -374,17 +374,17 @@ async def _fetch_icon_safely(server_url: str) -> str | None:
         return None
 
 
-async def _probe_connection_safely(mcp_client: MCPClient, server_url: str) -> dict[str, Any]:
+async def _probe_connection_safely(mcp_client: MCPClient, server_url: str) -> McpProbeResult:
     """Probe connection with error handling."""
     try:
-        return cast(dict[str, Any], await mcp_client.probe_connection(server_url))
+        return await mcp_client.probe_connection(server_url)
     except Exception as e:
         return {"error": str(e)}
 
 
 async def _connect_with_bearer_token(
     user_id: str, integration_id: str, bearer_token: str, mcp_client: MCPClient
-) -> tuple[Any, CustomConnectionResult]:
+) -> tuple[Integration | None, CustomConnectionResult]:
     """Store bearer token and attempt connection."""
     token_store = MCPTokenStore(user_id)
     await token_store.store_bearer_token(integration_id, bearer_token)

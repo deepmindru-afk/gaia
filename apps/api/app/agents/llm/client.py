@@ -1079,9 +1079,7 @@ class _GenerationIdCallback(BaseCallbackHandler):
             return
         for generations in response.generations or []:
             for generation in generations:
-                info: _GenerationInfo = cast(
-                    _GenerationInfo, getattr(generation, "generation_info", None) or {}
-                )
+                info: _GenerationInfo = cast(_GenerationInfo, generation.generation_info or {})
                 if info.get("id"):
                     self.generation_id = str(info["id"])
                     return

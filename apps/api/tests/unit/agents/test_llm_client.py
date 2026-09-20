@@ -388,6 +388,36 @@ class TestInitLlm:
 
         mock_ordered.assert_called_once_with(mock_available.return_value, None, True)
         mock_create.assert_called_once_with(primary, [alt])
+        # The wide event's model/provider keys: every per-provider cost and
+        # latency breakdown groups on exactly these two, so a renamed key or a
+        # dropped value silently empties the chart rather than failing.
+        assert mock_log.set.call_args.kwargs["llm"] == {
+            "model": PROVIDER_MODELS["gemini"],
+            "provider": "gemini",
+            "is_free": False,
+        }
+
+    @patch("app.agents.llm.client.log")
+    @patch("app.agents.llm.client._create_configurable_llm")
+    @patch("app.agents.llm.client._get_ordered_providers")
+    @patch("app.agents.llm.client._get_available_providers")
+    def test_a_provider_with_no_model_entry_logs_its_own_name(
+        self,
+        mock_available: MagicMock,
+        mock_ordered: MagicMock,
+        mock_create: MagicMock,
+        mock_log: MagicMock,
+    ) -> None:
+        """A missing entry logs the provider name, not an empty model."""
+        primary = _make_llm_provider("openai")
+        mock_available.return_value = {"openai": primary.instance}
+        mock_ordered.return_value = [primary]
+        mock_create.return_value = MagicMock()
+
+        init_llm()
+
+        assert "openai" not in PROVIDER_MODELS
+        assert mock_log.set.call_args.kwargs["llm"]["model"] == "openai"
 
     def test_invalid_provider_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="Invalid preferred_provider 'cerebras'"):

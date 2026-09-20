@@ -95,7 +95,12 @@ class TestPublishCustomIntegration:
         }
         assert mock_deps.repo.publish.await_args.kwargs["created_by"] == USER_ID
         assert mock_deps.repo.publish.await_args.kwargs["slug"] == "my-integration"
-        mock_deps.index.assert_awaited_once()
+        # The validator and the Chroma index take the dumped tools, not the
+        # models: a None here publishes an integration whose tools are
+        # unsearchable and unvalidated, with nothing else going wrong.
+        dumped = [{"name": "lookup", "description": "Look things up"}]
+        assert mock_deps.validate.await_args.kwargs["tools"] == dumped
+        assert mock_deps.index.await_args.kwargs["tools"] == dumped
         mock_deps.clear.assert_awaited_once_with("marketplace:community:*")
         mock_deps.invalidate.assert_awaited_once_with(USER_ID)
 
