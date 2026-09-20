@@ -16,9 +16,10 @@ ungrounded quote, instruction-like arguments, or shipping secrets outward.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 import re
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -79,6 +80,21 @@ AutoOutcome = Literal["accept", "reject", "ask"]
 
 
 @dataclass(frozen=True)
+class AutoHistory:
+    """What this user recently decided about this tool — the judge's memory.
+
+    Built from the ledger (Task 4 wires the counts); defaults to blank, which
+    the judge reads as "no signal", never as authorization. A store failure
+    degrades to this blank, not to an exception out of the judge path.
+    """
+
+    approved_recent: int = 0
+    denied_recent: int = 0
+    last_deny_feedback: str | None = None
+    last_deny_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class IntentDecision:
     """The judge's call, plus the why — shown to the user on receipts and refusals.
 
@@ -127,12 +143,30 @@ class _Verdict(BaseModel):
     reason: str = Field(default="", description="One short sentence, shown to the user.")
 
 
+class IntentJudge(Protocol):
+    """Decides one auto-mode call. LLM-backed today; a JEV-backed judge
+    implements this Protocol later (JEV answers risk booleans, code keeps the
+    grounding-quote and veto checks) — the gate never changes."""
+
+    async def decide(
+        self,
+        *,
+        user_id: str,
+        user_messages: list[str],
+        call: JudgedCall,
+        prior_calls: list[PriorCall],
+        history: AutoHistory,
+    ) -> IntentDecision: ...
+
+
 async def judge_intent(
     *,
     user_id: str,
     user_messages: list[str],
     call: JudgedCall,
     prior_calls: list[PriorCall],
+    history: AutoHistory | None = None,
+    judge: IntentJudge | None = None,
 ) -> IntentDecision:
     """Whether the user's own words authorize this call. Fails toward asking.
 
@@ -148,8 +182,15 @@ async def judge_intent(
         )
         return IntentDecision("ask", _NO_REQUEST_REASON)
 
+    active: IntentJudge = judge if judge is not None else _LLMIntentJudge()
     try:
-        verdict = await _ask_judge(user_id, turns, call, prior_calls)
+        return await active.decide(
+            user_id=user_id,
+            user_messages=turns,
+            call=call,
+            prior_calls=prior_calls,
+            history=history if history is not None else AutoHistory(),
+        )
     except Exception as e:  # a judge failure must fall back to asking
         log.warning(
             f"{LogTag.HIL} intent judge failed for ; asking",
@@ -159,22 +200,37 @@ async def judge_intent(
         )
         return IntentDecision("ask", _JUDGE_FAILED_REASON)
 
-    # Grounded against EVERY user turn, not just the latest: "looks good, send it" is
-    # authorized by the earlier "draft an email to Bob about the deck".
-    aligned = _accept(verdict, "\n".join(turns), call.tool_name)
-    log.info(
-        f"{LogTag.HIL} intent judge : aligned",
-        tool_name=call.tool_name,
-        aligned=aligned,
-        reason=verdict.reason,
-        hil={
-            "verdict": verdict.verdict,
-            "gap": verdict.scope_gap[:200],
-            "risks": [risk.value for risk in verdict.risk_factors],
-            "injected": verdict.injected_instructions,
-        },
-    )
-    return IntentDecision("accept" if aligned else "ask", verdict.reason)
+
+class _LLMIntentJudge:
+    """The current judge: one structured LLM call plus code-applied vetoes."""
+
+    async def decide(
+        self,
+        *,
+        user_id: str,
+        user_messages: list[str],
+        call: JudgedCall,
+        prior_calls: list[PriorCall],
+        history: AutoHistory,
+    ) -> IntentDecision:
+        _ = history  # Task 4 feeds history into the verdict; until then no signal.
+        verdict = await _ask_judge(user_id, user_messages, call, prior_calls)
+        # Grounded against EVERY user turn, not just the latest: "looks good, send
+        # it" is authorized by the earlier "draft an email to Bob about the deck".
+        aligned = _accept(verdict, "\n".join(user_messages), call.tool_name)
+        log.info(
+            f"{LogTag.HIL} intent judge : aligned",
+            tool_name=call.tool_name,
+            aligned=aligned,
+            reason=verdict.reason,
+            hil={
+                "verdict": verdict.verdict,
+                "gap": verdict.scope_gap[:200],
+                "risks": [risk.value for risk in verdict.risk_factors],
+                "injected": verdict.injected_instructions,
+            },
+        )
+        return IntentDecision("accept" if aligned else "ask", verdict.reason)
 
 
 async def _ask_judge(
