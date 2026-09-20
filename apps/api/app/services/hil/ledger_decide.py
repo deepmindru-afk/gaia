@@ -61,6 +61,7 @@ from app.models.hil_models import (
 )
 from app.services.hil.approvals_store import list_pending_for_conversation
 from app.services.hil.bridge import _approval_entry, _publish_entry, settle_session_approval_frame
+from app.services.hil.resume import record_owner_deny, resume_owner_after_approval
 from app.services.hil.resolution import (
     ApprovalRequestForbiddenError,
     ApprovalRequestNotFoundError,
@@ -173,6 +174,10 @@ async def decide_ledger(
                 error_type=type(e).__name__,
             )
             await _wake_agent(row, "APPROVED", None)
+        # A background owner parked on this approval has no live run to wake:
+        # re-enqueue its unit of work (todo re-execution, workflow continuation).
+        # Best-effort and claim-guarded — never fails the tap.
+        await resume_owner_after_approval(row)
     await publish_ledger_decision(row, target, feedback=feedback)
     if target is LedgerState.DENIED:
         # Denials schedule nothing, but the agent still needs the verdict: it
@@ -180,6 +185,8 @@ async def decide_ledger(
         # again. A wake alone only reaches a running run — deliver, so an idle
         # conversation starts one that wraps up and reports what was skipped.
         await _deliver_verdict(row, "DENIED", feedback)
+        # A background todo has no other surface: leave the skip in its log.
+        await record_owner_deny(row, feedback)
     elif queued:
         await _wake_agent(row, "QUEUED", f"waiting on {','.join(row.blocked_by)}")
     await reconcile_conversation_ledger(row.conversation_id)

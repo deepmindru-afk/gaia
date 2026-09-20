@@ -195,6 +195,17 @@ class ApprovalLedgerDocument(MongoDocument):
     preview: str = ""
     owner_agent: str = ""
     blocked_by: list[str] = Field(default_factory=list)
+    # Background owner parked on this approval, for the resume driver: who to
+    # wake when it decides. ("workflow"|"todo", the workflow/todo id.) Empty on
+    # live runs, which resume through the executor inbox instead. Set once at
+    # registration from the run's configurable; never changes after.
+    owner_run_type: str = ""
+    owner_id: str = ""
+    # Whether a resume was already enqueued for this approval. The approve tap
+    # and any retry/reconnect share it: exactly one resume per approval, and
+    # every further resume needs a fresh user approval (the human is the loop
+    # breaker, so no count cap is needed).
+    owner_resumed: bool = False
     state: LedgerState = LedgerState.PENDING
     feedback: str | None = None
     decided_by: str | None = None

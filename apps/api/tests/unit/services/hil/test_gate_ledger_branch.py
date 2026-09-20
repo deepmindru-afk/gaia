@@ -91,6 +91,64 @@ class TestLedgerBranch:
         assert "Approvals tab" in str(result.content)
         assert "when this run ends" not in str(result.content)
 
+    async def test_background_workflow_run_tags_the_ledger_owner(self) -> None:
+        """The resume driver needs to know WHAT parked: a background workflow
+        run stamps its owner on the row; nothing else does."""
+        from app.services.hil import gate
+
+        ledger = _ledger()
+        request = _gated_request(execution_mode="background", workflow_id="wf-1")
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()),
+            patch(f"{MODULE}.interrupt"),
+        ):
+            await gate.decide_tool_call(request)
+
+        assert ledger.register.await_args.kwargs["owner_run_type"] == "workflow"
+        assert ledger.register.await_args.kwargs["owner_id"] == "wf-1"
+
+    async def test_background_todo_run_tags_the_ledger_owner(self) -> None:
+        from app.services.hil import gate
+
+        ledger = _ledger()
+        request = _gated_request(execution_mode="background", active_todo_id="todo-9")
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()),
+            patch(f"{MODULE}.interrupt"),
+        ):
+            await gate.decide_tool_call(request)
+
+        assert ledger.register.await_args.kwargs["owner_run_type"] == "todo"
+        assert ledger.register.await_args.kwargs["owner_id"] == "todo-9"
+
+    async def test_live_run_with_ids_tags_no_owner(self) -> None:
+        """Owner tagging is resume-scoped: a live run resumes through the
+        executor inbox and must never re-enqueue, even carrying the keys."""
+        from app.services.hil import gate
+
+        ledger = _ledger()
+        request = _gated_request(workflow_id="wf-1", active_todo_id="todo-9")
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()),
+            patch(f"{MODULE}.interrupt"),
+        ):
+            await gate.decide_tool_call(request)
+
+        assert ledger.register.await_args.kwargs["owner_run_type"] == ""
+        assert ledger.register.await_args.kwargs["owner_id"] == ""
+
     async def test_flag_off_takes_the_old_interrupt_path(self) -> None:
         from app.services.hil import gate
 

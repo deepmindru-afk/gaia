@@ -24,6 +24,8 @@ def _row(**overrides: Any) -> MagicMock:
     row.blocked_by = []
     row.decided_at = None
     row.feedback = None
+    row.owner_run_type = ""
+    row.owner_id = ""
     for key, value in overrides.items():
         setattr(row, key, value)
     return row
@@ -595,7 +597,70 @@ class TestApproveDeliversToExecutor:
 
 
 @pytest.mark.unit
-class TestRedeemApproved:
+class TestApproveResumesBackgroundOwner:
+    async def test_approve_with_todo_owner_resumes(self) -> None:
+        """A background todo parked on this approval re-enqueues; the tap
+        never waits on it and never fails for it."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        row = _row(owner_run_type="todo", owner_id="todo-9")
+        repo = _repo(row)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
+            patch.object(
+                ledger_decide, "resume_owner_after_approval", new=AsyncMock()
+            ) as resume,
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        assert outcome.committed is True
+        resume.assert_awaited_once_with(row)
+
+    async def test_approve_without_owner_dispatches_to_a_no_op(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
+            patch.object(
+                ledger_decide, "resume_owner_after_approval", new=AsyncMock()
+            ) as resume,
+        ):
+            await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        # Dispatch is unconditional; the no-owner row returns before any claim.
+        resume.assert_awaited_once()
+
+    async def test_deny_records_todo_skip_and_resumes_nothing(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        repo = _repo(_row(owner_run_type="todo", owner_id="todo-9"))
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_verdict", new=AsyncMock()),
+            patch.object(
+                ledger_decide, "resume_owner_after_approval", new=AsyncMock()
+            ) as resume,
+            patch.object(
+                ledger_decide, "record_owner_deny", new=AsyncMock()
+            ) as record,
+        ):
+            outcome = await decide_ledger(
+                "ap_abc", user_id="u1", kind="deny", feedback="nope", v=3
+            )
+
+        assert outcome.committed is True
+        assert outcome.state == LedgerState.DENIED
+        resume.assert_not_called()
+        record.assert_awaited_once()
     async def test_redeem_runs_stored_envelope_and_returns_output(self) -> None:
         """The model supplies no args: the ticket IS the approval_id and the
         envelope runs verbatim."""

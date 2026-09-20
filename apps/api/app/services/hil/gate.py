@@ -97,6 +97,11 @@ class GateContext:
     # Whether this run can pause for approval. A background/queued run carries an identity
     # but has no live client to answer, so a gated call there is failed closed, not asked.
     pausable: bool
+    # Background owner parked on any approval this run registers, for the resume
+    # driver: ("workflow"|"todo", the workflow/todo id). Empty on live runs,
+    # which resume through the executor inbox instead of re-enqueueing.
+    owner_run_type: str = ""
+    owner_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -307,6 +312,8 @@ async def _decide_ledger(
             preview=clip_text(json.dumps(call.args, default=str), 500),
             owner_agent=str(owner),
             proposing_run_id=context.stream_id,
+            owner_run_type=context.owner_run_type,
+            owner_id=context.owner_id,
             # blocked_by arrives with ordering chains (Phase 3): the chain
             # joins the fingerprint there, so identical calls on different
             # chains never share an envelope.
@@ -378,7 +385,18 @@ def read_gate_context(request: ToolCallRequest) -> GateContext | None:
     # subagent the local task is an agent-authored paraphrase, never the user's words.
     raw = configurable.get("user_messages")
     turns = [text for text in raw if isinstance(text, str)] if isinstance(raw, list) else []
-    return GateContext(stream_id, user_id, conversation_id, turns, pausable)
+    # Background owner for the resume driver: stamped on any approval this run
+    # registers so the verdict can wake the right unit of work. Live runs leave
+    # it empty — they resume through the executor inbox, never re-enqueueing.
+    owner_run_type, owner_id = "", ""
+    if not pausable:
+        workflow_id = configurable.get("workflow_id") or ""
+        todo_id = configurable.get("active_todo_id") or ""
+        if workflow_id:
+            owner_run_type, owner_id = "workflow", workflow_id
+        elif todo_id:
+            owner_run_type, owner_id = "todo", todo_id
+    return GateContext(stream_id, user_id, conversation_id, turns, pausable, owner_run_type, owner_id)
 
 
 async def _decide(

@@ -46,6 +46,8 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         owner_agent: str = "",
         blocked_by: list[str] | None = None,
         proposing_run_id: str | None = None,
+        owner_run_type: str = "",
+        owner_id: str = "",
     ) -> str:
         """Insert a PENDING row, or return the live duplicate's id.
 
@@ -73,6 +75,8 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
                     owner_agent=owner_agent,
                     blocked_by=list(blocked_by or []),
                     proposing_run_id=proposing_run_id,
+                    owner_run_type=owner_run_type,
+                    owner_id=owner_id,
                 )
             )
         except DuplicateKeyError:
@@ -83,6 +87,19 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
                 return winner.approval_id
             raise
         return approval_id
+
+    async def claim_resume(self, approval_id: str) -> bool:
+        """Claim the one resume this approval may trigger. Exactly one winner:
+        a retried tap, a reconnect replay, and a racing worker converge here,
+        and only the winner re-enqueues the owner. A resumed owner that gates
+        again registers a fresh approval with its own claim, so no counter is
+        needed — every resume costs a new human tap.
+        """
+        result = await self._raw_collection().update_one(
+            {"approval_id": approval_id, "owner_resumed": False},
+            {"$set": {"owner_resumed": True}},
+        )
+        return bool(result.modified_count)
 
     async def transition(
         self,
