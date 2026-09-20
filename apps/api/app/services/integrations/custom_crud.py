@@ -1,7 +1,7 @@
 """Custom integration CRUD operations."""
 
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, TypedDict, cast
 import uuid
 
 from mcp_use.client.exceptions import OAuthAuthenticationError
@@ -310,11 +310,28 @@ async def delete_custom_integration(user_id: str, integration_id: str) -> bool:
     return await _unlink_member(user_id, integration_id)
 
 
+#: Mirrors CustomIntegrationConnectionResult.status on the wire.
+CustomConnectionStatus = Literal["created", "connected", "requires_oauth", "failed"]
+
+
+class CustomConnectionResult(TypedDict, total=False):
+    """What a custom-integration connect attempt reports back to the route.
+
+    total=False: the four keys are mutually exclusive by outcome — connected
+    carries tools_count, requires_oauth carries oauth_url, failed carries error.
+    """
+
+    status: CustomConnectionStatus
+    tools_count: int
+    oauth_url: str
+    error: str
+
+
 async def create_and_connect_custom_integration(
     user_id: str,
     request: CreateCustomIntegrationRequest,
     mcp_client: MCPClient,
-) -> tuple[Integration, dict]:
+) -> tuple[Integration, CustomConnectionResult]:
     """Create a custom integration and attempt connection."""
     log.set(
         integration={
@@ -367,7 +384,7 @@ async def _probe_connection_safely(mcp_client: MCPClient, server_url: str) -> di
 
 async def _connect_with_bearer_token(
     user_id: str, integration_id: str, bearer_token: str, mcp_client: MCPClient
-) -> tuple[Any, dict]:
+) -> tuple[Any, CustomConnectionResult]:
     """Store bearer token and attempt connection."""
     token_store = MCPTokenStore(user_id)
     await token_store.store_bearer_token(integration_id, bearer_token)
@@ -388,7 +405,7 @@ async def _connect_with_bearer_token(
 
 async def _connect_without_auth(
     integration: Integration, mcp_client: MCPClient
-) -> tuple[Integration, dict]:
+) -> tuple[Integration, CustomConnectionResult]:
     """Attempt connection without authentication."""
     try:
         tools = await mcp_client.connect(integration.integration_id)
@@ -410,7 +427,9 @@ async def _get_integration(integration_id: str) -> Integration | None:
     return await integration_repository.get(integration_id)
 
 
-async def _build_oauth_result(mcp_client: MCPClient, integration_id: str) -> dict:
+async def _build_oauth_result(
+    mcp_client: MCPClient, integration_id: str
+) -> CustomConnectionResult:
     """Build OAuth redirect result."""
     try:
         auth_url = await mcp_client.build_oauth_auth_url(
