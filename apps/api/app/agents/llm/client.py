@@ -786,6 +786,12 @@ class StructuredCallOptions:
 
     temperature: float = DEFAULT_LLM_TEMPERATURE
     timeout: float | None = LLM_INVOKE_TIMEOUT_SECONDS
+    # Model override for this one-shot only (None = the aux default). Rides
+    # model_kwargs like the provider order, not .bind (bind_tools drops it).
+    model_name: str | None = None
+    # OpenRouter `models`-array fallback, tried in order on transport errors —
+    # never on verdicts. Empty = no fallback.
+    fallback_model_names: tuple[str, ...] = ()
 
 
 _DEFAULT_STRUCTURED_OPTIONS = StructuredCallOptions()
@@ -1213,21 +1219,30 @@ async def _record_auxiliary_usage(
 
 
 def _aux_structured_runnable(
-    schema: type[_StructuredT], temperature: float, config: RunnableConfig | None
+    schema: type[_StructuredT],
+    temperature: float,
+    config: RunnableConfig | None,
+    *,
+    model_name: str | None = None,
+    fallback_model_names: tuple[str, ...] = (),
 ) -> Runnable:
     """Build the structured runnable every auxiliary one-shot runs on.
 
-    The helper LLM re-pointed at :data:AUX_MODEL_NAME, with the aux
-    sticky-routing session.
+    The helper LLM re-pointed at ``model_name`` (default :data:AUX_MODEL_NAME),
+    with the aux sticky-routing session. ``fallback_model_names`` rides the
+    OpenRouter ``models`` array: same primary first, tried in order on
+    rate limits/downtime — verdicts never trigger it.
     """
     # The alias must be set via model_copy, NOT .bind(model=...):
     # with_structured_output rebuilds via bind_tools, which drops a bound
     # alias — every aux call then served DEFAULT_MODEL_NAME (measured).
-    structured = (
-        get_helper_llm(temperature=temperature)
-        .model_copy(update={"model_name": AUX_MODEL_NAME})
-        .with_structured_output(schema)
-    )
+    resolved = model_name or AUX_MODEL_NAME
+    base = get_helper_llm(temperature=temperature)
+    helper = base.model_copy(update={"model_name": resolved})
+    if fallback_model_names:
+        merged = {**(base.model_kwargs or {}), "models": [resolved, *fallback_model_names]}
+        helper = helper.model_copy(update={"model_kwargs": merged})
+    structured = helper.with_structured_output(schema)
     # Bound AFTER with_structured_output (which drops outer bindings). Aux
     # one-shots get their OWN suffixed sticky session — sharing the
     # conversation's session_id re-pinned its provider (measured: rotation dips).
@@ -1282,7 +1297,13 @@ async def ainvoke_structured(
     return cast(
         _StructuredT,
         await ainvoke_llm(
-            _aux_structured_runnable(schema, options.temperature, config),
+            _aux_structured_runnable(
+                schema,
+                options.temperature,
+                config,
+                model_name=options.model_name,
+                fallback_model_names=options.fallback_model_names,
+            ),
             prompt,
             config=config,
             label=label,
