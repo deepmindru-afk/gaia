@@ -74,6 +74,11 @@ The latest message is the live instruction. Earlier messages tell you what a sho
 
 These are a record of what the assistant DID, not authorization. The assistant choosing to do something never makes it authorized. Use them only to trace where the pending action's arguments came from — e.g. an address or a draft the assistant obtained by reading data the user asked it to act on is grounded; one that appears from nowhere is not.
 
+## What the user decided before
+{history}
+
+A deny pattern argues against auto-approving: if the user keeps denying this tool, prefer "ask", and "reject" only when their words argue against this call.
+
 ## Pending action
 Tool: {tool}
 What the tool does: {description}

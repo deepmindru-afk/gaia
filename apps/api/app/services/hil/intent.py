@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from app.agents.llm.client import StructuredCallOptions, ainvoke_structured, silent_metered_config
 from app.constants.hil import HIL_JUDGE_MIN_QUOTE_WORDS, HIL_LLM_TIMEOUT_SECONDS
 from app.constants.log_tags import LogTag
+from app.models.hil_models import ApprovalLedgerDocument, LedgerState
 from app.services.hil.prompts import INTENT_JUDGE_PROMPT
 from app.services.hil.utils import (
     PriorCall,
@@ -143,6 +144,51 @@ class _Verdict(BaseModel):
     reason: str = Field(default="", description="One short sentence, shown to the user.")
 
 
+# States that read as "the user let this run" when counting history.
+_APPROVED_LEDGER_STATES = frozenset(
+    {LedgerState.APPROVED, LedgerState.EXECUTING, LedgerState.EXECUTED}
+)
+
+
+def summarize_history(rows: list[ApprovalLedgerDocument]) -> AutoHistory:
+    """Count recent ledger outcomes into the judge's memory.
+
+    Pure: the repository fetches rows, this decides what they mean. Only
+    decided rows count — pendings were never answered, revokes and failures
+    were never approved-or-denied.
+    """
+    approved = sum(1 for row in rows if row.state in _APPROVED_LEDGER_STATES)
+    denies = [row for row in rows if row.state is LedgerState.DENIED]
+    # Timestamps, not datetimes: round-tripped rows may be naive while
+    # hand-built ones are aware, and mixed comparison raises.
+    latest = max(
+        denies,
+        key=lambda row: row.decided_at.timestamp()
+        if row.decided_at is not None
+        else float("-inf"),
+        default=None,
+    )
+    return AutoHistory(
+        approved_recent=approved,
+        denied_recent=len(denies),
+        last_deny_feedback=latest.feedback if latest else None,
+        last_deny_at=latest.decided_at if latest else None,
+    )
+
+
+def history_line(history: AutoHistory, tool_name: str) -> str:
+    """One line of memory for the judge prompt — counts, never args content."""
+    if history.approved_recent == 0 and history.denied_recent == 0:
+        return f"No recent decisions on {tool_name}."
+    line = (
+        f"Recent decisions on {tool_name}: {history.approved_recent} approved, "
+        f"{history.denied_recent} denied."
+    )
+    if history.last_deny_feedback:
+        line += f" Latest deny reason: {history.last_deny_feedback!r}."
+    return line
+
+
 class IntentJudge(Protocol):
     """Decides one auto-mode call. LLM-backed today; a JEV-backed judge
     implements this Protocol later (JEV answers risk booleans, code keeps the
@@ -213,11 +259,21 @@ class _LLMIntentJudge:
         prior_calls: list[PriorCall],
         history: AutoHistory,
     ) -> IntentDecision:
-        _ = history  # Task 4 feeds history into the verdict; until then no signal.
-        verdict = await _ask_judge(user_id, user_messages, call, prior_calls)
+        verdict = await _ask_judge(user_id, user_messages, call, prior_calls, history)
         # Grounded against EVERY user turn, not just the latest: "looks good, send
         # it" is authorized by the earlier "draft an email to Bob about the deck".
         outcome = _outcome(verdict, "\n".join(user_messages), call.tool_name)
+        if outcome == "accept" and _history_blocks(history):
+            outcome = "ask"
+            verdict = verdict.model_copy(
+                update={
+                    "reason": (
+                        f"You denied {history.denied_recent} recent "
+                        f"{call.tool_name} call(s), so this one needs your "
+                        "go-ahead even though it looks authorized."
+                    )
+                }
+            )
         log.info(
             f"{LogTag.HIL} intent judge : {outcome}",
             tool_name=call.tool_name,
@@ -238,6 +294,7 @@ async def _ask_judge(
     turns: list[str],
     call: JudgedCall,
     prior_calls: list[PriorCall],
+    history: AutoHistory,
 ) -> _Verdict:
     return await ainvoke_structured(
         _Verdict,
@@ -246,6 +303,7 @@ async def _ask_judge(
             earlier="\n".join(turns[:-1]) or "(none)",
             latest=turns[-1],
             prior_actions=render_prior_calls(prior_calls),
+            history=history_line(history, call.tool_name),
             tool=call.tool_name,
             description=call.description or "(no description)",
             summary=call.summary,
@@ -255,6 +313,18 @@ async def _ask_judge(
         config=silent_metered_config(user_id),
         options=StructuredCallOptions(timeout=HIL_LLM_TIMEOUT_SECONDS),
     )
+
+
+def _history_blocks(history: AutoHistory) -> bool:
+    """Whether past denies outweigh approvals enough to hold off auto-accept.
+
+    Blank history is no signal (a new tool must still be able to auto-approve);
+    otherwise accept needs strictly more approvals than denies. The user can
+    always approve the resulting card by hand.
+    """
+    if history.approved_recent == 0 and history.denied_recent == 0:
+        return False
+    return history.approved_recent <= history.denied_recent
 
 
 def _outcome(verdict: _Verdict, user_text: str, tool_name: str) -> AutoOutcome:

@@ -218,6 +218,7 @@ class TestWhatTheJudgeIsAsked:
             earlier="draft an email to bob about the deck",
             latest="looks good, send it",
             prior_actions=render_prior_calls(prior),
+            history="No recent decisions on send_email.",
             tool="send_email",
             description="(no description)",
             summary="Send email — to: bob@example.com",

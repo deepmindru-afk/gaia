@@ -48,7 +48,13 @@ from app.services.hil.bridge import (
     remember_declined_call,
 )
 from app.services.hil.fingerprint import approval_fingerprint
-from app.services.hil.intent import IntentDecision, JudgedCall, judge_intent
+from app.services.hil.intent import (
+    AutoHistory,
+    IntentDecision,
+    JudgedCall,
+    judge_intent,
+    summarize_history,
+)
 from app.services.hil.policy import (
     GatingPolicy,
     gated_tool_object,
@@ -490,6 +496,7 @@ async def _judge(
     if await has_pausing_sibling(request, context.user_id, call.id):
         log.info(f"{LogTag.HIL} not auto-approving : a sibling call may pause", name=call.name)
         return None
+    history = await _auto_history(context.user_id, call.name)
     return await judge_intent(
         user_id=context.user_id,
         user_messages=context.user_messages,
@@ -505,7 +512,27 @@ async def _judge(
         ),
         # Actions only — the agent's own prose is never handed to its gate.
         prior_calls=prior_tool_calls(request.state, call.id),
+        history=history,
     )
+
+
+async def _auto_history(user_id: str, tool_name: str) -> AutoHistory:
+    """Build the judge's memory, or blank when the store cannot produce it.
+
+    A history failure must degrade to "no signal", never to an exception out
+    of the gate (which fails closed into a deny) and never to authorization.
+    """
+    try:
+        rows = await approval_ledger_repository.recent_tool_outcomes(user_id, tool_name)
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} auto history unavailable; judging without memory",
+            tool_name=tool_name,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return AutoHistory()
+    return summarize_history(rows)
 
 
 def _outcome_from_record(record: HILApprovalRecord) -> ApprovalOutcome:

@@ -11,7 +11,7 @@ the winner's id. Query-first alone would double-insert under races and an
 approve-all would double-execute.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -218,6 +218,31 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
             sort=[("created_at", -1)],
         )
         return ApprovalLedgerDocument.model_validate(raw) if raw else None
+
+    async def recent_tool_outcomes(
+        self, user_id: str, tool_name: str, *, limit: int = 10, since_days: int = 30
+    ) -> list[ApprovalLedgerDocument]:
+        """Newest decided rows for one user's tool — auto mode's memory.
+
+        Only rows with a decision timestamp: pendings were never answered, so
+        they are not votes for or against anything.
+        """
+        cutoff = datetime.now(UTC) - timedelta(days=since_days)
+        cursor = (
+            self._raw_collection()
+            .find(
+                {
+                    "user_id": user_id,
+                    "tool_name": tool_name,
+                    "decided_at": {"$gte": cutoff},
+                }
+            )
+            .sort("decided_at", -1)
+        )
+        return [
+            ApprovalLedgerDocument.model_validate(raw)
+            for raw in await cursor.to_list(length=limit)
+        ]
 
 
 approval_ledger_repository = ApprovalLedgerRepository()
