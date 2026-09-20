@@ -427,9 +427,7 @@ async def _get_integration(integration_id: str) -> Integration | None:
     return await integration_repository.get(integration_id)
 
 
-async def _build_oauth_result(
-    mcp_client: MCPClient, integration_id: str
-) -> CustomConnectionResult:
+async def _build_oauth_result(mcp_client: MCPClient, integration_id: str) -> CustomConnectionResult:
     """Build OAuth redirect result."""
     try:
         auth_url = await mcp_client.build_oauth_auth_url(
