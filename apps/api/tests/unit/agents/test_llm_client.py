@@ -60,6 +60,7 @@ from app.agents.llm.client import (
     register_llm_providers,
 )
 from app.agents.llm.exceptions import LLM_FALLBACK_EXCEPTIONS, LLMNotConfiguredError
+from app.agents.llm.types import LLMProvider
 from app.constants.llm import (
     AUX_MODEL_NAME,
     DEFAULT_GEMINI_MODEL_NAME,
@@ -101,8 +102,8 @@ def _make_fake_provider(name: str = "fake") -> MagicMock:
     return mock
 
 
-def _make_llm_provider(name: str) -> dict[str, Any]:
-    return {"name": name, "instance": _make_fake_provider(name)}
+def _make_llm_provider(name: str) -> LLMProvider:
+    return LLMProvider(name=cast(LLMProviderName, name), instance=_make_fake_provider(name))
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +242,7 @@ class TestGetOrderedProviders:
         ordered = _get_ordered_providers(available, preferred_provider=None, fallback_enabled=True)
 
         # Should follow PROVIDER_PRIORITY: 1=gemini, 2=openrouter
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["openrouter", "gemini"]
 
     def test_preferred_provider_is_first(self) -> None:
@@ -254,7 +255,7 @@ class TestGetOrderedProviders:
             available, preferred_provider="openai", fallback_enabled=True
         )
 
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names[0] == "openai"
         # Remaining follow priority order (gemini before openrouter)
         assert names[1:] == ["openrouter", "gemini"]
@@ -268,7 +269,7 @@ class TestGetOrderedProviders:
         )
 
         # openai not available, fallback picks gemini
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["gemini"]
 
     def test_preferred_provider_not_available_fallback_disabled(self) -> None:
@@ -282,7 +283,7 @@ class TestGetOrderedProviders:
         # openai not in available, fallback disabled but ordered is empty so
         # the branch `if fallback_enabled or not ordered` fires.
         # The code adds remaining by priority when ordered is empty even if fallback disabled.
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["gemini"]
 
     def test_no_fallback_only_preferred(self) -> None:
@@ -295,7 +296,7 @@ class TestGetOrderedProviders:
         )
 
         # Preferred is available and fallback disabled -> only preferred provider
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["openai"]
 
     def test_no_preferred_no_fallback(self) -> None:
@@ -306,7 +307,7 @@ class TestGetOrderedProviders:
         ordered = _get_ordered_providers(available, preferred_provider=None, fallback_enabled=False)
 
         # No preferred, ordered is empty, so all providers by priority added
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         assert names == ["openrouter", "gemini"]
 
     def test_empty_available(self) -> None:
@@ -323,7 +324,7 @@ class TestGetOrderedProviders:
             available, preferred_provider="gemini", fallback_enabled=True
         )
 
-        names = [p["name"] for p in ordered]
+        names = [p.name for p in ordered]
         # gemini first (preferred), openrouter from priority; gemini not duplicated
         assert names == ["gemini", "openrouter"]
 
@@ -336,19 +337,19 @@ class TestGetOrderedProviders:
 class TestCreateConfigurableLlm:
     def test_no_alternatives_returns_primary_instance(self) -> None:
         primary = _make_llm_provider("gemini")
-        result = _create_configurable_llm(primary, [])  # type: ignore[arg-type]  # stub provider dict stands in for an LLMProvider
+        result = _create_configurable_llm(primary, [])
 
-        assert result is primary["instance"]
+        assert result is primary.instance
 
     def test_with_alternatives_calls_configurable_alternatives(self) -> None:
         primary = _make_llm_provider("gemini")
         alt1 = _make_llm_provider("openai")
         alt2 = _make_llm_provider("openrouter")
 
-        _create_configurable_llm(primary, [alt1, alt2])  # type: ignore[arg-type, list-item]  # stub provider dicts stand in for LLMProvider entries
+        _create_configurable_llm(primary, [alt1, alt2])
 
-        primary["instance"].configurable_alternatives.assert_called_once()
-        call_args = primary["instance"].configurable_alternatives.call_args
+        primary.instance.configurable_alternatives.assert_called_once()
+        call_args = primary.instance.configurable_alternatives.call_args
         # Check that both alternatives are passed as keyword arguments
         kwargs = call_args.kwargs
         assert "openai" in kwargs
@@ -377,8 +378,8 @@ class TestInitLlm:
         primary = _make_llm_provider("gemini")
         alt = _make_llm_provider("openai")
         mock_available.return_value = {
-            "gemini": primary["instance"],
-            "openai": alt["instance"],
+            "gemini": primary.instance,
+            "openai": alt.instance,
         }
         mock_ordered.return_value = [primary, alt]
         mock_create.return_value = MagicMock()
@@ -387,6 +388,36 @@ class TestInitLlm:
 
         mock_ordered.assert_called_once_with(mock_available.return_value, None, True)
         mock_create.assert_called_once_with(primary, [alt])
+        # The wide event's model/provider keys: every per-provider cost and
+        # latency breakdown groups on exactly these two, so a renamed key or a
+        # dropped value silently empties the chart rather than failing.
+        assert mock_log.set.call_args.kwargs["llm"] == {
+            "model": PROVIDER_MODELS["gemini"],
+            "provider": "gemini",
+            "is_free": False,
+        }
+
+    @patch("app.agents.llm.client.log")
+    @patch("app.agents.llm.client._create_configurable_llm")
+    @patch("app.agents.llm.client._get_ordered_providers")
+    @patch("app.agents.llm.client._get_available_providers")
+    def test_a_provider_with_no_model_entry_logs_its_own_name(
+        self,
+        mock_available: MagicMock,
+        mock_ordered: MagicMock,
+        mock_create: MagicMock,
+        mock_log: MagicMock,
+    ) -> None:
+        """A missing entry logs the provider name, not an empty model."""
+        primary = _make_llm_provider("openai")
+        mock_available.return_value = {"openai": primary.instance}
+        mock_ordered.return_value = [primary]
+        mock_create.return_value = MagicMock()
+
+        init_llm()
+
+        assert "openai" not in PROVIDER_MODELS
+        assert mock_log.set.call_args.kwargs["llm"]["model"] == "openai"
 
     def test_invalid_provider_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="Invalid preferred_provider 'cerebras'"):
@@ -429,7 +460,7 @@ class TestInitLlm:
         mock_log: MagicMock,
     ) -> None:
         primary = _make_llm_provider("openrouter")
-        mock_available.return_value = {"openrouter": primary["instance"]}
+        mock_available.return_value = {"openrouter": primary.instance}
         mock_ordered.return_value = [primary]
         mock_create.return_value = MagicMock()
 
@@ -450,7 +481,7 @@ class TestInitLlm:
         mock_log: MagicMock,
     ) -> None:
         primary = _make_llm_provider("gemini")
-        mock_available.return_value = {"gemini": primary["instance"]}
+        mock_available.return_value = {"gemini": primary.instance}
         mock_ordered.return_value = [primary]
         mock_create.return_value = MagicMock()
 
@@ -470,7 +501,7 @@ class TestInitLlm:
         mock_log: MagicMock,
     ) -> None:
         primary = _make_llm_provider("openrouter")
-        mock_available.return_value = {"openrouter": primary["instance"]}
+        mock_available.return_value = {"openrouter": primary.instance}
         mock_ordered.return_value = [primary]
         mock_create.return_value = MagicMock()
 
@@ -1374,6 +1405,57 @@ class TestRecordAuxiliaryUsage:
         handler = UsageMetadataCallbackHandler()
         handler.usage_metadata = dict(usage_by_model)
         return handler
+
+    async def test_the_analytics_event_gets_this_call_s_user_model_and_cost(self) -> None:
+        """The only PostHog record of background spend; a null field still leaves the ledger valid."""
+        handler = self._handler(gemini={"input_tokens": 100, "output_tokens": 20})
+
+        with (
+            patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.25)),
+            patch("app.agents.llm.client.capture_auxiliary_llm_call") as capture,
+        ):
+            await _record_auxiliary_usage(
+                handler,
+                "memory:extract",
+                "u-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(),
+            )
+
+        kwargs = capture.call_args.kwargs
+        assert kwargs["user_id"] == "u-1"
+        assert kwargs["label"] == "memory:extract"
+        assert kwargs["model_name"] == "gemini"
+        assert kwargs["cost_usd"] == 0.25
+        assert kwargs["usage"] == {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+        }
+
+    async def test_the_analytics_event_carries_the_cached_and_reasoning_split(self) -> None:
+        """Cached input is discounted and reasoning is hidden output: dropping either hides cost."""
+        handler = self._handler(
+            gemini={
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "input_token_details": {"cache_read": 40},
+                "output_token_details": {"reasoning": 7},
+            }
+        )
+
+        with (
+            patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.1)),
+            patch("app.agents.llm.client.capture_auxiliary_llm_call") as capture,
+        ):
+            await _record_auxiliary_usage(
+                handler, "memory:extract", "u-1", context=_AUX_CONTEXT, facts=ResponseFacts()
+            )
+
+        usage = capture.call_args.kwargs["usage"]
+        assert usage["cached_tokens"] == 40
+        assert usage["reasoning_tokens"] == 7
 
     async def test_the_llm_call_event_carries_the_generation_id(self) -> None:
         """Structured calls used to lose the generation id (every follow-up/memory event read MISSING); the aux metering path must put it on the wide event."""

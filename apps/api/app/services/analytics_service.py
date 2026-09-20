@@ -235,6 +235,87 @@ class AnalyticsEvents(StrEnum):
 
     USAGE_QUERIED = "usage:queried"
 
+    # Background spend only; agent-graph calls are covered by $ai_generation.
+    AI_LLM_CALL_COMPLETED = "ai:llm_call_completed"
+
+
+class AIFeature(StrEnum):
+    """The product capability a metered model call was made on behalf of.
+
+    Each member owns the auxiliary label values that roll up to it, so there is
+    no second table to keep in sync; test_every_feature_is_reachable fails on a
+    member declared with none. Coarser than the labels on purpose: the
+    onboarding one-shots roll up to ONBOARDING while keeping their own labels.
+    Which integration ran is agent_name, an open string not ours to close.
+    """
+
+    _labels: tuple[str, ...]
+
+    def __new__(cls, value: str, labels: tuple[str, ...] = ()) -> "AIFeature":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member._labels = labels
+        return member
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """The auxiliary call labels booked to this feature."""
+        return self._labels
+
+    @classmethod
+    def for_label(cls, label: str) -> "AIFeature":
+        """Return the feature a one-shot's label belongs to, or UNATTRIBUTED."""
+        return _FEATURE_BY_LABEL.get(label, cls.UNATTRIBUTED)
+
+    # Graph-tier spend; attributed from the agent, not from a label.
+    CHAT = "chat"
+    INTEGRATION = "integration"
+
+    WORKFLOW = "workflow", ("playbook_ask_fill", "playbook_narration")
+    MEMORY = "memory", ("profile_extraction",)
+    VISION = "vision", ("image_to_text", "tool_media_vision", "vision_fallback")
+    MAIL = "mail", ("mail_compose",)
+    HIL = (
+        "hil",
+        (
+            "hil_conversational_resolve",
+            "hil_conversational_resolve_batch",
+            "hil_intent_judge",
+            "hil_tool_classification",
+        ),
+    )
+    ONBOARDING = (
+        "onboarding",
+        (
+            "onboarding_first_question",
+            "onboarding_inbox_triage",
+            "onboarding_social_profile",
+            "onboarding_writing_style",
+            "onboarding_writing_style_example",
+        ),
+    )
+    PROFILE = "profile", ("holo_card",)
+    INTEGRATION_INFERENCE = (
+        "integration_inference",
+        (
+            "integration_category",
+            "integration_content",
+        ),
+    )
+    WORKFLOW_GENERATION = "workflow_generation", ("workflow_generation", "workflow_prompt")
+    FILE_EXTRACTION = "file_extraction", ("file_image_summary", "file_text_summary")
+    FOLLOW_UPS = "follow_ups", ("follow_up_actions",)
+    RESEARCH = "research", ("research_queries",)
+    MODERATION = "moderation", ("profanity",)
+    TITLE_GENERATION = "title_generation", ("chatbot",)
+    # A caller whose label no member claims.
+    UNATTRIBUTED = "unattributed"
+
+
+_FEATURE_BY_LABEL: dict[str, AIFeature] = {
+    label: feature for feature in AIFeature for label in feature.labels
+}
+
 
 #: Event and person properties: counts, enums, durations, booleans and ids.
 #: JSON-able values, never PII — see the analytics section of the root CLAUDE.md.

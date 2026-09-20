@@ -10898,6 +10898,7 @@
         "type": "object"
       },
       "OnboardingPhaseUpdateResponse": {
+        "description": "Response body for an onboarding phase update.",
         "properties": {
           "message": {
             "title": "Message",
@@ -11043,6 +11044,7 @@
         "type": "object"
       },
       "OnboardingResetResponse": {
+        "description": "Response body for the onboarding reset endpoint.",
         "properties": {
           "conversation_deleted": {
             "title": "Conversation Deleted",
@@ -11475,6 +11477,7 @@
         "type": "object"
       },
       "PersonalizationTodo": {
+        "description": "A suggested todo as rendered by the onboarding cards.",
         "properties": {
           "description": {
             "anyOf": [
@@ -11549,6 +11552,7 @@
         "type": "object"
       },
       "PersonalizationWritingStyle": {
+        "description": "The learned writing style as rendered by the onboarding cards.",
         "properties": {
           "example": {
             "anyOf": [
@@ -12971,6 +12975,7 @@
         "type": "object"
       },
       "RegenerateWritingStyleExampleResponse": {
+        "description": "Response body for regenerating the writing-style example.",
         "properties": {
           "example": {
             "anyOf": [
@@ -13279,6 +13284,7 @@
         "type": "object"
       },
       "SaveSocialProfilesResponse": {
+        "description": "Response body for confirming social profiles, carrying how many were kept.",
         "properties": {
           "saved": {
             "title": "Saved",
@@ -13297,6 +13303,7 @@
         "type": "object"
       },
       "SaveWritingStyleResponse": {
+        "description": "Response body for saving a user-edited writing style.",
         "properties": {
           "success": {
             "title": "Success",
@@ -14362,6 +14369,7 @@
         "type": "object"
       },
       "SocialProfile": {
+        "description": "One social account belonging to the user, as stored and sent to the client.",
         "properties": {
           "platform": {
             "title": "Platform",
@@ -19245,6 +19253,7 @@
         "type": "object"
       },
       "WritingStyleExampleBlocks": {
+        "description": "An example email split into the parts the onboarding card renders separately.",
         "properties": {
           "body": {
             "description": "One string per body paragraph (1-3 typical). Do NOT include greeting or sign-off. Do NOT put `\\n` inside a paragraph.",
