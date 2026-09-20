@@ -61,7 +61,7 @@ from app.services.hil.policy import (
     has_pausing_sibling,
     resolve_policy,
 )
-from app.services.hil.preferences import set_tool_override
+from app.services.hil.preferences import get_hil_preferences, set_tool_override
 from app.services.hil.prompts import (
     AUTO_REJECT_TEMPLATE,
     DENIED_TEMPLATE,
@@ -497,6 +497,7 @@ async def _judge(
         log.info(f"{LogTag.HIL} not auto-approving : a sibling call may pause", name=call.name)
         return None
     history = await _auto_history(context.user_id, call.name)
+    never_auto = await _never_auto_tools(context.user_id)
     return await judge_intent(
         user_id=context.user_id,
         user_messages=context.user_messages,
@@ -513,7 +514,26 @@ async def _judge(
         # Actions only — the agent's own prose is never handed to its gate.
         prior_calls=prior_tool_calls(request.state, call.id),
         history=history,
+        never_auto_tools=never_auto,
     )
+
+
+async def _never_auto_tools(user_id: str) -> frozenset[str]:
+    """The user's deny-rule set, or empty when prefs cannot be read.
+
+    Empty-on-failure mirrors ``_auto_history``: prefs were already read for
+    policy resolution, so a blip here skips one refinement, never the call.
+    """
+    try:
+        prefs = await get_hil_preferences(user_id)
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} never-auto list unreadable; judging without it",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return frozenset()
+    return frozenset(prefs.never_auto_tools)
 
 
 async def _auto_history(user_id: str, tool_name: str) -> AutoHistory:

@@ -75,6 +75,7 @@ class UpdateHILPreferencesRequest(BaseModel):
 
     mode: HILMode | None = None
     tool_overrides: dict[str, bool] | None = None
+    never_auto_tools: list[str] | None = None
 
 
 class SetToolOverrideRequest(BaseModel):

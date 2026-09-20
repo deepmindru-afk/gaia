@@ -213,6 +213,7 @@ async def put_preferences(
         user.user_id,
         mode=payload.mode,
         tool_overrides=payload.tool_overrides,
+        never_auto_tools=payload.never_auto_tools,
     )
     return HILPreferencesResponse(**prefs.model_dump())
 

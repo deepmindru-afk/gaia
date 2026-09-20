@@ -213,12 +213,14 @@ async def judge_intent(
     prior_calls: list[PriorCall],
     history: AutoHistory | None = None,
     judge: IntentJudge | None = None,
+    never_auto_tools: frozenset[str] | None = None,
 ) -> IntentDecision:
     """Whether the user's own words authorize this call. Fails toward asking.
 
     No user turns means there is nothing to verify against, so it asks without
-    spending a call. The reason travels with the decision: an auto-approved action
-    is shown to the user afterwards as a receipt.
+    spending a call. A tool on the user's never-auto list also asks without
+    spending a call — the rule IS the decision. The reason travels with the
+    decision: an auto-approved action is shown to the user afterwards as a receipt.
     """
     turns = [text for text in user_messages if text.strip()]
     if not turns:
@@ -227,6 +229,12 @@ async def judge_intent(
             tool_name=call.tool_name,
         )
         return IntentDecision("ask", _NO_REQUEST_REASON)
+
+    if never_auto_tools and call.tool_name in never_auto_tools:
+        return IntentDecision(
+            "ask",
+            f"{call.tool_name} is on your never-auto list, so it always asks.",
+        )
 
     active: IntentJudge = judge if judge is not None else _LLMIntentJudge()
     try:

@@ -59,6 +59,9 @@ class HILPreferences(BaseModel):
     # tool name -> should-ask (True = always ask, False = always allow). Holds
     # only the tools the user explicitly flipped, so it stays small.
     tool_overrides: dict[str, bool] = Field(default_factory=dict)
+    # Auto mode declines to judge these tools — they always get a card. The
+    # deny-rule half of deny > ask > allow: explicit, per-user, no inference.
+    never_auto_tools: list[str] = Field(default_factory=list)
 
 
 class HILToolRiskRecord(MongoDocument):
