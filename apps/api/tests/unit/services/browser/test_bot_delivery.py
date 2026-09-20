@@ -378,13 +378,15 @@ class TestBotProgressDeliveryHandoff:
             mock_link.assert_awaited_once_with("sess-1", "user-1")
             msg = mock_pub.call_args[0][2][0]
             assert msg == (
-                "I need you to take over for this step: Payment needed\n\n"
-                "Open the live browser: https://live.example.com/link\n\n"
+                "I need you to take over for this step: Payment needed"
+                "<NEW_MESSAGE_BREAK>"
+                "Open the live browser: https://live.example.com/link"
+                "<NEW_MESSAGE_BREAK>"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
             )
 
-    async def test_handoff_is_one_delivery_call_with_blank_line_bubbles(self, delivery):
-        """The bot's outbound splitter turns each blank-line block into its own bubble: ask, link and reply instruction arrive as three readable messages, still in a single delivery call."""
+    async def test_handoff_is_one_delivery_call_with_token_bubbles(self, delivery):
+        """The bot splitter turns each token block into its own bubble: ask, link and reply instruction arrive as three readable messages, still in a single delivery call."""
         from app.constants.browser import SensitiveCategory
 
         snap = BrowserHandoffSnapshot(
@@ -407,7 +409,7 @@ class TestBotProgressDeliveryHandoff:
             mp.assert_awaited_once()
             text_parts = mp.call_args[0][2]
             assert len(text_parts) == 1
-            assert text_parts[0].count("\n\n") == 2
+            assert text_parts[0].count("<NEW_MESSAGE_BREAK>") == 2
 
     async def test_credentials_handoff_reassures_the_login_is_saved(self, delivery):
         """A sign-in handoff tells the user the session will be saved encrypted — it is true (storage_persistence.py) and it is what makes a login worth doing once."""
@@ -456,8 +458,10 @@ class TestBotProgressDeliveryHandoff:
             assert mp.call_args[0][2][0] == (
                 "I need you to take over for this step: "
                 "Enter your password and click Sign in.\n"
-                f"{BROWSER_CREDENTIALS_SAVED_NOTE}\n\n"
-                "Open the live browser: https://live/x\n\n"
+                f"{BROWSER_CREDENTIALS_SAVED_NOTE}"
+                "<NEW_MESSAGE_BREAK>"
+                "Open the live browser: https://live/x"
+                "<NEW_MESSAGE_BREAK>"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
             )
 
@@ -498,7 +502,8 @@ class TestBotProgressDeliveryHandoff:
             ml.assert_not_awaited()
             msg = mp.call_args[0][2][0]
             assert msg == (
-                "I need you to take over for this step: Need creds\n\n"
+                "I need you to take over for this step: Need creds"
+                "<NEW_MESSAGE_BREAK>"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
             )
 

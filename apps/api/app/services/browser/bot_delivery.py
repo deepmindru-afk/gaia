@@ -15,6 +15,7 @@ from app.constants.browser import (
     HandoffStatus,
     SensitiveCategory,
 )
+from app.constants.general import NEW_MESSAGE_BREAKER
 from app.models.chat_models import ConversationSource
 from app.schemas.browser import (
     BrowserAction,
@@ -113,9 +114,11 @@ class BotProgressDelivery:
         if snapshot.status != HandoffStatus.PENDING:
             return
 
-        # Blank-line separated blocks: the bot's outbound splitter turns each
-        # into its own bubble, so the ask, the link and the reply instruction
-        # arrive as three readable messages instead of one wall of lines.
+        # Token-separated blocks: the bot splitter turns each into its own
+        # bubble, so the ask, the link and the reply instruction arrive as
+        # three readable messages instead of one wall of lines. Blank lines
+        # do NOT split (single newlines separate lines inside one bubble),
+        # so the token carries every break here.
         # (One paragraph was tried before; distinct lines in a single bubble
         # are harder to scan than short separate bubbles.)
         blocks = [f"I need you to take over for this step: {snapshot.reason}"]
@@ -124,7 +127,7 @@ class BotProgressDelivery:
         if snapshot.session_id:
             blocks.append(f"Open the live browser: {await self._link(snapshot.session_id)}")
         blocks.append('Reply "done" when you\'ve finished, or "stop" to cancel.')
-        await self.note("\n\n".join(blocks))
+        await self.note(NEW_MESSAGE_BREAKER.join(blocks))
 
     async def result(self, snapshot: BrowserResultSnapshot) -> None:
         """Emit the final task result to the conversation."""
