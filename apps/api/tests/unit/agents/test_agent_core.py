@@ -30,7 +30,7 @@ from app.helpers.agent_helpers import (
     AgentTurn,
     recent_user_messages,
 )
-from app.models.agent_models import SilentRunResult
+from app.models.agent_models import SilentRunResult, agent_user_context
 from app.models.message_models import (
     MessageRequestWithHistory,
     ReplyToMessageData,
@@ -179,7 +179,7 @@ class TestCoreAgentLogic:
         mock_construct.assert_awaited_once()
         kwargs = mock_construct.call_args.kwargs
         assert kwargs["query"] == "custom query"
-        assert kwargs["user_name"] == "Alice"
+        assert kwargs["scope"].user_name == "Alice"
 
     @pytest.mark.asyncio
     async def test_the_users_onboarding_data_reaches_build_agent_config(self):
@@ -676,7 +676,7 @@ class TestCallAgent:
             gen = await call_agent(
                 request=_make_request(),
                 conversation_id="conv-1",
-                user=_make_user(user_id=None),
+                user=_make_user(user_id=""),
             )
 
         chunks = [chunk async for chunk in gen]
@@ -762,8 +762,8 @@ class TestCallAgentSilent:
                 options=AgentRunOptions(trigger_context=trigger),
             )
 
-        # construct_langchain_messages should get trigger_context
-        assert mock_construct.call_args.kwargs["trigger_context"] == trigger
+        # construct_langchain_messages should get trigger_context via attachments
+        assert mock_construct.call_args.kwargs["attachments"].trigger_context == trigger
 
     @pytest.mark.asyncio
     async def test_usage_metadata_logging(self):
@@ -1022,7 +1022,7 @@ class TestCallAgentSilent:
             await call_agent_silent(
                 request=_make_request(),
                 conversation_id="conv-1",
-                user=_make_user(user_id=None),
+                user=_make_user(user_id=""),
             )
 
         _no_real_analytics.assert_not_called()
@@ -1096,7 +1096,7 @@ class TestTheLaneTheRunResolves:
         assert build_config.call_args.kwargs == {
             "identity": AgentIdentity(
                 conversation_id="conv-1",
-                user=user,
+                user=agent_user_context(user),
                 agent_name="comms_agent",
             ),
             "lane": AgentLane(role=AgentRole.COMMS, dev_option=None),
@@ -1279,7 +1279,7 @@ class TestTheWorkflowKeysTheRunStashes:
             "workflow_id": "wf-1",
             "workflow_title": "Daily digest",
             "workflow_notify_on_completion": False,
-            PLAYBOOK_FALLBACK_CONTEXT_KEY: {"reason": "hash_drift", "step": 3},
+            PLAYBOOK_FALLBACK_CONTEXT_KEY: "hash_drift at step 3",
             WORKFLOW_LOCK_CONTEXT_KEY: ":fire-task-1",
         }
         patches = _common_patches()
@@ -1312,12 +1312,13 @@ class TestTheWorkflowKeysTheRunStashes:
             "workflow_id": "wf-1",
             "workflow_title": "Daily digest",
             "workflow_notify_on_completion": False,
-            "playbook_fallback": {"reason": "hash_drift", "step": 3},
+            "playbook_fallback": "hash_drift at step 3",
             # The claim its fire took on this conversation, carried through so
             # ``call_executor`` adopts it instead of queueing the run behind it.
             # Read under a different spelling here and every workflow run goes
             # to the inbox of a live run that does not exist.
             "executor_lock_reservation": ":fire-task-1",
+            "playbook_replayed_calls": None,
         }
 
     @pytest.mark.asyncio
@@ -1357,6 +1358,7 @@ class TestTheWorkflowKeysTheRunStashes:
             "workflow_notify_on_completion": True,
             "playbook_fallback": None,
             "executor_lock_reservation": None,
+            "playbook_replayed_calls": None,
         }
 
 

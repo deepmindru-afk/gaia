@@ -51,6 +51,7 @@ from app.constants.executor import EXECUTOR_PAUSED
 from app.constants.hil import HIL_PAUSED_LOCK_TTL_SECONDS
 from app.models.agent_models import InboxEntry
 from app.models.chat_models import SourceCategory
+from app.models.user_models import AuthenticatedUser
 from shared.py.wide_events import log, log_context
 
 # The task text the finalize step now receives; forwarded to comms on a cancel.
@@ -75,7 +76,7 @@ def _run(
     return ExecutorRun(
         stream_id=stream_id,
         conversation_id="conv-1",
-        user={"user_id": "u1"},
+        user=AuthenticatedUser(user_id="u1"),
         kind=kind,
         task_id="task-1",
         user_message_id=None,
@@ -928,10 +929,7 @@ class TestTerminalRunMetrics:
         error_before = _counter("executor_run_total", {"status": "error", "queued": "true"})
         success_before = _counter("executor_run_total", {"status": "success", "queued": "true"})
 
-        with (
-            patch.object(er.time, "perf_counter", return_value=1234.5),
-            patch.object(er, "_queue_collection_if_uncollected", AsyncMock()),
-        ):
+        with patch.object(er.time, "perf_counter", return_value=1234.5):
             await er._finalize_executor_run(run, TASK, "the model call failed", "error")
 
         assert (
@@ -953,10 +951,7 @@ class TestTerminalRunMetrics:
         before = _counter("executor_run_total", {"status": "cancelled", "queued": "true"})
         success_before = _counter("executor_run_total", {"status": "success", "queued": "true"})
 
-        with (
-            patch.object(er.time, "perf_counter", return_value=1234.5),
-            patch.object(er, "_queue_collection_if_uncollected", AsyncMock()),
-        ):
+        with patch.object(er.time, "perf_counter", return_value=1234.5):
             await er._finalize_executor_run(run, TASK, "partial text", "final")
 
         assert (
@@ -1014,5 +1009,8 @@ class TestRecordPauseIdentityRewrite:
 
         assert recorded is True
         item = set_item.await_args.args[1]
-        assert item["t_dispatch_perf"] is None
-        assert item["queued"] is False
+        # The serialized resume item carries no queue-timing at all, so a rebuilt
+        # run defaults to no dispatch stamp and no queue origin — the resume
+        # measures user decision time as neither queue wait nor a lock wait.
+        assert "t_dispatch_perf" not in item
+        assert "queued" not in item

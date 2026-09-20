@@ -1437,7 +1437,7 @@ class TestHandoffRejectionMessages:
             return candidate is ctx
 
         with patch("app.agents.core.subagents.handoff_tools._has_parked_subagent", new=_parked):
-            rejection = await _handoff_rejection(ctx, False, "s1")
+            rejection = await _handoff_rejection(ctx, "do the work", False, "s1")
 
         assert rejection == (
             "The gmail_agent subagent is paused waiting for the user's approval. "
@@ -1462,7 +1462,7 @@ class TestHandoffRejectionMessages:
                 "app.agents.core.subagents.handoff_tools.has_bg_integration", side_effect=_has_bg
             ),
         ):
-            rejection = await _handoff_rejection(ctx, False, None)
+            rejection = await _handoff_rejection(ctx, "do the work", False, None)
 
         assert rejection == (
             "A background gmail_agent subagent is already running on this "
@@ -1480,7 +1480,7 @@ class TestHandoffRejectionMessages:
             ),
             patch("app.agents.core.subagents.handoff_tools.has_bg_integration", return_value=True),
         ):
-            assert await _handoff_rejection(ctx, True, "s1") is None
+            assert await _handoff_rejection(ctx, "do the work", True, "s1") is None
 
 
 # ---------------------------------------------------------------------------

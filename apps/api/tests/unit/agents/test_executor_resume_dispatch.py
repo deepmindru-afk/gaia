@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from langgraph.types import Command
 
-from app.agents.core.background.executor_runner import _execute_executor, _ExecutorResult
+from app.agents.core.background.executor_runner import _execute_executor
 from app.agents.core.subagents.subagent_runner import SubagentOutcome
 from app.constants.executor import EXECUTOR_PAUSED
 from app.constants.hil import HIL_RESUME_CONFIG_KEY
@@ -61,7 +61,7 @@ async def test_a_paused_run_reports_the_approval_it_is_parked_on() -> None:
     ):
         result = await _execute_executor("task", {"user_id": "u1"}, "stream-1")
 
-    assert result == _ExecutorResult("", EXECUTOR_PAUSED, ("ap-1",))
+    assert (result.text, result.type, result.paused_on) == ("", EXECUTOR_PAUSED, ("ap-1",))
 
 
 async def test_a_batch_pause_reports_every_approval_not_the_single_id() -> None:
@@ -79,7 +79,7 @@ async def test_a_batch_pause_reports_every_approval_not_the_single_id() -> None:
     ):
         result = await _execute_executor("task", {"user_id": "u1"}, "stream-1")
 
-    assert result == _ExecutorResult("", EXECUTOR_PAUSED, ("ap-1", "ap-2"))
+    assert (result.text, result.type, result.paused_on) == ("", EXECUTOR_PAUSED, ("ap-1", "ap-2"))
 
 
 async def test_a_fresh_run_does_not_arm_the_probe() -> None:

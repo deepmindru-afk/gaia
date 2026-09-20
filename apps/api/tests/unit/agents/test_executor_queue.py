@@ -48,6 +48,7 @@ from app.constants.executor import (
 )
 from app.db.redis import redis_cache
 from app.models.agent_models import AgentConfigurable
+from app.models.user_models import AuthenticatedUser
 
 CONVERSATION = "conv-1"
 BUSY_KEY = f"{EXECUTOR_BUSY_PREFIX}{CONVERSATION}"
@@ -566,7 +567,7 @@ class TestPrepareRunFromItem:
 
         assert prepared is not None
         run = prepared.run
-        assert run.user == {"user_id": "u1", "email": "u1@x.com", "name": "Uno", "timezone": None}
+        assert run.user == AuthenticatedUser(user_id="u1", email="u1@x.com", name="Uno")
         assert run.conversation_id == CONVERSATION
         assert run.task_id == "task-7"
         assert run.user_message_id == "msg-1"

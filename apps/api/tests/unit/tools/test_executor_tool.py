@@ -35,7 +35,7 @@ from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
 from app.db.repositories.playbooks import playbook_repository
 from app.models.agent_models import InboxEntry
-from app.models.playbook_models import PlaybookDocument, PlaybookRunStatus, PlaybookStep
+from app.models.playbook_models import PlaybookDocument, PlaybookRunStatus, ToolStep
 from app.utils import background_tasks
 
 
@@ -189,9 +189,7 @@ def closed_approvals(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     """The HIL boundary (Mongo-backed): which conversations had their approvals closed."""
     mock = AsyncMock(return_value=[])
     monkeypatch.setattr(executor_tool, "cancel_conversation_approvals", mock)
-    monkeypatch.setattr(
-        executor_tool, "cancel_ledger_approvals", AsyncMock(return_value=[])
-    )
+    monkeypatch.setattr(executor_tool, "cancel_ledger_approvals", AsyncMock(return_value=[]))
     return mock
 
 
@@ -219,7 +217,7 @@ class TestCallExecutorDispatch:
         assert run.stream_id == "stream-1"
         assert run.conversation_id == CONVERSATION_ID
         assert run.user_message_id == "umsg-1"
-        assert run.user["user_id"] == "user-1"
+        assert run.user.user_id == "user-1"
         assert run.kind.value == "live"
         assert was_executor_spawned("stream-1") is True
 
@@ -759,9 +757,7 @@ class TestCancelClosesHilApprovals:
         await run_cancel_executor(config=config_for(), task_ids=[])
 
         assert isinstance(executor_tool.cancel_ledger_approvals, AsyncMock)
-        executor_tool.cancel_ledger_approvals.assert_awaited_once_with(
-            CONVERSATION_ID, "user-1"
-        )
+        executor_tool.cancel_ledger_approvals.assert_awaited_once_with(CONVERSATION_ID, "user-1")
 
     async def test_sparing_the_running_task_leaves_its_approvals_alone(
         self,
@@ -1075,7 +1071,7 @@ def _failed_playbook() -> PlaybookDocument:
         user_id="user-1",
         workflow_hash="h",
         description="d",
-        steps=[PlaybookStep(id="events", tool="list_events", args={})],
+        steps=[ToolStep(id="events", tool="list_events", args={})],
         result_brief="s",
         last_run_status=PlaybookRunStatus.FAILED,
         last_run_reason="stopped at step 2 (send_email)",

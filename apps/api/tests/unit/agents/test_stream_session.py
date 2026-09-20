@@ -26,6 +26,7 @@ from app.agents.core.background.session import (
     teardown_session,
     was_executor_spawned,
 )
+from app.models.user_models import AuthenticatedUser
 
 
 @pytest.fixture(autouse=True)
@@ -151,7 +152,7 @@ class TestOwnershipRule:
                 user_message_id="m1",
             ),
         )
-        assert run.user == {"user_id": "u1", "email": "u1@x.com", "name": "Uno", "timezone": None}
+        assert run.user == AuthenticatedUser(user_id="u1", email="u1@x.com", name="Uno")
         assert run.workflow_id == "wf-9"
         assert run.workflow_title == "Daily digest"
         assert run.workflow_notify_on_completion is False
@@ -170,8 +171,6 @@ class TestOwnershipRule:
         assert run.workflow_id is None
         assert run.workflow_notify_on_completion is True
         assert run.executor_owns_tool_data is False
-
-
 
     def test_integration_slot_claim_is_exclusive_until_released(self) -> None:
         # The slot is what stops two concurrent background handoffs to the same

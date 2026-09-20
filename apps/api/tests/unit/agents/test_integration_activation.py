@@ -164,18 +164,14 @@ class TestAutoBind:
 
     @staticmethod
     def _patch_registries(monkeypatch, registry: MagicMock) -> None:
-        monkeypatch.setattr(
-            f"{_MOD}.register_integration_tools", AsyncMock(return_value="GMAIL")
-        )
+        monkeypatch.setattr(f"{_MOD}.register_integration_tools", AsyncMock(return_value="GMAIL"))
         monkeypatch.setattr(f"{_MOD}.get_tool_registry", AsyncMock(return_value=registry))
         monkeypatch.setattr(
             "app.agents.tools.core.retrieval.get_tool_registry",
             AsyncMock(return_value=registry),
         )
 
-    async def test_splits_bind_helpers_from_preloaded_integration_tools(
-        self, monkeypatch
-    ) -> None:
+    async def test_splits_bind_helpers_from_preloaded_integration_tools(self, monkeypatch) -> None:
         from app.agents.core.subagents.integration_activation import _activate_tools
 
         subagent = _subagent()
@@ -273,7 +269,9 @@ class TestActivateIntegrationTool:
         with (
             patch(f"{_MOD}._get_subagent_by_id", new=AsyncMock(return_value=_subagent())),
             patch(f"{_MOD}.check_integration_connection", new=AsyncMock(return_value=None)),
-            patch(f"{_MOD}._activate_tools", new=AsyncMock(return_value=(7, [], [], ""))) as activate_tools,
+            patch(
+                f"{_MOD}._activate_tools", new=AsyncMock(return_value=(7, [], [], ""))
+            ) as activate_tools,
             patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="PROMPT + SKILLS")),
         ):
             call, run_cfg = self._invoke({"user_id": "u1"}, integration_id="gmail")
@@ -375,11 +373,15 @@ class TestActivateIntegrationTool:
         assert "handoff(" in text and "per-user" in text
 
     async def test_custom_mcp_dict_routes_to_handoff(self) -> None:
-        """A custom MCP integration resolves as a dict (from the repository), not a
-        registry Subagent. It is per-user, so it routes to handoff too."""
+        """A custom MCP integration resolves as a CustomMcpSubagent (from the
+        repository), not a registry Subagent. It is per-user, so it routes to
+        handoff too."""
+        from app.agents.core.subagents.handoff_tools import CustomMcpSubagent
         from app.agents.core.subagents.integration_activation import activate_integration
 
-        custom = {"id": "abc123", "name": "My MCP", "managed_by": "mcp", "mcp_config": {}}
+        custom = CustomMcpSubagent.model_validate(
+            {"id": "abc123", "name": "My MCP", "managed_by": "mcp", "mcp_config": {}}
+        )
         with (
             patch(f"{_MOD}._get_subagent_by_id", new=AsyncMock(return_value=custom)),
             patch(f"{_MOD}._activate_tools", new=AsyncMock()) as activate_tools,
@@ -406,7 +408,6 @@ class TestActivateIntegrationTool:
             result = await activate_integration.ainvoke(call, run_cfg)
 
         assert "3 tools" in self._text(result)
-
 
     async def test_successful_activation_stamps_the_conversation(self) -> None:
         """Discovery searches activated namespaces, so a success that yields

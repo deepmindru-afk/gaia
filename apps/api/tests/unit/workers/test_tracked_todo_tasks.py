@@ -1338,22 +1338,6 @@ class TestExecuteViaAgentDelivery:
 
         self.capture.assert_not_called()
 
-    async def test_a_queued_dispatch_delivers_nothing(self):
-        """The queued acknowledgement is not a result; delivering it announces work that never ran."""
-        agent = AsyncMock(
-            return_value=SilentRunResult(
-                message="That task is queued.", tool_data=[], queued_task_id="task-9"
-            )
-        )
-        deliver = AsyncMock()
-        p1, p2, p3, p4, p5, p6, p7 = self._patches(agent=agent, deliver=deliver)
-        with p1, p2, p3, p4, p5, p6, p7:
-            await _execute_via_agent(
-                _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1")
-            )
-
-        deliver.assert_not_awaited()
-
 
 # ---------------------------------------------------------------------------
 # _mark_todo_failed

@@ -712,69 +712,30 @@ class TestTheClockIsRenderedInTheUsersTimezone:
         clock.assert_called_once_with(user_timezone="Asia/Kolkata")
 
 
-class TestOpenuiFlagWiring:
-    """The per-user flag resolves before the static prompt is built: the real
-    ``create_system_message`` runs here so the test proves the variant that
-    reaches the model, not just that a resolver was called."""
+class TestOpenuiVariantReachesTheModel:
+    """The static per-channel prompt selection runs for real here (the real
+    ``create_system_message`` is not patched), so the test proves the variant
+    that reaches the model, not just that a selector was called."""
 
     @pytest.mark.asyncio
-    async def test_flag_off_serves_markdown_variant_on_web(self) -> None:
+    async def test_web_serves_the_openui_variant(self) -> None:
         p = _patches()
-        with (
-            p["build_dynamic"],
-            p["format_files"],
-            patch(
-                "app.agents.core.messages.is_comms_openui_enabled",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-        ):
+        with p["build_dynamic"], p["format_files"]:
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                user_id="uid-1",
-                source="web",
-            )
-
-        assert "---OpenUI Lang (Rich UI Components)---" not in result[0].content
-        assert "---Output Format---" in result[0].content
-
-    @pytest.mark.asyncio
-    async def test_flag_on_serves_openui_variant_on_web(self) -> None:
-        p = _patches()
-        with (
-            p["build_dynamic"],
-            p["format_files"],
-            patch(
-                "app.agents.core.messages.is_comms_openui_enabled",
-                new_callable=AsyncMock,
-                return_value=True,
-            ),
-        ):
-            result = await construct_langchain_messages(
-                messages=[{"role": "user", "content": "hi"}],
-                user_id="uid-1",
-                source="web",
+                scope=MessageScope(user_id="uid-1", source="web"),
             )
 
         assert "---OpenUI Lang (Rich UI Components)---" in result[0].content
 
     @pytest.mark.asyncio
-    async def test_text_channel_never_consults_the_flag(self) -> None:
+    async def test_text_channel_serves_the_platform_variant(self) -> None:
         p = _patches()
-        with (
-            p["build_dynamic"],
-            p["format_files"],
-            patch(
-                "app.agents.core.messages.is_comms_openui_enabled",
-                new_callable=AsyncMock,
-                return_value=True,
-            ) as flag,
-        ):
+        with p["build_dynamic"], p["format_files"]:
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                user_id="uid-1",
-                source="whatsapp",
+                scope=MessageScope(user_id="uid-1", source="whatsapp"),
             )
 
-        flag.assert_not_called()
         assert "Platform Context" in result[0].content
+        assert "---OpenUI Lang (Rich UI Components)---" not in result[0].content
