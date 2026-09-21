@@ -59,6 +59,7 @@ from app.models.hil_models import (
     HILApprovalStatus,
     LedgerState,
 )
+from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.hil.approvals_store import list_pending_for_conversation
 from app.services.hil.bridge import _approval_entry, _publish_entry, settle_session_approval_frame
 from app.services.hil.resume import record_owner_deny, resume_owner_after_approval
@@ -157,6 +158,23 @@ async def decide_ledger(
         )
 
     log.set(hil={"approval_id": approval_id, "decision": kind, "tool": row.tool_name})
+    # Server-owned funnel event: exactly once per committed decision (stale-v
+    # and lost-CAS returns above emit nothing). Explicit user_id: the decide
+    # path resolves its user from the row, not a session.
+    card_age_seconds: float | None = None
+    if row.created_at is not None:
+        card_age_seconds = (datetime.now(UTC) - row.created_at).total_seconds()
+    capture_event(
+        user_id,
+        AnalyticsEvents.HIL_DECISION_SUBMITTED,
+        {
+            "approval_id": approval_id,
+            "decision": target.value,
+            "card_age_seconds": card_age_seconds,
+            # The transition $incs v: the committed version is row.v + 1.
+            "ledger_version": row.v + 1,
+        },
+    )
     queued = bool(target is LedgerState.APPROVED and row.blocked_by)
     if target is LedgerState.APPROVED and not queued:
         # Permission granted — hand the ticket to the model, which redeems it
@@ -481,6 +499,15 @@ async def revoke_ticket(
     revoked_row = await approval_ledger_repository.get_by_approval_id(approval_id)
     if revoked_row is not None:
         await publish_ledger_revocation(revoked_row)
+    capture_event(
+        user_id,
+        AnalyticsEvents.HIL_REVOKED,
+        {
+            "approval_id": approval_id,
+            "ledger_version": row.v + 1,
+            "revoker": caller,
+        },
+    )
     return f"Revoked '{approval_id}' ({row.summary}). It will never be asked."
 
 
@@ -504,6 +531,15 @@ async def cancel_ledger_approvals(conversation_id: str, user_id: str) -> list[st
         current = await approval_ledger_repository.get_by_approval_id(row.approval_id)
         if current is not None:
             await publish_ledger_revocation(current)
+        capture_event(
+            user_id,
+            AnalyticsEvents.HIL_REVOKED,
+            {
+                "approval_id": row.approval_id,
+                "ledger_version": row.v + 1,
+                "revoker": "cancelled-run",
+            },
+        )
         cancelled.append(row.approval_id)
     if cancelled:
         log.info(

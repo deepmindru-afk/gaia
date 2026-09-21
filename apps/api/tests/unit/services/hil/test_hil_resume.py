@@ -170,3 +170,51 @@ class TestRecordDeny:
             await record_owner_deny(_row(owner_run_type="workflow", owner_id="wf-1"), None)
             await record_owner_deny(_row(), "nope")
         service.append_activity_entry.assert_not_called()
+
+
+class TestResumedEvent:
+    async def test_todo_resume_emits_event_with_user_id(self) -> None:
+        from app.services.analytics_service import AnalyticsEvents
+        from app.services.hil.resume import _resume_todo
+
+        pool = MagicMock()
+        with (
+            patch(
+                "app.utils.redis_utils.RedisPoolManager.get_pool",
+                new=AsyncMock(return_value=pool),
+            ),
+            patch(
+                "app.workers.queue.enqueue_worker_job",
+                new=AsyncMock(),
+            ),
+            patch("app.services.hil.resume.capture_event") as capture,
+        ):
+            await _resume_todo(_row(owner_run_type="todo", owner_id="todo-9"))
+
+        capture.assert_called_once_with(
+            "u1",
+            AnalyticsEvents.HIL_RESUMED,
+            {"approval_id": "ap_bg1", "owner_run_type": "todo"},
+        )
+
+    async def test_workflow_resume_emits_event_with_user_id(self) -> None:
+        from app.services.analytics_service import AnalyticsEvents
+        from app.services.hil.resume import _resume_workflow
+
+        async def _fake_queue(workflow_id: str, user_id: str, context: Any) -> bool:
+            return True
+
+        with (
+            patch(
+                "app.services.workflow.queue_service.WorkflowQueueService.queue_workflow_execution",
+                new=_fake_queue,
+            ),
+            patch("app.services.hil.resume.capture_event") as capture,
+        ):
+            await _resume_workflow(_row(owner_run_type="workflow", owner_id="wf-7"))
+
+        capture.assert_called_once_with(
+            "u1",
+            AnalyticsEvents.HIL_RESUMED,
+            {"approval_id": "ap_bg1", "owner_run_type": "workflow"},
+        )

@@ -23,11 +23,13 @@ import pytest
 from app.constants.hil import HIL_SUMMARY_MAX_ARG_CHARS, HIL_SUMMARY_MAX_ARGS
 from app.constants.log_tags import LogTag
 from app.models.hil_models import HILApprovalStatus
+from app.services.analytics_service import AnalyticsEvents
 from app.services.hil.bridge import (
     ApprovalOutcome,
     build_summary,
     publish_approval_request,
     publish_decision,
+    publish_ledger_request,
     recall_declined_call,
     remember_declined_call,
 )
@@ -420,3 +422,46 @@ class TestSummary:
 
     def test_a_call_with_no_arguments_still_reads_as_a_sentence(self) -> None:
         assert build_summary("delete_everything", {}, None) == "Delete everything"
+
+
+class TestCardShownEvent:
+    async def test_register_emits_card_shown_with_user_id(self, bridge: dict) -> None:
+        """The funnel's first event must attribute to the row's user — the
+        bridge carries no request context, so an inferred id is unavailable
+        and an anonymous capture would strand it."""
+        with patch(f"{MODULE}.capture_event") as capture:
+            await publish_ledger_request(
+                approval_id="ap_1",
+                stream_id=STREAM_ID,
+                user_id=USER_ID,
+                conversation_id=CONVERSATION_ID,
+                tool_call=TOOL_CALL,
+                summary="Send it",
+                integration_name="Gmail",
+            )
+
+        capture.assert_called_once_with(
+            USER_ID,
+            AnalyticsEvents.HIL_CARD_SHOWN,
+            {
+                "approval_id": "ap_1",
+                "tool_name": "send_email",
+                "ledger_version": 0,
+                "background": False,
+            },
+        )
+
+    async def test_background_register_marks_background(self, bridge: dict) -> None:
+        with patch(f"{MODULE}.capture_event") as capture:
+            await publish_ledger_request(
+                approval_id="ap_1",
+                stream_id=STREAM_ID,
+                user_id=USER_ID,
+                conversation_id=CONVERSATION_ID,
+                tool_call=TOOL_CALL,
+                summary="Send it",
+                integration_name="Gmail",
+                live=False,
+            )
+
+        assert capture.call_args.args[2]["background"] is True

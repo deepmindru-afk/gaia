@@ -232,6 +232,13 @@ class AnalyticsEvents(StrEnum):
 
     # Human-in-the-loop approvals
     APPROVAL_DECIDED = "approval:decided"
+    # Ledger approval cards. Server-owned, one event per transition — the
+    # funnel behind time-to-decision, batch-vs-inline share, and revoke rate.
+    # Props carry approval_id, tool_name, ledger_version, and counts only.
+    HIL_CARD_SHOWN = "hil:card_shown"
+    HIL_DECISION_SUBMITTED = "hil:decision_submitted"
+    HIL_REVOKED = "hil:revoked"
+    HIL_RESUMED = "hil:resumed"
 
     # Worker / agent lifecycle. AGENT_RUN_COMPLETED/FAILED carry executor
     # timing props when measured: queue_wait_ms, executor_ttft_ms,

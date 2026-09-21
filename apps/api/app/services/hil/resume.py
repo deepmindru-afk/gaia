@@ -20,6 +20,7 @@ best-effort: a resume failure must never fail the tap that approved.
 from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.models.hil_models import ApprovalLedgerDocument
+from app.services.analytics_service import AnalyticsEvents, capture_event
 from shared.py.wide_events import log
 
 
@@ -101,6 +102,11 @@ async def _resume_todo(row: ApprovalLedgerDocument) -> None:
         row.approval_id,
         row.summary,
     )
+    capture_event(
+        row.user_id,
+        AnalyticsEvents.HIL_RESUMED,
+        {"approval_id": row.approval_id, "owner_run_type": "todo"},
+    )
 
 
 async def _resume_workflow(row: ApprovalLedgerDocument) -> None:
@@ -134,4 +140,9 @@ async def _resume_workflow(row: ApprovalLedgerDocument) -> None:
             "approval_result": "granted",
             "prior_run_brief": brief,
         },
+    )
+    capture_event(
+        row.user_id,
+        AnalyticsEvents.HIL_RESUMED,
+        {"approval_id": row.approval_id, "owner_run_type": "workflow"},
     )

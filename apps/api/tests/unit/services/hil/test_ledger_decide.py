@@ -26,6 +26,9 @@ def _row(**overrides: Any) -> MagicMock:
     row.feedback = None
     row.owner_run_type = ""
     row.owner_id = ""
+    # Real datetime: the decision path computes card age from it, and a
+    # MagicMock would TypeError on the subtraction, hiding real type errors.
+    row.created_at = datetime.now(UTC)
     for key, value in overrides.items():
         setattr(row, key, value)
     return row
@@ -160,6 +163,83 @@ class TestDecideLedger:
             pytest.raises(ApprovalRequestNotFoundError),
         ):
             await decide_ledger("ap_nope", user_id="u1", kind="approve", v=None)
+
+
+@pytest.mark.unit
+class TestDecisionSubmittedEvent:
+    async def test_approve_emits_event_with_user_id(self) -> None:
+        """Same attribution rule as revoke: the decide path resolves its user
+        from the row, so the event must carry that id explicitly."""
+        from app.services.analytics_service import AnalyticsEvents
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
+            patch.object(ledger_decide, "capture_event") as capture,
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        assert outcome.committed is True
+        capture.assert_called_once()
+        user_id, event, props = capture.call_args.args
+        assert user_id == "u1"
+        assert event == AnalyticsEvents.HIL_DECISION_SUBMITTED
+        assert props["approval_id"] == "ap_abc"
+        assert props["decision"] == "approved"
+        assert props["ledger_version"] == 4
+        assert props["card_age_seconds"] is not None
+        assert props["card_age_seconds"] < 60
+
+    async def test_deny_emits_deny_decision(self) -> None:
+        from app.services.analytics_service import AnalyticsEvents
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "capture_event") as capture,
+        ):
+            await decide_ledger("ap_abc", user_id="u1", kind="deny", v=3)
+
+        assert capture.call_args.args[1] == AnalyticsEvents.HIL_DECISION_SUBMITTED
+        assert capture.call_args.args[2]["decision"] == "denied"
+
+    async def test_uncommitted_decisions_emit_nothing(self) -> None:
+        """Stale-v and lost-CAS returns decided nothing — an event would count
+        attempts as successes."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        stale_repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=stale_repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
+            patch.object(ledger_decide, "capture_event") as capture,
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=99)
+
+        assert outcome.committed is False
+        capture.assert_not_called()
+
+        lost_repo = _repo(_row())
+        lost_repo.transition = AsyncMock(return_value=False)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=lost_repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
+            patch.object(ledger_decide, "capture_event") as capture,
+        ):
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        assert outcome.committed is False
+        capture.assert_not_called()
 
 
 @pytest.mark.unit
@@ -492,6 +572,32 @@ class TestRevokeTicket:
         repo.transition.assert_awaited_once_with("ap_abc", LedgerState.PENDING, LedgerState.REVOKED)
         tombstone.assert_awaited_once()
         assert "Revoked 'ap_abc'" in text
+
+    async def test_revoke_emits_event_with_user_id(self) -> None:
+        """The revoke event must attribute to the row's user — an anonymous
+        capture would strand it outside the user's funnel, silently."""
+        from app.services.analytics_service import AnalyticsEvents
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import revoke_ticket
+
+        repo = _repo(_row())
+        repo.transition = AsyncMock(return_value=True)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()),
+            patch.object(ledger_decide, "capture_event") as capture,
+        ):
+            await revoke_ticket("ap_abc", **self._revoke_kwargs())
+
+        capture.assert_called_once_with(
+            "u1",
+            AnalyticsEvents.HIL_REVOKED,
+            {
+                "approval_id": "ap_abc",
+                "ledger_version": 4,
+                "revoker": "executor_conv-1",
+            },
+        )
 
     async def test_revoke_wrong_conversation_looks_absent(self) -> None:
         from app.services.hil import ledger_decide
