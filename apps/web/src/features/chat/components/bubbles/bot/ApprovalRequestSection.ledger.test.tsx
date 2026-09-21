@@ -5,6 +5,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatApi } from "@/features/chat/api/chatApi";
 import ApprovalRequestSection from "@/features/chat/components/bubbles/bot/ApprovalRequestSection";
+import { toast } from "@/lib/toast";
 
 vi.mock("@/features/chat/api/chatApi", () => ({
   chatApi: { postApprovalDecision: vi.fn() },
@@ -100,6 +101,45 @@ describe("ApprovalRequestSection ledger UX", () => {
         feedback: undefined,
         scope: "once",
         v: 4,
+      }),
+    );
+  });
+
+  it("drops the version on the retry after a stale-v conflict", async () => {
+    vi.mocked(chatApi.postApprovalDecision)
+      .mockReset()
+      .mockResolvedValueOnce({ success: false, status: "pending" })
+      .mockResolvedValueOnce({ success: true });
+    render(
+      <ApprovalRequestSection
+        data={card({ age_seconds: 5, ledger_version: 4 })}
+        onDecided={noop}
+      />,
+    );
+    // First tap carries the rendered version.
+    fireEvent.click(screen.getByRole("button", { name: /^approve$/i }));
+    await vi.waitFor(() =>
+      expect(chatApi.postApprovalDecision).toHaveBeenNthCalledWith(1, "ap_1", {
+        decision: "approve",
+        feedback: undefined,
+        scope: "once",
+        v: 4,
+      }),
+    );
+    // The conflict toast means the card re-enabled (submitting reset).
+    await vi.waitFor(() => expect(toast.error).toHaveBeenCalled());
+    const approve = () => screen.getByRole("button", { name: /^approve$/i });
+    await vi.waitFor(() =>
+      expect(approve().hasAttribute("disabled")).toBe(false),
+    );
+    // The card stayed pending; the second tap omits v so the CAS decides.
+    fireEvent.click(approve());
+    await vi.waitFor(() =>
+      expect(chatApi.postApprovalDecision).toHaveBeenNthCalledWith(2, "ap_1", {
+        decision: "approve",
+        feedback: undefined,
+        scope: "once",
+        v: undefined,
       }),
     );
   });

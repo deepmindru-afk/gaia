@@ -14,7 +14,7 @@ import type {
   ApprovalStatus,
 } from "@shared/chat";
 import { formatApprovalAge, RECONFIRM_AGE_SECONDS } from "@shared/chat";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ShieldAlertIcon } from "@/components/shared/icons";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
@@ -73,8 +73,9 @@ export default function ApprovalRequestSection({
   const [feedback, setFeedback] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   // A stale-v tap committed nothing; the next submit omits v so the CAS —
-  // not the version check — decides. v is an optimization, never a gate.
-  const [versionConflict, setVersionConflict] = useState(false);
+  // not the version check — decides. v is an optimization, never a gate. Read
+  // and written only inside submit, never in render — a ref, not state.
+  const versionConflict = useRef(false);
   const markApprovalDecided = useMarkApprovalDecided();
   const locked = submitting !== null || disabled || phase === "submitting";
 
@@ -96,7 +97,9 @@ export default function ApprovalRequestSection({
         decision,
         feedback: attachedFeedback ?? undefined,
         scope,
-        v: versionConflict ? undefined : (data.ledger_version ?? undefined),
+        v: versionConflict.current
+          ? undefined
+          : (data.ledger_version ?? undefined),
       });
       if (!outcome.success) {
         // Stale tap: the row moved under this card. Settle locally when the
@@ -109,7 +112,7 @@ export default function ApprovalRequestSection({
             attachedFeedback,
           );
         } else {
-          setVersionConflict(true);
+          versionConflict.current = true;
           setSubmitting(null);
           setPhase("idle");
           toast.error("That approval already moved — tap again to confirm");

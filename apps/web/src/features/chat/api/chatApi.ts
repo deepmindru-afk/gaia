@@ -524,14 +524,16 @@ export const chatApi = {
     ) {
       chunks.push(payload.decisions.slice(i, i + APPROVAL_BATCH_CHUNK_SIZE));
     }
-    const outcomes: BatchApprovalDecisionResponse["outcomes"] = [];
-    for (const decisions of chunks) {
-      const response = await api.post("/api/v1/approvals/batch-decision", {
-        body: { decisions },
-        silent: true,
-      });
-      outcomes.push(...response.outcomes);
-    }
-    return { outcomes };
+    // Disjoint slices with no ordering dependency (chunked only for the 25-item
+    // cap), so they fan out in parallel rather than serially.
+    const responses = await Promise.all(
+      chunks.map((decisions) =>
+        api.post("/api/v1/approvals/batch-decision", {
+          body: { decisions },
+          silent: true,
+        }),
+      ),
+    );
+    return { outcomes: responses.flatMap((r) => r.outcomes) };
   },
 };

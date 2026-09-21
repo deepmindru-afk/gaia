@@ -33,12 +33,15 @@ function singularize(key: string): string {
   const pretty = prettyKey(key);
   if (pretty.endsWith("ies")) return `${pretty.slice(0, -3)}y`;
   if (pretty.endsWith("ses")) return pretty;
-  if (pretty.endsWith("s") && !pretty.endsWith("ss")) return pretty.slice(0, -1);
+  if (pretty.endsWith("s") && !pretty.endsWith("ss"))
+    return pretty.slice(0, -1);
   return pretty;
 }
 
 function capitalize(text: string): string {
-  return text.length === 0 ? text : text.charAt(0).toUpperCase() + text.slice(1);
+  return text.length === 0
+    ? text
+    : text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** "2026-09-21T10:00:00" -> "Sun, Sep 21, 10:00 AM"; non-dates pass through. */
@@ -49,12 +52,24 @@ function prettyValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (trimmed === "") return null;
-  const iso = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(trimmed);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(
+    trimmed,
+  );
   if (iso) {
     const [, y, mo, d, h, mi] = iso;
     const months = [
-      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
     ];
     const hour24 = Number(h);
     const suffix = hour24 >= 12 ? "PM" : "AM";
