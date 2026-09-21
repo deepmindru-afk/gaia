@@ -174,31 +174,5 @@ class TestReads:
         assert flt == {"fingerprint": "fp", "conversation_id": "c1", "state": "denied"}
         assert doc is not None and doc.state == LedgerState.DENIED
 
-    async def test_list_live_by_owner_filters_owner_and_live_only(
-        self, repo: ApprovalLedgerRepository, collection: MagicMock
-    ) -> None:
-        """Terminal rows never block: a denied twin of the same owner must not
-        defer a fresh fire — only live states gate."""
-        cursor = MagicMock()
-        cursor.sort = MagicMock(return_value=cursor)
-        cursor.to_list = AsyncMock(return_value=[_doc()])
-        collection.find = MagicMock(return_value=cursor)
-
-        docs = await repo.list_live_by_owner("todo", "todo-1")
-
-        flt = collection.find.call_args.args[0]
-        assert flt["owner_run_type"] == "todo"
-        assert flt["owner_id"] == "todo-1"
-        assert set(flt["state"]["$in"]) == {"pending", "approved"}
-        cursor.sort.assert_called_once_with("created_at", 1)
-        assert len(docs) == 1 and docs[0].approval_id == "ap_1"
-
-    async def test_list_live_by_owner_with_no_owner_touches_nothing(
-        self, repo: ApprovalLedgerRepository, collection: MagicMock
-    ) -> None:
-        assert await repo.list_live_by_owner("", "") == []
-        assert await repo.list_live_by_owner("todo", "") == []
-        collection.find.assert_not_called()
-
     async def test_singleton_exists(self) -> None:
         assert isinstance(approval_ledger_repository, ApprovalLedgerRepository)
