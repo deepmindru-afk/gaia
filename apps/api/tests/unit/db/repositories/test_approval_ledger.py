@@ -176,3 +176,27 @@ class TestReads:
 
     async def test_singleton_exists(self) -> None:
         assert isinstance(approval_ledger_repository, ApprovalLedgerRepository)
+
+    async def test_list_live_by_owners_batches_one_query(
+        self, repo: ApprovalLedgerRepository, collection: MagicMock
+    ) -> None:
+        """List views read one page, not one row per todo."""
+        cursor = MagicMock()
+        cursor.sort = MagicMock(return_value=cursor)
+        cursor.to_list = AsyncMock(return_value=[_doc()])
+        collection.find = MagicMock(return_value=cursor)
+
+        docs = await repo.list_live_by_owners("todo", ["todo-1", "todo-2"])
+
+        flt = collection.find.call_args.args[0]
+        assert flt["owner_run_type"] == "todo"
+        assert flt["owner_id"] == {"$in": ["todo-1", "todo-2"]}
+        assert set(flt["state"]["$in"]) == {"pending", "approved"}
+        assert len(docs) == 1
+
+    async def test_list_live_by_owners_empty_means_no_query(
+        self, repo: ApprovalLedgerRepository, collection: MagicMock
+    ) -> None:
+        assert await repo.list_live_by_owners("todo", []) == []
+        assert await repo.list_live_by_owners("", ["todo-1"]) == []
+        collection.find.assert_not_called()

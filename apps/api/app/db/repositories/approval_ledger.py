@@ -236,6 +236,31 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         )
         return ApprovalLedgerDocument.model_validate(raw) if raw else None
 
+    async def list_live_by_owners(
+        self, owner_run_type: str, owner_ids: list[str]
+    ) -> list[ApprovalLedgerDocument]:
+        """Live (PENDING/APPROVED) rows parked by background owners, oldest first.
+
+        Batch read for list views (one query per page, not per row). Terminal
+        rows never match — a decided owner has nothing waiting.
+        """
+        if not owner_run_type or not owner_ids:
+            return []
+        cursor = (
+            self._raw_collection()
+            .find(
+                {
+                    "owner_run_type": owner_run_type,
+                    "owner_id": {"$in": owner_ids},
+                    "state": {"$in": sorted(str(s) for s in LIVE_LEDGER_STATES)},
+                }
+            )
+            .sort("created_at", 1)
+        )
+        return [
+            ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=200)
+        ]
+
     async def recent_tool_outcomes(
         self, user_id: str, tool_name: str, *, limit: int = 10, since_days: int = 30
     ) -> list[ApprovalLedgerDocument]:

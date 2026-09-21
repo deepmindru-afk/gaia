@@ -111,6 +111,45 @@ class TestLedgerBranch:
         assert ledger.register.await_args.kwargs["owner_run_type"] == "workflow"
         assert ledger.register.await_args.kwargs["owner_id"] == "wf-1"
 
+    async def test_background_run_threads_the_owner_to_publish(self) -> None:
+        """Publish is what raises the sidebar flag — it must receive the same
+        owner the row carries, or background cards never surface."""
+        from app.services.hil import gate
+
+        ledger = _ledger()
+        request = _gated_request(execution_mode="background", active_todo_id="todo-9")
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()) as pub,
+            patch(f"{MODULE}.interrupt"),
+        ):
+            await gate.decide_tool_call(request)
+
+        assert pub.await_args.kwargs["owner_run_type"] == "todo"
+        assert pub.await_args.kwargs["owner_id"] == "todo-9"
+
+    async def test_live_run_publishes_with_no_owner(self) -> None:
+        """Live runs resume through the inbox — an owner here would wrongly
+        surface (and re-enqueue) them."""
+        from app.services.hil import gate
+
+        ledger = _ledger()
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()) as pub,
+            patch(f"{MODULE}.interrupt"),
+        ):
+            await gate.decide_tool_call(_gated_request())
+
+        assert pub.await_args.kwargs["owner_run_type"] == ""
+        assert pub.await_args.kwargs["owner_id"] == ""
+
     async def test_background_todo_run_tags_the_ledger_owner(self) -> None:
         from app.services.hil import gate
 

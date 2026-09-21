@@ -66,6 +66,9 @@ class ConversationDocument(UserScopedDocument):
     source: ConversationSource | None = None
     is_onboarding_demo: bool = False
     starred: bool | None = None
+    # Set while a background run has a live approval parked here; the sidebar
+    # hides background conversations unless this is set (see _active_filter).
+    has_live_approval: bool = False
     messages: list[MessageModel] = Field(default_factory=list)
     # Conversation-level artifact registry: one entry per agent-written file,
     # deduped by path; services/chat/artifacts_registry.py owns every write.
@@ -102,6 +105,7 @@ class ConversationSummary(ResponseModel):
     system_purpose: SystemPurpose | None = None
     is_unread: bool | None = None
     source: ConversationSource | None = None
+    has_live_approval: bool | None = None
     createdAt: str | None = None
     updatedAt: datetime | None = None
 

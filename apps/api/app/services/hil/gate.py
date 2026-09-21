@@ -332,6 +332,8 @@ async def _decide_ledger(
             summary=summary,
             integration_name=integration_name,
             auto_reason=auto_note.strip() or None,
+            owner_run_type=context.owner_run_type,
+            owner_id=context.owner_id,
             # Live runs hold the card until the run ends (a mid-run revoke is
             # never shown); background runs have no watcher, so publish now.
             live=context.pausable,

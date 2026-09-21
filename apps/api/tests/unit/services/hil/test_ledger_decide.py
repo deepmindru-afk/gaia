@@ -243,6 +243,73 @@ class TestDecisionSubmittedEvent:
 
 
 @pytest.mark.unit
+class TestConversationFlagSync:
+    async def test_decide_refreshes_the_sidebar_flag(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import decide_ledger
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
+            patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
+            patch.object(ledger_decide, "capture_event"),
+            patch.object(
+                ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()
+            ) as sync,
+        ):
+            await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
+
+        sync.assert_awaited_once_with("conv-1", "u1")
+
+    async def test_revoke_refreshes_the_sidebar_flag(self) -> None:
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import revoke_ticket
+
+        repo = _repo(_row())
+        repo.transition = AsyncMock(return_value=True)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()),
+            patch.object(ledger_decide, "capture_event"),
+            patch.object(
+                ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()
+            ) as sync,
+        ):
+            await revoke_ticket(
+                "ap_abc", user_id="u1", conversation_id="conv-1", caller="executor_conv-1"
+            )
+
+        sync.assert_awaited_once_with("conv-1", "u1")
+
+    async def test_refused_revoke_syncs_nothing(self) -> None:
+        """A revoke that changed nothing must not touch the flag — the row's
+        state (and any flag it implies) is exactly as it was."""
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import revoke_ticket
+        from app.services.hil.resolution import ApprovalRequestForbiddenError
+
+        repo = _repo(_row())
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()),
+            patch.object(ledger_decide, "capture_event"),
+            patch.object(
+                ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()
+            ) as sync,
+            pytest.raises(ApprovalRequestForbiddenError),
+        ):
+            await revoke_ticket(
+                "ap_abc",
+                user_id="intruder",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
+
+        sync.assert_not_called()
+
+
+@pytest.mark.unit
 class TestDecideHardening:
     async def test_empty_owner_never_matches_any_user(self) -> None:
         from app.services.hil.ledger_decide import decide_ledger
