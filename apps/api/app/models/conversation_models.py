@@ -234,6 +234,9 @@ class ConversationSyncRow(ResponseModel):
     # Mirrored verbatim from the document (see ConversationDocument.artifacts).
     artifacts: list[ArtifactRegistryEntry] = Field(default_factory=list)
     active_stream_id: str | None = None
+    # Whether a background run holds a live approval here — drives the
+    # sidebar dot. Missing on older rows reads as unset (no dot).
+    has_live_approval: bool | None = None
 
 
 class BatchSyncResponse(ResponseModel):

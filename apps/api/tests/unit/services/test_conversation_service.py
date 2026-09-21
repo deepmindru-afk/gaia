@@ -471,3 +471,37 @@ class TestBatchSyncConversations:
         # The internal user_id/_id must not leak into a serialized sync row.
         serialized = row.model_dump()
         assert "user_id" not in serialized and "_id" not in serialized
+
+    async def test_flagged_row_reaches_the_client(self, mock_repo, test_user):
+        """The sidebar dot reads batch-sync rows: a dropped flag here is a
+        missing dot no frontend mapping can recover."""
+        mock_repo.find_updated_since = AsyncMock(
+            return_value=[_document(has_live_approval=True)]
+        )
+        with patch.object(
+            conversation_service.stream_manager,
+            "get_resumable_stream_id",
+            new=AsyncMock(return_value=None),
+        ):
+            request = BatchSyncRequest(
+                conversations=[ConversationSyncItem(conversation_id="conv_abc")]
+            )
+            result = await batch_sync_conversations(request, test_user)
+
+        (row,) = result.conversations
+        assert row.has_live_approval is True
+
+    async def test_unflagged_row_reads_unset(self, mock_repo, test_user):
+        mock_repo.find_updated_since = AsyncMock(return_value=[_document()])
+        with patch.object(
+            conversation_service.stream_manager,
+            "get_resumable_stream_id",
+            new=AsyncMock(return_value=None),
+        ):
+            request = BatchSyncRequest(
+                conversations=[ConversationSyncItem(conversation_id="conv_abc")]
+            )
+            result = await batch_sync_conversations(request, test_user)
+
+        assert result.conversations[0].has_live_approval in (None, False)
+
