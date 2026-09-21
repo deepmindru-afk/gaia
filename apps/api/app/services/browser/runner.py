@@ -332,6 +332,7 @@ class BrowserTaskRunner:
 
     async def _watch_for_stalls(self) -> None:
         """Say once, per silence, that the page is slow when no frame has shown for a while."""
+        stalls = 0
         while True:
             await asyncio.sleep(_STALL_POLL_SECONDS)
             quiet_for = perf_counter() - self._last_frame_at
@@ -343,7 +344,15 @@ class BrowserTaskRunner:
             ):
                 continue
             self._stall_noted = True
-            await self._note(BROWSER_STALL_NOTE)
+            stalls += 1
+            # Repeats carry new information (which step, how long quiet) so a
+            # long stall reads as progress, not a stuck recording.
+            if stalls == 1:
+                await self._note(BROWSER_STALL_NOTE)
+            else:
+                await self._note(
+                    f"Still on step {self._last_step} with no update for {int(quiet_for)}s."
+                )
 
     def _record_step(self, frame: StepFrame) -> None:
         """Emit one executed step off the agent loop's critical path.
