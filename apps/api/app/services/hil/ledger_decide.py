@@ -409,6 +409,7 @@ async def redeem_approved(
             error_type=type(e).__name__,
         )
         await _settle_terminal(row, LedgerState.UNKNOWN)
+        await sync_conversation_approval_flag(row.conversation_id, row.user_id)
         return RedeemResult(
             ok=False, approval_id=approval_id, state=LedgerState.UNKNOWN, detail=cause
         )
@@ -451,6 +452,7 @@ async def redeem_approved(
             detail=f"Already {actual}; report that instead of retrying.",
         )
     await _settle_terminal(row, state)
+    await sync_conversation_approval_flag(row.conversation_id, row.user_id)
     return RedeemResult(ok=result.ok, approval_id=approval_id, state=state, detail=detail)
 
 

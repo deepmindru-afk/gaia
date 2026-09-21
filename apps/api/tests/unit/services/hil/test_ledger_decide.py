@@ -464,6 +464,29 @@ class TestRedeemExecution:
         assert result.state == LS.UNKNOWN
         assert "never auto-retried" in result.detail
 
+    async def test_redeem_terminal_syncs_the_sidebar_flag(self) -> None:
+        """A settled ticket must not leave its sidebar row behind.
+
+        The flag follows the ledger: once the envelope ran (or failed), the
+        conversation holds nothing actionable, so the next reload hides it.
+        """
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import redeem_approved
+
+        ok_result = MagicMock(ok=True, output="sent", error=None)
+        repo = self._redeem_repo()
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "dispatch_tool", new=AsyncMock(return_value=ok_result)),
+            patch.object(
+                ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()
+            ) as sync,
+        ):
+            result = await redeem_approved("ap_abc", **self._redeem_kwargs())
+
+        assert result.state.value == "executed"
+        sync.assert_awaited_once_with("conv-1", "u1")
+
     async def test_redeem_failed_transition_still_returns_state(self) -> None:
         from app.models.hil_models import LedgerState as LS
         from app.services.hil import ledger_decide

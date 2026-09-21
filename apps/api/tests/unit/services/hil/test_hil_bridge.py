@@ -554,6 +554,33 @@ class TestBackgroundFlagSync:
 
         refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=False)
 
+    async def test_approved_ticket_keeps_no_sidebar_row(self) -> None:
+        """Decided means nothing left to tap: the sidebar flag is PENDING-only.
+
+        Ledger liveness still tracks APPROVED (dedup, owner lists), but the
+        flag tracks "needs the user" — an approved ticket executing in the
+        background must vanish on next reload, not linger with a dead dot.
+        """
+        from app.models.hil_models import LedgerState
+        from app.services.hil.bridge import sync_conversation_approval_flag
+
+        approved = MagicMock()
+        approved.user_id = USER_ID
+        approved.state = LedgerState.APPROVED
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(return_value=[approved]),
+            ),
+            patch(
+                f"{MODULE}.conversation_repository.refresh_live_approval_flag",
+                new=AsyncMock(),
+            ) as refresh,
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+        refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=False)
+
     async def test_sync_failure_never_breaks_the_gate(self) -> None:
         from app.services.hil.bridge import sync_conversation_approval_flag
 

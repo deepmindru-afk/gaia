@@ -43,7 +43,6 @@ from app.models.hil_models import (
     DeclinedCallRecord,
     HILApprovalRecord,
     HILApprovalStatus,
-    LIVE_LEDGER_STATES,
     LedgerState,
 )
 from app.models.stream_events import ApprovalRequestEntry, ApprovalRequestEntryData
@@ -194,15 +193,20 @@ async def publish_ledger_request(
 
 
 async def sync_conversation_approval_flag(conversation_id: str, user_id: str) -> None:
-    """Rewrite one conversation's sidebar flag from its live ledger rows.
+    """Rewrite one conversation's sidebar flag from its pending ledger rows.
 
-    Called wherever a row leaves the live set (decide, revoke, cancel,
-    reconcile): the flag follows the ledger, never leads it. Best-effort —
-    a stale flag only mislists a conversation, never misdecides an approval.
+    Called wherever a row leaves the pending set (decide, revoke, cancel,
+    reconcile): the flag follows the ledger, never leads it. Pending-only by
+    design: an approval is permission, and once decided the user has nothing
+    left to tap — the sidebar row must vanish on next reload while execution
+    continues in the background. Ledger liveness (dedup, list_open) still
+    tracks APPROVED tickets; this flag tracks "needs the user", which is
+    PENDING alone. Best-effort — a stale flag only mislists a conversation,
+    never misdecides an approval.
     """
     try:
         rows = await approval_ledger_repository.list_open(conversation_id)
-        live = any(row.user_id == user_id and row.state in LIVE_LEDGER_STATES for row in rows)
+        live = any(row.user_id == user_id and row.state is LedgerState.PENDING for row in rows)
         await conversation_repository.refresh_live_approval_flag(
             conversation_id, user_id=user_id, live=live
         )
