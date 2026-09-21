@@ -401,7 +401,6 @@ export const useActiveLoading = (): {
   loadingText: string;
   loadingTextKey: number;
   toolInfo?: ActiveToolInfo;
-  awaitingApproval: boolean;
 } => {
   const turn = useActiveTurn();
   const activeConversationId = useChatStore(
@@ -414,20 +413,19 @@ export const useActiveLoading = (): {
   );
   const aux = useStreamStore((state) => state.auxLoading);
 
+  // Track real activity, never the approval gate: a turn paused on the user's
+  // decision shows nothing, and post-resume activity arrives via the background
+  // run below — so a stuck approval flag can never freeze the line.
   if (
     turn &&
     (turn.spinnerActive ||
-      turn.awaitingApproval ||
-      turn.phase === "awaiting_executor")
+      (turn.phase === "awaiting_executor" && !turn.awaitingApproval))
   ) {
-    // While awaiting approval the indicator owns its own copy/icon, so drop the
-    // stale tool info/text from the last streamed step.
     return {
       isLoading: true,
-      loadingText: turn.awaitingApproval ? "" : turn.loadingText,
+      loadingText: turn.loadingText,
       loadingTextKey: turn.loadingTextKey,
-      toolInfo: turn.awaitingApproval ? undefined : turn.toolInfo,
-      awaitingApproval: turn.awaitingApproval,
+      toolInfo: turn.toolInfo,
     };
   }
   if (backgroundRun) {
@@ -436,7 +434,6 @@ export const useActiveLoading = (): {
       loadingText: backgroundRun.loadingText,
       loadingTextKey: backgroundRun.loadingTextKey,
       toolInfo: backgroundRun.toolInfo,
-      awaitingApproval: false,
     };
   }
   if (aux?.active) {
@@ -445,7 +442,6 @@ export const useActiveLoading = (): {
       loadingText: aux.text,
       loadingTextKey: aux.key,
       toolInfo: aux.toolInfo,
-      awaitingApproval: false,
     };
   }
   return {
@@ -453,7 +449,6 @@ export const useActiveLoading = (): {
     loadingText: turn?.loadingText ?? "",
     loadingTextKey: turn?.loadingTextKey ?? 0,
     toolInfo: undefined,
-    awaitingApproval: false,
   };
 };
 
