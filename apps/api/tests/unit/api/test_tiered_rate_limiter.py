@@ -21,6 +21,7 @@ from app.decorators import tiered_rate_limit
 from app.models.payment_models import PlanType
 from app.models.usage_models import FeatureUsage, UsagePeriod
 from app.models.user_models import AuthenticatedUser
+from app.services.analytics_service import AnalyticsEvents
 from app.services.limit_upsell import LimitHitOrigin
 
 
@@ -770,7 +771,9 @@ class TestUpsellOnExceed:
         capture, upsell_email, paused_email = await self._exceed()
 
         capture.assert_called_once_with(
-            "user1", "rate_limit_hit", {"feature": "chat_messages", "origin": "interactive"}
+            "user1",
+            AnalyticsEvents.RATE_LIMIT_HIT,
+            {"feature": "chat_messages", "origin": "interactive", "plan": "free"},
         )
         upsell_email.assert_awaited_once_with("user1", "chat_messages")
         paused_email.assert_not_awaited()
@@ -779,7 +782,9 @@ class TestUpsellOnExceed:
         capture, upsell_email, paused_email = await self._exceed(origin=LimitHitOrigin.BACKGROUND)
 
         capture.assert_called_once_with(
-            "user1", "rate_limit_hit", {"feature": "chat_messages", "origin": "background"}
+            "user1",
+            AnalyticsEvents.RATE_LIMIT_HIT,
+            {"feature": "chat_messages", "origin": "background", "plan": "free"},
         )
         paused_email.assert_awaited_once_with("user1")
         upsell_email.assert_not_awaited()

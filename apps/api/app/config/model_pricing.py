@@ -90,6 +90,11 @@ def get_model_pricing(model_name: str) -> ModelPricing:
     return DEFAULT_PRICING
 
 
+def has_rate_card(model_name: str) -> bool:
+    """Return True when the model has a real entry, rather than DEFAULT_PRICING."""
+    return model_name in MODEL_PRICING
+
+
 def calculate_token_cost(
     model_name: str,
     input_tokens: int,

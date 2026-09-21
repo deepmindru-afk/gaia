@@ -19,6 +19,7 @@ from app.config.model_pricing import (
     ModelPricing,
     calculate_token_cost,
     get_model_pricing,
+    has_rate_card,
 )
 from app.constants.llm import (
     AUX_MODEL_NAME,
@@ -129,6 +130,16 @@ class TestEveryRuntimeModelIsPriced:
         """An entry equal to DEFAULT_PRICING is indistinguishable from a missing one — someone pasted the fallback instead of the real rate."""
         for model_id, pricing in MODEL_PRICING.items():
             assert pricing != DEFAULT_PRICING, model_id
+
+
+class TestHasRateCard:
+    """The flag the analytics event reports as cost_estimated."""
+
+    def test_a_priced_model_is_not_estimated(self) -> None:
+        assert has_rate_card(DEFAULT_MODEL_NAME) is True
+
+    def test_a_model_missing_from_the_table_is_estimated(self) -> None:
+        assert has_rate_card("some-model-nobody-registered") is False
 
 
 class TestAuxModelPricing:
