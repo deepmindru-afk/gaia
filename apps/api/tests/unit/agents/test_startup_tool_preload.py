@@ -54,10 +54,14 @@ class TestSplitStartupTools:
         from app.agents.tools.core import retrieval
 
         with patch.object(
-            retrieval, "get_tool_registry", new=AsyncMock(return_value=_registry(
-                integration_names={"GMAIL_FETCH_MESSAGES"},
-                internal_names={"query_json"},
-            )),
+            retrieval,
+            "get_tool_registry",
+            new=AsyncMock(
+                return_value=_registry(
+                    integration_names={"GMAIL_FETCH_MESSAGES"},
+                    internal_names={"query_json"},
+                )
+            ),
         ):
             bind, preload = await retrieval.split_startup_tools(
                 None, ["GMAIL_FETCH_MESSAGES", "query_json"]
@@ -69,9 +73,7 @@ class TestSplitStartupTools:
         from app.agents.tools.core import retrieval
 
         registry = _registry(integration_names=set(), internal_names=set())
-        with patch.object(
-            retrieval, "get_tool_registry", new=AsyncMock(return_value=registry)
-        ):
+        with patch.object(retrieval, "get_tool_registry", new=AsyncMock(return_value=registry)):
             bind, preload = await retrieval.split_startup_tools(
                 "u1", ["MY_MCP_TOOL"], mcp_tool_names={"MY_MCP_TOOL"}
             )
@@ -82,9 +84,9 @@ class TestSplitStartupTools:
         from app.agents.tools.core import retrieval
 
         with patch.object(
-            retrieval, "get_tool_registry", new=AsyncMock(return_value=_registry(
-                integration_names=set(), internal_names=set()
-            )),
+            retrieval,
+            "get_tool_registry",
+            new=AsyncMock(return_value=_registry(integration_names=set(), internal_names=set())),
         ):
             assert await retrieval.split_startup_tools(None, []) == ([], [])
             assert await retrieval.split_startup_tools(None, None) == ([], [])
@@ -93,10 +95,14 @@ class TestSplitStartupTools:
         from app.agents.tools.core import retrieval
 
         with patch.object(
-            retrieval, "get_tool_registry", new=AsyncMock(return_value=_registry(
-                integration_names={"GMAIL_A"},
-                internal_names={"query_json"},
-            )),
+            retrieval,
+            "get_tool_registry",
+            new=AsyncMock(
+                return_value=_registry(
+                    integration_names={"GMAIL_A"},
+                    internal_names={"query_json"},
+                )
+            ),
         ):
             bind, preload = await retrieval.split_startup_tools(
                 None, ["GMAIL_A", "query_json", "GMAIL_A"]
@@ -122,7 +128,6 @@ class TestRenderPreloadBlock:
             name="GMAIL_FETCH_MESSAGES",
             tool=GMAIL_FETCH_MESSAGES,
             is_integration=True,
-            in_registry=True,
         )
         with patch.object(
             retrieval, "_resolve_for_retrieval", new=AsyncMock(return_value=resolved)
@@ -140,9 +145,7 @@ class TestRenderPreloadBlock:
     async def test_unresolvable_tools_degrade_to_empty_with_warning(self) -> None:
         from app.agents.tools.core import retrieval
 
-        with patch.object(
-            retrieval, "_resolve_for_retrieval", new=AsyncMock(return_value=None)
-        ):
+        with patch.object(retrieval, "_resolve_for_retrieval", new=AsyncMock(return_value=None)):
             assert await retrieval.render_preload_block("u1", ["GMAIL_GHOST"]) == ""
 
 
@@ -188,10 +191,12 @@ class TestFactoryDoesNotBindIntegrationTools:
             ),
             patch(
                 "app.agents.core.subagents.base_subagent.get_tool_registry",
-                new=AsyncMock(return_value=_registry(
-                    integration_names={"GMAIL_FETCH_MESSAGES"},
-                    internal_names={"query_json"},
-                )),
+                new=AsyncMock(
+                    return_value=_registry(
+                        integration_names={"GMAIL_FETCH_MESSAGES"},
+                        internal_names={"query_json"},
+                    )
+                ),
             ),
             patch(
                 "app.agents.core.subagents.base_subagent.build_scoped_tool_dict",
@@ -220,9 +225,7 @@ class TestFactoryDoesNotBindIntegrationTools:
             patch(
                 "app.agents.core.subagents.base_subagent.get_checkpointer_manager",
                 new=AsyncMock(
-                    return_value=MagicMock(
-                        get_checkpointer=MagicMock(return_value=MagicMock())
-                    )
+                    return_value=MagicMock(get_checkpointer=MagicMock(return_value=MagicMock()))
                 ),
             ),
         ):
@@ -304,9 +307,7 @@ class TestPrepareInjectsPreloadDocs:
                     }
                 ),
             ),
-            patch.object(
-                handoff_tools, "get_provider_metadata", new=AsyncMock(return_value=None)
-            ),
+            patch.object(handoff_tools, "get_provider_metadata", new=AsyncMock(return_value=None)),
             patch.object(
                 handoff_tools,
                 "build_initial_messages",
@@ -315,9 +316,7 @@ class TestPrepareInjectsPreloadDocs:
             patch.object(
                 retrieval, "get_tool_registry", new=AsyncMock(return_value=split_registry)
             ),
-            patch.object(
-                retrieval, "_user_mcp_tool_names", new=AsyncMock(return_value=set())
-            ),
+            patch.object(retrieval, "_user_mcp_tool_names", new=AsyncMock(return_value=set())),
             patch.object(
                 retrieval,
                 "_resolve_for_retrieval",
@@ -368,9 +367,7 @@ class TestPrepareInjectsPreloadDocs:
                     }
                 ),
             ),
-            patch.object(
-                handoff_tools, "get_provider_metadata", new=AsyncMock(return_value=None)
-            ),
+            patch.object(handoff_tools, "get_provider_metadata", new=AsyncMock(return_value=None)),
             patch.object(
                 handoff_tools,
                 "build_initial_messages",

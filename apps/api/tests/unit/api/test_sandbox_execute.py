@@ -81,7 +81,7 @@ class TestSandboxExecuteRoute:
         slack.name = "SLACK_SEND_MESSAGE"
         slack.args_schema = None
         slack.ainvoke = AsyncMock(return_value={"ok": True})
-        resolved = ResolvedTool("SLACK_SEND_MESSAGE", slack, is_integration=True, in_registry=True)
+        resolved = ResolvedTool("SLACK_SEND_MESSAGE", slack, is_integration=True)
         with (
             patch(f"{MODULE}.redis_cache", _redis_with_counts(total=1, rate=1)),
             patch(f"{DISPATCH}.resolve_tool", new=AsyncMock(return_value=resolved)),

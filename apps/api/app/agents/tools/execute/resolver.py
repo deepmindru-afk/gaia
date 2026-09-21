@@ -38,17 +38,10 @@ class ResolvedTool(NamedTuple):
     # True for Composio/MCP tools (the execute proxy's scope); False for
     # internal tools, which only run bound inside a graph.
     is_integration: bool
-    # Where this tool's observed output shape is stored and read. "global" for
-    # catalog tools (identical for every user); "mcp:<integration_id>" for MCP
-    # tools, so a private server's shapes are visible only to users who can
-    # resolve that integration — the resolver itself is the access gate.
+    # Where this tool's observed shape is stored/read: "global" for catalog tools
+    # (same for every user), "mcp:<integration_id>" for MCP tools, so a private
+    # server's shapes stay visible only to users who can resolve that integration.
     shape_scope: str = GLOBAL_SHAPE_SCOPE
-    # True when the name came from the global registry, which is the only
-    # source an agent's tool space partitions: MCP tools and on-demand catalog
-    # slugs are outside every space, so no space can exclude them. Dispatch
-    # applies a caller's scope to registry tools alone, matching the boundary
-    # retrieve_tools enforces for binding.
-    in_registry: bool = False
 
 
 # Composio tools materialized on demand outside a toolkit registration; process
@@ -96,9 +89,7 @@ def _from_registry(registry: ToolRegistry, tool_name: str) -> ResolvedTool | Non
         return None
     category = registry.get_category(registry.get_category_of_tool(meta.name))
     is_integration = bool(category is not None and category.require_integration)
-    return ResolvedTool(
-        name=meta.name, tool=meta.tool, is_integration=is_integration, in_registry=True
-    )
+    return ResolvedTool(name=meta.name, tool=meta.tool, is_integration=is_integration)
 
 
 async def _resolve_mcp_tool(user_id: str | None, tool_name: str) -> ResolvedTool | None:

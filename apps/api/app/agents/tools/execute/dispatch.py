@@ -113,16 +113,14 @@ async def dispatch_tool(
     runtime the route doesn't have, and excluding them narrows what a leaked
     token can reach.
 
-    ``scoped_tool_names`` is a subagent's own tool set. Without it the caller's
-    space is the whole registry (the executor). With it, a REGISTERED tool
-    outside the set is refused — exactly the boundary ``retrieve_tools`` applies
-    to binding, and both of the proxy's surfaces enforce it (the sandbox route
-    reads the space from the run's token).
-
-    Registered is the whole claim: MCP tools and unmaterialized catalog slugs
-    belong to no space (``ResolvedTool.in_registry``), so no space excludes them
-    — the same hole ``retrieve_tools`` has, and closing it means defining a
-    subagent's space by toolkit rather than by name.
+    ``scoped_tool_names`` is a subagent's own tool set — and its complete
+    legitimate space: the full toolkit a Composio subagent registered, every
+    MCP tool an MCP subagent connected, plus the always-available internals.
+    Without it the caller's space is the whole registry (the executor). With it,
+    ANY resolved tool whose name is outside the set is refused — MCP tools and
+    on-demand catalog slugs included, so a scoped subagent cannot reach another
+    integration's tools by resolving them on demand. Both of the proxy's
+    surfaces enforce it (the sandbox route reads the space from the run's token).
     """
     if tool_name in TICKET_NAMES:
         if integration_only:
@@ -183,11 +181,7 @@ async def dispatch_tool(
             ),
         )
 
-    if (
-        scoped_tool_names is not None
-        and resolved.in_registry
-        and resolved_name not in scoped_tool_names
-    ):
+    if scoped_tool_names is not None and resolved_name not in scoped_tool_names:
         log.warning(
             f"{LogTag.TOOL} execute: tool refused outside the calling agent's tool space",
             tool_name=resolved_name,

@@ -55,9 +55,7 @@ class TestResolveTool:
             patch(f"{MODULE}.get_composio_service") as composio,
         ):
             resolved = await resolver.resolve_tool("u1", "GMAIL_SEND_EMAIL")
-        assert resolved == ResolvedTool(
-            "GMAIL_SEND_EMAIL", tool, is_integration=True, in_registry=True
-        )
+        assert resolved == ResolvedTool("GMAIL_SEND_EMAIL", tool, is_integration=True)
         mcp.assert_not_awaited()
         composio.assert_not_called()
 
@@ -68,9 +66,7 @@ class TestResolveTool:
             new=AsyncMock(return_value=_registry_with({"GMAIL_SEND_EMAIL": tool})),
         ):
             resolved = await resolver.resolve_tool("u1", "GMAIL-SEND-EMAIL")
-        assert resolved == ResolvedTool(
-            "GMAIL_SEND_EMAIL", tool, is_integration=True, in_registry=True
-        )
+        assert resolved == ResolvedTool("GMAIL_SEND_EMAIL", tool, is_integration=True)
 
     async def test_mcp_fallback_when_registry_misses(self) -> None:
         mcp_tool = MagicMock()

@@ -238,11 +238,7 @@ class TestSubagentToolSpace:
         with (
             patch(
                 f"{MODULE}.resolve_tool",
-                new=AsyncMock(
-                    return_value=ResolvedTool(
-                        tool.name, tool, is_integration=True, in_registry=True
-                    )
-                ),
+                new=AsyncMock(return_value=ResolvedTool(tool.name, tool, is_integration=True)),
             ),
             patch(f"{MODULE}.capture_event") as capture,
         ):
@@ -268,11 +264,7 @@ class TestSubagentToolSpace:
         with (
             patch(
                 f"{MODULE}.resolve_tool",
-                new=AsyncMock(
-                    return_value=ResolvedTool(
-                        tool.name, tool, is_integration=True, in_registry=True
-                    )
-                ),
+                new=AsyncMock(return_value=ResolvedTool(tool.name, tool, is_integration=True)),
             ),
             patch(f"{MODULE}.capture_event"),
             patch(f"{MODULE}.spawn_logged_task"),
@@ -286,10 +278,40 @@ class TestSubagentToolSpace:
             )
         assert result.ok is True
 
-    async def test_a_tool_outside_the_registry_is_not_scope_checked(self) -> None:
-        """MCP tools and unmaterialized catalog slugs belong to no tool space —
-        no space can list them, so scoping them out would refuse every one.
-        This is exactly what retrieve_tools already allows through."""
+    async def test_an_on_demand_tool_outside_the_space_is_also_refused(self) -> None:
+        """MCP tools and on-demand catalog slugs resolve outside every tool
+        space, so a scoped subagent must not reach another integration's tool by
+        resolving it on demand — the proxy refuses any resolved name outside the
+        subagent's set, whether or not it came from the registry."""
+        tool = _tool(name="notion_mcp_search")
+        with (
+            patch(
+                f"{MODULE}.resolve_tool",
+                new=AsyncMock(return_value=ResolvedTool(tool.name, tool, is_integration=True)),
+            ),
+            patch(f"{MODULE}.capture_event") as capture,
+        ):
+            result = await dispatch_tool(
+                user_id="u1",
+                tool_name="notion_mcp_search",
+                data={"recipient": "a@b.c", "subject": "hi"},
+                config=CONFIG,
+                scoped_tool_names={"GMAIL_SEND_EMAIL"},
+            )
+        assert result.ok is False
+        assert result.error is not None
+        assert result.error.kind is DispatchErrorKind.OUT_OF_SCOPE
+        tool.ainvoke.assert_not_awaited()
+        capture.assert_called_once_with(
+            "u1",
+            AnalyticsEvents.EXECUTE_TOOL_FAILED,
+            {"tool_name": "notion_mcp_search", "reason": "out_of_scope"},
+        )
+
+    async def test_a_subagents_own_on_demand_tool_in_scope_still_runs(self) -> None:
+        """No over-refusal: a subagent carries its own MCP/on-demand tools in its
+        tool set by name (every connected MCP tool, its whole registered
+        toolkit), so an unregistered resolution whose name IS in scope runs."""
         tool = _tool(name="notion_mcp_search")
         with (
             patch(
@@ -304,7 +326,7 @@ class TestSubagentToolSpace:
                 tool_name="notion_mcp_search",
                 data={"recipient": "a@b.c", "subject": "hi"},
                 config=CONFIG,
-                scoped_tool_names={"GMAIL_SEND_EMAIL"},
+                scoped_tool_names={"notion_mcp_search"},
             )
         assert result.ok is True
 
@@ -313,11 +335,7 @@ class TestSubagentToolSpace:
         with (
             patch(
                 f"{MODULE}.resolve_tool",
-                new=AsyncMock(
-                    return_value=ResolvedTool(
-                        tool.name, tool, is_integration=True, in_registry=True
-                    )
-                ),
+                new=AsyncMock(return_value=ResolvedTool(tool.name, tool, is_integration=True)),
             ),
             patch(f"{MODULE}.capture_event"),
             patch(f"{MODULE}.spawn_logged_task"),

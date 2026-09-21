@@ -112,7 +112,7 @@ class TestTimeoutGuard:
     async def test_bash_is_allowed_to_outlive_the_generic_bound(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """bash carries its own deadline all the way down to e2b's server-side
+        """Bash carries its own deadline all the way down to e2b's server-side
         command timeout, and advertises up to 300s to the model. Cutting it at the
         generic 120 killed long commands the tool said it would run — and in code
         mode it killed the bash call before the host could answer an in-flight
@@ -164,7 +164,7 @@ class TestTimeoutGuard:
             )
             return ToolMessage(content=content, tool_call_id="c1")
 
-        resolved = ResolvedTool("GMAIL_SEND_EMAIL", hung, is_integration=True, in_registry=True)
+        resolved = ResolvedTool("GMAIL_SEND_EMAIL", hung, is_integration=True)
         with (
             patch(f"{DISPATCH}.resolve_tool", new=AsyncMock(return_value=resolved)),
             patch(f"{DISPATCH}.capture_event"),

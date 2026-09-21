@@ -153,7 +153,7 @@ def _resolved_tool(name: str):  # type: ignore[no-untyped-def]
         return query
 
     _fake.name = name
-    return ResolvedTool(name=name, tool=_fake, is_integration=True, in_registry=True)
+    return ResolvedTool(name=name, tool=_fake, is_integration=True)
 
 
 class TestAutoBind:
