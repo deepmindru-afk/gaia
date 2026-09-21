@@ -406,6 +406,7 @@ export const applySyncedConversation = async (
     isSystemGenerated: conversation.is_system_generated ?? false,
     systemPurpose: conversation.system_purpose ?? null,
     isUnread: conversation.is_unread ?? false,
+    hasLiveApproval: apiRowHasLiveApproval(conversation),
     artifacts,
     createdAt: new Date(conversation.createdAt ?? 0),
     updatedAt: conversation.updatedAt
