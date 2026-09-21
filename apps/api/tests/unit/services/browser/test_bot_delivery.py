@@ -551,8 +551,22 @@ class TestBotProgressDeliveryHandoff:
 
 
 class TestBotProgressDeliveryResult:
-    async def test_success_message(self, delivery):
-        snap = BrowserResultSnapshot(status="completed", success=True, summary="Done", steps=3)
+    async def test_success_message_includes_the_run_summary(self, delivery):
+        snap = BrowserResultSnapshot(
+            status="completed",
+            success=True,
+            summary="Posted the tweet with exactly the requested text",
+            steps=3,
+        )
+        with patch(
+            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+        ) as mp:
+            await delivery.result(snap)
+            msg = mp.call_args[0][2][0]
+            assert msg == "✅ Done. Posted the tweet with exactly the requested text"
+
+    async def test_success_message_without_summary(self, delivery):
+        snap = BrowserResultSnapshot(status="completed", success=True, summary="", steps=3)
         with patch(
             "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
         ) as mp:

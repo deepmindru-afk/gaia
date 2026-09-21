@@ -129,7 +129,8 @@ class BotProgressDelivery:
         # Don't echo Browser-Use's raw final text: the assistant sends the
         # user-facing summary right after. This just closes out the progress.
         if snapshot.success:
-            msg = "✅ Done."
+            summary = (snapshot.summary or "").strip()
+            msg = f"✅ Done. {summary}" if summary else "✅ Done."
         elif snapshot.status is BrowserSessionStatus.CANCELLED:
             # The user stopped this themselves, so telling them it could not be
             # finished reads as a failure they did not cause.
