@@ -245,7 +245,10 @@ class JevChatModel:
         observation = observe(state, live, screen)
         t4 = perf_counter()
         log.info(
-            f"{LogTag.BROWSER} Jev step input built",
+            f"{LogTag.BROWSER} Jev step input built (step={self._steps + 1} "
+            f"state={round((t1 - t0) * 1000)}ms viewport={round((t2 - t1) * 1000)}ms "
+            f"live={round((t3 - t2) * 1000)}ms observe={round((t4 - t3) * 1000)}ms "
+            f"elements={len(observation.elements)})",
             step=self._steps + 1,
             state_ms=round((t1 - t0) * 1000),
             viewport_ms=round((t2 - t1) * 1000),
@@ -298,7 +301,9 @@ class JevChatModel:
             cost = evaluation.gateway_cost_usd if evaluation is not None else None
             self._gateway_cost_usd = (self._gateway_cost_usd + cost) if cost is not None else None
         log.info(
-            f"{LogTag.BROWSER} Jev step decided",
+            f"{LogTag.BROWSER} Jev step decided (step={self._steps} "
+            f"{decision.operation.value} p={decision.confidence:.2f} "
+            f"{decision.evaluation.latency_ms if decision.evaluation else None}ms)",
             step=self._steps,
             provider=self._provider,
             operation=decision.operation.value,
@@ -521,7 +526,8 @@ class JevChatModel:
             log.warning(f"{LogTag.BROWSER} Jev text helper failed", error_type=type(exc).__name__)
             return None
         log.info(
-            f"{LogTag.BROWSER} Jev text helper answered",
+            f"{LogTag.BROWSER} Jev text helper answered (step={self._steps} "
+            f"text_ms={round((perf_counter() - t0) * 1000)})",
             step=self._steps,
             text_ms=round((perf_counter() - t0) * 1000),
         )

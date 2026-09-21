@@ -107,7 +107,8 @@ def _log_published(
         screenshot_upload_ms=upload_ms,
     )
     log.info(
-        f"{LogTag.BROWSER} Browser screenshot published",
+        f"{LogTag.BROWSER} Browser screenshot published (step {index}, {backend}, "
+        f"{size_bytes}B in {upload_ms}ms)",
         step_index=index,
         backend=backend,
         size_bytes=size_bytes,
