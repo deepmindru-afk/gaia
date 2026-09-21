@@ -30,6 +30,16 @@ EXECUTOR_APPROVAL_LOST_MESSAGE = (
     "I couldn't set up the approval for that action, so I've stopped. Please try again."
 )
 
+# User-facing text when comms narration of a finished run is unavailable. The
+# executor's own terminal text is never substituted: it is internal monologue,
+# and on the error path can be a raw exception string.
+EXECUTOR_NARRATION_FAILED_MESSAGE = (
+    "I finished that task, but I couldn't write up the result. Please ask me again."
+)
+EXECUTOR_NARRATION_FAILED_ERROR_MESSAGE = (
+    "That task didn't finish, and I couldn't write up what went wrong. Please try again."
+)
+
 # Task text for the wake-up turn queued when background-subagent work lands after
 # the executor rested. Landed results arrive through the executor inbox on their
 # own; the run only has to report what is new.

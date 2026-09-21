@@ -35,6 +35,10 @@ from app.agents.core.background.workflow_platform_delivery import (
 from app.agents.core.comms_directive import interpret_comms_output
 from app.agents.core.nodes.follow_up_actions_node import generate_follow_up_actions
 from app.constants.comms import CommsDirectiveKind
+from app.constants.executor import (
+    EXECUTOR_NARRATION_FAILED_ERROR_MESSAGE,
+    EXECUTOR_NARRATION_FAILED_MESSAGE,
+)
 from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
 from app.constants.log_tags import LogTag
 from app.core.websocket_manager import websocket_manager
@@ -484,11 +488,15 @@ async def _narrate_result(
         returned_note=returned_note,
         workflow_id=run.workflow_id,
     )
-    # If comms is unavailable, fall back to the raw executor text rather than
-    # dropping the message entirely.
+    # Never fall back to result_text: it is the executor's internal monologue,
+    # and on the error path a raw exception string (executor_runner `str(e)`).
     narrated = bool(notification_text)
     if not narrated:
-        notification_text = result_text
+        notification_text = (
+            EXECUTOR_NARRATION_FAILED_ERROR_MESSAGE
+            if result_type == "error"
+            else EXECUTOR_NARRATION_FAILED_MESSAGE
+        )
     observe_delivery_narration(
         time.perf_counter() - narration_start, status="success" if narrated else "fallback"
     )
