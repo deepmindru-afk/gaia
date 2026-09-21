@@ -17,7 +17,6 @@ from app.constants.chat import SourceCategory
 from app.models.chat_models import ConversationSource
 from app.services.browser.jobs import get_conversation_slot
 from tests.e2e._harness.browser_job import (
-    LIVE_VIEW_LINK,
     SHOT_URL_TEMPLATE,
     JevScript,
     JobWorld,
@@ -129,7 +128,8 @@ async def test_a_bot_conversation_gets_one_photo_per_step_and_the_result_line() 
         SHOT_URL_TEMPLATE.format(index=1),
         SHOT_URL_TEMPLATE.format(index=2),
     ]
-    assert any(LIVE_VIEW_LINK in message for message in world.bot_messages)
+    # Session start is deliberately silent (the link arrives at a handoff, if
+    # one comes); the run still closes with its result line.
     assert world.bot_messages[-1].startswith("✅")
 
 

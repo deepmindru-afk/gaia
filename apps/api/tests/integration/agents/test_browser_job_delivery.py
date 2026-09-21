@@ -261,8 +261,6 @@ async def test_a_bot_conversation_is_served_the_same_run_over_its_own_transport(
         )
     )
 
-    texts = [block for _, _, blocks in outbound["messages"] for block in blocks]
-    assert any(LIVE_VIEW_LINK in text for text in texts), texts
     assert [photo[2] for photo in outbound["photos"]] == [SHOT_URL]
     assert [_shape(frame) for frame in _frames(chunks)].count(BROWSER_TASK_EVENT) == 3
 

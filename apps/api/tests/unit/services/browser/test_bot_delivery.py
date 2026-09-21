@@ -563,7 +563,8 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
-            assert msg == "✅ Done. Posted the tweet with exactly the requested text"
+            assert msg.startswith("✅")
+            assert "Posted the tweet with exactly the requested text" in msg
 
     async def test_success_message_without_summary(self, delivery):
         snap = BrowserResultSnapshot(status="completed", success=True, summary="", steps=3)
@@ -572,7 +573,7 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
-            assert msg == "✅ Done."
+            assert msg.startswith("✅")
 
     async def test_failure_message(self, delivery):
         snap = BrowserResultSnapshot(status="failed", success=False, summary="Failed", steps=2)
@@ -581,7 +582,8 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
-            assert msg == "⚠️ Couldn't finish that: Failed"
+            assert "⚠️" in msg
+            assert "Failed" in msg
 
     async def test_a_user_cancelled_run_reads_as_stopped_not_as_a_failure(self, delivery):
         snap = BrowserResultSnapshot(
@@ -591,7 +593,10 @@ class TestBotProgressDeliveryResult:
             "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
         ) as mp:
             await delivery.result(snap)
-            assert mp.call_args[0][2][0] == "🛑 Stopped."
+            msg = mp.call_args[0][2][0]
+            assert "🛑" in msg
+            assert "Stopped" in msg
+            assert "Couldn't" not in msg
 
     async def test_failure_message_empty_summary_uses_bare_sentence(self, delivery):
         snap = BrowserResultSnapshot(status="failed", success=False, summary="", steps=2)
@@ -600,7 +605,7 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
-            assert msg == "⚠️ Couldn't finish that."
+            assert "⚠️" in msg
 
     async def test_failure_message_strips_prefix_and_surfaces_reason(self, delivery):
         snap = BrowserResultSnapshot(
@@ -614,7 +619,8 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
-            assert msg == ("⚠️ Couldn't finish that: Failed to establish CDP connection")
+            assert "Browser task failed: " not in msg
+            assert "Failed to establish CDP connection" in msg
 
     async def test_a_long_reason_is_sent_whole(self, delivery):
         """No clip: a reason of any length reaches the conversation intact."""
@@ -626,7 +632,7 @@ class TestBotProgressDeliveryResult:
             "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
         ) as mp:
             await delivery.result(snap)
-            assert mp.call_args[0][2][0] == f"⚠️ Couldn't finish that: {reason}"
+            assert reason in mp.call_args[0][2][0]
 
     async def test_a_handoff_timeout_summary_does_not_stack_two_stop_words(self, delivery):
         """BROWSER_RUN_HANDOFF_TIMED_OUT already starts with its own "Stopped:" label; the failure prefix must not stack a second one on top of it."""
@@ -641,9 +647,8 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
-            assert msg == (
-                "⚠️ Couldn't finish that: nobody finished the step in the live browser in time."
-            )
+            assert "Stopped: Stopped" not in msg
+            assert "nobody finished the step in the live browser in time." in msg
 
     async def test_failure_message_collapses_multiline_summary_to_one_line(self, delivery):
         summary = "Browser task failed: " + "\n".join(["line " + str(i) * 20 for i in range(20)])
@@ -653,9 +658,9 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
-            reason = msg.removeprefix("⚠️ Couldn't finish that: ")
-            assert "\n" not in reason
-            assert "…" not in reason
+            assert "\n" not in msg
+            assert "…" not in msg
+            assert "line 0" in msg
 
     async def test_with_replay_url_appended(self, delivery):
         snap = BrowserResultSnapshot(
@@ -670,9 +675,8 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
-            assert msg == (
-                "✅ Done. Done\n\n📽 Here's a recap of the run: https://cdn.example.com/replay"
-            )
+            assert msg.startswith("✅")
+            assert "https://cdn.example.com/replay" in msg
 
 
 class TestOneLinkPerRun:

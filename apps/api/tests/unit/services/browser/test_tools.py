@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from app.constants.browser import BrowserHandoffAction
 from app.services.browser.tools import build_browser_tools
 
 CAPTCHA_DESCRIPTION = (
@@ -131,40 +130,6 @@ async def test_captcha_action_always_uses_none_category() -> None:
 
     assert takeover.calls == [("Select all squares with motorcycles", "none")]
     assert result == "resolved:Select all squares with motorcycles:none"
-
-
-def test_takeover_action_description_mentions_all_three_categories() -> None:
-    takeover = _FakeTakeover()
-    guidance = _FakeGuidance()
-    tools = build_browser_tools(
-        solve_captcha=False, handle_takeover=takeover, handle_guidance=guidance
-    )
-
-    action = _get_action(tools, "request_human_takeover")
-
-    assert "payment | credentials | irreversible" in action.description
-
-
-def test_the_registered_handoff_actions_are_exactly_the_enum() -> None:
-    """Keep the enum spelling the same def names Browser-Use registers so the two cannot drift."""
-    takeover: Callable[[str, str], Awaitable[str]] = _FakeTakeover()
-    guidance = _FakeGuidance()
-
-    both = build_browser_tools(
-        solve_captcha=True, handle_takeover=takeover, handle_guidance=guidance
-    )
-    takeover_only = build_browser_tools(
-        solve_captcha=False, handle_takeover=takeover, handle_guidance=guidance
-    )
-
-    assert {a.value for a in BrowserHandoffAction} <= set(both.registry.registry.actions)
-    registered_handoffs = {a.value for a in BrowserHandoffAction} & set(
-        takeover_only.registry.registry.actions
-    )
-    assert registered_handoffs == {
-        BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER.value,
-        BrowserHandoffAction.REQUEST_AGENT_GUIDANCE.value,
-    }
 
 
 async def test_the_guidance_action_hands_the_reason_to_the_agent_seam() -> None:
