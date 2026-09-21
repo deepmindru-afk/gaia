@@ -27,15 +27,6 @@ from app.schemas.browser import (
 from app.services.browser.captions import caption_from_action_list
 from app.services.browser.live_view import create_live_view_link
 from app.services.outbound_delivery import publish_outbound_message, publish_outbound_photo
-from shared.py.wide_events import log
-
-# A photo caption should be a glanceable phrase, not a paragraph of the agent's goal.
-# Sized for messaging-app photo captions: descriptive but never outrageous.
-_CAPTION_MAX_CHARS = 180
-
-# The runner's failure summary is written for logs, not chat — clip it so a raw
-# error dump never floods the conversation.
-_FAILURE_REASON_MAX_CHARS = 160
 
 
 class BotProgressDelivery:
@@ -78,7 +69,7 @@ class BotProgressDelivery:
         # page), but its label still says where the run is headed: send that
         # as text so step 1 is never silence.
         if _is_blank_tab(snapshot.url):
-            label = _step_label(snapshot.goal, snapshot.actions, max_chars=None)
+            label = _step_label(snapshot.goal, snapshot.actions)
             if label:
                 self._steps_shown += 1
                 await self.note(f"Step {self._steps_shown} · {label}")
@@ -110,7 +101,7 @@ class BotProgressDelivery:
             if sent:
                 return
         await self.note(
-            _step_text(self._steps_shown, snapshot.goal, snapshot.actions)
+            _step_caption(self._steps_shown, snapshot.goal, snapshot.actions)
         )
 
     async def handoff(self, snapshot: BrowserHandoffSnapshot) -> None:
@@ -156,12 +147,9 @@ class BotProgressDelivery:
 
 
 def _failure_reason(summary: str) -> str:
-    """Collapse a runner failure summary to one clipped line, or "" when it carried none."""
+    """Collapse a runner failure summary to one line, or "" when it carried none. Never clipped."""
     reason = " ".join(summary.removeprefix(BROWSER_TASK_FAILED_PREFIX).split())
-    reason = reason.removeprefix(BROWSER_RUN_STOPPED_LABEL)
-    if len(reason) > _FAILURE_REASON_MAX_CHARS:
-        reason = reason[: _FAILURE_REASON_MAX_CHARS - 1].rstrip() + "…"
-    return reason
+    return reason.removeprefix(BROWSER_RUN_STOPPED_LABEL)
 
 
 def _is_blank_tab(url: str | None) -> bool:
@@ -169,23 +157,12 @@ def _is_blank_tab(url: str | None) -> bool:
     return not url or url.startswith("about:") or url == "chrome://newtab/"
 
 
-def _step_label(
-    goal: str | None, actions: list[BrowserAction], max_chars: int | None = _CAPTION_MAX_CHARS
-) -> str:
-    """Say what the agent is doing this step in plain language: its goal, else a clean action label; never a raw URL or a parameter dump."""
-    label = (goal or "").strip().rstrip(".") or caption_from_action_list(actions)
-    if max_chars is not None and len(label) > max_chars:
-        label = label[: max_chars - 1].rstrip() + "…"
-    return label
+def _step_label(goal: str | None, actions: list[BrowserAction]) -> str:
+    """Say what the agent is doing this step in plain language: its goal, else a clean action label; never a raw URL or a parameter dump. Never clipped."""
+    return (goal or "").strip().rstrip(".") or caption_from_action_list(actions)
 
 
 def _step_caption(index: int, goal: str | None, actions: list[BrowserAction]) -> str:
-    """Return the numbered caption a step photo carries (clipped: photo captions stay glanceable)."""
+    """Return the numbered caption a step carries, in full."""
     label = _step_label(goal, actions)
-    return f"Step {index} · {label}" if label else f"Step {index}"
-
-
-def _step_text(index: int, goal: str | None, actions: list[BrowserAction]) -> str:
-    """Return the numbered text for a step with no photo: the full label, never clipped."""
-    label = _step_label(goal, actions, max_chars=None)
     return f"Step {index} · {label}" if label else f"Step {index}"

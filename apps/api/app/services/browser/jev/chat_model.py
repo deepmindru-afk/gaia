@@ -401,7 +401,7 @@ class JevChatModel:
                 if value is None:
                     # A value the goal did not supply is never invented; the human
                     # supplies it instead, per the takeover policy.
-                    return _takeover(f"Enter the {element.label}"[:80]), None
+                    return _takeover(f"Enter the {element.label}"), None
                 input_action = "input" if "input" in registered else "input_text"
                 return {
                     input_action: {"index": element.browser_index, "text": value, "clear": True}

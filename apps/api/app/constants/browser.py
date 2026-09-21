@@ -207,9 +207,6 @@ BROWSER_JOB_CRASHED_SUMMARY = (
     "the browser task stopped unexpectedly, and nothing else changed; you can ask me to try again"
 )
 
-# The final step photo is captioned with what was found, clipped to this length.
-BROWSER_DONE_CAPTION_MAX_CHARS = 80
-
 # Upper bound on how many times one task may hand off to the human, so a
 # misbehaving agent can't loop the user forever.
 MAX_HANDOFFS_PER_TASK = 5

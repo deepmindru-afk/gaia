@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict
 
 from app.constants.browser import (
     BROWSER_AGENT_GUIDANCE_CAPTION,
-    BROWSER_DONE_CAPTION_MAX_CHARS,
     BrowserHandoffAction,
 )
 from app.schemas.browser import BrowserAction
@@ -23,14 +22,9 @@ from app.schemas.browser import BrowserAction
 # noise ("Clicking"), the element's text reads as intent ("Clicking Add to cart").
 _TARGETED_ACTIONS = {"click", "select_dropdown", "upload_file"}
 
-_TARGET_MAX_CHARS = 40
-
-
-def _shorten(text: str, max_chars: int = _TARGET_MAX_CHARS) -> str:
-    collapsed = " ".join(text.split())
-    if len(collapsed) <= max_chars:
-        return collapsed
-    return collapsed[: max_chars - 1].rstrip() + "…"
+def _shorten(text: str) -> str:
+    """Collapse whitespace so multi-line element text reads as one line. Never clips."""
+    return " ".join(text.split())
 
 
 class _ActionParams(BaseModel):
@@ -80,7 +74,8 @@ def _done_caption(params: _ActionParams, _target: str | None) -> str:
     text = (params.text or "").strip()
     # The verb ("Finished") says nothing a reader can't already see in the
     # photo; the done action's own summary says what was actually found.
-    return _shorten(text, BROWSER_DONE_CAPTION_MAX_CHARS) if text else "Finished"
+    # Collapsed to one line, never clipped.
+    return _shorten(text) or "Finished"
 
 
 def _click_caption(params: _ActionParams, target: str | None) -> str:

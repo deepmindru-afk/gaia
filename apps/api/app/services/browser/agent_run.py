@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 # person would recognise it. `value` covers <input type="submit" value="Submit">.
 _LABEL_ATTRIBUTES = ("aria-label", "value", "title", "placeholder", "alt", "name", "id")
 
-_OUTPUT_MAX_CHARS = 200
+_OUTPUT_MAX_CHARS = 1000
 
 #: Caption for a step that produced no action to describe — one whose actions
 #: errored or whose observation stalled. It lives here rather than in

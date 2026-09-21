@@ -11,7 +11,6 @@ import pytest
 from app.constants.browser import BrowserHandoffAction
 from app.schemas.browser import BrowserAction
 from app.services.browser.captions import (
-    _TARGET_MAX_CHARS,
     _dedupe_join,
     _shorten,
     caption_from_action_list,
@@ -101,11 +100,10 @@ class TestDescribeAction:
             == "line one line two"
         )
 
-    def test_done_summary_longer_than_80_chars_is_truncated(self):
-        text = "x" * 90
+    def test_done_summary_is_never_truncated(self):
+        text = "x" * 300
         result = describe_action("done", {"text": text, "success": True})
-        assert result.endswith("…")
-        assert len(result) == 80
+        assert result == text
 
     def test_fallback_replaces_underscores(self):
         assert describe_action("my_custom_action", {}) == "my custom action"
@@ -153,15 +151,14 @@ class TestCaptionFromActionList:
         actions = [BrowserAction(name="input", inputs={"text": "Aryan"}, target="Full name")]
         assert caption_from_action_list(actions) == 'Typing "Aryan" into "Full name"'
 
-    def test_long_target_is_truncated(self):
+    def test_long_target_is_kept_whole(self):
         actions = [BrowserAction(name="click", inputs={}, target="x" * 80)]
         caption = caption_from_action_list(actions)
-        assert caption.endswith('…"')
-        assert len(caption) < 60
+        assert caption == 'Clicking "' + "x" * 80 + '"'
 
 
 # ---------------------------------------------------------------------------
-# _shorten — the truncation boundary a caption's readable length depends on
+# _shorten — whitespace collapsing only; captions never clip
 # ---------------------------------------------------------------------------
 
 
@@ -170,17 +167,14 @@ class TestShorten:
     def test_collapses_internal_whitespace(self):
         assert _shorten("a  \n b\tc") == "a b c"
 
-    def test_exactly_at_the_limit_is_kept_whole(self):
-        """40 chars is the last length that still fits, so it must survive untouched -- truncating it would put an ellipsis on a caption that had room to spare."""
-        text = "y" * _TARGET_MAX_CHARS
+    def test_long_text_is_kept_whole(self):
+        """No length cap: a long caption survives untouched."""
+        text = "y" * 300
         assert _shorten(text) == text
 
-    def test_one_over_the_limit_keeps_39_chars_plus_the_ellipsis(self):
-        assert _shorten("x" * (_TARGET_MAX_CHARS + 1)) == "x" * (_TARGET_MAX_CHARS - 1) + "…"
-
-    def test_truncation_does_not_leave_a_dangling_space_before_the_ellipsis(self):
-        text = "a" * (_TARGET_MAX_CHARS - 2) + " " + "b" * 20
-        assert _shorten(text) == "a" * (_TARGET_MAX_CHARS - 2) + "…"
+    def test_internal_whitespace_collapses_without_clipping(self):
+        text = "a" * 178 + " " + "b" * 20
+        assert _shorten(text) == text
 
 
 @pytest.mark.unit

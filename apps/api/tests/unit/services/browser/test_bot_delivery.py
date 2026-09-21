@@ -17,7 +17,6 @@ from app.schemas.browser import (
 )
 from app.services.browser import bot_delivery as bot_delivery_mod
 from app.services.browser.bot_delivery import (
-    _FAILURE_REASON_MAX_CHARS,
     BotProgressDelivery,
     _is_blank_tab,
     _step_caption,
@@ -79,18 +78,10 @@ class TestStepCaption:
     def test_strips_trailing_dot(self):
         assert _step_caption(1, "Opening the page.", []) == "Step 1 · Opening the page"
 
-    def test_exactly_180_not_truncated(self):
-        goal = "A" * 180
+    def test_long_goal_never_truncated(self):
+        goal = "A" * 300
         result = _step_caption(1, goal, [])
         assert result == f"Step 1 · {goal}"
-
-    def test_181_truncated(self):
-        goal = "A" * 181
-        result = _step_caption(1, goal, [])
-        assert result.endswith("…")
-        # label should be 180 chars
-        label = result.split(" · ", 1)[1]
-        assert len(label) == 180
 
     def test_falls_back_to_the_actions(self):
         # goal empty → uses caption_from_action_summary
@@ -114,15 +105,10 @@ class TestStepCaption:
         # which a real caption text like "Click X" must never lose.
         assert _step_caption(1, "Click X", []) == "Step 1 · Click X"
 
-    def test_truncation_rstrips_trailing_space_before_ellipsis(self):
-        # 178 "A"s then a space then filler — the 180-char slice cuts right after
-        # the space, so the truncated label must have it trimmed before the
-        # ellipsis is appended, not "A"*178 + " …".
+    def test_long_goal_with_space_never_truncated(self):
         goal = "A" * 178 + " " + "B" * 20
         result = _step_caption(1, goal, [])
-        label = result.split(" · ", 1)[1]
-        assert label == "A" * 178 + "…"
-        assert len(label) == 179
+        assert result == f"Step 1 · {goal}"
 
 
 class TestBotProgressDeliverySession:
@@ -268,9 +254,8 @@ class TestBotProgressDeliveryStep:
             mm.assert_awaited_once()
             assert mm.call_args[0][2][0] == "Step 1 · Open"
 
-    async def test_long_goal_photo_caption_is_clipped(self, delivery):
+    async def test_long_goal_photo_caption_is_whole(self, delivery):
         goal = 'Typing "hi sent using gaia browser use from telegram" into the post composer box on the x.com homepage timeline view area near the very top of the main feed column on the left hand side'
-        assert len(goal) > 90
         snap = BrowserStepSnapshot(
             index=2, goal=goal, url="https://x.com/compose", screenshot="https://cdn/shot.png"
         )
@@ -286,11 +271,10 @@ class TestBotProgressDeliveryStep:
             await delivery.step(snap)
             mock_photo.assert_awaited_once()
             mm.assert_not_awaited()
-            assert mock_photo.call_args.kwargs["caption"].endswith("…")
+            assert mock_photo.call_args.kwargs["caption"] == f"Step 1 · {goal}"
 
-    async def test_long_goal_text_fallback_is_not_clipped(self, delivery):
+    async def test_long_goal_text_fallback_is_whole(self, delivery):
         goal = 'Typing "hi sent using gaia browser use from telegram" into the post composer box on the x.com homepage timeline view area near the very top of the main feed column on the left hand side'
-        assert len(goal) > 90
         snap = BrowserStepSnapshot(
             index=2, goal=goal, url="https://x.com/compose", screenshot="https://cdn/shot.png"
         )
@@ -618,9 +602,9 @@ class TestBotProgressDeliveryResult:
             msg = mp.call_args[0][2][0]
             assert msg == ("⚠️ Couldn't finish that: Failed to establish CDP connection")
 
-    async def test_a_reason_exactly_at_the_limit_is_sent_whole(self, delivery):
-        """The clip is for reasons longer than the limit, so one exactly at it keeps its last word."""
-        reason = "x" * _FAILURE_REASON_MAX_CHARS
+    async def test_a_long_reason_is_sent_whole(self, delivery):
+        """No clip: a reason of any length reaches the conversation intact."""
+        reason = "x" * 300
         snap = BrowserResultSnapshot(
             status="failed", success=False, summary=f"Browser task failed: {reason}", steps=2
         )
@@ -629,20 +613,6 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             assert mp.call_args[0][2][0] == f"⚠️ Couldn't finish that: {reason}"
-
-    async def test_a_clip_landing_after_a_space_leaves_no_gap_before_the_ellipsis(self, delivery):
-        head = "x" * (_FAILURE_REASON_MAX_CHARS - 2)
-        snap = BrowserResultSnapshot(
-            status="failed",
-            success=False,
-            summary=f"Browser task failed: {head} {'y' * 40}",
-            steps=2,
-        )
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            assert mp.call_args[0][2][0] == f"⚠️ Couldn't finish that: {head}…"
 
     async def test_a_handoff_timeout_summary_does_not_stack_two_stop_words(self, delivery):
         """BROWSER_RUN_HANDOFF_TIMED_OUT already starts with its own "Stopped:" label; the failure prefix must not stack a second one on top of it."""
@@ -661,7 +631,7 @@ class TestBotProgressDeliveryResult:
                 "⚠️ Couldn't finish that: nobody finished the step in the live browser in time."
             )
 
-    async def test_failure_message_clips_long_multiline_summary(self, delivery):
+    async def test_failure_message_collapses_multiline_summary_to_one_line(self, delivery):
         summary = "Browser task failed: " + "\n".join(["line " + str(i) * 20 for i in range(20)])
         snap = BrowserResultSnapshot(status="failed", success=False, summary=summary, steps=2)
         with patch(
@@ -671,8 +641,7 @@ class TestBotProgressDeliveryResult:
             msg = mp.call_args[0][2][0]
             reason = msg.removeprefix("⚠️ Couldn't finish that: ")
             assert "\n" not in reason
-            assert len(reason) == 160
-            assert reason.endswith("…")
+            assert "…" not in reason
 
     async def test_with_replay_url_appended(self, delivery):
         snap = BrowserResultSnapshot(
