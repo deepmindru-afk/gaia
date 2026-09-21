@@ -5,7 +5,7 @@
 // Core message types
 // ---------------------------------------------------------------------------
 
-import type { RecurrenceData, ToolDataEntry } from "../api/generated";
+import type { ToolDataEntry } from "../api/generated";
 
 export type {
   RecurrenceData,
