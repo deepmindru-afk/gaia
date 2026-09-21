@@ -1,9 +1,9 @@
-"""OpenRouter transport for Jev, a decisions model rather than a chat model.
+"""Decisions-protocol transport for Jev, served by OpenRouter or Vercel AI Gateway.
 
 Jev answers structured questions instead of producing text, so it is refused by
-chat/completions and served by OpenRouter's decisions endpoint: {model, state,
-questions} in, {answers, usage} back. The body is the same one TypeSafe
-takes directly; only the envelope and the credential differ.
+chat/completions and served by a decisions endpoint: {model, state, questions}
+in, {answers, usage} back. Both gateways speak that shape; only the URL, the
+model id, and the credential differ, so one client covers both.
 """
 
 from __future__ import annotations

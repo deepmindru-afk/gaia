@@ -16,6 +16,7 @@ rather than failing the run.
 
 import asyncio
 from functools import lru_cache
+from time import perf_counter
 from typing import Protocol, cast
 
 import boto3
@@ -70,8 +71,12 @@ def _put(image: bytes, key: str) -> None:
 
 async def publish_step_screenshot(png: bytes, conversation_id: str, index: int) -> str | None:
     """Publish one step screenshot and return the URL that serves it, or None."""
+    size_bytes = len(png)
+    started = perf_counter()
     if not _r2_configured():
-        return await _store_locally(png, conversation_id, index)
+        url = await _store_locally(png, conversation_id, index)
+        _log_published(index, size_bytes, "local", url is not None, started)
+        return url
     key = f"browser_steps/{conversation_id}/step_{index}.png"
     try:
         # boto3 is blocking — run it off the event loop.
@@ -80,10 +85,35 @@ async def publish_step_screenshot(png: bytes, conversation_id: str, index: int) 
         log.warning(
             f"{LogTag.BROWSER} Browser screenshot upload failed; storing it locally instead",
             error_type=type(exc).__name__,
+            size_bytes=size_bytes,
         )
-        return await _store_locally(png, conversation_id, index)
+        url = await _store_locally(png, conversation_id, index)
+        _log_published(index, size_bytes, "local_fallback", url is not None, started)
+        return url
     base = (settings.R2_PUBLIC_BASE_URL or "").rstrip("/")  # guaranteed set by _r2_configured
+    _log_published(index, size_bytes, "r2", True, started)
     return f"{base}/{key}"
+
+
+def _log_published(
+    index: int, size_bytes: int, backend: str, ok: bool, started: float
+) -> None:
+    """One real-time line per step frame, and its numbers on the wide event."""
+    upload_ms = round((perf_counter() - started) * 1000)
+    log.set_ns(
+        "browser",
+        screenshot_backend=backend,
+        screenshot_bytes=size_bytes,
+        screenshot_upload_ms=upload_ms,
+    )
+    log.info(
+        f"{LogTag.BROWSER} Browser screenshot published",
+        step_index=index,
+        backend=backend,
+        size_bytes=size_bytes,
+        upload_ms=upload_ms,
+        success=ok,
+    )
 
 
 async def _store_locally(png: bytes, conversation_id: str, index: int) -> str | None:
@@ -94,5 +124,6 @@ async def _store_locally(png: bytes, conversation_id: str, index: int) -> str | 
         log.warning(
             f"{LogTag.BROWSER} Browser screenshot could not be stored; using inline fallback",
             error_type=type(exc).__name__,
+            size_bytes=len(png),
         )
         return None

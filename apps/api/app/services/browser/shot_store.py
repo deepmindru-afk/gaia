@@ -17,6 +17,7 @@ import asyncio
 from pathlib import Path
 import secrets
 import tempfile
+from time import perf_counter
 
 from app.constants.browser import (
     BROWSER_LIVE_CODE_ENTROPY_BYTES,
@@ -24,8 +25,10 @@ from app.constants.browser import (
     BROWSER_SHOT_CODE_KEY_PREFIX,
     BROWSER_SHOT_SESSION_KEY_PREFIX,
 )
+from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache
 from app.services.browser.links import browser_link_base
+from shared.py.wide_events import log
 
 # Disposable progress artifacts for a local run, so the system temp dir is the
 # honest home: nothing here outlives the machine, and nothing else wants it.
@@ -73,7 +76,24 @@ def _write(png: bytes, session_id: str, index: int) -> None:
 
 async def store_step_screenshot(png: bytes, session_id: str, index: int) -> str:
     """Write one step frame to disk and return the URL that serves it back."""
+    size_bytes = len(png)
+    started = perf_counter()
     # Disk is blocking, and this runs on the browser loop's own event loop.
     await asyncio.to_thread(_write, png, session_id, index)
     code = await _code_for(session_id)
+    store_ms = round((perf_counter() - started) * 1000)
+    log.set_ns(
+        "browser",
+        session_id=session_id,
+        shot_backend="local",
+        shot_bytes=size_bytes,
+        shot_store_ms=store_ms,
+    )
+    log.info(
+        f"{LogTag.BROWSER} Browser step screenshot stored",
+        step_index=index,
+        backend="local",
+        size_bytes=size_bytes,
+        store_ms=store_ms,
+    )
     return f"{browser_link_base()}/shots/{code}/{index}{_SHOT_SUFFIX}"

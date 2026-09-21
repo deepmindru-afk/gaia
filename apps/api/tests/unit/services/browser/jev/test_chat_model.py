@@ -634,6 +634,34 @@ def test_build_requires_the_gateway_key(monkeypatch) -> None:
         build_jev_chat_model(text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake text model in place of the real one
 
 
+def test_build_vercel_uses_the_evaluate_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.browser.jev.chat_model.settings.BROWSER_JEV_PROVIDER", "vercel"
+    )
+    monkeypatch.setattr(
+        "app.services.browser.jev.chat_model.settings.BROWSER_JEV_VERCEL_API_KEY", "vck-test"
+    )
+
+    model = build_jev_chat_model(text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake text model in place of the real one
+
+    assert model.provider == "vercel"
+    assert model.model == "typesafe-ai/jev"
+    assert model._client._url == "https://ai-gateway.vercel.sh/v1/evaluate"
+    assert model._client._headers == {"Authorization": "Bearer vck-test"}
+
+
+def test_build_vercel_requires_its_key(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.browser.jev.chat_model.settings.BROWSER_JEV_PROVIDER", "vercel"
+    )
+    monkeypatch.setattr(
+        "app.services.browser.jev.chat_model.settings.BROWSER_JEV_VERCEL_API_KEY", None
+    )
+
+    with pytest.raises(BrowserUnavailableError, match="BROWSER_JEV_VERCEL_API_KEY"):
+        build_jev_chat_model(text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake text model in place of the real one
+
+
 async def test_every_operation_has_a_mapping(flights_state) -> None:
     """A new JevOperation member without an action mapping would raise mid-run."""
     for operation in JevOperation:

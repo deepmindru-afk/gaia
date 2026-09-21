@@ -197,10 +197,17 @@ class CommonSettings(BaseAppSettings):
     R2_SECRET_ACCESS_KEY: str | None = None
     R2_BUCKET: str = "gaia-browser-shots"
     R2_PUBLIC_BASE_URL: str | None = None
-    # Jev "System One" decision policy (TypeSafe AI, served by OpenRouter): each
-    # step's decision is a single Jev evaluation over the page's indexed element
-    # table, not a generative chat completion. Screenshots are never sent to Jev.
+    # Jev "System One" decision policy (TypeSafe AI): each step's decision is a
+    # single Jev evaluation over the page's indexed element table, not a
+    # generative chat completion. Screenshots are never sent to Jev.
     BROWSER_USE_JEV_MODEL: str = "~typesafe/jev-latest"
+    # Which gateway serves Jev decisions: "openrouter" (default) or "vercel"
+    # (Vercel AI Gateway). Hot-swappable at boot: both speak the same
+    # {model, state, questions} decisions shape.
+    BROWSER_JEV_PROVIDER: Literal["openrouter", "vercel"] = "openrouter"
+    # Vercel AI Gateway key + model, read only when BROWSER_JEV_PROVIDER=vercel.
+    BROWSER_JEV_VERCEL_API_KEY: str | None = None
+    BROWSER_JEV_VERCEL_MODEL: str = "typesafe-ai/jev"
     # Text helper for the loop, called only when a decision needs a typed value.
     # gemini-3.5-flash-lite is the verified model: mercury-2.5 returned empty
     # content when it spent its token budget on reasoning (measured 2026-09-18).

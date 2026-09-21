@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from time import perf_counter
 
 from app.config.settings import settings
 from app.constants.browser import (
@@ -19,9 +20,11 @@ from app.constants.browser import (
     BROWSER_REPLAY_CODE_KEY_PREFIX,
     BROWSER_REPLAY_CODE_TTL_SECONDS,
 )
+from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache
 from app.schemas.browser import ReplayRecord
 from app.services.browser.links import browser_link_base
+from shared.py.wide_events import log
 
 
 def _key(code: str) -> str:
@@ -30,12 +33,24 @@ def _key(code: str) -> str:
 
 async def mint_replay_code(session_id: str, steps: int, shots: list[str] | None = None) -> str:
     """Create a short code resolving to a finished session's screenshot set."""
+    started = perf_counter()
     code = secrets.token_urlsafe(BROWSER_LIVE_CODE_ENTROPY_BYTES)
+    shot_count = len(shots or [])
     await redis_cache.set(
         _key(code),
         ReplayRecord(session_id=session_id, steps=steps, shots=shots or []),
         ttl=BROWSER_REPLAY_CODE_TTL_SECONDS,
         model=ReplayRecord,
+    )
+    mint_ms = round((perf_counter() - started) * 1000)
+    log.set_ns(
+        "browser", session_id=session_id, replay_shots=shot_count, replay_mint_ms=mint_ms
+    )
+    log.info(
+        f"{LogTag.BROWSER} Browser replay code minted",
+        steps=steps,
+        shot_count=shot_count,
+        mint_ms=mint_ms,
     )
     return code
 

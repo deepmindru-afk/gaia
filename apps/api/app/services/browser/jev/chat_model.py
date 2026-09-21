@@ -113,6 +113,9 @@ _USER_REQUEST = re.compile(r"<user_request>\s*(.*?)\s*</user_request>", re.DOTAL
 _TERMINAL_OPERATIONS = frozenset({JevOperation.DONE, JevOperation.BLOCKED})
 _HANDOFF_OPERATIONS = frozenset({JevOperation.REQUEST_HUMAN, JevOperation.SOLVE_CAPTCHA})
 _JEV_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+# Vercel AI Gateway evaluation endpoint: same {model, state, questions} body
+# and {answers, usage} response as the OpenRouter decisions route.
+_JEV_VERCEL_EVALUATE_URL = "https://ai-gateway.vercel.sh/v1/evaluate"
 
 
 class _TextValue(BaseModel):
@@ -133,9 +136,12 @@ class JevChatModel:
     #: model built without __init__ (the runner tests do) still answers None.
     _shot: asyncio.Task[str | None] | None = None
 
-    def __init__(self, *, client: JevGatewayClient, text_model: BaseChatModel) -> None:
+    def __init__(
+        self, *, client: JevGatewayClient, text_model: BaseChatModel, provider: str = "openrouter"
+    ) -> None:
         self.model = client.model
         self.text_model = text_model
+        self._provider = provider
         self._client = client
         self._browser: BrowserSession | None = None
         self._task: str | None = None
@@ -162,7 +168,7 @@ class JevChatModel:
 
     @property
     def provider(self) -> str:
-        return "vercel-ai-gateway"
+        return self._provider
 
     @property
     def name(self) -> str:
@@ -654,10 +660,25 @@ def _goal_from_messages(messages: list[BaseMessage]) -> str:
 
 
 def build_jev_chat_model(*, text_model: BaseChatModel) -> JevChatModel:
-    """Return the Jev policy over OpenRouter, with text_model as its text helper.
+    """Return the Jev policy over the configured gateway, with text_model as its text helper.
 
-    Raises BrowserUnavailableError when no OpenRouter key is configured.
+    BROWSER_JEV_PROVIDER selects "openrouter" (default) or "vercel" (Vercel AI
+    Gateway). Raises BrowserUnavailableError when the selected gateway's key
+    is not configured.
     """
+    provider = settings.BROWSER_JEV_PROVIDER
+    if provider == "vercel":
+        api_key = settings.BROWSER_JEV_VERCEL_API_KEY
+        if not api_key:
+            raise BrowserUnavailableError(
+                "Jev provider is vercel but BROWSER_JEV_VERCEL_API_KEY is not set."
+            )
+        client = JevGatewayClient(
+            api_key=api_key,
+            model=settings.BROWSER_JEV_VERCEL_MODEL,
+            url=_JEV_VERCEL_EVALUATE_URL,
+        )
+        return JevChatModel(client=client, text_model=text_model, provider="vercel")
     api_key = settings.OPENROUTER_API_KEY
     if not api_key:
         raise BrowserUnavailableError("Jev is enabled but OPENROUTER_API_KEY is not set.")
@@ -666,7 +687,7 @@ def build_jev_chat_model(*, text_model: BaseChatModel) -> JevChatModel:
         model=settings.BROWSER_USE_JEV_MODEL,
         url=_JEV_DECISIONS_URL,
     )
-    return JevChatModel(client=client, text_model=text_model)
+    return JevChatModel(client=client, text_model=text_model, provider="openrouter")
 
 
 __all__ = ["JevChatModel", "JevGatewayError", "build_jev_chat_model"]
