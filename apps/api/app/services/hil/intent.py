@@ -18,6 +18,7 @@ ungrounded quote, instruction-like arguments, or shipping secrets outward.
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+import json
 import re
 from typing import Any, Literal, Protocol
 
@@ -377,6 +378,28 @@ def _history_blocks(history: AutoHistory) -> bool:
     return history.approved_recent <= history.denied_recent
 
 
+def _output_identifies(output: str) -> bool:
+    """Whether a prior result identifies (rather than lists).
+
+    One id-like value means the lookup returned the thing: acting on it
+    involves no agent choice. Several means the agent picked from a list —
+    and that pick is exactly what needs the user's confirmation. Unparseable
+    results identify nothing.
+    """
+    try:
+        parsed: object = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return len([t for t in _target_values(parsed) if _is_id_like(t)]) == 1
+
+
+def _is_id_like(target: str) -> bool:
+    """Whether a target value is a reference id, not an address or an amount."""
+    if "@" in target:
+        return False
+    return not target.replace(",", "").replace(".", "").replace("$", "").strip().isdigit()
+
+
 def ungrounded_targets(
     args: dict[str, Any],
     user_text: str,
@@ -389,15 +412,18 @@ def ungrounded_targets(
     an email, id, or amount that appears from nowhere blocks auto-accept. Prose
     bodies are not targets — the choice criteria already judge those. Targets
     from the user's own approved runs (``known``) are provenance, not novelty.
-    Prior outputs count as provenance: an id minted by an earlier call in this
-    run (a draft id from a create call's result) traces to the run, not nowhere.
+    Prior outputs count as provenance only when they identify: a single-result
+    output means the lookup returned the thing (no agent choice); a list means
+    the agent picked from it (that pick needs the user).
     """
     normalized_user = _normalize(user_text)
-    normalized_priors = _normalize(
-        "\n".join(
-            f"{call.name} {args_preview(call.args)} {call.output}" for call in prior_calls
-        )
-    )
+    provenance_parts = [
+        f"{call.name} {args_preview(call.args)}" for call in prior_calls
+    ]
+    for call in prior_calls:
+        if call.output.strip() and _output_identifies(call.output):
+            provenance_parts.append(call.output)
+    normalized_priors = _normalize("\n".join(provenance_parts))
     normalized_known = {_normalize(target) for target in known or frozenset()}
     user_tokens = set(normalized_user.split())
     return [

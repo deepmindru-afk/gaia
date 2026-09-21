@@ -284,6 +284,27 @@ class TestGrounding:
             == []
         )
 
+    async def test_an_id_picked_from_a_list_is_not_grounded(self) -> None:
+        # A result that lists several ids presents a choice: acting on one of
+        # them involves agent judgment, so the veto stands even though the id
+        # appears in a prior output.
+        priors = [
+            PriorCall(
+                name="FIND",
+                args={"query": "standup"},
+                output='[{"event_id": "evt-4"}, {"event_id": "evt-5"}]',
+            )
+        ]
+        assert ungrounded_targets({"event_id": "evt-4"}, "cancel it", priors) == [
+            "evt-4"
+        ]
+
+    async def test_an_unparseable_output_identifies_nothing(self) -> None:
+        priors = [PriorCall(name="FIND", args={}, output="two things happened")]
+        assert ungrounded_targets({"event_id": "evt-4"}, "cancel it", priors) == [
+            "evt-4"
+        ]
+
     async def test_a_name_in_words_grounds_its_email(self) -> None:
         # "Sarah's" grounds sarah@x.com; the domain was resolved, not chosen.
         assert (

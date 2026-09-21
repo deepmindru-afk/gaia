@@ -71,6 +71,43 @@ def _eval_history(setup: Mapping[str, Any]) -> Any:
     )
 
 
+def _eval_priors(setup: Mapping[str, Any]) -> list[Any]:
+    """Prior calls with their outputs: ids minted mid-run live in outputs.
+
+    New keys are optional — old cases without them run exactly as before.
+    """
+    from app.services.hil.utils import PriorCall
+
+    return [
+        PriorCall(
+            name=str(p.get("tool")),
+            args=dict(p.get("args") or {}),
+            output=str(p.get("output") or ""),
+        )
+        for p in setup.get("prior", [])
+    ]
+
+
+def _eval_call(setup: Mapping[str, Any]) -> Any:
+    """The pending call, with its schema when the case carries one."""
+    from app.services.hil.intent import JudgedCall
+
+    schema = setup.get("tool_schema")
+    return JudgedCall(
+        tool_name=str(setup.get("tool")),
+        description=str(setup.get("desc") or f"Tool {setup.get('tool')}."),
+        args=dict(setup.get("args") or {}),
+        summary=f"{setup.get('tool')} call",
+        tool_schema=dict(schema) if isinstance(schema, dict) else None,
+    )
+
+
+def _eval_assistant_turns(setup: Mapping[str, Any]) -> list[str]:
+    """Recent assistant words, when the case models them. Absent = none."""
+    turns = setup.get("assistant_turns") or []
+    return [str(t) for t in turns]
+
+
 class JudgeTransport:
     """One case: build judge state from the YAML, run one backend, journal all."""
 
@@ -124,27 +161,18 @@ class JudgeTransport:
         )
 
     async def _run_llm(self, setup: Mapping[str, Any]) -> tuple[str, str, tuple[int, int]]:
-        from app.services.hil.intent import AutoHistory, JudgedCall, judge_intent
-        from app.services.hil.utils import PriorCall
+        from app.services.hil.intent import judge_intent
 
         from scripts.evals.core.cost import estimate_tokens
 
         turns = [str(t) for t in setup.get("turns", [])]
-        priors = [
-            PriorCall(name=str(p.get("tool")), args=dict(p.get("args") or {}))
-            for p in setup.get("prior", [])
-        ]
         decision = await judge_intent(
             user_id="hil-judge-eval",
             user_messages=turns,
-            call=JudgedCall(
-                tool_name=str(setup.get("tool")),
-                description=str(setup.get("desc") or f"Tool {setup.get('tool')}."),
-                args=dict(setup.get("args") or {}),
-                summary=f"{setup.get('tool')} call",
-            ),
-            prior_calls=priors,
+            call=_eval_call(setup),
+            prior_calls=_eval_priors(setup),
             history=_eval_history(setup),
+            assistant_turns=_eval_assistant_turns(setup),
         )
         # App-side metering owns LLM cost, so journal an openly-labelled
         # estimate (source=estimated, never priced) instead of zeros — zeros
@@ -167,30 +195,22 @@ class JudgeTransport:
             map_jev_choice,
             needs_forbid_check,
         )
-        from app.services.hil.intent import JudgedCall
-        from app.services.hil.utils import PriorCall
 
         key = get_settings().OPENROUTER_API_KEY
         if not key:
             raise ProviderError(provider.name, "OPENROUTER_API_KEY unset")
         history = _eval_history(setup)
         turns = [str(t) for t in setup.get("turns", [])]
-        priors = [
-            PriorCall(name=str(p.get("tool")), args=dict(p.get("args") or {}))
-            for p in setup.get("prior", [])
-        ]
-        call = JudgedCall(
-            tool_name=str(setup.get("tool")),
-            description=str(setup.get("desc") or f"Tool {setup.get('tool')}."),
-            args=dict(setup.get("args") or {}),
-            summary=f"{setup.get('tool')} call",
-        )
+        priors = _eval_priors(setup)
+        call = _eval_call(setup)
+        assistant_turns = _eval_assistant_turns(setup)
         try:
             choice, confidence, probs, tokens_in, tokens_out = await ask_jev(
                 user_messages=turns,
                 call=call,
                 prior_calls=priors,
                 history=history,
+                assistant_turns=assistant_turns,
             )
         except httpx.HTTPError as e:
             raise ProviderError(provider.name, f"decisions API failed: {e}") from e
@@ -290,27 +310,15 @@ def sweep_journal(run_dir: Path) -> str:
             if line:
                 rows.append(json.loads(line))
     rows = [r for r in rows if (r.get("end_state") or {}).get("choice")]
-    from app.services.hil.utils import PriorCall
 
     from scripts.evals.suites.hil_judge import _eval_history  # noqa: PLC0415 -- sweep reuses the transport's history builder so lines are the only variable
 
     def _regrade(row: dict[str, Any], accept: float, reject: float) -> str:
         """Full pipeline outcome for one journaled case: mapping + vetoes."""
-        from app.services.hil.intent import JudgedCall
-        from app.services.hil.utils import PriorCall
-
         es = row["end_state"]
         setup = es.get("setup") or {}
-        call = JudgedCall(
-            tool_name=str(setup.get("tool")),
-            description="",
-            args=dict(setup.get("args") or {}),
-            summary="",
-        )
-        priors = [
-            PriorCall(name=str(p.get("tool")), args=dict(p.get("args") or {}))
-            for p in setup.get("prior", [])
-        ]
+        call = _eval_call(setup)
+        priors = _eval_priors(setup)
         forbid = es.get("forbid_choice")
         return decide_from_verdict(
             choice=str(es["choice"]),
