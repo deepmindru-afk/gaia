@@ -271,6 +271,7 @@ class JevChatModel:
         log.info(
             f"{LogTag.BROWSER} Jev step decided",
             step=self._steps,
+            provider=self._provider,
             operation=decision.operation.value,
             target=decision.target,
             confidence=round(decision.confidence, 3),
