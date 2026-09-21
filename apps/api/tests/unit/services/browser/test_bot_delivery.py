@@ -79,18 +79,18 @@ class TestStepCaption:
     def test_strips_trailing_dot(self):
         assert _step_caption(1, "Opening the page.", []) == "Step 1 · Opening the page"
 
-    def test_exactly_90_not_truncated(self):
-        goal = "A" * 90
+    def test_exactly_180_not_truncated(self):
+        goal = "A" * 180
         result = _step_caption(1, goal, [])
         assert result == f"Step 1 · {goal}"
 
-    def test_91_truncated(self):
-        goal = "A" * 91
+    def test_181_truncated(self):
+        goal = "A" * 181
         result = _step_caption(1, goal, [])
         assert result.endswith("…")
-        # label should be 90 chars
+        # label should be 180 chars
         label = result.split(" · ", 1)[1]
-        assert len(label) == 90
+        assert len(label) == 180
 
     def test_falls_back_to_the_actions(self):
         # goal empty → uses caption_from_action_summary
@@ -115,14 +115,14 @@ class TestStepCaption:
         assert _step_caption(1, "Click X", []) == "Step 1 · Click X"
 
     def test_truncation_rstrips_trailing_space_before_ellipsis(self):
-        # 88 "A"s then a space then filler — the 90-char slice cuts right after
+        # 178 "A"s then a space then filler — the 180-char slice cuts right after
         # the space, so the truncated label must have it trimmed before the
-        # ellipsis is appended, not "A"*88 + " …".
-        goal = "A" * 88 + " " + "B" * 20
+        # ellipsis is appended, not "A"*178 + " …".
+        goal = "A" * 178 + " " + "B" * 20
         result = _step_caption(1, goal, [])
         label = result.split(" · ", 1)[1]
-        assert label == "A" * 88 + "…"
-        assert len(label) == 89
+        assert label == "A" * 178 + "…"
+        assert len(label) == 179
 
 
 class TestBotProgressDeliverySession:
@@ -269,7 +269,7 @@ class TestBotProgressDeliveryStep:
             assert mm.call_args[0][2][0] == "Step 1 · Open"
 
     async def test_long_goal_photo_caption_is_clipped(self, delivery):
-        goal = 'Typing "hi sent using gaia browser use from telegram" into the post composer box on the x.com homepage'
+        goal = 'Typing "hi sent using gaia browser use from telegram" into the post composer box on the x.com homepage timeline view area near the very top of the main feed column on the left hand side'
         assert len(goal) > 90
         snap = BrowserStepSnapshot(
             index=2, goal=goal, url="https://x.com/compose", screenshot="https://cdn/shot.png"
@@ -289,7 +289,7 @@ class TestBotProgressDeliveryStep:
             assert mock_photo.call_args.kwargs["caption"].endswith("…")
 
     async def test_long_goal_text_fallback_is_not_clipped(self, delivery):
-        goal = 'Typing "hi sent using gaia browser use from telegram" into the post composer box on the x.com homepage'
+        goal = 'Typing "hi sent using gaia browser use from telegram" into the post composer box on the x.com homepage timeline view area near the very top of the main feed column on the left hand side'
         assert len(goal) > 90
         snap = BrowserStepSnapshot(
             index=2, goal=goal, url="https://x.com/compose", screenshot="https://cdn/shot.png"

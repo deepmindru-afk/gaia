@@ -30,7 +30,8 @@ from app.services.outbound_delivery import publish_outbound_message, publish_out
 from shared.py.wide_events import log
 
 # A photo caption should be a glanceable phrase, not a paragraph of the agent's goal.
-_CAPTION_MAX_CHARS = 90
+# Sized for messaging-app photo captions: descriptive but never outrageous.
+_CAPTION_MAX_CHARS = 180
 
 # The runner's failure summary is written for logs, not chat — clip it so a raw
 # error dump never floods the conversation.
