@@ -21,6 +21,9 @@ interface ChatTabProps {
   isSystemGenerated?: boolean;
   systemPurpose?: SystemPurpose;
   isUnread?: boolean;
+  // Persisted counterpart of the transient awaiting-approval pulse: a
+  // background run's card survives reloads, where stream state does not.
+  hasPendingApproval?: boolean;
 }
 
 export const ChatTab: FC<ChatTabProps> = ({
@@ -30,6 +33,7 @@ export const ChatTab: FC<ChatTabProps> = ({
   isSystemGenerated = false,
   systemPurpose,
   isUnread = false,
+  hasPendingApproval = false,
 }) => {
   const pathname = usePathname();
   const [buttonHovered, setButtonHovered] = useState(false);
@@ -39,8 +43,10 @@ export const ChatTab: FC<ChatTabProps> = ({
   const isAwaitingApproval = useIsConversationAwaitingApproval(id);
   // A turn paused on an approval has already left the streaming phase (its SSE
   // closed), so the dot must key off both — otherwise it would vanish for exactly
-  // the wait it exists to advertise.
-  const isBusy = isStreaming || isAwaitingApproval;
+  // the wait it exists to advertise. hasPendingApproval covers the same wait
+  // across reloads and background runs, where no stream state exists.
+  const showApprovalDot = isAwaitingApproval || hasPendingApproval;
+  const isBusy = isStreaming || showApprovalDot;
 
   // Derive current conversation ID from pathname during render
   const pathParts = pathname.split("/");
@@ -97,11 +103,9 @@ export const ChatTab: FC<ChatTabProps> = ({
               the blue "actively streaming" pulse. */}
           {isBusy && (
             <div
-              className={`size-2 shrink-0 rounded-full animate-pulse ${isAwaitingApproval ? "bg-warning" : "bg-primary"}`}
+              className={`size-2 shrink-0 rounded-full animate-pulse ${showApprovalDot ? "bg-warning" : "bg-primary"}`}
               title={
-                isAwaitingApproval
-                  ? "Waiting for your approval"
-                  : "Streaming..."
+                showApprovalDot ? "Waiting for your approval" : "Streaming..."
               }
             />
           )}

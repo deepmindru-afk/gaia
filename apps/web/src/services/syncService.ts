@@ -6,6 +6,7 @@ import {
   toClientMessages,
 } from "@/features/chat/api/chatApi";
 import { MAX_SYNC_CONVERSATIONS } from "@/features/chat/constants";
+import { apiRowHasLiveApproval } from "@/features/chat/utils/approvalFlag";
 import { db, type IConversation, type IMessage } from "@/lib/db/chatDb";
 import { useChatStore } from "@/stores/chatStore";
 import {
@@ -330,6 +331,7 @@ export const batchSyncConversations = async (): Promise<void> => {
           isSystemGenerated: conversation.is_system_generated ?? false,
           systemPurpose: conversation.system_purpose ?? null,
           isUnread: conversation.is_unread ?? false,
+          hasLiveApproval: apiRowHasLiveApproval(conversation),
           artifacts,
           createdAt: new Date(conversation.createdAt ?? 0),
           updatedAt: conversation.updatedAt

@@ -23,6 +23,9 @@ export interface IConversation {
   systemPurpose?: SystemPurpose | null;
   isUnread?: boolean;
   source?: string; // ConversationSource from backend (web, telegram, discord, etc.)
+  // Set while a background run holds a live approval here: the sidebar shows
+  // the conversation for its card, and the row lights the approval dot.
+  hasLiveApproval?: boolean;
   // Conversation-level artifact registry: the single source of truth for this
   // conversation's agent-written files. Messages store path references that
   // resolve against this (see FileArtifactSection / chatStore).
