@@ -627,11 +627,18 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
     def _active_filter(self, user_id: str) -> dict[str, object]:
         # Background runs stay out of the sidebar — except while one holds a
         # live approval, when its card is the only way to reach it. Sourceless
-        # legacy rows match $ne and stay visible (no backfill needed).
+        # legacy rows match $ne and stay visible (no backfill needed). A null
+        # starred reads as unstarred: several write paths store explicit null.
         return {
             "user_id": user_id,
             "$and": [
-                {"$or": [{"starred": {"$exists": False}}, {"starred": False}]},
+                {
+                    "$or": [
+                        {"starred": {"$exists": False}},
+                        {"starred": False},
+                        {"starred": None},
+                    ]
+                },
                 {
                     "$or": [
                         {"source": {"$ne": ConversationSource.BACKGROUND.value}},
