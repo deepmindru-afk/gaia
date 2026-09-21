@@ -15,6 +15,7 @@ import base64
 from dataclasses import replace
 import json
 import re
+from time import perf_counter
 from typing import TYPE_CHECKING, TypedDict, TypeVar, cast, get_args, overload
 
 from pydantic import BaseModel
@@ -228,15 +229,30 @@ class JevChatModel:
 
         if self._browser is None:
             raise BrowserUnavailableError("Jev policy has no browser session bound.")
+        t0 = perf_counter()
         state = await self._browser.get_browser_state_summary(cached=True, include_screenshot=False)
+        t1 = perf_counter()
         selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
         self._handles.on_page(getattr(state, "url", None))
         screen = await read_viewport(self._browser, selector_map, self._handles)
+        t2 = perf_counter()
         self._viewport = screen.boxes
         # The engine idles while Jev and the text helper think; render the step's
         # photo then, not inside the state read where it queued ahead of the DOM.
         self._shot = asyncio.create_task(self._capture_screenshot())
-        observation = observe(state, await read_live_values(self._browser), screen)
+        live = await read_live_values(self._browser)
+        t3 = perf_counter()
+        observation = observe(state, live, screen)
+        t4 = perf_counter()
+        log.info(
+            f"{LogTag.BROWSER} Jev step input built",
+            step=self._steps + 1,
+            state_ms=round((t1 - t0) * 1000),
+            viewport_ms=round((t2 - t1) * 1000),
+            live_values_ms=round((t3 - t2) * 1000),
+            observe_ms=round((t4 - t3) * 1000),
+            elements=len(observation.elements),
+        )
         self._observation = observation
         self._seen_text.record(observation.url, observation.text)
         self._settle_previous_step(observation)
@@ -495,6 +511,7 @@ class JevChatModel:
         }
         if seen_text:
             context["seen_on_this_page"] = seen_text
+        t0 = perf_counter()
         try:
             result = await self.text_model.ainvoke(
                 [SystemMessage(content=instructions), UserMessage(content=json.dumps(context))],
@@ -503,6 +520,11 @@ class JevChatModel:
         except Exception as exc:
             log.warning(f"{LogTag.BROWSER} Jev text helper failed", error_type=type(exc).__name__)
             return None
+        log.info(
+            f"{LogTag.BROWSER} Jev text helper answered",
+            step=self._steps,
+            text_ms=round((perf_counter() - t0) * 1000),
+        )
         return result.completion
 
     def note_from_user(self, note: str | None) -> None:
