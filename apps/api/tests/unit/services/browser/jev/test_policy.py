@@ -58,6 +58,7 @@ def test_the_request_shares_one_state_across_an_operation_head_and_one_target_he
             "kind": "click",
             "text": None,
             "page_changed": True,
+            "url": None,
             "note": None,
         }
     ]

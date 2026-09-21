@@ -27,6 +27,7 @@ from app.services.browser.job_events import (
 )
 from app.services.browser.job_runner import agent_result_message, execute_browser_job
 from app.services.browser.jobs import (
+    claim_conversation_slot,
     heartbeat_conversation_slot,
     joiner_lease_held,
     put_job_state,
@@ -48,6 +49,15 @@ async def run_browser_job(
     """
     request = BrowserJobRequest.model_validate(payload)
     log.set(browser={"job_id": request.job_id, "conversation_id": request.conversation_id})
+    # Nobody heartbeats the enqueuer's slot lease until here, so a long queue wait
+    # can have outlived it. Re-take it before the run, or the run holds no slot at
+    # all: its release is a no-op and a joiner reads a RUNNING job as dead.
+    holder = await claim_conversation_slot(request.conversation_id, request.job_id)
+    if holder is not None and holder != request.job_id:
+        log.warning(
+            f"{LogTag.BROWSER} Browser job starting without its conversation slot",
+            browser={"job_id": request.job_id, "slot_holder": holder},
+        )
     heartbeat = spawn_background_task(_heartbeat(request), name="browser_job_heartbeat")
     try:
         result = await execute_browser_job(request)

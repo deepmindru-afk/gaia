@@ -22,6 +22,7 @@ from app.schemas.browser import BrowserAction
 # noise ("Clicking"), the element's text reads as intent ("Clicking Add to cart").
 _TARGETED_ACTIONS = {"click", "select_dropdown", "upload_file"}
 
+
 def _shorten(text: str) -> str:
     """Collapse whitespace so multi-line element text reads as one line. Never clips."""
     return " ".join(text.split())
@@ -71,11 +72,10 @@ def _done_caption(params: _ActionParams, _target: str | None) -> str:
     # with success=False, and "BLOCKED" is not something to show a reader.
     if not params.success:
         return "Could not find a way forward on this page"
-    text = (params.text or "").strip()
-    # The verb ("Finished") says nothing a reader can't already see in the
-    # photo; the done action's own summary says what was actually found.
-    # Collapsed to one line, never clipped.
-    return _shorten(text) or "Finished"
+    # The result message that follows this photo carries the run's answer in
+    # full; repeating it here put the whole report on a caption and then again
+    # as the next message.
+    return "Finished"
 
 
 def _click_caption(params: _ActionParams, target: str | None) -> str:

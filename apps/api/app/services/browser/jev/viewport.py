@@ -342,7 +342,7 @@ async def _by_xpath(session: CDPSession, targets: list[_Target]) -> dict[int, Vi
 
 
 async def _by_backend_node(
-    session: CDPSession, targets: list[_Target], handles: NodeHandles
+    session: CDPSession, targets: list[_Target], handles: NodeHandles, retry: bool = True
 ) -> dict[int, ViewportBox]:
     """Measure each node through its backend id: a resolveNode per new node, then batched measures."""
     semaphore = asyncio.Semaphore(_RESOLVE_CONCURRENCY)
@@ -383,11 +383,12 @@ async def _by_backend_node(
     batches = [resolved[i : i + _MEASURE_BATCH] for i in range(0, len(resolved), _MEASURE_BATCH)]
     measured = await asyncio.gather(*(_measure_batch(session, batch) for batch in batches))
     boxes = {index: box for batch in measured for index, box in batch.items()}
-    if not boxes and resolved:
+    if not boxes and resolved and retry:
         # A kept handle can outlive its document without the url changing; drop
-        # them all and measure this screen the slow way once.
+        # them all and measure this screen the slow way once, keeping what that
+        # resolves so the next step is fast, and never recursing a second time.
         handles.forget(t.backend_node_id for t in targets if t.backend_node_id is not None)
-        return await _by_backend_node(session, targets, NodeHandles())
+        return await _by_backend_node(session, targets, handles, retry=False)
     return boxes
 
 

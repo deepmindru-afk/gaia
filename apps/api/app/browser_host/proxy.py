@@ -199,7 +199,7 @@ async def run_cdp_proxy(host: ChromiumHost, session: HostSession, client_ws: Web
             reason = _refusal_reason(message) or await _refused_private_target(message)
             if reason is not None:
                 log.warning(
-                    f"{LogTag.BROWSER} browser cdp command refused",
+                    f"{LogTag.BROWSER} browser cdp command refused ({message.get('method')}: {reason})",
                     error_type="RefusedCdpCommand",
                     browser={"session_id": session.session_id, "reason": reason},
                 )

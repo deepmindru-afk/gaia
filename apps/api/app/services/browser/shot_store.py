@@ -90,7 +90,7 @@ async def store_step_screenshot(png: bytes, session_id: str, index: int) -> str:
         shot_store_ms=store_ms,
     )
     log.info(
-        f"{LogTag.BROWSER} Browser step screenshot stored",
+        f"{LogTag.BROWSER} Browser step screenshot stored (step {index}, local, {size_bytes}B in {store_ms}ms)",
         step_index=index,
         backend="local",
         size_bytes=size_bytes,

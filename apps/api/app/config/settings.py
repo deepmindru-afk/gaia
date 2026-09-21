@@ -209,12 +209,12 @@ class CommonSettings(BaseAppSettings):
     BROWSER_JEV_VERCEL_API_KEY: str | None = None
     BROWSER_JEV_VERCEL_MODEL: str = "typesafe-ai/jev"
     # Text helper for the loop, called only when a decision needs a typed value.
-    # gemini-3.5-flash-lite is the verified model: mercury-2.5 returned empty
-    # content when it spent its token budget on reasoning (measured 2026-09-18).
-    BROWSER_USE_JEV_TEXT_MODEL: str = "google/gemini-3.5-flash-lite"
+    # deepseek-v4-flash answers a URL/value prompt in ~1.5-5s with minimal
+    # reasoning (measured 2026-09-22); forcing reasoning off made it return null.
+    BROWSER_USE_JEV_TEXT_MODEL: str = "deepseek/deepseek-v4-flash-0731"
 
     # Hard limits — everything is bounded so no browser task can run away.
-    BROWSER_USE_MAX_STEPS: int = 25
+    BROWSER_USE_MAX_STEPS: int = 40
     BROWSER_USE_MAX_ACTIONS_PER_STEP: int = 5
     BROWSER_USE_TASK_TIMEOUT_SECONDS: int = 600
     # How long a paused run waits for the human to finish a handoff step,

@@ -89,6 +89,11 @@ def get_model_pricing(model_name: str) -> ModelPricing:
     pricing = MODEL_PRICING.get(model_name)
     if pricing is not None:
         return pricing
+    # OpenRouter routing variants ("model:nitro" sorts providers by throughput,
+    # ":floor" by price) name the same model; its rate card is the base id's.
+    base, _, variant = model_name.rpartition(":")
+    if variant and base in MODEL_PRICING:
+        return MODEL_PRICING[base]
     # A model id missing from the table is priced at DEFAULT_PRICING, which is
     # not its real rate — so it must never pass quietly.
     log.error(

@@ -529,7 +529,7 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
     )
 
     try:
-        llm = build_browser_llm()
+        llm = build_browser_llm(user_id=request.user_id)
     except BrowserUnavailableError as exc:
         log.warning(f"{LogTag.BROWSER} Browser LLM unavailable", error_type=type(exc).__name__)
         return await _terminal_failure(emitter, str(exc))

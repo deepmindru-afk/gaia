@@ -9,11 +9,13 @@ target head matching the chosen operation is read.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import math
 from typing import TypedDict, cast
 
 from app.constants.browser import (
+    JEV_PAGES_READ,
     JEV_PROBABILITY_SUM_TOLERANCE,
     JEV_RECENT_ACTIONS,
     JEV_TARGET_OPERATIONS,
@@ -23,9 +25,9 @@ from app.constants.browser import (
 from app.services.browser.jev.gateway import (
     JevChoiceAnswer,
     JevChoiceQuestion,
+    JevDecisionsClient,
     JevEvaluation,
     JevEvaluationRequest,
-    JevGatewayClient,
     JsonInput,
 )
 from app.services.browser.jev.observation import JevElement, JevObservation, JevSelectOption
@@ -71,15 +73,16 @@ _OPERATION_LABELS: dict[JevOperation, str] = {
     JevOperation.REQUEST_HUMAN: REQUEST_HUMAN_CRITERION,
     JevOperation.SOLVE_CAPTCHA: SOLVE_CAPTCHA_CRITERION,
     JevOperation.DONE: (
-        "Every requirement is visibly satisfied right now: the page that holds the answer is "
-        "itself open, and the answer is readable on this screen. A search result, a link title, "
-        "a snippet about the page, or anything you already know is not enough. When the goal asks "
-        "for the cheapest, the most, the best, the first, the last, the newest, a count, a total, "
-        "or every item of a list, that whole list must already have been seen: scrolled down until "
-        "nothing new appeared, and paged through to its last page. One screenful of a list is a "
-        "sample, not the list. Every step the goal lists was carried out by an action in this run; "
-        "a control the goal names by a label the screen does not show is the one in that position "
-        "or with the closest wording, never a step to skip."
+        "Every requirement is satisfied by what this run has read: this screen together with "
+        "the pages in pages_read hold every answer the goal asks for, because each page that "
+        "holds one was opened and read. A search result, a link title, a snippet about a page, "
+        "or anything you already know is not enough: a page not in pages_read has not been read. "
+        "When the goal asks for the cheapest, the most, the best, the first, the last, the newest, "
+        "a count, a total, or every item of a list, that whole list must already have been seen: "
+        "scrolled down until nothing new appeared, and paged through to its last page. Every step "
+        "the goal lists was carried out by an action in this run; a control the goal names by a "
+        "label the screen does not show is the one in that position or with the closest wording, "
+        "never a step to skip."
     ),
     JevOperation.BLOCKED: "No supported operation can progress.",
 }
@@ -93,6 +96,12 @@ class JevHistoryEntry:
     kind: str
     text: str | None = None
     page_changed: bool | None = None
+    #: The page this action was taken on, so a page already opened from a list
+    #: reads as done rather than as the thing to click again.
+    url: str | None = None
+    #: The element's own label; the action string bakes in an index that
+    #: renumbers between renders, so a repeat is matched by label.
+    target_label: str | None = None
     #: The instruction handed back after this step: the user's after a takeover,
     #: or the executor's after this step asked it for guidance.
     note: str | None = None
@@ -104,6 +113,7 @@ class JevHistoryEntry:
             "kind": self.kind,
             "text": self.text,
             "page_changed": self.page_changed,
+            "url": self.url,
             "note": self.note,
         }
 
@@ -133,9 +143,20 @@ def build_request(
     goal: str,
     history: list[JevHistoryEntry],
     offered: frozenset[JevOperation],
+    pages_read: Sequence[Mapping[str, str]] = (),
 ) -> JevEvaluationRequest:
     """Return the shared state plus one operation head and one target head per offered element operation."""
     targets = {op: observation.targets(op) for op in JEV_TARGET_OPERATIONS if op in offered}
+    opened = _already_opened(history, observation.url, pages_read)
+    clicks = targets.get(JevOperation.CLICK)
+    if opened and clicks:
+        # A row this page already opened leads to a page the run has been on;
+        # offering it again is how a list task re-reads its first item forever.
+        kept = {
+            key: pair for key, pair in clicks.items() if not _opens_again(pair[0].label, opened)
+        }
+        if kept:
+            targets[JevOperation.CLICK] = kept
     operations = {
         op.value: _OPERATION_LABELS[op]
         for op in JevOperation
@@ -157,25 +178,83 @@ def build_request(
                 for key, (element, option) in candidates.items()
             },
         )
-    return JevEvaluationRequest(
-        state={
-            "page": observation.page_state(),
-            "elements": [e.state_entry() for e in observation.elements],
-            "recent_actions": [h.state_entry() for h in history[-JEV_RECENT_ACTIONS:]],
-        },
-        questions=questions,
-    )
+    state: dict[str, object] = {
+        "page": observation.page_state(),
+        "elements": [e.state_entry() for e in observation.elements],
+        "recent_actions": [h.state_entry() for h in history[-JEV_RECENT_ACTIONS:]],
+    }
+    if pages_read:
+        # What the run has already opened and read, so a listed item whose page
+        # is here counts as done and the next item is the move.
+        state["pages_read"] = [dict(page) for page in pages_read[-JEV_PAGES_READ:]]
+    return JevEvaluationRequest(state=state, questions=questions)
+
+
+def _already_opened(
+    history: list[JevHistoryEntry], url: str, pages_read: Sequence[Mapping[str, str]]
+) -> frozenset[str]:
+    """Labels on this page that name something the run has already opened and read.
+
+    Two sources: a click from this page that was followed by steps on another
+    page, and the title of any page already read (a story's row names its
+    article's title). A control clicked again on the same page (a next-page
+    link, a toggle, a submit that did not respond) is left alone.
+    """
+    here = page_key(url)
+    opened: set[str] = set()
+    dead_clicks: dict[str, int] = {}
+    for position, entry in enumerate(history):
+        if not (entry.target_label and entry.kind == "click" and page_key(entry.url) == here):
+            continue
+        if entry.page_changed is False:
+            # Clicked here and nothing changed: a table row, a label, a slow
+            # control. One retry is fair (the page may just have been slow);
+            # a second dead click says the control does nothing.
+            dead_clicks[entry.target_label] = dead_clicks.get(entry.target_label, 0) + 1
+            if dead_clicks[entry.target_label] >= _DEAD_CLICKS_BEFORE_WITHHELD:
+                opened.add(entry.target_label)
+        elif any(later.url and page_key(later.url) != here for later in history[position + 1 :]):
+            opened.add(entry.target_label)
+    for page in pages_read:
+        if (
+            page_key(page.get("url")) != here
+            and len(page.get("title", "")) >= _TITLE_MATCH_MIN_CHARS
+        ):
+            opened.add(page["title"])
+    return frozenset(opened)
+
+
+def page_key(url: str | None) -> str:
+    """Return the page a URL names, ignoring a fragment and a trailing slash the engine adds and drops."""
+    return (url or "").split("#", 1)[0].rstrip("/")
+
+
+def _opens_again(label: str, opened: frozenset[str]) -> bool:
+    """Whether a row's label names something already opened: a story's row, its link and its page's title share words."""
+    if label in opened:
+        return True
+    if len(label) < _TITLE_MATCH_MIN_CHARS:
+        return False
+    low = label.lower()
+    return any(low in seen.lower() or seen.lower() in low for seen in opened)
+
+
+#: Shorter labels ("jobs", "hide") would match inside almost any page title.
+_TITLE_MATCH_MIN_CHARS = 12
+#: Dead clicks on one control on one page before it is no longer offered there.
+_DEAD_CLICKS_BEFORE_WITHHELD = 2
 
 
 async def choose(
-    client: JevGatewayClient,
+    client: JevDecisionsClient,
     observation: JevObservation,
     goal: str,
     history: list[JevHistoryEntry],
     offered: frozenset[JevOperation],
+    pages_read: Sequence[Mapping[str, str]] = (),
 ) -> JevDecision:
     """Ask Jev for this step's operation and, when it needs one, its target."""
-    request = build_request(observation, goal, history, offered)
+    request = build_request(observation, goal, history, offered, pages_read)
     evaluation = await client.evaluate(request)
     return resolve(request, evaluation, observation)
 

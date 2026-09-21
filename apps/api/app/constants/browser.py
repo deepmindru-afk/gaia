@@ -318,21 +318,30 @@ BROWSER_USER_WORDS_MAX_CHARS = 1000
 # Jev sees the viewport only; this bounds one screen. Measured on Wikipedia:
 # 200 rows is 64,483 bytes, the gateway 400s max_tokens_exceeded from 86,133
 # bytes up, and refuses a question with over 255 choices.
-JEV_MAX_ELEMENTS = 200
+JEV_MAX_ELEMENTS = 100
 
-JEV_GATEWAY_TIMEOUT_SECONDS = 25.0
+JEV_GATEWAY_TIMEOUT_SECONDS = 8.0
+# One writer call (a typed value, a URL, a part judgement, the closing answer).
+JEV_TEXT_TIMEOUT_SECONDS = 60.0
 JEV_GATEWAY_MAX_ATTEMPTS = 3
 
 # Observation budget: visible page text sent as Jev state, and how much of the
 # run's own action history rides along as context.
 JEV_PAGE_TEXT_MAX_CHARS = 6000
-# What the closing summary may read back from screens of the same page already
-# scrolled past, on top of the current one: three screenfuls of a list.
-JEV_SEEN_TEXT_MAX_CHARS = 18000
+# What the closing answer may read back across every page the run opened, on
+# top of the current screen. Bounded because the whole of it rides on one
+# writer call; 18000 made that call the slowest in the run.
+JEV_SEEN_TEXT_MAX_CHARS = 8000
 JEV_ELEMENT_LABEL_MAX_CHARS = 120
 JEV_RECENT_ACTIONS = 10
+# Pages already opened and read that Jev is shown, so a list task moves to its next item.
+JEV_PAGES_READ = 12
+# A compound task is split into at most this many ordered parts before the first decision.
+JEV_PLAN_MAX_STEPS = 6
 JEV_TEXT_HELPER_RECENT_ACTIONS = 6
 JEV_TEXT_VALUE_MAX_CHARS = 2000
+# The closing answer covers every part of a task; a typed value's cap is far too small for it.
+JEV_SUMMARY_MAX_CHARS = 6000
 # Probability mass across a choice question must sum to ~1; the gateway rounds.
 JEV_PROBABILITY_SUM_TOLERANCE = 0.02
 

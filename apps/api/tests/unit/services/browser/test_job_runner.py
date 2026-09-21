@@ -363,7 +363,7 @@ def _install(
     h = Harness()
     final = result if result is not None else _result(BrowserSessionStatus.COMPLETED, True, "Done")
 
-    monkeypatch.setattr(jr, "build_browser_llm", lambda: LLM_SENTINEL)
+    monkeypatch.setattr(jr, "build_browser_llm", lambda user_id=None: LLM_SENTINEL)
     monkeypatch.setattr(jr, "publish_frame_to_job", h.publish)
 
     async def _put_state(state: BrowserJobState) -> None:

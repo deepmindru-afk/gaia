@@ -387,12 +387,14 @@ class BrowserTaskRunner:
                     elapsed_ms=frame.since_prev_ms or None,
                 )
             )
+            emit_ms = round((perf_counter() - emit_t0) * 1000)
             log.info(
-                f"{LogTag.BROWSER} step timing",
+                f"{LogTag.BROWSER} step timing (step={frame.index} "
+                f"since_prev={frame.since_prev_ms}ms screenshot={screenshot_ms}ms emit={emit_ms}ms)",
                 step=frame.index,
                 since_prev_ms=frame.since_prev_ms,
                 screenshot_ms=screenshot_ms,
-                emit_ms=round((perf_counter() - emit_t0) * 1000),
+                emit_ms=emit_ms,
             )
 
     async def _render_screenshot(self, frame: StepFrame) -> str | None:

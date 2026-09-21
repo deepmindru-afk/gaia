@@ -83,6 +83,9 @@ async def narrate_executor_result(
                 writing_style=writing_style,
             ),
         )
+        # This turn's only job is to re-voice result_text. Stamp it so
+        # call_executor refuses and executor_status_hook stays quiet.
+        config["configurable"]["is_result_narration"] = True
         initial_state = {
             "messages": [
                 # MUST be a HumanMessage: a SystemMessage evicts

@@ -1528,9 +1528,7 @@ async def test_gateway_reported_cost_wins_over_the_table(monkeypatch) -> None:
     llm.model = "jev-test"
 
     await runner._record_usage(
-        outcome_from_history(
-            _History(usage=_Usage({"jev-test": _Stats(100, 5)}))
-        ).usage
+        outcome_from_history(_History(usage=_Usage({"jev-test": _Stats(100, 5)}))).usage
     )
 
     (call,) = record.await_args_list
@@ -1554,9 +1552,7 @@ async def test_missing_gateway_cost_falls_back_to_the_table(monkeypatch) -> None
     llm.model = "jev-test"
 
     await runner._record_usage(
-        outcome_from_history(
-            _History(usage=_Usage({"jev-test": _Stats(100, 5)}))
-        ).usage
+        outcome_from_history(_History(usage=_Usage({"jev-test": _Stats(100, 5)}))).usage
     )
 
     (call,) = record.await_args_list
@@ -1592,6 +1588,8 @@ AGENT_KWARG_KEYS = {
     "tools",
     "extend_system_message",
     "use_judge",
+    "llm_timeout",
+    "max_failures",
 }
 
 

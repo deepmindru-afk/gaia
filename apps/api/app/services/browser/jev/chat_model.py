@@ -16,12 +16,15 @@ from dataclasses import replace
 import json
 import re
 from time import perf_counter
-from typing import TYPE_CHECKING, TypedDict, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Protocol, TypedDict, TypeVar, cast, get_args, overload
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel
+from langchain_core.messages import BaseMessage as LangChainMessage, HumanMessage, SystemMessage
+from pydantic import BaseModel, Field, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_core import CoreSchema, core_schema
 
+from app.agents.llm.client import StructuredCallOptions, ainvoke_structured, silent_metered_config
 from app.config.settings import settings
 from app.constants.browser import (
     BROWSER_GUIDANCE_MAX_ELEMENTS,
@@ -30,7 +33,10 @@ from app.constants.browser import (
     BROWSER_RUN_BLOCKED_SUMMARY,
     JEV_DONE_REASK_BUDGET,
     JEV_MIN_DONE_CONFIDENCE,
+    JEV_PLAN_MAX_STEPS,
+    JEV_SUMMARY_MAX_CHARS,
     JEV_TEXT_HELPER_RECENT_ACTIONS,
+    JEV_TEXT_TIMEOUT_SECONDS,
     JEV_TEXT_VALUE_MAX_CHARS,
     BrowserHandoffAction,
     JevNoteSource,
@@ -41,7 +47,12 @@ from app.constants.log_tags import LogTag
 from app.patches.browser_use_deferred_screenshot_patch import defer_screenshots_for
 from app.schemas.browser import AgentGuidanceRequest, GuidanceAction, GuidanceElement
 from app.services.browser.exceptions import BrowserUnavailableError
-from app.services.browser.jev.gateway import JevGatewayClient, JevGatewayError
+from app.services.browser.jev.gateway import (
+    JevDecisionsClient,
+    JevFailoverClient,
+    JevGatewayClient,
+    JevGatewayError,
+)
 from app.services.browser.jev.live_values import read_live_values
 from app.services.browser.jev.observation import JevElement, JevObservation, observe
 from app.services.browser.jev.policy import (
@@ -49,11 +60,14 @@ from app.services.browser.jev.policy import (
     JevDecisionError,
     JevHistoryEntry,
     choose,
+    page_key,
 )
 from app.services.browser.jev.prompts import (
     CAPTCHA_CHALLENGE,
     DONE_SUMMARY,
     GUIDANCE_REASON,
+    PART_DONE,
+    PLAN_STEPS,
     TAKEOVER_REASON,
     TEXT_VALUE,
     URL_VALUE,
@@ -123,9 +137,60 @@ class _TextValue(BaseModel):
     text: str | None = None
 
 
+class _ClosingAnswer(BaseModel):
+    """The closing answer is never optional: an empty reply is a failed call, retried on the lane."""
+
+    text: str = Field(min_length=1)
+
+
 class _TakeoverReason(BaseModel):
     text: str | None = None
     category: str = SensitiveCategory.IRREVERSIBLE.value
+
+
+class StructuredCall(Protocol):
+    """One structured one-shot to the writer: a schema and a prompt in, the filled schema out."""
+
+    async def __call__(
+        self, schema: type[T], prompt: list[LangChainMessage], *, label: str
+    ) -> T: ...
+
+
+def canonical_structured_call(user_id: str | None) -> StructuredCall:
+    """Return the app's one structured one-shot, metered to the user the run works for."""
+
+    async def call(schema: type[T], prompt: list[LangChainMessage], *, label: str) -> T:
+        return await ainvoke_structured(
+            schema,
+            prompt,
+            label=label,
+            config=silent_metered_config(user_id) if user_id else None,
+            options=StructuredCallOptions(timeout=JEV_TEXT_TIMEOUT_SECONDS),
+        )
+
+    return call
+
+
+class _PlanStep(BaseModel):
+    goal: str = ""
+    url: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_sentence(cls, value: object) -> object:
+        # The writer sometimes lists a part as its sentence alone; that is a
+        # part with no site of its own, not a malformed plan.
+        return {"goal": value} if isinstance(value, str) else value
+
+
+class _PlanSteps(BaseModel):
+    steps: list[_PlanStep] = []
+
+
+class _PartDone(BaseModel):
+    done: bool = False
+    evidence: list[str] = []
+    findings: str = ""
 
 
 class JevChatModel:
@@ -138,14 +203,35 @@ class JevChatModel:
     _shot: asyncio.Task[str | None] | None = None
 
     def __init__(
-        self, *, client: JevGatewayClient, text_model: BaseChatModel, provider: str = "openrouter"
+        self,
+        *,
+        client: JevDecisionsClient,
+        text_model: BaseChatModel,
+        provider: str = "openrouter",
+        structured_call: StructuredCall | None = None,
+        user_id: str | None = None,
     ) -> None:
         self.model = client.model
         self.text_model = text_model
+        #: The writer: every typed value, URL, part judgement and closing answer
+        #: is one structured one-shot on the app's own LLM lane, so it runs on
+        #: the provider chat runs on, with its retry, fallback and metering.
+        self._structured_call = structured_call or canonical_structured_call(user_id)
         self._provider = provider
         self._client = client
         self._browser: BrowserSession | None = None
         self._task: str | None = None
+        #: The task split into ordered sub-goals once, at the first decision; Jev
+        #: sees only the current one, so a compound task cannot loop on its first part.
+        self._plan: list[_PlanStep] | None = None
+        self._plan_index = 0
+        #: How many pages had been read when the writer last judged the current part.
+        self._pages_judged = 0
+        #: What each finished part produced, in the writer's words: the list a
+        #: later part works through, the fact the closing answer reports.
+        self._findings: list[str] = []
+        #: Parts whose own site the run has opened; a part opens its site once.
+        self._opened_parts: set[int] = set()
         self._history: list[JevHistoryEntry] = []
         self._last_fingerprint: str | None = None
         self._steps = 0
@@ -235,6 +321,9 @@ class JevChatModel:
         selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
         self._handles.on_page(getattr(state, "url", None))
         screen = await read_viewport(self._browser, selector_map, self._handles)
+        # Keyed on the page's own url as well as the summary's: a click whose
+        # watchdog timed out leaves the summary's url pre-navigation.
+        self._handles.on_page(screen.url or getattr(state, "url", None))
         t2 = perf_counter()
         self._viewport = screen.boxes
         # The engine idles while Jev and the text helper think; render the step's
@@ -257,11 +346,25 @@ class JevChatModel:
             elements=len(observation.elements),
         )
         self._observation = observation
-        self._seen_text.record(observation.url, observation.text)
+        self._seen_text.record(observation.url, observation.text, observation.title)
         self._settle_previous_step(observation)
+        await self._ensure_plan(observation)
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
         offered = _offered_operations(registered)
+        self._steps += 1
+        part_over = await self._part_is_done(observation, goal)
+        if part_over and not self._advance_plan():
+            # The writer judged the last part complete: finish with the summary,
+            # without waiting for Jev to reach the same conclusion by chance.
+            return await self._finish(observation, goal, registered, output_format)
+        if part_over:
+            goal = self._effective_goal(messages)
+        opening = self._part_opening(observation)
+        if opening is not None:
+            # A new part starts on a site of its own; open it outright instead of
+            # spending a decision and a URL answer on what the plan already knows.
+            return self._direct(output_format, opening, observation)
         if self._latest_note_from(JevNoteSource.USER):
             # The user answered a takeover with an instruction; handing the same step
             # back ignores what they said, then blames them when it times out. A later
@@ -272,15 +375,45 @@ class JevChatModel:
             # spend a guidance round and never try what it said.
             offered -= {JevOperation.BLOCKED}
             self._blocked_suppressed = False
-        self._steps += 1
+        last = self._history[-1] if self._history else None
+        if any(
+            entry.kind == "error"
+            and entry.action.startswith(JevOperation.NAVIGATE.value)
+            and page_key(entry.url) == page_key(observation.url)
+            for entry in self._history
+        ):
+            # The helper found no URL to write from this page; asking again on
+            # the same page gets the same answer and spends a step on a wait
+            # that sleeps nothing.
+            offered -= {JevOperation.NAVIGATE}
+        if self._off_part_site(observation):
+            # Off the part's own site; the plan knows the way back, so NAVIGATE
+            # is a direct move there (see _control_action), and never a blank.
+            offered |= {JevOperation.NAVIGATE} & _offered_operations(registered)
+        if observation.at_bottom:
+            # Nothing is further down; an offered scroll there is a step that changes nothing.
+            offered -= {JevOperation.SCROLL_DOWN}
+        if last is not None and last.kind == "go_back":
+            # Two backs in a row is never the plan: the first one landed somewhere,
+            # and the run decides from there; twenty of them once spent a whole run.
+            offered -= {JevOperation.GO_BACK}
+        offered -= _stalled_operations(self._history)
 
         try:
             decision = await self._choose(observation, goal, offered)
-        except JevDecisionError as exc:
-            # Nothing executes on a malformed answer; a WAIT keeps the loop honest
-            # and the failure shows up in Jev's next recent_actions. On the step
-            # Browser-Use narrows to `done` only, the honest answer is a failed done.
-            log.warning(f"{LogTag.BROWSER} Jev decision rejected", error_type=type(exc).__name__)
+            if decision.operation is JevOperation.DONE and self._advance_plan():
+                # One part of the task is done; the next part is decided on this
+                # same screen instead of ending the run here.
+                goal = self._effective_goal(messages)
+                decision = await self._choose(observation, goal, offered)
+        except (JevDecisionError, JevGatewayError) as exc:
+            # Nothing executes on a malformed answer or a gateway that would not
+            # answer; a WAIT keeps the loop honest and the failure shows up in
+            # Jev's next recent_actions. Raising instead would hand Browser-Use a
+            # step failure, and six of those silently narrow the run to `done`.
+            log.warning(
+                f"{LogTag.BROWSER} Jev decision rejected ({exc})", error_type=type(exc).__name__
+            )
             self._remember("WAIT", "error", str(exc))
             fallback = _idle_action(output_format)
             return ChatInvokeCompletion(
@@ -295,17 +428,25 @@ class JevChatModel:
             if wait_action.get("wait") and decision.operation is not JevOperation.WAIT
             else (decision.operation.value.lower())
         )
-        self._remember(decision.label, kind, text)
+        self._remember(
+            decision.label,
+            kind,
+            text,
+            url=observation.url,
+            target_label=decision.element.label if decision.element is not None else None,
+        )
         evaluation = decision.evaluation
         if self._gateway_cost_usd is not None:
             cost = evaluation.gateway_cost_usd if evaluation is not None else None
             self._gateway_cost_usd = (self._gateway_cost_usd + cost) if cost is not None else None
+        served_by = (evaluation.provider if evaluation else None) or self._provider
         log.info(
             f"{LogTag.BROWSER} Jev step decided (step={self._steps} "
             f"{decision.operation.value} p={decision.confidence:.2f} "
-            f"{decision.evaluation.latency_ms if decision.evaluation else None}ms)",
+            f"{decision.evaluation.latency_ms if decision.evaluation else None}ms via {served_by} "
+            f"on {observation.url[:80]})",
             step=self._steps,
-            provider=self._provider,
+            provider=served_by,
             operation=decision.operation.value,
             target=decision.target,
             confidence=round(decision.confidence, 3),
@@ -339,7 +480,9 @@ class JevChatModel:
         A DONE under the floor ends the run on whatever page is showing, and the
         closing summary then reads like a confident answer to a goal never met.
         """
-        decision = await choose(self._client, observation, goal, self._history, offered)
+        decision = await choose(
+            self._client, observation, goal, self._history, offered, self._seen_text.pages
+        )
         if (
             decision.operation is not JevOperation.DONE
             or decision.confidence >= JEV_MIN_DONE_CONFIDENCE
@@ -354,7 +497,12 @@ class JevChatModel:
         )
         self._done_reasks_left -= 1
         alternative = await choose(
-            self._client, observation, goal, self._history, offered - {JevOperation.DONE}
+            self._client,
+            observation,
+            goal,
+            self._history,
+            offered - {JevOperation.DONE},
+            self._seen_text.pages,
         )
         # A re-ask that surfaces only a less sure WAIT spends a whole step (about
         # 6s on a long page) to change nothing; the unsure DONE was the better read.
@@ -389,10 +537,28 @@ class JevChatModel:
     ) -> tuple[dict[str, dict[str, object]], str | None]:
         if decision.operation is JevOperation.BLOCKED:
             return await self._blocked_action(goal, observation, registered)
-        summary = await self._field_text(
-            DONE_SUMMARY, goal, observation, None, seen_text=self._seen_text.text
+        answer = await self._structured(
+            _ClosingAnswer,
+            DONE_SUMMARY,
+            self._effective_goal([], whole_task=True) if self._task else goal,
+            observation,
+            None,
+            seen_text=self._seen_text.all_text,
         )
-        return {"done": {"text": summary or "Completed the task.", "success": True}}, summary
+        summary = answer.text.strip() if answer else None
+        if summary and len(summary) > JEV_SUMMARY_MAX_CHARS:
+            log.warning(
+                f"{LogTag.BROWSER} Jev closing answer discarded ({len(summary)} chars over "
+                f"the {JEV_SUMMARY_MAX_CHARS} cap)",
+                step=self._steps,
+                chars=len(summary),
+            )
+            summary = None
+        if not summary:
+            # The pages were read but the answer could not be written; saying
+            # "completed" here would report a success the user never receives.
+            return {"done": {"text": _NO_SUMMARY, "success": False}}, _NO_SUMMARY
+        return {"done": {"text": summary, "success": True}}, summary
 
     async def _blocked_action(
         self, goal: str, observation: JevObservation, registered: set[str]
@@ -463,11 +629,21 @@ class JevChatModel:
             case JevOperation.GO_BACK:
                 return {"go_back": {}}, None
             case JevOperation.NAVIGATE:
+                if self._off_part_site(observation) and self._plan is not None:
+                    # Back to the part's own site: the plan already names it.
+                    part_url = cast(str, self._plan[self._plan_index].url)
+                    return {"navigate": {"url": part_url, "new_tab": False}}, part_url
                 url = await self._field_text(URL_VALUE, goal, observation, None)
                 if not url or not url.lower().startswith(("http://", "https://")):
                     return {
                         "wait": {"seconds": 1}
                     }, "NAVIGATE needs a URL the goal implies; none found"
+                if _same_page(url, observation.url):
+                    # Browser-Use's wait(1) sleeps zero seconds: opening the page
+                    # already showing would spend a step on nothing at all.
+                    return {
+                        "wait": {"seconds": 1}
+                    }, f"NAVIGATE to {url} is the page already open; nothing to load"
                 return {"navigate": {"url": url, "new_tab": False}}, url
         return None
 
@@ -478,12 +654,23 @@ class JevChatModel:
         observation: JevObservation,
         field: JevElement | None,
         seen_text: str | None = None,
+        max_chars: int | None = None,
     ) -> str | None:
+        # Resolved at call time: a typed value's cap is a module constant.
+        cap = JEV_TEXT_VALUE_MAX_CHARS if max_chars is None else max_chars
         answer = await self._structured(
             _TextValue, instructions, goal, observation, field, seen_text
         )
         value = answer.text if answer else None
-        if not value or not value.strip() or len(value) > JEV_TEXT_VALUE_MAX_CHARS:
+        if not value or not value.strip():
+            return None
+        if len(value) > cap:
+            log.warning(
+                f"{LogTag.BROWSER} Jev text helper value discarded ({len(value)} chars over "
+                f"the {cap} cap)",
+                step=self._steps,
+                chars=len(value),
+            )
             return None
         return value
 
@@ -497,11 +684,6 @@ class JevChatModel:
         seen_text: str | None = None,
     ) -> T | None:
         """Goal, field, page and recent actions in; one small JSON value out."""
-        from browser_use.llm.messages import (  # noqa: PLC0415 -- heavy optional dep
-            SystemMessage,
-            UserMessage,
-        )
-
         context: dict[str, object] = {
             "goal": goal,
             "field": {"label": field.label, "role": field.role, "value": field.value}
@@ -513,25 +695,36 @@ class JevChatModel:
                 for h in self._history[-JEV_TEXT_HELPER_RECENT_ACTIONS:]
             ],
             "latest_note": self._latest_note(),
+            # What is already done, so a URL or a closing answer is written for
+            # the part of the goal that is left, not the part already read.
+            "pages_read": self._seen_text.pages,
+            "findings": self._findings,
         }
         if seen_text:
-            context["seen_on_this_page"] = seen_text
+            context["seen_on_pages_read"] = seen_text
         t0 = perf_counter()
+        label = f"browser_{output.__name__.strip('_').lower()}"
         try:
-            result = await self.text_model.ainvoke(
-                [SystemMessage(content=instructions), UserMessage(content=json.dumps(context))],
+            parsed = await self._structured_call(
                 output,
+                [SystemMessage(content=instructions), HumanMessage(content=json.dumps(context))],
+                label=label,
             )
         except Exception as exc:
-            log.warning(f"{LogTag.BROWSER} Jev text helper failed", error_type=type(exc).__name__)
+            log.warning(
+                f"{LogTag.BROWSER} Jev text helper failed ({type(exc).__name__}: {str(exc)[:200]})",
+                error_type=type(exc).__name__,
+            )
             return None
+        answer = next(iter(parsed.model_dump().values()), None)
         log.info(
             f"{LogTag.BROWSER} Jev text helper answered (step={self._steps} "
-            f"text_ms={round((perf_counter() - t0) * 1000)})",
+            f"text_ms={round((perf_counter() - t0) * 1000)} "
+            f"value={str(answer)[:120]!r})",
             step=self._steps,
             text_ms=round((perf_counter() - t0) * 1000),
         )
-        return result.completion
+        return parsed
 
     def note_from_user(self, note: str | None) -> None:
         """Attach what the user said when handing the browser back to the step that asked.
@@ -612,7 +805,173 @@ class JevChatModel:
             )
         self._last_fingerprint = observation.fingerprint
 
-    def _effective_goal(self, messages: list[BaseMessage]) -> str:
+    async def _ensure_plan(self, observation: JevObservation) -> None:
+        """Split the task into its ordered parts once; a single-part task is its own plan."""
+        if self._plan is not None:
+            return
+        task = self._task or ""
+        plan = await self._structured(_PlanSteps, PLAN_STEPS, task, observation, None)
+        steps = [
+            _PlanStep(goal=s.goal.strip(), url=_https_or_none(s.url))
+            for s in (plan.steps if plan else [])
+            if s.goal and s.goal.strip()
+        ]
+        self._plan = steps[:JEV_PLAN_MAX_STEPS] if len(steps) > 1 else [_PlanStep(goal=task)]
+        log.info(
+            f"{LogTag.BROWSER} Jev plan built ({len(self._plan)} part(s): "
+            f"{' | '.join(f'{s.goal[:60]} @ {s.url}' for s in self._plan)})",
+            steps=len(self._plan),
+        )
+
+    async def _part_is_done(self, observation: JevObservation, goal: str) -> bool:
+        """Ask the writer whether the current part is complete, once per newly read page."""
+        pages = len(self._seen_text.pages)
+        if pages <= self._pages_judged or self._plan is None:
+            return False
+        self._pages_judged = pages
+        # pages_read (titles and urls) is in the context already; the pages' full
+        # text is not what a "has every item been opened" judgement needs.
+        verdict = await self._structured(_PartDone, PART_DONE, goal, observation, None)
+        # A "done" is only as good as its evidence: every page it cites must be
+        # one the run actually read, and not the part's own listing. The writer
+        # once declared three stories opened from the front page alone.
+        read = {page_key(page["url"]) for page in self._seen_text.pages}
+        listing = page_key(self._plan[self._plan_index].url)
+        evidence = [page_key(url) for url in (verdict.evidence if verdict else [])]
+        cited = [url for url in evidence if url in read and url != listing]
+        done = bool(verdict and verdict.done and cited)
+        if verdict and verdict.done and not cited:
+            log.info(
+                f"{LogTag.BROWSER} Jev part claimed done without evidence in pages read "
+                f"(cited {evidence[:4]})",
+                step=self._steps,
+                part=self._plan_index + 1,
+            )
+        findings = (verdict.findings if verdict else "").strip()
+        if done and findings:
+            self._findings.append(f"Part {self._plan_index + 1}: {findings}")
+        log.info(
+            f"{LogTag.BROWSER} Jev part judged (part {self._plan_index + 1}/{len(self._plan)} "
+            f"{'done' if done else 'not done'} after {pages} pages read"
+            f"{f'; findings: {findings[:160]}' if findings else ''})",
+            step=self._steps,
+            part=self._plan_index + 1,
+            done=done,
+        )
+        return done
+
+    def _advance_plan(self) -> bool:
+        """Move to the next part of the plan; False when the part just finished was the last."""
+        if self._plan is None or self._plan_index >= len(self._plan) - 1:
+            return False
+        done = self._plan[self._plan_index]
+        self._plan_index += 1
+        self._remember(f"DONE part {self._plan_index}: {done.goal[:80]}", "done_part", None)
+        log.info(
+            f"{LogTag.BROWSER} Jev plan advanced (part {self._plan_index + 1}/{len(self._plan)}: "
+            f"{self._plan[self._plan_index].goal[:80]})",
+            step=self._steps,
+            part=self._plan_index + 1,
+        )
+        return True
+
+    def _off_part_site(self, observation: JevObservation) -> bool:
+        """Whether the current part names a site of its own and the run is not on it.
+
+        A site, not a page: the part's URL is where the part starts, and it
+        redirects (en.wikipedia.org lands on /wiki/Main_Page) while the work
+        then moves across that site's pages.
+        """
+        if not self._plan or not self._plan[self._plan_index].url:
+            return False
+        return _site_of(self._plan[self._plan_index].url) != _site_of(observation.url)
+
+    def _part_opening(self, observation: JevObservation) -> dict[str, dict[str, object]] | None:
+        """Return the navigate that opens a part on its own site, the first time the part runs."""
+        if self._plan is None or self._plan_index in self._opened_parts:
+            return None
+        self._opened_parts.add(self._plan_index)
+        part = self._plan[self._plan_index]
+        if not part.url or not self._off_part_site(observation):
+            return None
+        return {"navigate": {"url": part.url, "new_tab": False}}
+
+    def _direct(
+        self,
+        output_format: type[T],
+        action: dict[str, dict[str, object]],
+        observation: JevObservation,
+    ) -> ChatInvokeCompletion[T]:
+        """Return an action the plan chose itself, recorded like any other step."""
+        from browser_use.llm.views import (  # noqa: PLC0415 -- heavy optional dep
+            ChatInvokeCompletion,
+        )
+
+        url = str(action["navigate"]["url"])
+        self._remember(f"NAVIGATE {url}", "navigate", url, url=observation.url)
+        log.info(
+            f"{LogTag.BROWSER} Jev step decided (step={self._steps} NAVIGATE by plan on "
+            f"{observation.url[:80]} -> {url[:80]})",
+            step=self._steps,
+            operation="NAVIGATE",
+        )
+        return ChatInvokeCompletion(
+            completion=_output(
+                output_format, action, f"NAVIGATE {url}", f"Step {self._steps}: opening {url}"
+            ),
+            usage=None,
+        )
+
+    async def _finish(
+        self,
+        observation: JevObservation,
+        goal: str,
+        registered: set[str],
+        output_format: type[T],
+    ) -> ChatInvokeCompletion[T]:
+        """End the run with the closing answer, as a DONE the writer decided."""
+        from browser_use.llm.views import (  # noqa: PLC0415 -- heavy optional dep
+            ChatInvokeCompletion,
+        )
+
+        decision = JevDecision(operation=JevOperation.DONE, confidence=1.0)
+        action, text = await self._action_for(decision, observation, goal, registered)
+        self._remember(decision.label, "done", text, url=observation.url)
+        log.info(
+            f"{LogTag.BROWSER} Jev step decided (step={self._steps} DONE by the writer's judgement "
+            f"on {observation.url[:80]})",
+            step=self._steps,
+            operation="DONE",
+        )
+        return ChatInvokeCompletion(
+            completion=_output(output_format, action, decision.label, f"Step {self._steps}: DONE"),
+            usage=None,
+        )
+
+    def _goal_with_plan(self, goal: str) -> str:
+        """Frame the goal as its current part when the task was split."""
+        if not self._plan or len(self._plan) == 1:
+            return goal
+        i, n = self._plan_index, len(self._plan)
+        lines = [f"CURRENT PART ({i + 1} of {n}), the only thing to do now: {self._plan[i].goal}"]
+        if i:
+            lines.append("ALREADY DONE, never redo: " + " / ".join(s.goal for s in self._plan[:i]))
+        if self._findings:
+            lines.append(
+                "FOUND SO FAR, what the parts done produced: " + " | ".join(self._findings)
+            )
+        if i < n - 1:
+            lines.append(
+                "STILL TO DO AFTER THIS PART, not yet: "
+                + " / ".join(s.goal for s in self._plan[i + 1 :])
+            )
+        lines.append(
+            "DONE means this current part is complete; the parts after it come next. "
+            f"FULL TASK for reference: {goal}"
+        )
+        return "\n".join(lines)
+
+    def _effective_goal(self, messages: list[BaseMessage], *, whole_task: bool = False) -> str:
         """Return the goal to decide and answer against: what the user changed, how to proceed, then the task.
 
         The user's instruction leads and says it overrides -- appended at the end
@@ -620,7 +979,10 @@ class JevChatModel:
         unfinished instead. Agent guidance only says how to proceed, so it never
         displaces what the user asked for.
         """
-        goal = self._task or _goal_from_messages(messages)
+        task = self._task or _goal_from_messages(messages)
+        # The closing answer is written against the whole task, every part of
+        # it; a decision is made against the part in progress.
+        goal = task if whole_task else self._goal_with_plan(task)
         user_note = self._latest_note_from(JevNoteSource.USER)
         agent_note = self._latest_note_from(JevNoteSource.AGENT)
         if not user_note and not agent_note:
@@ -646,8 +1008,48 @@ class JevChatModel:
     def _latest_note(self) -> str | None:
         return next((h.note for h in reversed(self._history) if h.note), None)
 
-    def _remember(self, action: str, kind: str, text: str | None) -> None:
-        self._history.append(JevHistoryEntry(action=action, kind=kind, text=text))
+    def _remember(
+        self,
+        action: str,
+        kind: str,
+        text: str | None,
+        *,
+        url: str | None = None,
+        target_label: str | None = None,
+    ) -> None:
+        self._history.append(
+            JevHistoryEntry(action=action, kind=kind, text=text, url=url, target_label=target_label)
+        )
+
+
+def _stalled_operations(history: list[JevHistoryEntry]) -> frozenset[JevOperation]:
+    """Operations whose last two uses changed nothing on the page, so a third would not either."""
+    if len(history) < 2:
+        return frozenset()
+    last, before = history[-1], history[-2]
+    if last.page_changed is not False or before.page_changed is not False:
+        return frozenset()
+    if last.kind != before.kind or last.kind in ("wait", "error", "done_part"):
+        return frozenset()
+    return frozenset(op for op in JevOperation if op.value.lower() == last.kind)
+
+
+def _same_page(target: str, current: str) -> bool:
+    """Return whether the URL to open is the document already showing, fragment aside."""
+    return page_key(target) == page_key(current)
+
+
+_NO_SUMMARY = "I read the pages but could not write the closing answer."
+
+
+def _site_of(url: str | None) -> str:
+    """Return the host a URL is on, so a part's site matches every page of it."""
+    return urlsplit(url or "").netloc.lower().removeprefix("www.")
+
+
+def _https_or_none(url: str | None) -> str | None:
+    value = (url or "").strip()
+    return value if value.lower().startswith(("http://", "https://")) else None
 
 
 def _takeover(
@@ -707,7 +1109,7 @@ def _goal_from_messages(messages: list[BaseMessage]) -> str:
     return ""
 
 
-def build_jev_chat_model(*, text_model: BaseChatModel) -> JevChatModel:
+def build_jev_chat_model(*, text_model: BaseChatModel, user_id: str | None = None) -> JevChatModel:
     """Return the Jev policy over the configured gateway, with text_model as its text helper.
 
     BROWSER_JEV_PROVIDER selects "openrouter" (default) or "vercel" (Vercel AI
@@ -716,26 +1118,51 @@ def build_jev_chat_model(*, text_model: BaseChatModel) -> JevChatModel:
     """
     provider = settings.BROWSER_JEV_PROVIDER
     if provider == "vercel":
-        api_key = settings.BROWSER_JEV_VERCEL_API_KEY
-        if not api_key:
+        if not settings.BROWSER_JEV_VERCEL_API_KEY:
             raise BrowserUnavailableError(
                 "Jev provider is vercel but BROWSER_JEV_VERCEL_API_KEY is not set."
             )
-        client = JevGatewayClient(
-            api_key=api_key,
-            model=settings.BROWSER_JEV_VERCEL_MODEL,
-            url=_JEV_VERCEL_EVALUATE_URL,
-        )
-        return JevChatModel(client=client, text_model=text_model, provider="vercel")
-    api_key = settings.OPENROUTER_API_KEY
-    if not api_key:
+    elif not settings.OPENROUTER_API_KEY:
         raise BrowserUnavailableError("Jev is enabled but OPENROUTER_API_KEY is not set.")
-    client = JevGatewayClient(
-        api_key=api_key,
+    gateways = {
+        name: client
+        for name, client in (("vercel", _vercel_client()), ("openrouter", _openrouter_client()))
+        if client is not None
+    }
+    primary = gateways.pop(provider)
+    fallback = next(iter(gateways.values()), None)
+    client: JevDecisionsClient = (
+        JevFailoverClient(primary=primary, fallback=fallback) if fallback is not None else primary
+    )
+    log.info(
+        f"{LogTag.BROWSER} Jev gateway wired ({provider}"
+        f"{f', falling back to {fallback.provider}' if fallback is not None else ', no fallback'})",
+        provider=provider,
+        fallback_provider=fallback.provider if fallback is not None else None,
+    )
+    return JevChatModel(client=client, text_model=text_model, provider=provider, user_id=user_id)
+
+
+def _vercel_client() -> JevGatewayClient | None:
+    if not settings.BROWSER_JEV_VERCEL_API_KEY:
+        return None
+    return JevGatewayClient(
+        api_key=settings.BROWSER_JEV_VERCEL_API_KEY,
+        model=settings.BROWSER_JEV_VERCEL_MODEL,
+        url=_JEV_VERCEL_EVALUATE_URL,
+        provider="vercel",
+    )
+
+
+def _openrouter_client() -> JevGatewayClient | None:
+    if not settings.OPENROUTER_API_KEY:
+        return None
+    return JevGatewayClient(
+        api_key=settings.OPENROUTER_API_KEY,
         model=settings.BROWSER_USE_JEV_MODEL,
         url=_JEV_DECISIONS_URL,
+        provider="openrouter",
     )
-    return JevChatModel(client=client, text_model=text_model, provider="openrouter")
 
 
 __all__ = ["JevChatModel", "JevGatewayError", "build_jev_chat_model"]

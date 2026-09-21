@@ -264,9 +264,11 @@ async def _poll_job(
         pending = await get_guidance_request(job_id)
         if pending is not None:
             return _JoinOutcome(guidance_message(pending.request), keep_lease=True)
-        if await get_conversation_slot(conversation_id) is None:
-            # Only the worker heartbeats the slot, so its absence under a
-            # non-terminal state means the run died with the process that held it.
+        # A QUEUED job has never had a worker, so the enqueuer's un-heartbeaten
+        # lease expiring says nothing about liveness: a worker still busy booting
+        # will run it. Only from RUNNING on does a missing slot mean a dead run.
+        queued_awaiting_worker = state is not None and state.status is BrowserJobStatus.QUEUED
+        if not queued_awaiting_worker and await get_conversation_slot(conversation_id) is None:
             log.warning(
                 f"{LogTag.BROWSER} Browser job lost its worker",
                 browser={"job_id": job_id},

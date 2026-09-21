@@ -5,6 +5,12 @@ from it, and chat_model.py answers Browser-Use's calls. Policy and prompts deriv
 browser-use/jev-ultrafast (MIT)."""
 
 from app.services.browser.jev.chat_model import JevChatModel, build_jev_chat_model
-from app.services.browser.jev.gateway import JevGatewayClient, JevGatewayError
+from app.services.browser.jev.gateway import JevFailoverClient, JevGatewayClient, JevGatewayError
 
-__all__ = ["JevChatModel", "JevGatewayClient", "JevGatewayError", "build_jev_chat_model"]
+__all__ = [
+    "JevChatModel",
+    "JevFailoverClient",
+    "JevGatewayClient",
+    "JevGatewayError",
+    "build_jev_chat_model",
+]

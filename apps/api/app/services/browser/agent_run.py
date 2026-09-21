@@ -242,6 +242,15 @@ class BrowserAgentRun:
             # user had already cancelled and logged the run as a failure.
             "use_judge": False,
             "flash_mode": self._config.flash_mode,
+            # A step that fails twice running (a state read that timed out, an
+            # engine that stopped answering) ends the run with its reason instead
+            # of Browser-Use's default of narrowing the action space to `done`.
+            "max_failures": 2,
+            # One decision here is a state read (which can wait out the engine's
+            # layout pass, see browser_use_event_budget_patch), a part judgement
+            # by the writer, Jev and possibly a typed value; Browser-Use's 75s
+            # default cut such a step off as a failure.
+            "llm_timeout": 180,
             "max_actions_per_step": self._config.max_actions_per_step,
             "step_timeout": self._step_timeout,
             "tools": build_browser_tools(

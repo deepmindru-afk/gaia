@@ -21,7 +21,12 @@ from bubus import BaseEvent
 
 # The state read carries the screenshot, so its budget has to sit above it.
 _SCREENSHOT_SECONDS = 60.0
-_STATE_READ_SECONDS = 90.0
+# Obscura lays out a 30k-node page (a long Wikipedia article) in one ~50s pass
+# on the page's thread, and every CDP command queues behind it. The pass runs
+# once per such page and the page then answers in under a second, so a state
+# read that waits it out succeeds where a shorter budget fails the step twice
+# and ends the run (measured 2026-09-22: 57-62s stalls on the Transformer article).
+_STATE_READ_SECONDS = 120.0
 
 
 def _budget(env_var: str, seconds: float) -> Callable[[], float | None]:

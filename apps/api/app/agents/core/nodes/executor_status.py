@@ -36,11 +36,15 @@ async def executor_status_hook(state: State, config: RunnableConfig, store: Base
         if not thread_id or not redis_cache.client:
             return state
 
+        # Skip for the whole result-narration run, not just its first model call:
+        # the busy lock is still held by the run being narrated, so the frame is
+        # false by construction. Checking only messages[-1] lapsed the moment the
+        # turn made a tool call, and the model then told the user the finished
+        # run "is still going".
+        if configurable.get("is_result_narration"):
+            return state
         messages = state.get("messages", [])
-        # Skip during result narration: the busy lock is still held while comms
-        # re-voices a finished result, and injecting "STILL RUNNING" here can
-        # make the model return an empty narration that leaks the raw text.
-        if messages and messages[-1].name == BACKGROUND_EXECUTOR_NAME:
+        if any(getattr(m, "name", None) == BACKGROUND_EXECUTOR_NAME for m in messages):
             return state
 
         raw = await redis_cache.client.get(f"{EXECUTOR_BUSY_PREFIX}{thread_id}")

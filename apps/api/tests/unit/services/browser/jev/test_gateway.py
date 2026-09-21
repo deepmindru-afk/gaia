@@ -10,6 +10,7 @@ import pytest
 from app.services.browser.jev.gateway import (
     JevChoiceQuestion,
     JevEvaluationRequest,
+    JevFailoverClient,
     JevGatewayClient,
     JevGatewayError,
 )
@@ -167,3 +168,104 @@ async def test_missing_cost_metadata_reports_none() -> None:
     evaluation = await _client(handler).evaluate(REQUEST)
 
     assert evaluation.gateway_cost_usd is None
+
+
+async def test_an_answer_is_attributed_to_the_gateway_that_served_it() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=ANSWER)
+
+    evaluation = await _client(handler, provider="vercel").evaluate(REQUEST)
+
+    assert evaluation.provider == "vercel"
+
+
+def _no_sleep(monkeypatch) -> None:
+    async def fake_sleep(seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr("app.services.browser.jev.gateway.asyncio.sleep", fake_sleep)
+
+
+async def test_a_primary_that_exhausts_its_retries_hands_the_same_request_to_the_fallback(
+    monkeypatch,
+) -> None:
+    _no_sleep(monkeypatch)
+    primary_bodies: list[dict] = []
+    fallback_bodies: list[dict] = []
+
+    def primary(request: httpx.Request) -> httpx.Response:
+        primary_bodies.append(json.loads(request.content))
+        return httpx.Response(503, json={"error": {"message": "Service temporarily unavailable"}})
+
+    def fallback(request: httpx.Request) -> httpx.Response:
+        fallback_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=ANSWER)
+
+    client = JevFailoverClient(
+        primary=_client(primary, provider="vercel"),
+        fallback=_client(fallback, provider="openrouter"),
+    )
+
+    evaluation = await client.evaluate(REQUEST)
+
+    assert evaluation.answers["operation"].choice == "DONE"
+    assert evaluation.provider == "openrouter"
+    assert len(primary_bodies) == 3, "the primary gets every retry before the fallback is asked"
+    assert len(fallback_bodies) == 1
+    assert primary_bodies[0]["state"] == fallback_bodies[0]["state"]
+    assert primary_bodies[0]["questions"] == fallback_bodies[0]["questions"]
+
+
+async def test_the_fallback_is_never_asked_when_the_primary_answers() -> None:
+    fallback_calls = 0
+
+    def primary(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=ANSWER)
+
+    def fallback(request: httpx.Request) -> httpx.Response:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return httpx.Response(200, json=ANSWER)
+
+    client = JevFailoverClient(
+        primary=_client(primary, provider="vercel"),
+        fallback=_client(fallback, provider="openrouter"),
+    )
+
+    evaluation = await client.evaluate(REQUEST)
+
+    assert evaluation.provider == "vercel"
+    assert fallback_calls == 0
+
+
+async def test_a_transport_failure_on_the_primary_also_fails_over() -> None:
+    def primary(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    def fallback(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=ANSWER)
+
+    client = JevFailoverClient(
+        primary=_client(primary, provider="vercel"),
+        fallback=_client(fallback, provider="openrouter"),
+    )
+
+    assert (await client.evaluate(REQUEST)).provider == "openrouter"
+
+
+async def test_both_gateways_failing_surfaces_the_fallbacks_error(monkeypatch) -> None:
+    _no_sleep(monkeypatch)
+
+    def primary(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": {"message": "primary down"}})
+
+    def fallback(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": {"message": "fallback limited"}})
+
+    client = JevFailoverClient(
+        primary=_client(primary, provider="vercel"),
+        fallback=_client(fallback, provider="openrouter"),
+    )
+
+    with pytest.raises(JevGatewayError, match="returned HTTP 429: fallback limited"):
+        await client.evaluate(REQUEST)

@@ -43,11 +43,9 @@ async def mint_replay_code(session_id: str, steps: int, shots: list[str] | None 
         model=ReplayRecord,
     )
     mint_ms = round((perf_counter() - started) * 1000)
-    log.set_ns(
-        "browser", session_id=session_id, replay_shots=shot_count, replay_mint_ms=mint_ms
-    )
+    log.set_ns("browser", session_id=session_id, replay_shots=shot_count, replay_mint_ms=mint_ms)
     log.info(
-        f"{LogTag.BROWSER} Browser replay code minted",
+        f"{LogTag.BROWSER} Browser replay code minted ({shot_count}/{steps} shots in {mint_ms}ms)",
         steps=steps,
         shot_count=shot_count,
         mint_ms=mint_ms,

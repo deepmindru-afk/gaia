@@ -107,6 +107,11 @@ class AgentConfigurable(TypedDict, total=False):
     # --- run scope ----------------------------------------------------------
     selected_tool: str | None
     tool_category: str | None
+    #: True only for the silent comms invocation that re-voices a finished
+    #: executor result (comms_narrator). A narration turn reports; it never
+    #: dispatches. call_executor refuses here and the live-executor status frame
+    #: stays out, because the busy lock is still held by the run being narrated.
+    is_result_narration: bool
     subagent_id: str | None
     #: Shared VFS session, held constant across the executor and the handoff
     #: subagents it spawns so all resolve paths against one workspace.

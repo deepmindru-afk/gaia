@@ -9,6 +9,7 @@ model id, and the credential differ, so one client covers both.
 from __future__ import annotations
 
 import asyncio
+import json
 from time import perf_counter
 from typing import Literal
 
@@ -19,7 +20,9 @@ from app.constants.browser import (
     JEV_GATEWAY_MAX_ATTEMPTS,
     JEV_GATEWAY_TIMEOUT_SECONDS,
 )
+from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserAutomationError
+from shared.py.wide_events import log
 
 # A criterion or instruction: TypeSafe accepts a string or structured JSON.
 JsonInput = str | dict[str, object] | list[object]
@@ -104,6 +107,9 @@ class JevEvaluation(BaseModel):
     answers: dict[str, JevChoiceAnswer]
     usage: JevUsage | None = None
     latency_ms: int = 0
+    #: Which gateway served this answer; set by the client, so a failed-over
+    #: decision is attributed to the gateway that actually answered.
+    provider: str = ""
     provider_metadata: _ProviderMetadata | None = Field(default=None, alias="providerMetadata")
 
     @property
@@ -126,9 +132,11 @@ class JevGatewayClient:
         api_key: str,
         model: str,
         url: str,
+        provider: str = "openrouter",
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.model = model
+        self.provider = provider
         self._url = url
         self._headers = {"Authorization": f"Bearer {api_key}"}
         self._client = client or httpx.AsyncClient(timeout=JEV_GATEWAY_TIMEOUT_SECONDS)
@@ -136,14 +144,36 @@ class JevGatewayClient:
     async def evaluate(self, request: JevEvaluationRequest) -> JevEvaluation:
         """POST the questions; retries transient 429/503/529 with backoff."""
         body = {"model": self.model, **request.model_dump(mode="json")}
+        request_bytes = len(json.dumps(body))
         started = perf_counter()
         for attempt in range(JEV_GATEWAY_MAX_ATTEMPTS):
+            attempt_started = perf_counter()
             try:
                 response = await self._client.post(self._url, json=body, headers=self._headers)
             except httpx.HTTPError as exc:
+                log.warning(
+                    f"{LogTag.BROWSER} Jev gateway request failed ({self.provider} "
+                    f"attempt {attempt + 1}/{JEV_GATEWAY_MAX_ATTEMPTS}, {request_bytes}B, "
+                    f"{_elapsed_ms(attempt_started)}ms: {type(exc).__name__})",
+                    provider=self.provider,
+                    attempt=attempt + 1,
+                    request_bytes=request_bytes,
+                    error_type=type(exc).__name__,
+                )
                 raise JevGatewayError(
-                    f"Jev decisions request failed: {exc}; no action executed."
+                    f"Jev decisions request failed: {exc} ({self.provider}); no action executed."
                 ) from exc
+            if response.is_error:
+                log.warning(
+                    f"{LogTag.BROWSER} Jev gateway refused ({self.provider} HTTP "
+                    f"{response.status_code}, attempt {attempt + 1}/{JEV_GATEWAY_MAX_ATTEMPTS}, "
+                    f"{request_bytes}B, {_elapsed_ms(attempt_started)}ms: {_error_message(response)})",
+                    provider=self.provider,
+                    status_code=response.status_code,
+                    attempt=attempt + 1,
+                    request_bytes=request_bytes,
+                    latency_ms=_elapsed_ms(attempt_started),
+                )
             if response.status_code in _RETRY_STATUSES and attempt < JEV_GATEWAY_MAX_ATTEMPTS - 1:
                 await asyncio.sleep(0.5 * 2**attempt)
                 continue
@@ -153,12 +183,55 @@ class JevGatewayClient:
                     f"{_error_message(response)}; no action executed."
                 )
             evaluation = JevEvaluation.model_validate(response.json())
-            evaluation.latency_ms = round((perf_counter() - started) * 1000)
+            evaluation.latency_ms = _elapsed_ms(started)
+            evaluation.provider = self.provider
             return evaluation
-        raise JevGatewayError("Jev decisions unavailable; no action executed.")
+        raise JevGatewayError(f"Jev decisions unavailable ({self.provider}); no action executed.")
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+class JevFailoverClient:
+    """A primary gateway with a second one behind it for the decisions the primary cannot serve.
+
+    Both gateways answer the same {model, state, questions} shape, so when the
+    primary exhausts its retries (rate limit, outage, transport failure) the
+    same request goes to the fallback instead of costing the run a step. The
+    provider flag still picks the primary; the fallback is whichever other
+    gateway has a key configured.
+    """
+
+    def __init__(self, *, primary: JevGatewayClient, fallback: JevGatewayClient) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self.model = primary.model
+        self.provider = primary.provider
+
+    async def evaluate(self, request: JevEvaluationRequest) -> JevEvaluation:
+        try:
+            return await self.primary.evaluate(request)
+        except JevGatewayError as exc:
+            log.warning(
+                f"{LogTag.BROWSER} Jev decision failed over "
+                f"({self.primary.provider} -> {self.fallback.provider}: {exc})",
+                provider=self.primary.provider,
+                fallback_provider=self.fallback.provider,
+                error_type=type(exc).__name__,
+            )
+            return await self.fallback.evaluate(request)
+
+    async def aclose(self) -> None:
+        await self.primary.aclose()
+        await self.fallback.aclose()
+
+
+#: What the policy asks for a decision: one gateway, or one with a fallback behind it.
+JevDecisionsClient = JevGatewayClient | JevFailoverClient
+
+
+def _elapsed_ms(since: float) -> int:
+    return round((perf_counter() - since) * 1000)
 
 
 def _error_message(response: httpx.Response) -> str:
