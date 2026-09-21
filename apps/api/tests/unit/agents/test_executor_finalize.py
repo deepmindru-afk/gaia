@@ -337,9 +337,11 @@ class TestCancelStillCarriesHandedOverWork:
             await asyncio.sleep(0)
 
         boundaries.inbox_cls.assert_called_with("conv-1")
-        assert boundaries.prepare.await_args.args[1]["task"] == wrap_agent_payload(
-            AgentTag.USER_INTERJECTION, "the handed-over ask"
-        )
+        # A run is started to drain the inbox, seeded (not stuffed) with the ask;
+        # the handed-over entry is never retired before a run is durably going to
+        # take it, so a crash here cannot strand it.
+        assert boundaries.prepare.await_args.args[1]["task"] == er.EXECUTOR_CARRY_TASK
+        boundaries.inbox_cls.return_value.retire.assert_not_awaited()
         spawn.assert_awaited_once()
 
 
@@ -684,11 +686,10 @@ class TestFinalizeCarriesOnlyWorkTheThreadNeverTook:
             still_pending = [entry.id for entry in await inbox.read()]
 
         prepare.assert_awaited_once()
-        assert prepare.await_args.args[1]["task"] == wrap_agent_payload(
-            AgentTag.USER_INTERJECTION, "and book the flight"
-        )
-        # e1 is in the thread, so it is retired here. e2 stays: the claim was
-        # lost, and work must never be destroyed before a run exists to take it.
+        # The run is seeded to drain the inbox, not stuffed with the late work.
+        assert prepare.await_args.args[1]["task"] == er.EXECUTOR_CARRY_TASK
+        # e1 was committed to the thread, so it is retired. e2 was not — it stays
+        # for the new run's own drain to inject, commit, and retire crash-safely.
         assert still_pending == ["e2"]
 
     async def test_work_staged_into_a_model_call_that_failed_is_still_carried(self) -> None:
@@ -707,10 +708,12 @@ class TestFinalizeCarriesOnlyWorkTheThreadNeverTook:
             )
 
             await er._carry_pending_into_new_run(_run(RunKind.QUEUED), object())
+            still_pending = [entry.id for entry in await inbox.read()]
 
-        assert prepare.await_args.args[1]["task"] == wrap_agent_payload(
-            AgentTag.USER_INTERJECTION, "also check my calendar"
-        )
+        # Seeded to drain; the un-committed entry stays for that drain, never
+        # retired before a run exists to take it.
+        assert prepare.await_args.args[1]["task"] == er.EXECUTOR_CARRY_TASK
+        assert still_pending == ["e1"]
 
     async def test_a_bare_stop_starts_no_run(self) -> None:
         """BUG: cancel_executor appends its interruption notice, and the
@@ -733,7 +736,7 @@ class TestFinalizeCarriesOnlyWorkTheThreadNeverTook:
         prepare.assert_not_awaited()
         assert still_pending == [ec.INTERRUPTION_NOTICE]
 
-    async def test_a_redirect_starts_a_run_and_carries_the_notice_framed_with_it(self) -> None:
+    async def test_a_redirect_starts_a_run_and_leaves_the_entries_for_its_drain(self) -> None:
         cache = _FakeInboxCache()
 
         with ExitStack() as stack:
@@ -748,15 +751,13 @@ class TestFinalizeCarriesOnlyWorkTheThreadNeverTook:
             spawn = stack.enter_context(patch.object(er, "_spawn_detached_run"))
 
             await er._carry_pending_into_new_run(_run(RunKind.QUEUED), None)
-            still_pending = await inbox.read()
+            still_pending = [entry.text for entry in await inbox.read()]
 
         spawn.assert_called_once()
-        # Each entry keeps its own tag: a stop notice and the instruction that
-        # follows it must not merge into one unframed blob.
-        assert prepare.await_args.args[1]["task"] == wrap_agent_payload(
-            AgentTag.EXECUTOR_INTERRUPTED, ec.INTERRUPTION_NOTICE
-        ) + wrap_agent_payload(AgentTag.USER_INTERJECTION, "book the flight instead")
-        assert still_pending == []
+        assert prepare.await_args.args[1]["task"] == er.EXECUTOR_CARRY_TASK
+        # Both entries stay in the inbox, each keeping its own tag, for the new
+        # run's drain to inject and retire — never stuffed into the seed task.
+        assert still_pending == [ec.INTERRUPTION_NOTICE, "book the flight instead"]
 
 
 class TestTheCardNoteOnlyGoesWhereCardsRender:

@@ -54,9 +54,10 @@ from app.agents.core.subagents.subagent_runner import (
     prepare_executor_execution,
     thread_messages,
 )
-from app.constants.agents import AgentTag, wrap_agent_payload
+from app.constants.agents import AgentTag
 from app.constants.executor import (
     EXECUTOR_APPROVAL_LOST_MESSAGE,
+    EXECUTOR_CARRY_TASK,
     EXECUTOR_PAUSED,
     EXECUTOR_STEP_LIMIT_MESSAGE,
     MESSAGE_ID_KEY,
@@ -707,11 +708,10 @@ async def _prepare_executor_run(
     *,
     workflow_execution_id: str | None = None,
 ) -> PreparedQueuedTask | None:
-    """Claim the conversation and materialize a detached run for ``task``.
+    """Claim the conversation and materialize a detached run for the task.
 
-    ``None`` means another run holds the conversation (or Redis is down) and
-    nothing was started. Separate from spawning so a caller with inbox entries to
-    retire can do it once the run exists but before it can read them back.
+    None means another run holds the conversation (or Redis is down) and nothing
+    was started.
     """
     return await prepare_run_from_item(
         conversation_id,
@@ -740,7 +740,7 @@ async def _start_executor_run(
     *,
     workflow_execution_id: str | None = None,
 ) -> bool:
-    """Materialize and spawn a detached run for ``task``. Returns whether it started."""
+    """Materialize and spawn a detached run for the task. Returns whether it started."""
     prepared = await _prepare_executor_run(
         conversation_id, configurable, task, workflow_execution_id=workflow_execution_id
     )
@@ -755,14 +755,9 @@ async def _carry_pending_into_new_run(
 ) -> None:
     """Start a run for work this one finished too early to absorb.
 
-    What counts as absorbed is read off the thread, not off a marker: an entry
-    injected on a model call that then FAILED was never committed, and only the
-    checkpoint can tell that apart from one the final call did commit.
-
-    Only WORK starts a run. A stop notice is context for whatever the user does
-    next — carrying it made a bare Stop spawn a fresh run whose task was
-    "the task you were working on was INTERRUPTED". It stays pending instead,
-    for the next run's drain hook to read.
+    Absorbed is read off the thread, not a marker: an entry injected on a model
+    call that then FAILED was never committed. Only WORK starts a run — a bare
+    stop notice stays pending for the next run's drain instead of spawning one.
     """
     try:
         inbox = ExecutorInbox(run.conversation_id)
@@ -776,9 +771,10 @@ async def _carry_pending_into_new_run(
         if not any(entry.tag is not AgentTag.EXECUTOR_INTERRUPTED for entry in carry):
             return
 
-        # Framed per entry, so a stop notice and the redirect that follows it
-        # stay distinguishable to the model instead of merging into one blob.
-        prepared = await _prepare_executor_run(
+        # Leave the carried entries in the inbox: the new run's drain hook injects
+        # each (framed with its INBOX_ENTRY_ID) and retires it only once committed —
+        # the crash-safe path. Concatenating + retiring here first lost work on a crash.
+        started = await _start_executor_run(
             run.conversation_id,
             {
                 "user_id": run.user.user_id,
@@ -786,22 +782,15 @@ async def _carry_pending_into_new_run(
                 "user_name": run.user.name or "",
                 "user_timezone": run.user.timezone,
             },
-            "".join(wrap_agent_payload(entry.tag, entry.text) for entry in carry),
+            EXECUTOR_CARRY_TASK,
             workflow_execution_id=run.workflow_execution_id,
         )
-        if prepared is None:
+        if not started:
             log.info(
                 f"{LogTag.AGENT} Pending work left for the run that holds the conversation",
                 conversation_id=run.conversation_id,
                 pending=len(carry),
             )
-            return
-        # Retired only now the run exists, and before it is spawned: a failed
-        # claim must leave the work for whoever won, and the new run's drain hook
-        # must not find these still pending and inject them a second time.
-        for entry in carry:
-            await inbox.retire(entry)
-        _spawn_detached_run(prepared, run.conversation_id)
     except Exception as e:  # a failed carry must not break finalize
         log.error(
             f"{LogTag.AGENT} Could not carry pending work into a new run",

@@ -50,11 +50,17 @@ EXECUTOR_COLLECTION_TASK = "Background subagent results have landed in this conv
 EXECUTOR_COLLECT_MARKER_PREFIX = "executor:collect_queued:"
 EXECUTOR_COLLECT_MARKER_TTL = 600
 
+# Seed task for the run that picks up work a finished run absorbed too late. The
+# carried entries stay in the inbox and arrive through the drain hook (framed,
+# ID-stamped, crash-safe); this only has to get the run to its first model call.
+EXECUTOR_CARRY_TASK = (
+    "New work arrived in this conversation after your previous turn ended. Read it and act on it."
+)
+
 
 # Stamped onto an injected inbox message so a later drain pass recognises it as
-# already committed to the thread. This is the whole basis of the drain's
-# idempotency: the thread itself is the record of what has been delivered, so no
-# cursor has to be kept in sync with it.
+# already committed to the thread — the drain's whole basis of idempotency: the
+# thread is the record of what was delivered, so no cursor is kept in sync.
 INBOX_ENTRY_ID = "inbox_entry_id"
 
 # What a stopped run tells the run that follows it. Carries no instruction of its
