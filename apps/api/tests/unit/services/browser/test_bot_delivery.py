@@ -268,6 +268,45 @@ class TestBotProgressDeliveryStep:
             mm.assert_awaited_once()
             assert mm.call_args[0][2][0] == "Step 1 · Open"
 
+    async def test_long_goal_photo_caption_is_clipped(self, delivery):
+        goal = 'Typing "hi sent using gaia browser use from telegram" into the post composer box on the x.com homepage'
+        assert len(goal) > 90
+        snap = BrowserStepSnapshot(
+            index=2, goal=goal, url="https://x.com/compose", screenshot="https://cdn/shot.png"
+        )
+        with (
+            patch(
+                "app.services.browser.bot_delivery.publish_outbound_photo",
+                new=AsyncMock(return_value=True),
+            ) as mock_photo,
+            patch(
+                "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+            ) as mm,
+        ):
+            await delivery.step(snap)
+            mock_photo.assert_awaited_once()
+            mm.assert_not_awaited()
+            assert mock_photo.call_args.kwargs["caption"].endswith("…")
+
+    async def test_long_goal_text_fallback_is_not_clipped(self, delivery):
+        goal = 'Typing "hi sent using gaia browser use from telegram" into the post composer box on the x.com homepage'
+        assert len(goal) > 90
+        snap = BrowserStepSnapshot(
+            index=2, goal=goal, url="https://x.com/compose", screenshot="https://cdn/shot.png"
+        )
+        with (
+            patch(
+                "app.services.browser.bot_delivery.publish_outbound_photo",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+            ) as mm,
+        ):
+            await delivery.step(snap)
+            mm.assert_awaited_once()
+            assert mm.call_args[0][2][0] == f"Step 1 · {goal}"
+
     async def test_no_screenshot_falls_back_to_text(self, delivery):
         snap = BrowserStepSnapshot(index=1, goal="Open", url="https://example.com", screenshot=None)
         with (

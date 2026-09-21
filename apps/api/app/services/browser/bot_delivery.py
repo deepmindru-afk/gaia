@@ -77,7 +77,7 @@ class BotProgressDelivery:
         # page), but its label still says where the run is headed: send that
         # as text so step 1 is never silence.
         if _is_blank_tab(snapshot.url):
-            label = _step_label(snapshot.goal, snapshot.actions)
+            label = _step_label(snapshot.goal, snapshot.actions, max_chars=None)
             if label:
                 self._steps_shown += 1
                 await self.note(f"Step {self._steps_shown} · {label}")
@@ -108,7 +108,9 @@ class BotProgressDelivery:
             )
             if sent:
                 return
-        await self.note(caption)
+        await self.note(
+            _step_text(self._steps_shown, snapshot.goal, snapshot.actions)
+        )
 
     async def handoff(self, snapshot: BrowserHandoffSnapshot) -> None:
         # Only PENDING needs a message: resolution is already acked in-chat and
@@ -166,15 +168,23 @@ def _is_blank_tab(url: str | None) -> bool:
     return not url or url.startswith("about:") or url == "chrome://newtab/"
 
 
-def _step_label(goal: str | None, actions: list[BrowserAction]) -> str:
+def _step_label(
+    goal: str | None, actions: list[BrowserAction], max_chars: int | None = _CAPTION_MAX_CHARS
+) -> str:
     """Say what the agent is doing this step in plain language: its goal, else a clean action label; never a raw URL or a parameter dump."""
     label = (goal or "").strip().rstrip(".") or caption_from_action_list(actions)
-    if len(label) > _CAPTION_MAX_CHARS:
-        label = label[: _CAPTION_MAX_CHARS - 1].rstrip() + "…"
+    if max_chars is not None and len(label) > max_chars:
+        label = label[: max_chars - 1].rstrip() + "…"
     return label
 
 
 def _step_caption(index: int, goal: str | None, actions: list[BrowserAction]) -> str:
-    """Return the numbered caption a step photo carries."""
+    """Return the numbered caption a step photo carries (clipped: photo captions stay glanceable)."""
     label = _step_label(goal, actions)
+    return f"Step {index} · {label}" if label else f"Step {index}"
+
+
+def _step_text(index: int, goal: str | None, actions: list[BrowserAction]) -> str:
+    """Return the numbered text for a step with no photo: the full label, never clipped."""
+    label = _step_label(goal, actions, max_chars=None)
     return f"Step {index} · {label}" if label else f"Step {index}"
