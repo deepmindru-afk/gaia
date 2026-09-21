@@ -27,6 +27,7 @@ from app.agents.prompts.todo_prompts import (
     TRIGGERED_RELEVANCE_GUIDANCE,
 )
 from app.constants.todos import ACTIVITY_PROMPT_TAIL_CHARS, FAILED_LABEL
+from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.db.repositories.todos import todo_repository
 from app.decorators import enforce_daily_cost_budget
 from app.models.message_models import MessageRequestWithHistory
@@ -192,6 +193,40 @@ async def _execute_todo_with_retry(
     # execution and the next-run computation, so a tz change applies immediately
     # without an extra DB round-trip.
     user_data, user_tz = await _load_user_with_tz(user_id)
+
+    # No new session while the owner's cycle is open: a prior execution parked
+    # on a PENDING approval resumes in its own conversation when the user
+    # decides, so a fresh fire now would split the work across two threads —
+    # the new run blind to the parked run's partial results. Skip the fire and
+    # advance the schedule exactly like a success (the approval tap, not the
+    # clock, continues the work). Decided/terminal rows never block: deny,
+    # revoke, and execution all close the cycle.
+    live = await approval_ledger_repository.list_live_by_owner("todo", todo_id)
+    if live:
+        pending_ids = sorted(row.approval_id for row in live)
+        log.info(
+            "tracked_todo.deferred_awaiting_approval",
+            todo_id=todo_id,
+            approval_ids=pending_ids,
+        )
+        next_run = (
+            _compute_next_run(doc.recurrence, user_tz.value, anchor=doc.scheduled_at)
+            if doc.recurrence
+            else None
+        )
+        await todo_repository.update(
+            todo_id,
+            user_id=user_id,
+            update=TodoUpdate(gaia_retry_count=0, scheduled_at=next_run),
+        )
+        if next_run:
+            await enqueue_worker_job(
+                pool,
+                "execute_tracked_todo",
+                todo_id,
+                _defer_until=next_run,
+            )
+        return f"deferred:{todo_id} (awaiting approval {','.join(pending_ids)})"
 
     # Cost wall before any LLM work, mirroring the workflow path. A trigger fire
     # is not a user action, so a chatty subscription must not be able to spend a

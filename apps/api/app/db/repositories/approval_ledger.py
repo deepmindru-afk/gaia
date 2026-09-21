@@ -236,6 +236,33 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         )
         return ApprovalLedgerDocument.model_validate(raw) if raw else None
 
+    async def list_live_by_owner(
+        self, owner_run_type: str, owner_id: str
+    ) -> list[ApprovalLedgerDocument]:
+        """Live (PENDING/APPROVED) rows parked by one background owner.
+
+        The no-new-session rule reads this: a fresh fire for an owner with a
+        live row would split the work across two threads, so it defers to the
+        resume instead. Terminal rows (denied, revoked, executed, failed)
+        never block — the cycle is closed.
+        """
+        if not owner_run_type or not owner_id:
+            return []
+        cursor = (
+            self._raw_collection()
+            .find(
+                {
+                    "owner_run_type": owner_run_type,
+                    "owner_id": owner_id,
+                    "state": {"$in": sorted(str(s) for s in LIVE_LEDGER_STATES)},
+                }
+            )
+            .sort("created_at", 1)
+        )
+        return [
+            ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=50)
+        ]
+
     async def recent_tool_outcomes(
         self, user_id: str, tool_name: str, *, limit: int = 10, since_days: int = 30
     ) -> list[ApprovalLedgerDocument]:

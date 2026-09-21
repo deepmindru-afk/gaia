@@ -97,6 +97,20 @@ def _updates(repo: MagicMock) -> list[dict]:
     return [c.kwargs["update"].model_dump(exclude_unset=True) for c in repo.update.call_args_list]
 
 
+@pytest.fixture(autouse=True)
+def _no_live_approvals_by_default():
+    """Default every fire to "no parked approval for this todo".
+
+    _execute_todo_with_retry consults the approval ledger before spending
+    anything; without this every existing test would reach Mongo. Tests for
+    the deferral branch patch the same seam with live rows.
+    """
+    ledger = MagicMock()
+    ledger.list_live_by_owner = AsyncMock(return_value=[])
+    with patch(f"{MODULE}.approval_ledger_repository", ledger):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # execute_tracked_todo — the Redis lock
 # ---------------------------------------------------------------------------
@@ -655,6 +669,93 @@ class TestExecuteTodoWithRetrySuccess:
         assert result == "success:todo-1"
         assert _updates(repo) == [{"gaia_retry_count": 0, "scheduled_at": None}]
         pool.enqueue_job.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _execute_todo_with_retry — deferred while the owner's cycle is open
+# ---------------------------------------------------------------------------
+
+
+class TestDeferredAwaitingApproval:
+    @pytest.fixture(autouse=True)
+    def _route_enqueue(self, route_enqueue_via_pool):
+        return
+
+    @staticmethod
+    def _live_row(approval_id="ap_1"):
+        row = MagicMock()
+        row.approval_id = approval_id
+        return row
+
+    async def _run_with_live(self, doc, rows):
+        pool = _pool()
+        repo = MagicMock()
+        repo.get_by_id = AsyncMock(return_value=doc)
+        repo.update = AsyncMock()
+        run_execution = AsyncMock()
+        ledger = MagicMock()
+        ledger.list_live_by_owner = AsyncMock(return_value=rows)
+        with (
+            patch(f"{MODULE}.todo_repository", repo),
+            patch(f"{MODULE}._run_execution", run_execution),
+            patch(
+                f"{MODULE}.load_user_context",
+                AsyncMock(side_effect=_user_context(timezone="UTC")),
+            ),
+            patch(f"{MODULE}.approval_ledger_repository", ledger),
+        ):
+            result = await _execute_todo_with_retry("todo-1", pool)
+        return result, repo, pool, run_execution, ledger
+
+    async def test_live_pending_row_defers_the_fire(self):
+        """A prior execution parked on PENDING resumes in its own conversation
+        when the user decides — a fresh fire now would split the work across
+        two threads, blind to the parked run's partial results."""
+        result, repo, pool, run_execution, ledger = await self._run_with_live(
+            _doc(scheduled_at=datetime.now(UTC) - timedelta(minutes=5), recurrence=None),
+            [self._live_row()],
+        )
+
+        assert result == "deferred:todo-1 (awaiting approval ap_1)"
+        run_execution.assert_not_called()
+        ledger.list_live_by_owner.assert_awaited_once_with("todo", "todo-1")
+        assert _updates(repo) == [{"gaia_retry_count": 0, "scheduled_at": None}]
+        pool.enqueue_job.assert_not_awaited()
+
+    async def test_recurring_fire_re_enqueues_while_deferred(self):
+        """Deferral advances the schedule exactly like a success — the approval
+        tap, not the clock, continues the work."""
+        anchor = datetime.now(UTC).replace(microsecond=0) - timedelta(days=2)
+        result, repo, pool, run_execution, _ledger = await self._run_with_live(
+            _doc(scheduled_at=anchor, recurrence="daily"), [self._live_row()]
+        )
+
+        assert result == "deferred:todo-1 (awaiting approval ap_1)"
+        run_execution.assert_not_called()
+        (payload,) = _updates(repo)
+        assert payload["gaia_retry_count"] == 0
+        assert payload["scheduled_at"] > datetime.now(UTC)
+        pool.enqueue_job.assert_awaited_once_with(
+            "execute_tracked_todo", "todo-1", _defer_until=payload["scheduled_at"]
+        )
+
+    async def test_every_live_approval_is_named(self):
+        result, _repo, _pool, _run_execution, _ledger = await self._run_with_live(
+            _doc(recurrence=None),
+            [self._live_row("ap_2"), self._live_row("ap_1")],
+        )
+
+        assert result == "deferred:todo-1 (awaiting approval ap_1,ap_2)"
+
+    async def test_no_live_rows_runs_normally(self):
+        """The gate is consulted, not bypassed: an empty ledger means run."""
+        result, _repo, _pool, run_execution, ledger = await self._run_with_live(
+            _doc(recurrence=None), []
+        )
+
+        assert result == "success:todo-1"
+        run_execution.assert_awaited_once()
+        ledger.list_live_by_owner.assert_awaited_once_with("todo", "todo-1")
 
 
 # ---------------------------------------------------------------------------
