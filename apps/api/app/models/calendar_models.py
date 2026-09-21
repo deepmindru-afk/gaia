@@ -630,8 +630,13 @@ class SingleEventInput(BaseModel):
         ...,
         description="Start time in ISO format (e.g., '2024-01-15T10:00:00'). Use user's local time.",
     )
-    duration_hours: float = Field(default=0, description="Duration hours (0-23)", ge=0, le=23)
-    duration_minutes: float = Field(default=30, description="Duration minutes (0-59)", ge=0, le=59)
+    end_datetime: str | None = Field(
+        default=None,
+        description=(
+            "End time in ISO format, same style as start_datetime. "
+            "Omit for a 30-minute event. For all-day events this is the last day (inclusive)."
+        ),
+    )
     calendar_id: str = Field(default="primary", description="Calendar ID")
     description: str | None = Field(default=None, description="Event description")
     location: str | None = Field(default=None, description="Event location")

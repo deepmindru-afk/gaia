@@ -57,8 +57,7 @@ class TestLookalikeCollision:
                     {
                         "summary": "s",
                         "start_datetime": "2026-09-26T11:00:00",
-                        "duration_hours": 0,
-                        "duration_minutes": 30,
+                        "end_datetime": None,
                         "calendar_id": "primary",
                         "description": None,
                         "location": None,

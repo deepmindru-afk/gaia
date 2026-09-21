@@ -11,7 +11,7 @@ Args:
     events (List): List of events to create, each with:
         - summary (str): Required. Title.
         - start_datetime (str): Required. Start time (ISO format).
-        - duration_hours/minutes (int): Duration, default 30min.
+        - end_datetime (str): Optional. End time (ISO format, same style as start). Omit for a 30min event. For all-day events this is the last day (inclusive).
         - calendar_id (str): Calendar ID, default "primary".
         - description, location, attendees: Optional.
         - is_all_day (bool): Default False.

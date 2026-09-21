@@ -678,8 +678,7 @@ class TestCalendarCreateEvent:
                             {
                                 "summary": "Dentist",
                                 "start_datetime": "2026-08-10T09:00:00+05:30",
-                                "duration_hours": 1,
-                                "duration_minutes": 30,
+                                "end_datetime": "2026-08-10T10:30:00+05:30",
                                 "calendar_id": "primary",
                             }
                         ],
@@ -706,8 +705,8 @@ class TestCalendarCreateEvent:
             }
         ], "the created-event card never reached the chat"
 
-    def test_a_confirmed_event_is_written_with_the_duration_the_user_asked_for(self, tools):
-        """The end time is derived from duration, not given directly — getting it wrong books the wrong slot."""
+    def test_a_confirmed_event_is_written_with_the_end_the_user_asked_for(self, tools):
+        """The end time is sent verbatim — getting it wrong books the wrong slot."""
         tool = tools["GOOGLECALENDAR_CUSTOM_CREATE_EVENT"]
         posted: list[dict[str, Any]] = []
 
@@ -733,8 +732,7 @@ class TestCalendarCreateEvent:
                             {
                                 "summary": "Dentist",
                                 "start_datetime": "2026-08-10T09:00:00+05:30",
-                                "duration_hours": 0,
-                                "duration_minutes": 45,
+                                "end_datetime": "2026-08-10T09:45:00+05:30",
                                 "calendar_id": "primary",
                             }
                         ],

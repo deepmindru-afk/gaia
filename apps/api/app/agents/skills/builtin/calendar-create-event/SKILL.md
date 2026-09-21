@@ -85,15 +85,23 @@ GOOGLECALENDAR_FIND_FREE_SLOTS(
 
 ```
 GOOGLECALENDAR_CUSTOM_CREATE_EVENT(
-    calendar_id="primary",
-    title="Team Standup",
-    start_time="2026-03-01T09:00:00",
-    end_time="2026-03-01T09:30:00",
-    description="Daily sync",
-    attendees=["alice@company.com", "bob@company.com"],
-    create_meeting_room=True
+    events=[
+        {
+            "summary": "Team Standup",
+            "start_datetime": "2026-03-01T09:00:00",
+            "end_datetime": "2026-03-01T09:30:00",
+            "calendar_id": "primary",
+            "description": "Daily sync",
+            "attendees": ["alice@company.com", "bob@company.com"],
+            "create_meeting_room": True,
+        }
+    ]
 )
 ```
+
+Give the event's length with `start_datetime` and `end_datetime`. Omit
+`end_datetime` for a 30-minute event. For all-day events set `is_all_day=True`
+and use `end_datetime` as the last day (inclusive), or omit it for one day.
 
 The call creates immediately. When approval gating is on, the approval card
 is the confirmation — no separate draft step.

@@ -1188,6 +1188,24 @@ class TestCreateEvent:
         )
         assert proxy.call_args.args[0].body["end"] == {"date": "2027-01-01"}
 
+    def test_all_day_end_datetime_is_the_inclusive_last_day(self, tools, writer) -> None:
+        _, proxy = self._run(
+            tools,
+            CreateEventInput(
+                events=[
+                    SingleEventInput(
+                        summary="Trip",
+                        start_datetime="2026-01-15T00:00:00",
+                        end_datetime="2026-01-17T00:00:00",
+                        is_all_day=True,
+                    )
+                ],
+            ),
+        )
+        body = proxy.call_args.args[0].body
+        assert body["start"] == {"date": "2026-01-15"}
+        assert body["end"] == {"date": "2026-01-18"}
+
     # -- timezone handling -------------------------------------------------
 
     def test_aware_start_is_preserved_verbatim(self, tools, writer) -> None:
@@ -1201,8 +1219,7 @@ class TestCreateEvent:
                         SingleEventInput(
                             summary="Call",
                             start_datetime="2026-01-15T10:00:00+05:30",
-                            duration_hours=1,
-                            duration_minutes=0,
+                            end_datetime="2026-01-15T11:00:00+05:30",
                         )
                     ],
                 ),
@@ -1268,7 +1285,7 @@ class TestCreateEvent:
             )
         assert proxy.call_args.args[0].body["start"]["dateTime"].endswith("+05:30")
 
-    def test_duration_is_added_to_the_start(self, tools, writer) -> None:
+    def test_naive_end_is_stamped_and_may_cross_midnight(self, tools, writer) -> None:
         with patch(
             f"{MODULE}.get_config",
             return_value={"configurable": {"user_timezone": "+05:30"}},
@@ -1280,13 +1297,84 @@ class TestCreateEvent:
                         SingleEventInput(
                             summary="Workshop",
                             start_datetime="2026-01-15T23:00:00",
-                            duration_hours=2,
-                            duration_minutes=30,
+                            end_datetime="2026-01-16T01:30:00",
                         )
                     ],
                 ),
             )
-        assert proxy.call_args.args[0].body["end"] == {"dateTime": "2026-01-16T01:30:00+05:30"}
+        body = proxy.call_args.args[0].body
+        assert body["start"] == {"dateTime": "2026-01-15T23:00:00+05:30"}
+        assert body["end"] == {"dateTime": "2026-01-16T01:30:00+05:30"}
+
+    @pytest.mark.regression
+    def test_explicit_end_is_the_event_end_no_default_padding(self, tools, writer) -> None:
+        # BUG: length came from a duration_minutes that defaulted to 30 and was
+        # added on top, so a 2-hour event (23:00) ended at 01:30 not 01:00.
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
+            _, proxy = self._run(
+                tools,
+                CreateEventInput(
+                    events=[
+                        SingleEventInput(
+                            summary="Meet with Aryan",
+                            start_datetime="2026-09-22T23:00:00+05:30",
+                            end_datetime="2026-09-23T01:00:00+05:30",
+                        )
+                    ],
+                ),
+            )
+        assert proxy.call_args.args[0].body["end"] == {"dateTime": "2026-09-23T01:00:00+05:30"}
+
+    def test_missing_end_defaults_to_a_thirty_minute_event(self, tools, writer) -> None:
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
+            _, proxy = self._run(
+                tools,
+                CreateEventInput(
+                    events=[
+                        SingleEventInput(
+                            summary="Quick sync",
+                            start_datetime="2026-01-15T10:00:00+05:30",
+                        )
+                    ],
+                ),
+            )
+        assert proxy.call_args.args[0].body["end"] == {"dateTime": "2026-01-15T10:30:00+05:30"}
+
+    def test_end_before_start_is_rejected(self, tools, writer) -> None:
+        with pytest.raises(ValueError, match="after start_datetime"):
+            self._run(
+                tools,
+                CreateEventInput(
+                    events=[
+                        SingleEventInput(
+                            summary="Backwards",
+                            start_datetime="2026-01-15T10:00:00+05:30",
+                            end_datetime="2026-01-15T09:00:00+05:30",
+                        )
+                    ],
+                ),
+            )
+
+    def test_invalid_end_datetime_is_rejected(self, tools, writer) -> None:
+        with pytest.raises(ValueError, match="Invalid end_datetime"):
+            self._run(
+                tools,
+                CreateEventInput(
+                    events=[
+                        SingleEventInput(
+                            summary="Bad end",
+                            start_datetime="2026-01-15T10:00:00+05:30",
+                            end_datetime="not-a-date",
+                        )
+                    ],
+                ),
+            )
 
     # -- optional fields ---------------------------------------------------
 

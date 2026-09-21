@@ -19,7 +19,7 @@ from composio.types import ExecuteRequestFn
 from langgraph.config import get_config
 from pydantic import TypeAdapter
 
-from app.constants.calendar import DEFAULT_CALENDAR_COLOR
+from app.constants.calendar import DEFAULT_CALENDAR_COLOR, DEFAULT_EVENT_DURATION
 from app.constants.log_tags import LogTag
 from app.db.repositories.users import user_repository
 from app.decorators import with_doc
@@ -48,6 +48,7 @@ from app.models.calendar_models import (
     GoogleConferenceSolutionKey,
     ListCalendarsInput,
     PatchEventInput,
+    SingleEventInput,
 )
 from app.models.common_models import GatherContextInput
 from app.models.integrations.composio import CustomToolAuthCredentials
@@ -163,6 +164,57 @@ async def get_effective_timezone(user_id: str) -> tzinfo | None:
             error_type=type(e).__name__,
         )
         return None
+
+
+def _resolve_event_bounds(
+    event: SingleEventInput, user_id: str
+) -> tuple[GoogleCalendarEventDateTime, GoogleCalendarEventDateTime]:
+    """Google start/end for one event; raises ValueError with a user-facing message on bad input."""
+    try:
+        start_dt = datetime.fromisoformat(event.start_datetime)
+    except ValueError as e:
+        raise ValueError(f"Invalid start_datetime format: {e}") from e
+
+    end_dt: datetime | None = None
+    if event.end_datetime:
+        try:
+            end_dt = datetime.fromisoformat(event.end_datetime)
+        except ValueError as e:
+            raise ValueError(f"Invalid end_datetime format: {e}") from e
+
+    if event.is_all_day:
+        # Google treats an all-day end.date as exclusive, so an inclusive last
+        # day (or a missing end) becomes the following date.
+        last_day = end_dt or start_dt
+        return (
+            GoogleCalendarEventDateTime(date=start_dt.strftime("%Y-%m-%d")),
+            GoogleCalendarEventDateTime(date=(last_day + timedelta(days=1)).strftime("%Y-%m-%d")),
+        )
+
+    if end_dt is None:
+        end_dt = start_dt + DEFAULT_EVENT_DURATION
+
+    if start_dt.tzinfo is None or end_dt.tzinfo is None:
+        user_tz = _run_sync(get_effective_timezone(user_id))
+        if user_tz is None:
+            # Google 400s a naked wall time, and that failure used to land after
+            # the user approved. Fail fast so the model adds an explicit offset.
+            raise ValueError(
+                "start_datetime has no UTC offset and no home timezone is "
+                "configured: pass an explicit offset (e.g. 2026-09-21T11:00:00+05:30)."
+            )
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=user_tz)
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=user_tz)
+
+    if end_dt <= start_dt:
+        raise ValueError("end_datetime must be after start_datetime.")
+
+    return (
+        GoogleCalendarEventDateTime(dateTime=start_dt.isoformat()),
+        GoogleCalendarEventDateTime(dateTime=end_dt.isoformat()),
+    )
 
 
 def register_calendar_custom_tools(composio: Composio) -> list[str]:
@@ -631,53 +683,10 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
 
         for index, event in enumerate(request.events):
             try:
-                start_dt = datetime.fromisoformat(event.start_datetime)
+                start, end = _resolve_event_bounds(event, user_id)
             except ValueError as e:
-                errors.append(
-                    EventDraftFailure(
-                        index=index,
-                        summary=event.summary,
-                        error=f"Invalid start_datetime format: {e}",
-                    )
-                )
+                errors.append(EventDraftFailure(index=index, summary=event.summary, error=str(e)))
                 continue
-
-            duration = timedelta(hours=event.duration_hours, minutes=event.duration_minutes)
-            end_dt = start_dt + duration
-
-            if event.is_all_day:
-                # Google treats an all-day `end.date` as exclusive and rejects an
-                # empty range, so a one-day event ends on the following date.
-                # Same convention as calendar_service.create_calendar_event.
-                start = GoogleCalendarEventDateTime(date=start_dt.strftime("%Y-%m-%d"))
-                end = GoogleCalendarEventDateTime(
-                    date=(start_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-                )
-            elif start_dt.tzinfo is not None:
-                start = GoogleCalendarEventDateTime(dateTime=start_dt.isoformat())
-                end = GoogleCalendarEventDateTime(dateTime=end_dt.isoformat())
-            else:
-                user_tz = _run_sync(get_effective_timezone(user_id))
-                if user_tz is None:
-                    # Google rejects a naked wall time (HTTP 400), and that
-                    # failure used to land after the user approved. Fail fast
-                    # with a clear error so the model adds an explicit offset.
-                    errors.append(
-                        EventDraftFailure(
-                            index=index,
-                            summary=event.summary,
-                            error=(
-                                "start_datetime has no UTC offset and no home "
-                                "timezone is configured: pass an explicit offset "
-                                "(e.g. 2026-09-21T11:00:00+05:30)."
-                            ),
-                        )
-                    )
-                    continue
-                start_dt = start_dt.replace(tzinfo=user_tz)
-                end_dt = end_dt.replace(tzinfo=user_tz)
-                start = GoogleCalendarEventDateTime(dateTime=start_dt.isoformat())
-                end = GoogleCalendarEventDateTime(dateTime=end_dt.isoformat())
 
             body = GoogleCalendarEventWrite(
                 summary=event.summary,

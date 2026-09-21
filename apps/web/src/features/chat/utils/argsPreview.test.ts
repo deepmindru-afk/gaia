@@ -10,8 +10,7 @@ const calendarArgs = {
       summary: "Team standup",
       description: "Daily sync",
       start_datetime: "2026-09-21T10:00:00",
-      duration_hours: 0,
-      duration_minutes: 30,
+      end_datetime: "2026-09-21T10:30:00",
       location: "Meet",
       attendees: ["a@x.com", "b@x.com"],
       is_all_day: false,
@@ -22,8 +21,7 @@ const calendarArgs = {
       summary: "1:1 with Priya",
       description: null,
       start_datetime: "2026-09-21T14:00:00",
-      duration_hours: 1,
-      duration_minutes: 0,
+      end_datetime: "2026-09-21T15:00:00",
       location: "",
       attendees: [],
       is_all_day: false,
@@ -57,7 +55,9 @@ describe("flattenArgsPreview", () => {
 
   it("never crashes on hostile shapes", () => {
     expect(flattenArgsPreview({}).rows).toEqual([]);
-    expect(flattenArgsPreview({ a: null, b: undefined, c: "", d: [] }).rows).toEqual([]);
+    expect(
+      flattenArgsPreview({ a: null, b: undefined, c: "", d: [] }).rows,
+    ).toEqual([]);
     expect(
       flattenArgsPreview({ deep: { deeper: { deepest: { x: 1 } } } }).omitted,
     ).toBeGreaterThanOrEqual(1);
