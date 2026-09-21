@@ -3738,6 +3738,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sandbox/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sandbox Execute */
+        post: operations["sandbox_sandbox_execute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sandbox/tool-schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sandbox Tool Schema
+         * @description The full tool contract behind the discovery doc's pointer.
+         *
+         *     Metadata only (no tool runs), but it shares the execute budget so a leaked
+         *     token cannot use it as an unmetered probe of the catalog.
+         */
+        post: operations["sandbox_sandbox_tool_schema"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -4072,7 +4112,7 @@ export interface paths {
         /**
          * List Skill Targets Endpoint
          * @description List the targets a skill can run in: the executor plus the user's
-         *     connected integration subagents.
+         *     connected integrations.
          */
         get: operations["skills_list_skill_targets_endpoint"];
         put?: never;
@@ -5539,12 +5579,18 @@ export interface components {
              * @enum {string}
              */
             scope?: "once" | "always_tool";
+            /** V */
+            v?: number | null;
         };
         /**
          * ApprovalDecisionResponse
          * @description Result of relaying an approval decision to the awaiting gate.
          */
         ApprovalDecisionResponse: {
+            /** Reason */
+            reason?: string | null;
+            /** Status */
+            status?: string | null;
             /** Success */
             success: boolean;
         };
@@ -5773,6 +5819,8 @@ export interface components {
             decision: "approve" | "deny";
             /** Feedback */
             feedback?: string | null;
+            /** V */
+            v?: number | null;
         };
         /**
          * BatchDecisionOutcome
@@ -5785,6 +5833,8 @@ export interface components {
             reason?: string | null;
             /** Resolved */
             resolved: boolean;
+            /** Status */
+            status?: string | null;
         };
         /**
          * BatchEventCreateFailure
@@ -6056,6 +6106,11 @@ export interface components {
              */
             platform: string;
             /**
+             * Platform Message Id
+             * @description Platform-native id of the user's message (WhatsApp wamid, Telegram message_id, Discord id, Slack ts). Persisted on the saved user message so a later background reaction can anchor to it.
+             */
+            platform_message_id?: string | null;
+            /**
              * Platform User Id
              * @description User's ID on the platform
              */
@@ -6132,7 +6187,7 @@ export interface components {
             group_label: string;
             /**
              * Icon
-             * @description Icon key (owning subagent id, or 'executor')
+             * @description Icon key (owning integration id, or 'executor')
              */
             icon: string;
             /**
@@ -6147,7 +6202,7 @@ export interface components {
             slug: string;
             /**
              * Target
-             * @description Target agent_name (executor or a subagent)
+             * @description Target agent_name (executor or an integration)
              */
             target: string;
         };
@@ -6702,6 +6757,11 @@ export interface components {
              */
             description?: string;
             /**
+             * Has Live Approval
+             * @default false
+             */
+            has_live_approval?: boolean;
+            /**
              * Id
              * @default
              */
@@ -6809,6 +6869,8 @@ export interface components {
             createdAt: string | null;
             /** Description */
             description: string | null;
+            /** Has Live Approval */
+            has_live_approval: boolean | null;
             /** Is System Generated */
             is_system_generated: boolean | null;
             /** Is Unread */
@@ -6853,6 +6915,8 @@ export interface components {
             createdAt: string | null;
             /** Description */
             description: string;
+            /** Has Live Approval */
+            has_live_approval: boolean | null;
             /** Is System Generated */
             is_system_generated: boolean | null;
             /** Is Unread */
@@ -7545,6 +7609,19 @@ export interface components {
             /** Skills */
             skills: components["schemas"]["DiscoveredSkillInfo"][];
         };
+        /** DispatchError */
+        DispatchError: {
+            /** Detail */
+            detail: string;
+            /** Hint */
+            hint: string;
+            kind: components["schemas"]["DispatchErrorKind"];
+        };
+        /**
+         * DispatchErrorKind
+         * @enum {string}
+         */
+        DispatchErrorKind: "unknown_tool" | "invalid_args" | "internal_tool" | "out_of_scope" | "timeout";
         /**
          * DodoWebhookAckResponse
          * @description Acknowledgement returned to Dodo once a webhook has been accepted.
@@ -8458,6 +8535,8 @@ export interface components {
              * @enum {string}
              */
             mode: "always_allow" | "always_ask" | "auto";
+            /** Never Auto Tools */
+            never_auto_tools: string[];
             /** Tool Overrides */
             tool_overrides: {
                 [key: string]: boolean;
@@ -9662,6 +9741,14 @@ export interface components {
             trace_id?: string | null;
         };
         /**
+         * MessageKind
+         * @description What a bot message IS beyond its text, set when comms' intent is known at
+         *     creation and would otherwise be unrecoverable from the body alone (a deliberate
+         *     one-emoji acknowledgement reads identically to a coincidental one-emoji reply).
+         * @enum {string}
+         */
+        MessageKind: "text" | "emoji_ack";
+        /**
          * MessageModel
          * @description A single chat message with its content, attachments and tool data.
          */
@@ -9691,6 +9778,8 @@ export interface components {
             /** Follow Up Actions */
             follow_up_actions?: string[] | null;
             image_data?: components["schemas"]["ImageData"] | null;
+            /** @default text */
+            kind?: components["schemas"]["MessageKind"];
             /** Message Id */
             message_id?: string | null;
             /** Metadata */
@@ -9699,6 +9788,10 @@ export interface components {
             } | null;
             /** Pinned */
             pinned?: boolean | null;
+            /** Platform Message Id */
+            platform_message_id?: string | null;
+            /** Reacts To Message Id */
+            reacts_to_message_id?: string | null;
             replyToMessage?: components["schemas"]["ReplyToMessageData"] | null;
             /** Response */
             response: string;
@@ -9744,6 +9837,8 @@ export interface components {
             /** Follow Up Actions */
             follow_up_actions?: string[] | null;
             image_data?: components["schemas"]["ImageData"] | null;
+            /** @default text */
+            kind?: components["schemas"]["MessageKind"];
             /** Message Id */
             message_id?: string | null;
             /** Metadata */
@@ -9752,6 +9847,10 @@ export interface components {
             } | null;
             /** Pinned */
             pinned?: boolean | null;
+            /** Platform Message Id */
+            platform_message_id?: string | null;
+            /** Reacts To Message Id */
+            reacts_to_message_id?: string | null;
             replyToMessage?: components["schemas"]["ReplyToMessageData"] | null;
             /** Response */
             response: string;
@@ -9805,6 +9904,8 @@ export interface components {
             message: string;
             /** Messages */
             messages: components["schemas"]["MessageDict"][];
+            /** Platform Message Id */
+            platform_message_id?: string | null;
             replyToMessage?: components["schemas"]["ReplyToMessageData"] | null;
             selectedCalendarEvent?: components["schemas"]["SelectedCalendarEventData"] | null;
             /** Selectedtool */
@@ -10607,6 +10708,24 @@ export interface components {
             payment_completed: boolean;
             /** Subscription Id */
             subscription_id?: string | null;
+        };
+        /**
+         * PendingApprovalRef
+         * @description A live approval parked against this todo — the UI's jump link to the
+         *     conversation holding the card. Oldest live row wins; terminal rows never
+         *     appear here.
+         */
+        PendingApprovalRef: {
+            /**
+             * Approval Id
+             * @description Ledger approval id (ap_*)
+             */
+            approval_id: string;
+            /**
+             * Conversation Id
+             * @description Conversation holding the card
+             */
+            conversation_id: string;
         };
         /**
          * PersistedTriageSummary
@@ -11610,6 +11729,30 @@ export interface components {
              */
             success: boolean;
         };
+        /** SandboxExecuteRequest */
+        SandboxExecuteRequest: {
+            /** Data */
+            data?: {
+                [key: string]: unknown;
+            };
+            /** Tool Name */
+            tool_name: string;
+        };
+        /** SandboxExecuteResponse */
+        SandboxExecuteResponse: {
+            error?: components["schemas"]["DispatchError"] | null;
+            /** Ok */
+            ok: boolean;
+            /** Output */
+            output?: unknown;
+            /** Resolved Name */
+            resolved_name: string;
+        };
+        /** SandboxToolSchemaRequest */
+        SandboxToolSchemaRequest: {
+            /** Tool Name */
+            tool_name: string;
+        };
         /**
          * SaveSocialProfilesResponse
          * @description Response body for confirming social profiles, carrying how many were kept.
@@ -11971,7 +12114,7 @@ export interface components {
             source_url: string | null;
             /**
              * Target
-             * @description Target agent: 'executor', or a subagent agent_name (gmail_agent, github_agent, etc.)
+             * @description Target agent: 'executor', or an integration agent_name (gmail_agent, github_agent, etc.)
              * @default executor
              */
             target: string;
@@ -12010,7 +12153,7 @@ export interface components {
             name: string;
             /**
              * Target
-             * @description Target agent: 'executor' or a subagent agent_name (e.g., gmail_agent)
+             * @description Target agent: 'executor' or an integration agent_name (e.g., gmail_agent)
              * @default executor
              */
             target?: string;
@@ -12036,9 +12179,9 @@ export interface components {
         SkillSource: "github" | "url" | "upload" | "inline";
         /**
          * SkillTarget
-         * @description A place a skill can run: the executor, or a connected integration subagent.
+         * @description A place a skill can run: the executor, or a connected integration.
          *
-         *     ``value`` is the subagent ``agent_name`` written to a skill's ``target``;
+         *     ``value`` is the integration ``agent_name`` written to a skill's ``target``;
          *     ``icon`` is the integration id (``executor`` for the general bucket) so the
          *     UI can reuse the integration logo set.
          */
@@ -12105,7 +12248,7 @@ export interface components {
             instructions?: string | null;
             /**
              * Target
-             * @description Target agent: 'executor' or a connected subagent agent_name (unchanged if omitted)
+             * @description Target agent: 'executor' or a connected integration agent_name (unchanged if omitted)
              */
             target?: string | null;
         };
@@ -12952,6 +13095,8 @@ export interface components {
              * @default true
              */
             notify_on_run: boolean;
+            /** @description Oldest live approval parked against this todo, if any — the UI's jump link to the card's conversation */
+            pending_approval: components["schemas"]["PendingApprovalRef"] | null;
             /**
              * @description Priority level
              * @default none
@@ -13131,6 +13276,35 @@ export interface components {
             todo_id: string;
             workflow?: components["schemas"]["WorkflowWithIntegrations"] | null;
             workflow_status: components["schemas"]["TodoWorkflowStatus"];
+        };
+        /**
+         * ToolContract
+         * @description Everything known about one tool's contract, both provider and observed.
+         */
+        ToolContract: {
+            /** Compact Output Type */
+            compact_output_type?: string | null;
+            /** Description */
+            description: string;
+            /** Input Schema */
+            input_schema: {
+                [key: string]: unknown;
+            };
+            /**
+             * Observed Call Count
+             * @default 0
+             */
+            observed_call_count?: number;
+            /** Observed Output Schema */
+            observed_output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Provider Output Schema */
+            provider_output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Tool Name */
+            tool_name: string;
         };
         /**
          * ToolDataEntry
@@ -13548,6 +13722,8 @@ export interface components {
         UpdateHILPreferencesRequest: {
             /** Mode */
             mode?: ("always_allow" | "always_ask" | "auto") | null;
+            /** Never Auto Tools */
+            never_auto_tools?: string[] | null;
             /** Tool Overrides */
             tool_overrides?: {
                 [key: string]: boolean;
@@ -14698,6 +14874,8 @@ export type DeviceTokenResponse = components['schemas']['DeviceTokenResponse'];
 export type DisconnectPlatformResponse = components['schemas']['DisconnectPlatformResponse'];
 export type DiscoveredSkillInfo = components['schemas']['DiscoveredSkillInfo'];
 export type DiscoverSkillsResponse = components['schemas']['DiscoverSkillsResponse'];
+export type DispatchError = components['schemas']['DispatchError'];
+export type DispatchErrorKind = components['schemas']['DispatchErrorKind'];
 export type DodoWebhookAckResponse = components['schemas']['DodoWebhookAckResponse'];
 export type DraftMutationResponse = components['schemas']['DraftMutationResponse'];
 export type DraftRequest = components['schemas']['DraftRequest'];
@@ -14819,6 +14997,7 @@ export type MemoryTreeResponse = components['schemas']['MemoryTreeResponse'];
 export type MessageDict = components['schemas']['MessageDict'];
 export type MessageFeedbackRequest = components['schemas']['MessageFeedbackRequest'];
 export type MessageFeedbackResponse = components['schemas']['MessageFeedbackResponse'];
+export type MessageKind = components['schemas']['MessageKind'];
 export type MessageModelInput = components['schemas']['MessageModelInput'];
 export type MessageModelOutput = components['schemas']['MessageModelOutput'];
 export type MessageRequest = components['schemas']['MessageRequest'];
@@ -14867,6 +15046,7 @@ export type OnboardingStatusResponse = components['schemas']['OnboardingStatusRe
 export type PaginatedNotificationsResponse = components['schemas']['PaginatedNotificationsResponse'];
 export type PaginationMeta = components['schemas']['PaginationMeta'];
 export type PaymentVerificationResponse = components['schemas']['PaymentVerificationResponse'];
+export type PendingApprovalRef = components['schemas']['PendingApprovalRef'];
 export type PersistedTriageSummary = components['schemas']['PersistedTriageSummary'];
 export type PersonalizationResponse = components['schemas']['PersonalizationResponse'];
 export type PersonalizationTodo = components['schemas']['PersonalizationTodo'];
@@ -14912,6 +15092,9 @@ export type ReplyToMessageData = components['schemas']['ReplyToMessageData'];
 export type ResetSessionRequest = components['schemas']['ResetSessionRequest'];
 export type ResetSessionResponse = components['schemas']['ResetSessionResponse'];
 export type ResetWorkflowResponse = components['schemas']['ResetWorkflowResponse'];
+export type SandboxExecuteRequest = components['schemas']['SandboxExecuteRequest'];
+export type SandboxExecuteResponse = components['schemas']['SandboxExecuteResponse'];
+export type SandboxToolSchemaRequest = components['schemas']['SandboxToolSchemaRequest'];
 export type SaveSocialProfilesResponse = components['schemas']['SaveSocialProfilesResponse'];
 export type SaveWritingStyleResponse = components['schemas']['SaveWritingStyleResponse'];
 export type ScheduledTaskStatus = components['schemas']['ScheduledTaskStatus'];
@@ -14988,6 +15171,7 @@ export type TodoWorkflowGenerationResponse = components['schemas']['TodoWorkflow
 export type TodoWorkflowGenerationStatus = components['schemas']['TodoWorkflowGenerationStatus'];
 export type TodoWorkflowStatus = components['schemas']['TodoWorkflowStatus'];
 export type TodoWorkflowStatusResponse = components['schemas']['TodoWorkflowStatusResponse'];
+export type ToolContract = components['schemas']['ToolContract'];
 export type ToolDataEntry = components['schemas']['ToolDataEntry'];
 export type ToolInfo = components['schemas']['ToolInfo'];
 export type ToolsCategoryResponse = components['schemas']['ToolsCategoryResponse'];
@@ -25093,6 +25277,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CronValidationResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    sandbox_sandbox_execute: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SandboxExecuteRequest"];
+            };
+        };
+        responses: {
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxExecuteResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    sandbox_sandbox_tool_schema: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SandboxToolSchemaRequest"];
+            };
+        };
+        responses: {
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolContract"];
                 };
             };
             /** @description Unprocessable Entity */

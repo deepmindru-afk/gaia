@@ -10,7 +10,7 @@ from app.agents.tools.execute.dispatch import (
     ToolExecutionResult,
 )
 from app.agents.tools.execute.resolver import ResolvedTool
-from app.agents.tools.execute.tool_info import ToolInfo
+from app.agents.tools.execute.tool_info import ToolContract
 from app.api.v1.endpoints.sandbox_execute import (
     SandboxExecuteRequest,
     SandboxToolSchemaRequest,
@@ -120,7 +120,7 @@ class TestSandboxExecuteRoute:
 
     async def test_tool_schema_returns_the_full_contract_for_the_token_user(self) -> None:
         token = mint_execute_token("u1", "run-1", scoped_tool_names=None, ttl_seconds=60)
-        contract = ToolInfo(
+        contract = ToolContract(
             tool_name="GMAIL_FETCH_EMAILS",
             description="Fetch emails.",
             input_schema={"type": "object"},

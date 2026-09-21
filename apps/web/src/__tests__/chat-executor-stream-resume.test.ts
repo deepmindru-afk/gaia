@@ -27,8 +27,8 @@ vi.mock("@/features/chat/api/chatApi", () => ({
 
 import { chatApi } from "@/features/chat/api/chatApi";
 import { createExecutorStreamHandler } from "@/features/chat/hooks/useExecutorStream";
+import type { IMessage } from "@/lib/db/chatDb";
 import { useChatStore } from "@/stores/chatStore";
-import type { IMessage } from "@/types/features/convoTypes";
 
 const CONVERSATION_ID = "conv-resume-1";
 const TASK_ID = "task-resume-1";

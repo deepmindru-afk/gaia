@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.tools.execute.schema_tool import get_tool_schema
-from app.agents.tools.execute.tool_info import ToolInfo
+from app.agents.tools.execute.tool_info import ToolContract
 
 MODULE = "app.agents.tools.execute.schema_tool"
 CONFIG = {"configurable": {"user_id": "u1"}}
 
 
-def _info(**overrides: object) -> ToolInfo:
+def _info(**overrides: object) -> ToolContract:
     defaults: dict = {
         "tool_name": "GMAIL_FETCH_EMAILS",
         "description": "Fetch emails.",
@@ -26,7 +26,7 @@ def _info(**overrides: object) -> ToolInfo:
         "observed_call_count": 0,
     }
     defaults.update(overrides)
-    return ToolInfo(**defaults)
+    return ToolContract(**defaults)
 
 
 @pytest.mark.unit

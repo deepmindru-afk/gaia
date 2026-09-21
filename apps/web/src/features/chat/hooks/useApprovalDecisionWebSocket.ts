@@ -1,6 +1,6 @@
 import type { ApprovalRequestData, ApprovalStatus } from "@shared/chat";
 import { useCallback, useEffect } from "react";
-import type { ToolDataEntry } from "@/config/registries/toolRegistry";
+import type { TypedToolDataEntry } from "@/config/registries/toolRegistry";
 import { db } from "@/lib/db/chatDb";
 import { wsManager } from "@/lib/websocket/WebSocketManager";
 import { useChatStore } from "@/stores/chatStore";
@@ -58,21 +58,23 @@ export function useApprovalDecisionWebSocket() {
     );
     if (!target) return;
 
-    const tool_data: ToolDataEntry[] = (target.tool_data ?? []).map((entry) => {
-      const data = entry.data as Partial<ApprovalRequestData> | undefined;
-      if (
-        entry.tool_name !== "approval_request" ||
-        data?.approval_id !== approval_id
-      ) {
-        return entry;
-      }
-      const next: ApprovalRequestData = {
-        ...(data as ApprovalRequestData),
-        status: status as ApprovalRequestData["status"],
-        feedback: event.feedback ?? data.feedback ?? null,
-      };
-      return { ...entry, data: next } as ToolDataEntry;
-    });
+    const tool_data: TypedToolDataEntry[] = (target.tool_data ?? []).map(
+      (entry) => {
+        const data = entry.data as Partial<ApprovalRequestData> | undefined;
+        if (
+          entry.tool_name !== "approval_request" ||
+          data?.approval_id !== approval_id
+        ) {
+          return entry;
+        }
+        const next: ApprovalRequestData = {
+          ...(data as ApprovalRequestData),
+          status: status as ApprovalRequestData["status"],
+          feedback: event.feedback ?? data.feedback ?? null,
+        };
+        return { ...entry, data: next } as TypedToolDataEntry;
+      },
+    );
     const updated = { ...target, tool_data };
     try {
       await db.putMessage(updated);

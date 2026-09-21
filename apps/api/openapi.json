@@ -402,6 +402,17 @@
             ],
             "title": "Scope",
             "type": "string"
+          },
+          "v": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "V"
           }
         },
         "required": [
@@ -413,6 +424,28 @@
       "ApprovalDecisionResponse": {
         "description": "Result of relaying an approval decision to the awaiting gate.",
         "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
           "success": {
             "title": "Success",
             "type": "boolean"
@@ -1061,6 +1094,17 @@
               }
             ],
             "title": "Feedback"
+          },
+          "v": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "V"
           }
         },
         "required": [
@@ -1091,6 +1135,17 @@
           "resolved": {
             "title": "Resolved",
             "type": "boolean"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
           }
         },
         "required": [
@@ -1686,6 +1741,18 @@
             "title": "Platform",
             "type": "string"
           },
+          "platform_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Platform-native id of the user's message (WhatsApp wamid, Telegram message_id, Discord id, Slack ts). Persisted on the saved user message so a later background reaction can anchor to it.",
+            "title": "Platform Message Id"
+          },
           "platform_user_id": {
             "description": "User's ID on the platform",
             "minLength": 1,
@@ -1805,7 +1872,7 @@
             "type": "string"
           },
           "icon": {
-            "description": "Icon key (owning subagent id, or 'executor')",
+            "description": "Icon key (owning integration id, or 'executor')",
             "title": "Icon",
             "type": "string"
           },
@@ -1820,7 +1887,7 @@
             "type": "string"
           },
           "target": {
-            "description": "Target agent_name (executor or a subagent)",
+            "description": "Target agent_name (executor or an integration)",
             "title": "Target",
             "type": "string"
           }
@@ -2935,6 +3002,11 @@
             "title": "Description",
             "type": "string"
           },
+          "has_live_approval": {
+            "default": false,
+            "title": "Has Live Approval",
+            "type": "boolean"
+          },
           "id": {
             "default": "",
             "title": "Id",
@@ -3201,6 +3273,17 @@
             ],
             "title": "Description"
           },
+          "has_live_approval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Live Approval"
+          },
           "is_system_generated": {
             "anyOf": [
               {
@@ -3280,6 +3363,7 @@
           "system_purpose",
           "is_unread",
           "source",
+          "has_live_approval",
           "createdAt",
           "updatedAt"
         ],
@@ -3350,6 +3434,17 @@
           "description": {
             "title": "Description",
             "type": "string"
+          },
+          "has_live_approval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Live Approval"
           },
           "is_system_generated": {
             "anyOf": [
@@ -3425,7 +3520,8 @@
           "updatedAt",
           "messages",
           "artifacts",
-          "active_stream_id"
+          "active_stream_id",
+          "has_live_approval"
         ],
         "title": "ConversationSyncRow",
         "type": "object"
@@ -4720,6 +4816,39 @@
         ],
         "title": "DiscoveredSkillInfo",
         "type": "object"
+      },
+      "DispatchError": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DispatchErrorKind"
+          }
+        },
+        "required": [
+          "kind",
+          "detail",
+          "hint"
+        ],
+        "title": "DispatchError",
+        "type": "object"
+      },
+      "DispatchErrorKind": {
+        "enum": [
+          "unknown_tool",
+          "invalid_args",
+          "internal_tool",
+          "out_of_scope",
+          "timeout"
+        ],
+        "title": "DispatchErrorKind",
+        "type": "string"
       },
       "DodoWebhookAckResponse": {
         "description": "Acknowledgement returned to Dodo once a webhook has been accepted.",
@@ -6558,6 +6687,13 @@
             "title": "Mode",
             "type": "string"
           },
+          "never_auto_tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Never Auto Tools",
+            "type": "array"
+          },
           "tool_overrides": {
             "additionalProperties": {
               "type": "boolean"
@@ -6568,7 +6704,8 @@
         },
         "required": [
           "mode",
-          "tool_overrides"
+          "tool_overrides",
+          "never_auto_tools"
         ],
         "title": "HILPreferencesResponse",
         "type": "object"
@@ -8903,6 +9040,15 @@
         "title": "MessageFeedbackResponse",
         "type": "object"
       },
+      "MessageKind": {
+        "description": "What a bot message IS beyond its text, set when comms' intent is known at\ncreation and would otherwise be unrecoverable from the body alone (a deliberate\none-emoji acknowledgement reads identically to a coincidental one-emoji reply).",
+        "enum": [
+          "text",
+          "emoji_ack"
+        ],
+        "title": "MessageKind",
+        "type": "string"
+      },
       "MessageModelInput": {
         "description": "A single chat message with its content, attachments and tool data.",
         "properties": {
@@ -9027,6 +9173,10 @@
               }
             ]
           },
+          "kind": {
+            "$ref": "#/components/schemas/MessageKind",
+            "default": "text"
+          },
           "message_id": {
             "anyOf": [
               {
@@ -9060,6 +9210,28 @@
               }
             ],
             "title": "Pinned"
+          },
+          "platform_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Message Id"
+          },
+          "reacts_to_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reacts To Message Id"
           },
           "replyToMessage": {
             "anyOf": [
@@ -9268,6 +9440,10 @@
               }
             ]
           },
+          "kind": {
+            "$ref": "#/components/schemas/MessageKind",
+            "default": "text"
+          },
           "message_id": {
             "anyOf": [
               {
@@ -9301,6 +9477,28 @@
               }
             ],
             "title": "Pinned"
+          },
+          "platform_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Message Id"
+          },
+          "reacts_to_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reacts To Message Id"
           },
           "replyToMessage": {
             "anyOf": [
@@ -9483,6 +9681,17 @@
             },
             "title": "Messages",
             "type": "array"
+          },
+          "platform_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Message Id"
           },
           "replyToMessage": {
             "anyOf": [
@@ -11290,6 +11499,27 @@
           "message"
         ],
         "title": "PaymentVerificationResponse",
+        "type": "object"
+      },
+      "PendingApprovalRef": {
+        "description": "A live approval parked against this todo \u2014 the UI's jump link to the\nconversation holding the card. Oldest live row wins; terminal rows never\nappear here.",
+        "properties": {
+          "approval_id": {
+            "description": "Ledger approval id (ap_*)",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "conversation_id": {
+            "description": "Conversation holding the card",
+            "title": "Conversation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "conversation_id"
+        ],
+        "title": "PendingApprovalRef",
         "type": "object"
       },
       "PersistedTriageSummary": {
@@ -13283,6 +13513,70 @@
         "title": "ResetWorkflowResponse",
         "type": "object"
       },
+      "SandboxExecuteRequest": {
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "tool_name": {
+            "minLength": 1,
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_name"
+        ],
+        "title": "SandboxExecuteRequest",
+        "type": "object"
+      },
+      "SandboxExecuteResponse": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DispatchError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "output": {
+            "title": "Output"
+          },
+          "resolved_name": {
+            "title": "Resolved Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "resolved_name"
+        ],
+        "title": "SandboxExecuteResponse",
+        "type": "object"
+      },
+      "SandboxToolSchemaRequest": {
+        "properties": {
+          "tool_name": {
+            "minLength": 1,
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_name"
+        ],
+        "title": "SandboxToolSchemaRequest",
+        "type": "object"
+      },
       "SaveSocialProfilesResponse": {
         "description": "Response body for confirming social profiles, carrying how many were kept.",
         "properties": {
@@ -14068,7 +14362,7 @@
           },
           "target": {
             "default": "executor",
-            "description": "Target agent: 'executor', or a subagent agent_name (gmail_agent, github_agent, etc.)",
+            "description": "Target agent: 'executor', or an integration agent_name (gmail_agent, github_agent, etc.)",
             "title": "Target",
             "type": "string"
           },
@@ -14138,7 +14432,7 @@
           },
           "target": {
             "default": "executor",
-            "description": "Target agent: 'executor' or a subagent agent_name (e.g., gmail_agent)",
+            "description": "Target agent: 'executor' or an integration agent_name (e.g., gmail_agent)",
             "title": "Target",
             "type": "string"
           }
@@ -14186,7 +14480,7 @@
         "type": "string"
       },
       "SkillTarget": {
-        "description": "A place a skill can run: the executor, or a connected integration subagent.\n\n``value`` is the subagent ``agent_name`` written to a skill's ``target``;\n``icon`` is the integration id (``executor`` for the general bucket) so the\nUI can reuse the integration logo set.",
+        "description": "A place a skill can run: the executor, or a connected integration.\n\n``value`` is the integration ``agent_name`` written to a skill's ``target``;\n``icon`` is the integration id (``executor`` for the general bucket) so the\nUI can reuse the integration logo set.",
         "properties": {
           "connected": {
             "default": true,
@@ -14297,7 +14591,7 @@
                 "type": "null"
               }
             ],
-            "description": "Target agent: 'executor' or a connected subagent agent_name (unchanged if omitted)",
+            "description": "Target agent: 'executor' or a connected integration agent_name (unchanged if omitted)",
             "title": "Target"
           }
         },
@@ -15795,6 +16089,17 @@
             "title": "Notify On Run",
             "type": "boolean"
           },
+          "pending_approval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingApprovalRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Oldest live approval parked against this todo, if any \u2014 the UI's jump link to the card's conversation"
+          },
           "priority": {
             "$ref": "#/components/schemas/Priority",
             "default": "none",
@@ -15937,7 +16242,8 @@
           "updated_at",
           "completed_at",
           "workflow_categories",
-          "trigger_subscriptions"
+          "trigger_subscriptions",
+          "pending_approval"
         ],
         "title": "TodoResponse",
         "type": "object"
@@ -16292,6 +16598,71 @@
           }
         },
         "title": "TodoistNewTaskCreatedConfig",
+        "type": "object"
+      },
+      "ToolContract": {
+        "description": "Everything known about one tool's contract, both provider and observed.",
+        "properties": {
+          "compact_output_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compact Output Type"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "observed_call_count": {
+            "default": 0,
+            "title": "Observed Call Count",
+            "type": "integer"
+          },
+          "observed_output_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Output Schema"
+          },
+          "provider_output_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Output Schema"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_name",
+          "description",
+          "input_schema"
+        ],
+        "title": "ToolContract",
         "type": "object"
       },
       "ToolDataEntry": {
@@ -17331,6 +17702,20 @@
               }
             ],
             "title": "Mode"
+          },
+          "never_auto_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Never Auto Tools"
           },
           "tool_overrides": {
             "anyOf": [
@@ -32465,6 +32850,153 @@
         ]
       }
     },
+    "/api/v1/sandbox/execute": {
+      "post": {
+        "operationId": "sandbox_sandbox_execute",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxExecuteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxExecuteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Sandbox Execute",
+        "tags": [
+          "Sandbox"
+        ]
+      }
+    },
+    "/api/v1/sandbox/tool-schema": {
+      "post": {
+        "description": "The full tool contract behind the discovery doc's pointer.\n\nMetadata only (no tool runs), but it shares the execute budget so a leaked\ntoken cannot use it as an unmetered probe of the catalog.",
+        "operationId": "sandbox_sandbox_tool_schema",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxToolSchemaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolContract"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Sandbox Tool Schema",
+        "tags": [
+          "Sandbox"
+        ]
+      }
+    },
     "/api/v1/search": {
       "get": {
         "description": "Search for messages, conversations, and notes by their description or content.\n\nArgs:\n    query (str): The search query.\n    user_id (str): The authenticated user's id.\n\nReturns:\n    SearchResultsResponse: The search results for messages, conversations, and notes.",
@@ -33409,7 +33941,7 @@
     },
     "/api/v1/skills/targets": {
       "get": {
-        "description": "List the targets a skill can run in: the executor plus the user's\nconnected integration subagents.",
+        "description": "List the targets a skill can run in: the executor plus the user's\nconnected integrations.",
         "operationId": "skills_list_skill_targets_endpoint",
         "responses": {
           "200": {

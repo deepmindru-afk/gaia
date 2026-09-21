@@ -18,7 +18,7 @@ from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
 
 from app.agents.tools.execute.dispatch import DispatchError, dispatch_config_for, dispatch_tool
-from app.agents.tools.execute.tool_info import ToolInfo, full_tool_info
+from app.agents.tools.execute.tool_info import ToolContract, full_tool_info
 from app.constants.execute import (
     SANDBOX_EXECUTE_BUDGET_WINDOW_SECONDS,
     SANDBOX_EXECUTE_MAX_CALLS_PER_MINUTE,
@@ -146,7 +146,7 @@ class SandboxToolSchemaRequest(BaseModel):
 async def sandbox_tool_schema(
     payload: SandboxToolSchemaRequest,
     authorization: str = Header(default=""),
-) -> ToolInfo:
+) -> ToolContract:
     """The full tool contract behind the discovery doc's pointer.
 
     Metadata only (no tool runs), but it shares the execute budget so a leaked

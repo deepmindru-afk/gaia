@@ -53,6 +53,7 @@ function toCanonicalTodo(t: ChatTodoItem): Todo {
     workflow_categories: [],
     trigger_subscriptions: [],
     gaia_retry_count: 0,
+    pending_approval: null,
     created_at: t.created_at,
     updated_at: t.updated_at,
   };

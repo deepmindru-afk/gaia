@@ -2,7 +2,7 @@
 
 import type { ApprovalRequestData } from "@shared/chat";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ToolDataEntry } from "@/config/registries/toolRegistry";
+import type { TypedToolDataEntry } from "@/config/registries/toolRegistry";
 import { useApprovalDecisionWebSocket } from "@/features/chat/hooks/useApprovalDecisionWebSocket";
 import type { IMessage } from "@/lib/db/chatDb";
 import { useChatStore } from "@/stores/chatStore";
@@ -27,7 +27,7 @@ vi.mock("@/lib/db/chatDb", () => ({
 const card = (
   approval_id: string,
   status: ApprovalRequestData["status"] = "pending",
-): ToolDataEntry => ({
+): TypedToolDataEntry => ({
   tool_name: "approval_request",
   tool_category: "hil",
   timestamp: "2026-09-19T00:00:00Z",

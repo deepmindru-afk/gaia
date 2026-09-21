@@ -57,30 +57,10 @@ export interface ApprovalDecisionPayload {
   v?: number;
 }
 
-/** One approval's decision within POST /approvals/batch-decision. */
-export interface BatchDecisionItem {
-  approval_id: string;
-  decision: ApprovalDecision;
-  feedback?: string;
-  /** Row version the client rendered; see ApprovalDecisionPayload.v. */
-  v?: number;
-}
-
 /** Body of POST /approvals/batch-decision — decide several approvals at once. */
 export interface BatchApprovalDecisionPayload {
   decisions: BatchDecisionItem[];
 }
-
-/** Per-approval outcome of a batch decision. */
-export interface BatchDecisionOutcome {
-  approval_id: string;
-  resolved: boolean;
-  reason: string | null;
-  /** Current ledger state when unresolved (e.g. already decided elsewhere). */
-  status?: string | null;
-}
-
-/** Response of POST /approvals/batch-decision. */
 
 /** One approval card, as streamed to the client. */
 export interface ApprovalRequestData {

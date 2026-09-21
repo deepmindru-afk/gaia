@@ -20,7 +20,7 @@ from app.agents.tools.execute.schema_docs import (
 from app.db.repositories.tool_shapes import tool_shapes_repository
 
 
-class ToolInfo(BaseModel):
+class ToolContract(BaseModel):
     """Everything known about one tool's contract, both provider and observed."""
 
     tool_name: str
@@ -35,7 +35,7 @@ class ToolInfo(BaseModel):
     compact_output_type: str | None = None
 
 
-async def full_tool_info(user_id: str | None, tool_name: str) -> ToolInfo | None:
+async def full_tool_info(user_id: str | None, tool_name: str) -> ToolContract | None:
     """The complete contract for one tool, or ``None`` if the name is unknown."""
     resolved = await resolve_tool(user_id, tool_name)
     if resolved is None:
@@ -43,7 +43,7 @@ async def full_tool_info(user_id: str | None, tool_name: str) -> ToolInfo | None
     observed = await tool_shapes_repository.get_shape(resolved.shape_scope, resolved.name)
     provider_schema = _response_schema_of(resolved.tool)
     effective = provider_schema or (observed.output_schema if observed is not None else None)
-    return ToolInfo(
+    return ToolContract(
         tool_name=resolved.name,
         description=(resolved.tool.description or "").strip(),
         input_schema=_args_schema_of(resolved.tool),
