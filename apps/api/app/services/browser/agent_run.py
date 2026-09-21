@@ -6,6 +6,7 @@ RunHooks, and the agent's history is read into a RunOutcome.
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from app.constants.browser import (
@@ -200,6 +201,7 @@ class BrowserAgentRun:
         self._last_step = 0
         self._frames = 0
         self._framed = False
+        self._step_started_at = 0.0
 
     async def execute(self, task: str) -> RunOutcome:
         from browser_use import Agent, Browser  # noqa: PLC0415 -- heavy optional dep
@@ -317,6 +319,7 @@ class BrowserAgentRun:
         """Fire after the model picks actions, before they execute."""
         del n_steps  # Browser-Use's counter; the frame's own number is what the user reads
         self._framed = True
+        self._step_started_at = perf_counter()
         points = self._llm.viewport_points() if isinstance(self._llm, JevChatModel) else {}
         step_actions = _extract_actions(agent_output, browser_state_summary, points)
         raw_screenshot = (
@@ -344,6 +347,12 @@ class BrowserAgentRun:
         state = getattr(agent, "state", None)
         results = getattr(state, "last_result", None) or []
         framed, self._framed = self._framed, False
+        if self._step_started_at:
+            log.info(
+                f"{LogTag.BROWSER} Browser step actions executed "
+                f"({round((perf_counter() - self._step_started_at) * 1000)}ms)",
+            )
+            self._step_started_at = 0.0
         if not framed and any(getattr(result, "error", None) for result in results):
             # The step died before the model picked anything (an action error, a
             # watchdog timeout on the observation), so nothing else will ever

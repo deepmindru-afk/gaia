@@ -564,7 +564,13 @@ class JevChatModel:
         if self._browser is None:
             return None
         try:
-            return base64.b64encode(await self._browser.take_screenshot()).decode()
+            t0 = perf_counter()
+            raw = await self._browser.take_screenshot()
+            log.info(
+                f"{LogTag.BROWSER} Jev step screenshot captured "
+                f"({len(raw) // 1024}KB in {round((perf_counter() - t0) * 1000)}ms)",
+            )
+            return base64.b64encode(raw).decode()
         except Exception as exc:  # a missing photo must never cost the step
             log.warning(
                 f"{LogTag.BROWSER} Jev step screenshot failed", error_type=type(exc).__name__
