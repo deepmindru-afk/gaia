@@ -671,7 +671,7 @@ class TestBotProgressDeliveryResult:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
             assert msg == (
-                "✅ Done.\n\n📽 Here's a recap of the run: https://cdn.example.com/replay"
+                "✅ Done. Done\n\n📽 Here's a recap of the run: https://cdn.example.com/replay"
             )
 
 
