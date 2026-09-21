@@ -30,6 +30,8 @@ import {
   type CalendarEditOption,
   CalendarFetchCard,
   type CalendarFetchItem,
+  type CalendarOption,
+  CalendarOptionsCard,
   CodeExecutionCard,
   ConnectionStatusCard,
   type ConnectionStatusData,
@@ -146,6 +148,16 @@ const TOOL_RENDERERS: Record<
   email_fetch_data: (data, baseKey) => {
     const emails = Array.isArray(data) ? data : [data];
     return <EmailFetchCard key={baseKey} data={emails as EmailFetchItem[]} />;
+  },
+
+  // Legacy conversations restore this key (creation is now immediate); render
+  // the card so old cards still show event details. Without onAdd handlers its
+  // Confirm buttons are inert — display only, as before the renderer was dropped.
+  calendar_options: (data, baseKey) => {
+    const events = Array.isArray(data) ? data : [data];
+    return (
+      <CalendarOptionsCard key={baseKey} data={events as CalendarOption[]} />
+    );
   },
 
   calendar_fetch_data: (data, baseKey) => {

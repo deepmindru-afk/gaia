@@ -6,7 +6,7 @@ import type {
 } from "@gaia/shared/chat";
 import * as Haptics from "expo-haptics";
 import { Button, Chip } from "heroui-native";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import {
   AlertCircleIcon,
@@ -49,7 +49,6 @@ const RESOLVED_ICONS: Record<
 function ArgsPreview({ args }: { args: Record<string, unknown> }) {
   const { rows, omitted } = useMemo(() => flattenArgsPreview(args), [args]);
   if (rows.length === 0) return null;
-  let lastGroup: string | null = null;
   return (
     <View
       style={{
@@ -61,11 +60,10 @@ function ArgsPreview({ args }: { args: Record<string, unknown> }) {
       }}
     >
       {rows.map((row, index) => {
-        const showGroup = row.group !== null && row.group !== lastGroup;
-        lastGroup = row.group;
+        const showGroup =
+          row.group !== null && row.group !== (rows[index - 1]?.group ?? null);
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: rows derive from immutable args and never reorder
-          <View key={`${row.group ?? "top"}:${row.key}:${index}`}>
+          <View key={`${row.group ?? "top"}:${row.key}:${row.value}`}>
             {showGroup && row.group !== null ? (
               <Text
                 style={{
@@ -109,6 +107,10 @@ export function ApprovalRequestCard({ data }: ApprovalRequestCardProps) {
   const [submitting, setSubmitting] = useState<ApprovalDecision | null>(null);
   const [denyOpen, setDenyOpen] = useState(false);
   const [feedback, setFeedback] = useState("");
+  // A stale-v tap committed nothing; the next submit omits v so the ledger CAS,
+  // not the version check, decides. v is an optimization, never a gate. Read
+  // only inside the handler, so a ref — not state — avoids a dead re-render.
+  const versionConflict = useRef(false);
 
   const decide = async (
     decision: ApprovalDecision,
@@ -116,15 +118,34 @@ export function ApprovalRequestCard({ data }: ApprovalRequestCardProps) {
   ) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSubmitting(decision);
-    // The resolved frame replaces this card over the stream; a 410 still counts
-    // as resolved. Only a genuine failure re-enables the buttons and tells the
-    // user their decision didn't go through.
-    const ok = await chatApi.postApprovalDecision(data.approval_id, {
-      decision,
-      feedback: feedback.trim() || undefined,
-      scope,
-    });
-    if (!ok) {
+    try {
+      // The resolved frame replaces this card in place over the stream
+      // (upsertApprovalToolData). A 410 refreshes via not_found below; reaching
+      // the catch means the submit genuinely failed.
+      const outcome = await chatApi.postApprovalDecision(data.approval_id, {
+        decision,
+        feedback: feedback.trim() || undefined,
+        scope,
+        v: versionConflict.current
+          ? undefined
+          : (data.ledger_version ?? undefined),
+      });
+      if (!outcome.success) {
+        // The row moved under this card. If it already carries a verdict, leave
+        // the card disabled and let the resolved frame replace it; otherwise
+        // re-enable, drop v, and ask the user to tap again.
+        if (outcome.status === "approved" || outcome.status === "denied") {
+          return;
+        }
+        versionConflict.current = true;
+        setSubmitting(null);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        Alert.alert(
+          "Approval moved",
+          "That approval already moved — tap again to confirm.",
+        );
+      }
+    } catch {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert(
         "Couldn't submit",

@@ -1,4 +1,8 @@
-import type { ImageData, ReplyToMessageData } from "@gaia/shared/api/generated";
+import type {
+  ApprovalDecisionResponse,
+  ImageData,
+  ReplyToMessageData,
+} from "@gaia/shared/api/generated";
 
 export type { ImageData, ReplyToMessageData } from "@gaia/shared/api/generated";
 
@@ -258,17 +262,19 @@ export async function cancelStream(streamId: string): Promise<boolean> {
 export async function postApprovalDecision(
   approvalId: string,
   decision: ApprovalDecisionPayload,
-): Promise<boolean> {
+): Promise<ApprovalDecisionResponse> {
   try {
-    await apiService.post(`/approvals/${approvalId}/decision`, decision);
-    return true;
+    return await apiService.post<ApprovalDecisionResponse>(
+      `/approvals/${approvalId}/decision`,
+      decision,
+    );
   } catch (error) {
-    // A 410 means the approval was already resolved elsewhere — the resolved
-    // card arrives over the stream regardless, so treat it as success. Only a
-    // genuine submission failure returns false.
-    if (error instanceof ApiError && error.status === HTTP_GONE) return true;
-    console.warn("Error submitting approval decision:", error);
-    return false;
+    // A 410 means the row already moved elsewhere — report it as not_found so
+    // the card refreshes rather than painting over the real verdict. Any other
+    // failure propagates to the card, which re-enables the buttons.
+    if (error instanceof ApiError && error.status === HTTP_GONE)
+      return { success: false, reason: "not_found" };
+    throw error;
   }
 }
 
