@@ -13,3 +13,18 @@ export function apiRowHasLiveApproval(row: unknown): boolean {
   }
   return (row as { has_live_approval?: unknown }).has_live_approval === true;
 }
+
+/**
+ * Whether a cached conversation row needs refetching for its approval flag.
+ *
+ * Sync staleness compares `updatedAt` timestamps, but flag flips never bump
+ * `updatedAt` (they must not re-sort the list). Without this, a row cached
+ * before the flag existed keeps `undefined` forever and the dot never
+ * lights. Compares the field sync is responsible for, nothing else.
+ */
+export function isApprovalFlagStale(
+  localHasFlag: boolean | undefined,
+  remoteRow: unknown,
+): boolean {
+  return apiRowHasLiveApproval(remoteRow) !== (localHasFlag ?? false);
+}

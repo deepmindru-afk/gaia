@@ -6,7 +6,10 @@ import {
   toClientMessages,
 } from "@/features/chat/api/chatApi";
 import { MAX_SYNC_CONVERSATIONS } from "@/features/chat/constants";
-import { apiRowHasLiveApproval } from "@/features/chat/utils/approvalFlag";
+import {
+  apiRowHasLiveApproval,
+  isApprovalFlagStale,
+} from "@/features/chat/utils/approvalFlag";
 import { db, type IConversation, type IMessage } from "@/lib/db/chatDb";
 import { useChatStore } from "@/stores/chatStore";
 import {
@@ -146,6 +149,9 @@ const identifyStaleConversations = (
       conv.updatedAt || conv.createdAt,
     ]),
   );
+  const localFlagMap = new Map(
+    localConversations.map((conv) => [conv.id, conv.hasLiveApproval]),
+  );
 
   const staleItems: ConversationSyncItem[] = [];
 
@@ -158,6 +164,15 @@ const identifyStaleConversations = (
       staleItems.push({
         conversation_id: conversationId,
         last_updated: undefined,
+      });
+      continue;
+    }
+
+    if (isApprovalFlagStale(localFlagMap.get(conversationId), remote)) {
+      // Flag flipped without touching updatedAt — refetch for the dot.
+      staleItems.push({
+        conversation_id: conversationId,
+        last_updated: localUpdatedAt.toISOString(),
       });
       continue;
     }
