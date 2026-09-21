@@ -40,13 +40,20 @@ interface ExecutorStreamStartedEvent {
   bot_message_id?: string | null;
 }
 
-/** Project the shared accumulator onto the placeholder message record. */
+/** Project the shared accumulator onto the placeholder message record.
+ *
+ * `writeContent` is false unless the stream actually produced response text:
+ * an executor stream emits no `response` frames, so its accumulator text stays
+ * at the seed and writing it would stamp that stale snapshot over the comms
+ * narration the backend concurrently saves.
+ */
 const applyAccumulatorToMessage = (
   base: IMessage,
   acc: TurnAccumulator,
+  writeContent: boolean,
 ): IMessage => ({
   ...base,
-  content: acc.responseText,
+  ...(writeContent ? { content: acc.responseText } : {}),
   tool_data:
     acc.toolData.length > 0 ? (acc.toolData as TypedToolDataEntry[]) : null,
   follow_up_actions: acc.followUpActions,
@@ -139,15 +146,18 @@ export const createExecutorStreamHandler =
     // The projection below REPLACES the record's fields, so a continued message
     // must seed the accumulator with what it already has or its earlier cards
     // and text would be wiped by the first resumed frame.
+    const seededContent = existing?.content ?? "";
     let acc = createTurnAccumulator();
     if (existing) {
       acc = {
-        ...createTurnAccumulator(existing.content ?? ""),
+        ...createTurnAccumulator(seededContent),
         toolData: [
           ...((existing.tool_data as TurnAccumulator["toolData"]) ?? []),
         ],
       };
     }
+    // Only once a `response` frame moves the text off its seed may we write it.
+    const hasNewContent = () => acc.responseText !== seededContent;
 
     // Coalesced IndexedDB persistence: the store update renders live, the
     // throttled DB write is only a refresh-survival snapshot.
@@ -173,7 +183,7 @@ export const createExecutorStreamHandler =
       const current = msgs.find((m) => m.id === targetId);
       // Target momentarily absent — skip this frame, keep the stream alive.
       if (!current) return;
-      const updated = applyAccumulatorToMessage(current, acc);
+      const updated = applyAccumulatorToMessage(current, acc, hasNewContent());
       state.updateMessageInPlace(updated);
       scheduleWrite(updated);
     };
@@ -194,7 +204,7 @@ export const createExecutorStreamHandler =
       const current = msgs.find((m) => m.id === targetId);
       if (current) {
         const finalized: IMessage = {
-          ...applyAccumulatorToMessage(current, acc),
+          ...applyAccumulatorToMessage(current, acc, hasNewContent()),
           status: error ? "failed" : "sent",
           error: error ?? null,
         };
