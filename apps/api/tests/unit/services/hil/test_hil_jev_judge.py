@@ -264,6 +264,26 @@ class TestGrounding:
         priors = [PriorCall(name="FIND", args={"id": "d123"})]
         assert ungrounded_targets({"id": "d123"}, "delete it", priors) == []
 
+    async def test_an_id_minted_in_a_prior_output_is_grounded(self) -> None:
+        # The reported Gmail case: SEND_DRAFT carries only a draft id, which no
+        # user ever typed. The create call's result minted it, so it traces to
+        # the run — not to nowhere.
+        priors = [
+            PriorCall(
+                name="GMAIL_CREATE_DRAFT",
+                args={"to": "maradiyadhruv0@gmail.com", "subject": "Test email"},
+                output='{"draft_id": "r6898160653200701840", "to": "maradiyadhruv0@gmail.com"}',
+            )
+        ]
+        assert (
+            ungrounded_targets(
+                {"draft_id": "r6898160653200701840"},
+                "send test mail to maradiyadhruv0@gmail.com\nsend",
+                priors,
+            )
+            == []
+        )
+
     async def test_a_name_in_words_grounds_its_email(self) -> None:
         # "Sarah's" grounds sarah@x.com; the domain was resolved, not chosen.
         assert (
@@ -305,6 +325,28 @@ class TestGrounding:
         )
         assert d.outcome == "ask"
         assert "mallory@evil.com" in d.reason
+
+    async def test_authorized_send_of_a_minted_draft_id_stays_accepted(self) -> None:
+        # The reported Gmail case at the pure seam (no network): a confident
+        # authorized verdict plus the create call's output carrying the draft
+        # id. The id traces to the run, so the veto stands down.
+        d = decide_from_verdict(
+            choice="authorized",
+            confidence=0.9,
+            probabilities={"authorized": 0.9},
+            user_messages=["send test mail to maradiyadhruv0@gmail.com", "send"],
+            call=_call(args={"draft_id": "r6898160653200701840"}),
+            prior_calls=[
+                PriorCall(
+                    name="GMAIL_CREATE_DRAFT",
+                    args={"to": "maradiyadhruv0@gmail.com", "subject": "Test email"},
+                    output='{"draft_id": "r6898160653200701840"}',
+                )
+            ],
+            history=AutoHistory(),
+            forbid=None,
+        )
+        assert d.outcome == "accept"
 
 
 class TestVetoes:
@@ -401,6 +443,56 @@ class TestWire:
             "args",
         }
         assert posted["questions"]["decision"]["type"] == "choice"
+
+    async def test_enrichment_rides_only_when_it_exists(self) -> None:
+        """Empty evidence reads as missing evidence and costs confidence, so an
+        old-shape call posts the old-shape state — and a rich call carries it all."""
+        from app.services.hil.utils import PriorCall
+
+        client = _client(_answer("unclear", 0.5))
+        with patch(f"{MODULE}.httpx.AsyncClient", return_value=client):
+            with patch(f"{MODULE}.settings") as settings:
+                settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
+                await ask_jev(
+                    user_messages=["send it"],
+                    call=_call(),
+                    prior_calls=[PriorCall(name="FIND", args={})],
+                    history=AutoHistory(),
+                )
+        posted = client.__aenter__.return_value.post.await_args.kwargs["json"]
+        assert set(posted["state"]["pending_action"]) == {
+            "tool",
+            "description",
+            "summary",
+            "args",
+        }
+        assert posted["state"]["prior_actions"] == [{"tool": "FIND", "args": {}}]
+        assert "assistant_turns" not in posted["state"]
+
+        client = _client(_answer("unclear", 0.5))
+        with patch(f"{MODULE}.httpx.AsyncClient", return_value=client):
+            with patch(f"{MODULE}.settings") as settings:
+                settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
+                await ask_jev(
+                    user_messages=["send it"],
+                    call=_call(
+                        args={"draft_id": "r1"},
+                        tool_schema={"properties": {"draft_id": {"type": "string"}}},
+                    ),
+                    prior_calls=[
+                        PriorCall(name="CREATE", args={}, output='{"draft_id": "r1"}')
+                    ],
+                    history=AutoHistory(),
+                    assistant_turns=["your draft is ready"],
+                )
+        posted = client.__aenter__.return_value.post.await_args.kwargs["json"]
+        assert posted["state"]["pending_action"]["tool_schema"] == {
+            "properties": {"draft_id": {"type": "string"}}
+        }
+        assert posted["state"]["prior_actions"] == [
+            {"tool": "CREATE", "args": {}, "output": '{"draft_id": "r1"}'}
+        ]
+        assert posted["state"]["assistant_turns"] == ["your draft is ready"]
 
     async def test_usage_is_reported(self) -> None:
         with patch(f"{MODULE}.httpx.AsyncClient", return_value=_client(_answer("unclear", 0.5))):

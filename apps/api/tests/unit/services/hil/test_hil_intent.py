@@ -18,7 +18,13 @@ from app.constants.hil import HIL_JUDGE_MIN_QUOTE_WORDS, HIL_LLM_TIMEOUT_SECONDS
 from app.constants.llm import HIL_JUDGE_FALLBACK_MODEL_NAMES, HIL_JUDGE_MODEL_NAME
 from app.services.hil.intent import JudgedCall, RiskFactor, _Verdict, judge_intent
 from app.services.hil.prompts import INTENT_JUDGE_PROMPT
-from app.services.hil.utils import PriorCall, args_preview, render_prior_calls
+from app.services.hil.utils import (
+    PriorCall,
+    args_preview,
+    render_assistant_turns,
+    render_prior_calls,
+    render_tool_schema,
+)
 
 MODULE = "app.services.hil.intent"
 
@@ -219,11 +225,13 @@ class TestWhatTheJudgeIsAsked:
             earlier="draft an email to bob about the deck",
             latest="looks good, send it",
             prior_actions=render_prior_calls(prior),
+            assistant_turns=render_assistant_turns([]),
             history="No recent decisions on send_email.",
             tool="send_email",
             description="(no description)",
             summary="Send email — to: bob@example.com",
             args=args_preview(call.args),
+            schema=render_tool_schema(call.tool_schema),
         )
         assert llm.await_args.kwargs["label"] == "hil_intent_judge"
         # Metered to the user whose gate this is, and bounded — an unbounded judge

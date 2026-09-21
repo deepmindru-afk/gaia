@@ -46,6 +46,7 @@ class FakeJudge(IntentJudge):
         call: JudgedCall,
         prior_calls: list[PriorCall],
         history: Any,
+        assistant_turns: list[str] | None = None,
     ) -> IntentDecision:
         self.calls += 1
         return self._decision

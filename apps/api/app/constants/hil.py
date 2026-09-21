@@ -21,10 +21,21 @@ HIL_JUDGE_MAX_USER_TURNS = 6
 HIL_JUDGE_MAX_TURN_CHARS = 800
 
 # The pending call's arguments, and the run's earlier tool calls (the provenance for
-# arguments the agent derived rather than the user dictating).
+# arguments the agent derived rather than the user dictating). Prior outputs ride
+# too, clipped small: an id minted by an earlier call (a draft id, a created event
+# id) is only traceable through the output that minted it.
 HIL_JUDGE_MAX_ARGS_CHARS = 1500
 HIL_JUDGE_MAX_PRIOR_CALLS = 8
 HIL_JUDGE_MAX_PRIOR_ARGS_CHARS = 200
+HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS = 300
+
+# The pending tool's own arg schema, and the run's recent assistant messages.
+# Both are provenance for JEV, never authorization: the schema says what each
+# argument means (an opaque id stops being opaque), the assistant's words say
+# what it already told the user. Bounded — JEV is cheap, but prompts are not free.
+HIL_JUDGE_MAX_SCHEMA_CHARS = 2000
+HIL_JUDGE_MAX_ASSISTANT_TURNS = 3
+HIL_JUDGE_MAX_ASSISTANT_CHARS = 500
 
 # Bytes of randomness in the fence around untrusted content in the judge prompt. Fixed
 # tags are guessable from a leaked prompt and can simply be closed by an attacker.

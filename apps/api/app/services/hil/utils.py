@@ -4,8 +4,10 @@ Everything the gate and the judge need to *look at* — the tool call, the run's
 the graph state, the untrusted argument payload — is read through here, so the modules
 that make decisions stay about decisions.
 
-The graph-state readers deliberately expose tool *calls* and never message *content*: the
-assistant's prose must never reach its own gate (see intent.py).
+The graph-state readers expose tool *calls* (with their outputs, which carry
+minted ids) and the assistant's recent *words* as labeled provenance — never as
+authorization. The authority line stays where it was: only the user's turns
+authorize (see intent.py).
 """
 
 from dataclasses import dataclass
@@ -20,8 +22,12 @@ from app.agents.tools.execute.unwrap import unwrap_execute_call
 from app.constants.hil import (
     HIL_APPROVAL_TIMEOUT_SECONDS,
     HIL_JUDGE_MAX_ARGS_CHARS,
+    HIL_JUDGE_MAX_ASSISTANT_CHARS,
+    HIL_JUDGE_MAX_ASSISTANT_TURNS,
     HIL_JUDGE_MAX_PRIOR_ARGS_CHARS,
     HIL_JUDGE_MAX_PRIOR_CALLS,
+    HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS,
+    HIL_JUDGE_MAX_SCHEMA_CHARS,
     HIL_JUDGE_NONCE_BYTES,
 )
 from app.models.agent_models import AgentConfigurable, runtime_configurable
@@ -39,10 +45,16 @@ class GatedCall:
 
 @dataclass(frozen=True)
 class PriorCall:
-    """A tool call this run already made — an action, never a narration."""
+    """A tool call this run already made — an action, never a narration.
+
+    ``output`` is the call's truncated result: ids minted mid-run (a draft id,
+    a created event id) live in outputs, never in args, so without it an id
+    that the run itself created reads as "from nowhere".
+    """
 
     name: str
     args: dict[str, Any]
+    output: str = ""
 
 
 # --- reading the request ---------------------------------------------------------------
@@ -96,20 +108,98 @@ def current_tool_calls(state: object) -> list[dict[str, Any]]:
 
 
 def prior_tool_calls(state: object, exclude_id: str) -> list[PriorCall]:
-    """Return the tool calls this run already made, oldest first — names and args only.
+    """Return the tool calls this run already made, oldest first — names, args, outputs.
 
     AIMessage.content (the assistant's prose) is deliberately never read, since it is
     the one channel through which the agent could argue with its own gate. exclude_id
     drops the pending call itself; matched on id, not name, since an earlier call of
-    the *same* tool is real prior context.
+    the *same* tool is real prior context. Outputs are matched by tool_call_id and
+    clipped small: they carry minted ids, not authority.
     """
+    outputs = _tool_outputs_by_call_id(state)
     calls = [
-        PriorCall(name=call.get("name", ""), args=call.get("args", {}) or {})
+        PriorCall(
+            name=call.get("name", ""),
+            args=call.get("args", {}) or {},
+            output=outputs.get(call.get("id", ""), ""),
+        )
         for message in _messages_of(state)
         for call in getattr(message, "tool_calls", None) or []
         if call.get("name") and call.get("id") != exclude_id
     ]
     return calls[-HIL_JUDGE_MAX_PRIOR_CALLS:]
+
+
+def _tool_outputs_by_call_id(state: object) -> dict[str, str]:
+    """Map tool_call_id to its truncated result, for calls already answered.
+
+    Reads ToolMessages (dict or object shaped); anything without an id match is
+    ignored by the caller. Untrusted tool-result text, so clipped like args.
+    """
+    outputs: dict[str, str] = {}
+    for message in _messages_of(state):
+        if isinstance(message, dict):
+            call_id = message.get("tool_call_id")
+            content = message.get("content")
+        else:
+            call_id = getattr(message, "tool_call_id", None)
+            content = getattr(message, "content", None)
+        if not call_id or not isinstance(content, str) or not content.strip():
+            continue
+        outputs[str(call_id)] = clip_text(content, HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS)
+    return outputs
+
+
+def recent_assistant_turns(state: object) -> list[str]:
+    """The run's latest assistant messages, oldest first — provenance, never authority.
+
+    What the agent already told the user ("your draft to X is ready") is the
+    context a bare user shorthand ("send it") refers to. Bounded and clipped;
+    callers must label it as the assistant's words, never as authorization.
+    """
+    turns = [
+        clip_text(content, HIL_JUDGE_MAX_ASSISTANT_CHARS)
+        for message in _messages_of(state)
+        if _is_ai_message(message)
+        for content in [_message_text(message)]
+        if content.strip()
+    ]
+    return turns[-HIL_JUDGE_MAX_ASSISTANT_TURNS:]
+
+
+def _is_ai_message(message: Any) -> bool:
+    """Whether a state message is the assistant's own (not human, tool, or system).
+
+    LangChain shapes vary (objects with ``type``, dicts with ``type``/``role``),
+    so accept the assistant spellings and reject everything else — a human turn
+    duplicating user_messages is waste, a tool result at this budget is laundering.
+    """
+    if isinstance(message, dict):
+        kind = str(message.get("type") or message.get("role") or "").lower()
+        return kind in ("ai", "assistant")
+    kind = str(getattr(message, "type", "") or "").lower()
+    if kind:
+        return kind == "ai"
+    return type(message).__name__ in ("AIMessage",)
+
+
+def _message_text(message: Any) -> str:
+    """Best-effort text of one state message (AI messages only carry content here)."""
+    if isinstance(message, dict):
+        if message.get("tool_call_id"):
+            return ""
+        content = message.get("content")
+        return content if isinstance(content, str) else ""
+    if getattr(message, "tool_call_id", None):
+        return ""
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            part.get("text", "") for part in content if isinstance(part, dict)
+        )
+    return ""
 
 
 def _messages_of(state: object) -> list[Any]:
@@ -138,11 +228,43 @@ def args_preview(args: dict[str, Any]) -> str:
 
 
 def render_prior_calls(calls: list[PriorCall]) -> str:
-    lines = [
-        f"- {call.name}({clip_text(json.dumps(call.args, default=str), HIL_JUDGE_MAX_PRIOR_ARGS_CHARS)})"
-        for call in calls
-    ]
+    lines = []
+    for call in calls:
+        line = f"- {call.name}({clip_text(json.dumps(call.args, default=str), HIL_JUDGE_MAX_PRIOR_ARGS_CHARS)})"
+        if call.output.strip():
+            # JSON-encoded like args: a result containing a quote or newline
+            # must not break out of its line and read as prompt structure.
+            line += f" => {clip_text(json.dumps(call.output, default=str), HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS + 2)}"
+        lines.append(line)
     return "\n".join(lines) or "(none)"
+
+
+def render_assistant_turns(turns: list[str]) -> str:
+    """Numbered recent assistant messages for a prompt — labeled, never quoted as authority."""
+    lines = [f"{index + 1}. {turn}" for index, turn in enumerate(turns) if turn.strip()]
+    return "\n".join(lines) or "(none)"
+
+
+def tool_schema(tool: BaseTool | None) -> dict[str, Any] | None:
+    """The pending tool's argument contract, or None when it cannot be read.
+
+    An opaque id stops being opaque once the judge sees what it is *for*
+    (``draft_id``: "ID of a previously created draft"). Best-effort like every
+    other read here: a missing schema degrades to today's description-only view.
+    """
+    if tool is None:
+        return None
+    schema = getattr(tool, "args", None)
+    if not isinstance(schema, dict) or not schema:
+        return None
+    return cast(dict[str, Any], schema)
+
+
+def render_tool_schema(schema: dict[str, Any] | None) -> str:
+    """Clip the arg contract for a prompt — schemas bloat, and JEV is cheap but not free."""
+    if not schema:
+        return "(no schema)"
+    return clip_text(json.dumps(schema, default=str), HIL_JUDGE_MAX_SCHEMA_CHARS)
 
 
 def approval_window_label() -> str:

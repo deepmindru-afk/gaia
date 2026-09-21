@@ -75,7 +75,9 @@ from app.services.hil.utils import (
     approval_window_label,
     configurable_of,
     prior_tool_calls,
+    recent_assistant_turns,
     tool_description,
+    tool_schema,
     unpack_tool_call,
 )
 from app.utils.general_utils import clip_text
@@ -547,6 +549,7 @@ async def _judge(
     if await is_jev_judge_enabled(context.user_id):
         # JEV classifies first, LLM stays as its transport-failure fallback.
         judge = JevIntentJudge()
+    tool = await gated_tool_object(request, context.user_id, call.name)
     return await judge_intent(
         user_id=context.user_id,
         user_messages=context.user_messages,
@@ -555,14 +558,15 @@ async def _judge(
             tool_name=call.name,
             # The REAL tool's description — for an execute-proxied call the
             # request carries the proxy's object, which would mislead the judge.
-            description=tool_description(
-                await gated_tool_object(request, context.user_id, call.name)
-            ),
+            description=tool_description(tool),
             args=call.args,
             summary=summary,
+            tool_schema=tool_schema(tool),
         ),
-        # Actions only — the agent's own prose is never handed to its gate.
+        # Prior actions and recent assistant words are provenance for arguments,
+        # never authorization — only the user's turns authorize.
         prior_calls=prior_tool_calls(request.state, call.id),
+        assistant_turns=recent_assistant_turns(request.state),
         history=history,
         never_auto_tools=never_auto,
     )

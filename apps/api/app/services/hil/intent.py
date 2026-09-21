@@ -32,7 +32,9 @@ from app.services.hil.prompts import INTENT_JUDGE_PROMPT
 from app.services.hil.utils import (
     PriorCall,
     args_preview,
+    render_assistant_turns,
     render_prior_calls,
+    render_tool_schema,
     untrusted_fence,
 )
 from shared.py.wide_events import log
@@ -67,13 +69,16 @@ class JudgedCall:
 
     Name, description, arguments and summary always travel together — the gate reads
     them off one pending call, and the prompt renders all four — so they are passed as
-    one value rather than four parallel arguments.
+    one value rather than four parallel arguments. ``tool_schema`` is the tool's own
+    argument contract: an opaque id stops being opaque once the judge sees what it
+    is *for*.
     """
 
     tool_name: str
     description: str
     args: dict[str, Any]
     summary: str
+    tool_schema: dict[str, Any] | None = None
 
 
 # What auto mode decided about one call: accept runs it, reject refuses it with
@@ -222,6 +227,7 @@ class IntentJudge(Protocol):
         call: JudgedCall,
         prior_calls: list[PriorCall],
         history: AutoHistory,
+        assistant_turns: list[str] | None = None,
     ) -> IntentDecision: ...
 
 
@@ -234,6 +240,7 @@ async def judge_intent(
     history: AutoHistory | None = None,
     judge: IntentJudge | None = None,
     never_auto_tools: frozenset[str] | None = None,
+    assistant_turns: list[str] | None = None,
 ) -> IntentDecision:
     """Whether the user's own words authorize this call. Fails toward asking.
 
@@ -241,6 +248,10 @@ async def judge_intent(
     spending a call. A tool on the user's never-auto list also asks without
     spending a call — the rule IS the decision. The reason travels with the
     decision: an auto-approved action is shown to the user afterwards as a receipt.
+
+    ``assistant_turns`` is the run's recent assistant prose: context for what a
+    shorthand refers to ("send it" after "your draft to X is ready"), never
+    authorization — only user turns authorize.
     """
     turns = [text for text in user_messages if text.strip()]
     if not turns:
@@ -264,6 +275,7 @@ async def judge_intent(
             call=call,
             prior_calls=prior_calls,
             history=history if history is not None else AutoHistory(),
+            assistant_turns=assistant_turns,
         )
     except Exception as e:  # a judge failure must fall back to asking
         log.warning(
@@ -286,8 +298,11 @@ class _LLMIntentJudge:
         call: JudgedCall,
         prior_calls: list[PriorCall],
         history: AutoHistory,
+        assistant_turns: list[str] | None = None,
     ) -> IntentDecision:
-        verdict = await _ask_judge(user_id, user_messages, call, prior_calls, history)
+        verdict = await _ask_judge(
+            user_id, user_messages, call, prior_calls, history, assistant_turns or []
+        )
         # Grounded against EVERY user turn, not just the latest: "looks good, send
         # it" is authorized by the earlier "draft an email to Bob about the deck".
         outcome = _outcome(verdict, "\n".join(user_messages), call.tool_name)
@@ -323,6 +338,7 @@ async def _ask_judge(
     call: JudgedCall,
     prior_calls: list[PriorCall],
     history: AutoHistory,
+    assistant_turns: list[str],
 ) -> _Verdict:
     return await ainvoke_structured(
         _Verdict,
@@ -331,11 +347,13 @@ async def _ask_judge(
             earlier="\n".join(turns[:-1]) or "(none)",
             latest=turns[-1],
             prior_actions=render_prior_calls(prior_calls),
+            assistant_turns=render_assistant_turns(assistant_turns),
             history=history_line(history, call.tool_name),
             tool=call.tool_name,
             description=call.description or "(no description)",
             summary=call.summary,
             args=args_preview(call.args),
+            schema=render_tool_schema(call.tool_schema),
         ),
         label="hil_intent_judge",
         config=silent_metered_config(user_id),
@@ -371,10 +389,14 @@ def ungrounded_targets(
     an email, id, or amount that appears from nowhere blocks auto-accept. Prose
     bodies are not targets — the choice criteria already judge those. Targets
     from the user's own approved runs (``known``) are provenance, not novelty.
+    Prior outputs count as provenance: an id minted by an earlier call in this
+    run (a draft id from a create call's result) traces to the run, not nowhere.
     """
     normalized_user = _normalize(user_text)
     normalized_priors = _normalize(
-        "\n".join(f"{call.name} {args_preview(call.args)}" for call in prior_calls)
+        "\n".join(
+            f"{call.name} {args_preview(call.args)} {call.output}" for call in prior_calls
+        )
     )
     normalized_known = {_normalize(target) for target in known or frozenset()}
     user_tokens = set(normalized_user.split())

@@ -195,6 +195,7 @@ async def ask_jev(
     call: JudgedCall,
     prior_calls: list[PriorCall],
     history: AutoHistory,
+    assistant_turns: list[str] | None = None,
 ) -> tuple[str, float, dict[str, float], int, int]:
     """One Decisions call: (choice, confidence, probabilities, in, out) tokens.
 
@@ -204,20 +205,32 @@ async def ask_jev(
     key = settings.OPENROUTER_API_KEY
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY unset; cannot reach the JEV judge")
+    pending_action: dict[str, object] = {
+        "tool": call.tool_name,
+        "description": call.description,
+        "summary": call.summary,
+        "args": call.args,
+    }
+    # Enrichment rides only when it exists: empty evidence reads as missing
+    # evidence and costs confidence, so an old-shape call posts the old-shape
+    # state byte for byte.
+    if call.tool_schema:
+        pending_action["tool_schema"] = call.tool_schema
+    prior_actions = []
+    for prior in prior_calls:
+        item: dict[str, object] = {"tool": prior.name, "args": prior.args}
+        if prior.output.strip():
+            item["output"] = prior.output
+        prior_actions.append(item)
     state = {
         "user_messages": user_messages,
-        "pending_action": {
-            "tool": call.tool_name,
-            "description": call.description,
-            "summary": call.summary,
-            "args": call.args,
-        },
-        "prior_actions": [
-            {"tool": prior.name, "args": prior.args} for prior in prior_calls
-        ],
+        "pending_action": pending_action,
+        "prior_actions": prior_actions,
         "recent_history": history_line(history, call.tool_name),
         "now": datetime.now(UTC).isoformat(),
     }
+    if assistant_turns:
+        state["assistant_turns"] = list(assistant_turns)
     async with httpx.AsyncClient(timeout=HIL_JEV_TIMEOUT_SECONDS) as client:
         resp = await client.post(
             HIL_JEV_URL,
@@ -266,6 +279,7 @@ class JevIntentJudge:
         call: JudgedCall,
         prior_calls: list[PriorCall],
         history: AutoHistory,
+        assistant_turns: list[str] | None = None,
     ) -> IntentDecision:
         try:
             choice, confidence, probs, _in, _out = await ask_jev(
@@ -273,6 +287,7 @@ class JevIntentJudge:
                 call=call,
                 prior_calls=prior_calls,
                 history=history,
+                assistant_turns=assistant_turns,
             )
         except Exception as e:
             log.warning(
@@ -287,6 +302,7 @@ class JevIntentJudge:
                 call=call,
                 prior_calls=prior_calls,
                 history=history,
+                assistant_turns=assistant_turns,
             )
         return decide_from_verdict(
             choice=choice,
