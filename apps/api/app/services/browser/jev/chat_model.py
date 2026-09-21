@@ -148,6 +148,10 @@ class JevChatModel:
         self._history: list[JevHistoryEntry] = []
         self._last_fingerprint: str | None = None
         self._steps = 0
+        #: Actual gateway-reported spend across this run's decisions (Vercel
+        #: reports cost 0 on free allowance); None the moment one decision
+        #: arrives without cost metadata, so metering falls back to the table.
+        self._gateway_cost_usd: float | None = 0.0
         self._viewport: dict[int, ViewportBox] = {}
         self._done_reasks_left = JEV_DONE_REASK_BUDGET
         self._guidance_allowed: GuidanceGate | None = None
@@ -169,6 +173,11 @@ class JevChatModel:
     @property
     def provider(self) -> str:
         return self._provider
+
+    @property
+    def actual_cost_usd(self) -> float | None:
+        """Gateway-reported spend for this run's decisions, or None when any decision lacked cost metadata."""
+        return self._gateway_cost_usd
 
     @property
     def name(self) -> str:
@@ -268,6 +277,10 @@ class JevChatModel:
             else (decision.operation.value.lower())
         )
         self._remember(decision.label, kind, text)
+        evaluation = decision.evaluation
+        if self._gateway_cost_usd is not None:
+            cost = evaluation.gateway_cost_usd if evaluation is not None else None
+            self._gateway_cost_usd = (self._gateway_cost_usd + cost) if cost is not None else None
         log.info(
             f"{LogTag.BROWSER} Jev step decided",
             step=self._steps,

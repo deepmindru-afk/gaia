@@ -42,6 +42,7 @@ from app.schemas.browser import (
 )
 from app.services.browser.agent_run import BrowserAgentRun
 from app.services.browser.exceptions import BrowserHandoffCancelled, BrowserUnavailableError
+from app.services.browser.jev.chat_model import JevChatModel
 from app.services.browser.replay import create_replay_link
 from app.services.browser.run_contract import (
     ActionResultsFn,
@@ -431,7 +432,9 @@ class BrowserTaskRunner:
 
         One record_llm_call per billed model, re-priced through GAIA's own
         catalog rather than Browser-Use's pricing data, so the Jev spend is
-        charged to the budget like any other tool-driven model call.
+        charged to the budget like any other tool-driven model call. When the
+        gateway reported its own per-decision cost for the whole run (Vercel
+        does; OpenRouter does not), that actual number wins over the table.
         """
         for entry in usage:
             await record_llm_call(
@@ -444,9 +447,17 @@ class BrowserTaskRunner:
                     reasoning_tokens=0,
                 ),
                 root_request_id=self._root_request_id,
+                provider_cost=self._gateway_cost(entry.model_name),
                 context=LLMCallContext(
                     agent_name="browser_task",
                     background=False,
                     charge_to_budget=True,
                 ),
             )
+
+    def _gateway_cost(self, model_name: str) -> float | None:
+        """Actual gateway-reported spend for model_name, or None to price from the table."""
+        llm = self._llm
+        if isinstance(llm, JevChatModel) and model_name == llm.model:
+            return llm.actual_cost_usd
+        return None

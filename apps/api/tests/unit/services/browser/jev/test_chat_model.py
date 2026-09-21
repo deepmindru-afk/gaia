@@ -107,6 +107,7 @@ class ScriptedGateway:
     model: str = "typesafe-ai/jev"
     requests: list[Any] = field(default_factory=list)
     confidence: float = 0.8
+    costs: list[float | None] = field(default_factory=list)
 
     async def evaluate(self, request):
         self.requests.append(request)
@@ -117,8 +118,15 @@ class ScriptedGateway:
         if target is not None:
             head = f"{operation.lower()}_target"
             answers[head] = _answer(target, list(request.questions[head].criteria))
+        metadata = None
+        if self.costs:
+            cost = self.costs.pop(0)
+            metadata = {"gateway": {"cost": cost}} if cost is not None else None
         return JevEvaluation(
-            answers=answers, usage=JevUsage(inputTokens=300, outputTokens=6), latency_ms=42
+            answers=answers,
+            usage=JevUsage(inputTokens=300, outputTokens=6),
+            latency_ms=42,
+            providerMetadata=metadata,
         )
 
 
@@ -660,6 +668,30 @@ def test_build_vercel_requires_its_key(monkeypatch) -> None:
 
     with pytest.raises(BrowserUnavailableError, match="BROWSER_JEV_VERCEL_API_KEY"):
         build_jev_chat_model(text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake text model in place of the real one
+
+
+async def test_gateway_costs_accumulate_across_decisions(flights_state) -> None:
+    gateway = ScriptedGateway(script=[("CLICK", "4"), ("CLICK", "4")], costs=[0.0, 0.0])
+    model = JevChatModel(client=gateway, text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
+    session = FakeSession(flights_state)
+    model.bind(session, "Fly Zurich to London")  # type: ignore[arg-type]  # the test hands a fake session in place of Browser-Use's session
+
+    await model.ainvoke([], _agent_output())
+    await model.ainvoke([], _agent_output())
+
+    assert model.actual_cost_usd == 0.0
+
+
+async def test_cost_blind_decision_clears_the_actual_total(flights_state) -> None:
+    gateway = ScriptedGateway(script=[("CLICK", "4"), ("CLICK", "4")], costs=[0.0, None])
+    model = JevChatModel(client=gateway, text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
+    session = FakeSession(flights_state)
+    model.bind(session, "Fly Zurich to London")  # type: ignore[arg-type]  # the test hands a fake session in place of Browser-Use's session
+
+    await model.ainvoke([], _agent_output())
+    assert model.actual_cost_usd == 0.0
+    await model.ainvoke([], _agent_output())
+    assert model.actual_cost_usd is None
 
 
 async def test_every_operation_has_a_mapping(flights_state) -> None:

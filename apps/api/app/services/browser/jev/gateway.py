@@ -80,14 +80,41 @@ class JevUsage(BaseModel):
     output_tokens: int = Field(default=0, alias="outputTokens")
 
 
+class _GatewayCostMeta(BaseModel):
+    """The gateway's own cost report for one evaluation, when it sends one."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    cost: str | float | int | None = None
+
+
+class _ProviderMetadata(BaseModel):
+    """Provider-specific envelope around an evaluation (Vercel gateway metadata)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    gateway: _GatewayCostMeta | None = None
+
+
 class JevEvaluation(BaseModel):
     """The gateway's answer set plus what it cost and how long it took."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     answers: dict[str, JevChoiceAnswer]
     usage: JevUsage | None = None
     latency_ms: int = 0
+    provider_metadata: _ProviderMetadata | None = Field(default=None, alias="providerMetadata")
+
+    @property
+    def gateway_cost_usd(self) -> float | None:
+        """What the gateway says this evaluation cost, or None when unreported."""
+        if self.provider_metadata is None or self.provider_metadata.gateway is None:
+            return None
+        try:
+            return float(self.provider_metadata.gateway.cost)
+        except (TypeError, ValueError):
+            return None
 
 
 class JevGatewayClient:

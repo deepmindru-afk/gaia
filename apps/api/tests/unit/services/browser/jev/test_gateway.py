@@ -143,3 +143,27 @@ async def test_a_malformed_answer_set_is_rejected() -> None:
 
     with pytest.raises(ValueError):
         await _client(handler).evaluate(REQUEST)
+
+
+async def test_gateway_reported_cost_is_parsed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                **ANSWER,
+                "providerMetadata": {"gateway": {"cost": "0", "marketCost": "0.00001302"}},
+            },
+        )
+
+    evaluation = await _client(handler).evaluate(REQUEST)
+
+    assert evaluation.gateway_cost_usd == 0.0
+
+
+async def test_missing_cost_metadata_reports_none() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=ANSWER)
+
+    evaluation = await _client(handler).evaluate(REQUEST)
+
+    assert evaluation.gateway_cost_usd is None

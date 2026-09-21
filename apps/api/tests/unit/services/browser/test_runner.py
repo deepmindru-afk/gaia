@@ -1502,6 +1502,7 @@ async def test_each_models_tokens_are_charged_to_the_users_budget(monkeypatch) -
             input_tokens=1200, output_tokens=34, cached_tokens=0, reasoning_tokens=0
         ),
         "root_request_id": "req-1",
+        "provider_cost": None,
         "context": LLMCallContext(
             agent_name="browser_task", background=False, charge_to_budget=True
         ),
@@ -1509,6 +1510,57 @@ async def test_each_models_tokens_are_charged_to_the_users_budget(monkeypatch) -
     assert by_model["claude-sonnet"]["usage"]["input_tokens"] == 90
     assert by_model["claude-sonnet"]["usage"]["output_tokens"] == 7
     assert by_model["claude-sonnet"]["context"].charge_to_budget is True
+
+
+async def test_gateway_reported_cost_wins_over_the_table(monkeypatch) -> None:
+    """A Jev run whose gateway reported per-decision cost is metered at that actual number."""
+    from app.services.browser.jev.chat_model import JevChatModel
+
+    record = AsyncMock()
+    monkeypatch.setattr(runner_mod, "record_llm_call", record)
+    _, emit = _collector()
+    llm = JevChatModel(client=MagicMock(), text_model=MagicMock())
+    llm._gateway_cost_usd = 0.0
+    runner = _make_runner(
+        emit=emit,
+        overrides=_RunnerOverrides(user_id="u1", root_request_id="req-1", llm=llm),
+    )
+    llm.model = "jev-test"
+
+    await runner._record_usage(
+        outcome_from_history(
+            _History(usage=_Usage({"jev-test": _Stats(100, 5)}))
+        ).usage
+    )
+
+    (call,) = record.await_args_list
+    assert call.kwargs["model_name"] == "jev-test"
+    assert call.kwargs["provider_cost"] == 0.0
+
+
+async def test_missing_gateway_cost_falls_back_to_the_table(monkeypatch) -> None:
+    """A Jev run with a cost-blind decision prices from the catalog instead."""
+    from app.services.browser.jev.chat_model import JevChatModel
+
+    record = AsyncMock()
+    monkeypatch.setattr(runner_mod, "record_llm_call", record)
+    _, emit = _collector()
+    llm = JevChatModel(client=MagicMock(), text_model=MagicMock())
+    llm._gateway_cost_usd = None
+    runner = _make_runner(
+        emit=emit,
+        overrides=_RunnerOverrides(user_id="u1", root_request_id="req-1", llm=llm),
+    )
+    llm.model = "jev-test"
+
+    await runner._record_usage(
+        outcome_from_history(
+            _History(usage=_Usage({"jev-test": _Stats(100, 5)}))
+        ).usage
+    )
+
+    (call,) = record.await_args_list
+    assert call.kwargs["provider_cost"] is None
 
 
 async def test_a_completed_run_charges_its_llm_usage(patch_browser, monkeypatch) -> None:
