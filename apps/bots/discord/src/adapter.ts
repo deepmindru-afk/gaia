@@ -17,6 +17,7 @@
  * @module
  */
 
+import { BOT_EVENTS } from "@gaia/shared/analytics";
 import {
   BaseBotAdapter,
   type BotCommand,
@@ -40,7 +41,6 @@ import {
   wideLog,
   withWideEvent,
 } from "@gaia/shared/bots";
-import { BOT_EVENTS } from "@gaia/shared/analytics";
 import {
   ActionRowBuilder,
   ButtonBuilder,

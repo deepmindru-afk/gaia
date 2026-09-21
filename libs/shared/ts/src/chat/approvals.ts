@@ -28,7 +28,9 @@ export const DEFAULT_HIL_MODE: HilMode = "always_allow";
 export const RECONFIRM_AGE_SECONDS = 86400;
 
 /** Compact card age: "asked just now" / "asked 1h ago" / "asked 2d ago". */
-export function formatApprovalAge(ageSeconds: number | null | undefined): string {
+export function formatApprovalAge(
+  ageSeconds: number | null | undefined,
+): string {
   if (ageSeconds == null || ageSeconds < 60) return "asked just now";
   const hours = Math.floor(ageSeconds / 3600);
   if (hours < 1) return `asked ${Math.floor(ageSeconds / 60)}m ago`;

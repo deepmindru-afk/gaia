@@ -1334,7 +1334,9 @@ describe("DiscordAdapter - deliverOutboundReaction", () => {
     const adapter = makeReactor(
       {
         isTextBased: () => true,
-        messages: { fetch: vi.fn().mockRejectedValue(new Error("Unknown Message")) },
+        messages: {
+          fetch: vi.fn().mockRejectedValue(new Error("Unknown Message")),
+        },
         send,
       },
       {},

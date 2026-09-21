@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  approvalOutcomeLabel,
-  isSettled,
-} from "./approvals";
+import { approvalOutcomeLabel, isSettled } from "./approvals";
 import type { ApprovalRequestData } from "./approvals.types";
 
 const base: ApprovalRequestData = {

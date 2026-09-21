@@ -86,7 +86,7 @@ describe("streamChat mid-stream abort", () => {
       stream.end();
     });
 
-    const { onChunk, onDone, onError } = await run(stream);
+    const { onDone, onError } = await run(stream);
 
     // The streamed directive is taken back: the delivered message is the emoji.
     expect(onDone).toHaveBeenCalledWith("😎", "c1");

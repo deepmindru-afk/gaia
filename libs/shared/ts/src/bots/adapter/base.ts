@@ -406,7 +406,11 @@ export abstract class BaseBotAdapter {
     this.analytics.capture(
       await this.resolveDistinctId(destinationId),
       BOT_EVENTS.REACTION_DELIVERED,
-      { success: true, delivery: "fallback_text", reason: "platform_unsupported" },
+      {
+        success: true,
+        delivery: "fallback_text",
+        reason: "platform_unsupported",
+      },
     );
   }
 

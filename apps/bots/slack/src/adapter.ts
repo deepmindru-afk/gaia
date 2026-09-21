@@ -20,6 +20,7 @@
  * @module
  */
 
+import { BOT_EVENTS } from "@gaia/shared/analytics";
 import {
   BaseBotAdapter,
   type BotCommand,
@@ -38,7 +39,6 @@ import {
   type SentMessage,
   STREAMING_DEFAULTS,
 } from "@gaia/shared/bots";
-import { BOT_EVENTS } from "@gaia/shared/analytics";
 import { App } from "@slack/bolt";
 
 /** Bolt's respond function for slash command responses. */
@@ -462,7 +462,14 @@ export class SlackAdapter extends BaseBotAdapter {
 
     await handleStreamingChat(
       this.gaia,
-      { message, platform: "slack", platformUserId: userId, channelId, isDm, platformMessageId: inboundTs },
+      {
+        message,
+        platform: "slack",
+        platformUserId: userId,
+        channelId,
+        isDm,
+        platformMessageId: inboundTs,
+      },
       async (text: string) => {
         await client.chat.update({
           channel: channelId,
