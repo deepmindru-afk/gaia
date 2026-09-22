@@ -12,6 +12,7 @@ import json
 import time
 from typing import Any, cast
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import fakeredis.aioredis
 from langchain_core.runnables import RunnableConfig
@@ -344,6 +345,8 @@ class TestCallExecutorLockContention:
         assert len(spawned_runs) == 1  # handed-over work must NOT start its own run
         entries = await inbox().read()
         handed_id = entries[0].id
+        # The entry is keyed by this dispatch's own task id, what a selective cancel matches.
+        assert UUID(handed_id).version == 4
         assert entries == [
             InboxEntry(
                 id=handed_id,
@@ -745,6 +748,22 @@ class TestCancelClosesHilApprovals:
 
         assert isinstance(executor_tool.cancel_ledger_approvals, AsyncMock)
         executor_tool.cancel_ledger_approvals.assert_awaited_once_with(CONVERSATION_ID, "user-1")
+
+    async def test_a_userless_stop_still_closes_ledger_approvals_for_the_conversation(
+        self,
+        fake_redis: fakeredis.aioredis.FakeRedis,
+        broadcast: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(StreamManager, "cancel_stream", AsyncMock())
+        await fake_redis.set(LOCK_KEY, "stream-1:running-task", ex=EXECUTOR_BUSY_TTL)
+        config = config_for()
+        del config["configurable"]["user_id"]
+
+        await run_cancel_executor(config=config, task_ids=[])
+
+        assert isinstance(executor_tool.cancel_ledger_approvals, AsyncMock)
+        executor_tool.cancel_ledger_approvals.assert_awaited_once_with(CONVERSATION_ID, "")
 
     async def test_sparing_the_running_task_leaves_its_approvals_alone(
         self,
