@@ -626,7 +626,7 @@ def _refusal_message(call: GatedCall, outcome: ApprovalOutcome) -> ToolMessage:
 class _AutoVerdict:
     """Auto mode's conclusion: either it settled the call, or it left a note for the ask."""
 
-    settled: bool
+    settled: bool = False
     message: ToolMessage | None = None
     note: str = ""
 
@@ -636,12 +636,12 @@ async def _auto_ledger_verdict(
 ) -> _AutoVerdict:
     """Let auto mode settle a ledger-path call, or say why it still needs the user."""
     if policy != "auto":
-        return _AutoVerdict(settled=False)
+        return _AutoVerdict()
     integration_name = await _integration_name_for(call.name)
     summary = build_summary(call.name, call.args, integration_name)
     decision = await _judge(request, context, call, None, summary)
     if decision is None:
-        return _AutoVerdict(settled=False)
+        return _AutoVerdict()
     if decision.outcome == "accept":
         log.info(
             f"{LogTag.HIL} auto-approved (ledger path)",
@@ -663,7 +663,7 @@ async def _auto_ledger_verdict(
         if decision.outcome == "ask" and decision.reason
         else ""
     )
-    return _AutoVerdict(settled=False, note=note)
+    return _AutoVerdict(note=note)
 
 
 def _live_envelope_message(
