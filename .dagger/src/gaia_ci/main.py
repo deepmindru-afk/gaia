@@ -7,8 +7,9 @@ functions that run identically locally and in CI.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
-from typing import Annotated
+from typing import Annotated, Any
 
 import dagger
 from dagger import DefaultPath, Doc, Ignore, dag, function, object_type
@@ -54,6 +55,16 @@ _RABBITMQ_IMAGE = (
     "rabbitmq:3.13.7-alpine@sha256:d7af1c87c5f1eda13fcfca06db452bf3aeab6619fc3358b68535c0c02c4e52bc"
 )
 
+# The one definition of the test-python slices; main.yml's matrix reads it too.
+_SLICES_FILE = "scripts/ci/lib/test-slices.json"
+# Same path, and same warmup, as the GitHub-hosted lanes (setup-python-test-env).
+_MODEL_CACHE_DIR = "/tmp/fastembed_cache"
+_PREFETCH_MODELS = (
+    "from app.memory.embeddings import _embed_sync, _rerank_sync\n"
+    "_embed_sync(['warmup'])\n"
+    "_rerank_sync('warmup', ['warmup document'])"
+)
+
 # Type alias for the annotated source directory used by all functions.
 Source = Annotated[
     dagger.Directory,
@@ -88,7 +99,7 @@ class GaiaCi:
                         "apt-get update"
                         " && apt-get install -y --no-install-recommends"
                         " python3 python3-pip python3-venv python3-dev"
-                        " git curl build-essential libpq-dev"
+                        " git curl build-essential libpq-dev time"
                         " && apt-get clean"
                         " && rm -rf /var/lib/apt/lists/*"
                     ),
@@ -241,18 +252,68 @@ class GaiaCi:
             raise RuntimeError(f"pytest failed with exit code {code}.\n\n{output}")
 
     @function
-    async def test_python(self, source: Source) -> str:
-        """Run all Python tests with live service containers and pytest-xdist."""
-        pytest_cmd = (
-            "uv run --frozen pytest -n auto -m 'not composio' "
-            "--tb=short -q --override-ini=addopts=--strict-markers"
+    async def test_python(
+        self,
+        source: Source,
+        slice_name: Annotated[
+            str, Doc("A slice in scripts/ci/lib/test-slices.json; empty runs all in turn")
+        ] = "",
+    ) -> str:
+        """Run the test-python slices exactly as main.yml does: same file, same runner script."""
+        slices = json.loads(await source.file(_SLICES_FILE).contents())["slices"]
+        chosen = [s for s in slices if not slice_name or s["name"] == slice_name]
+        if not chosen:
+            names = ", ".join(s["name"] for s in slices)
+            raise ValueError(f"unknown slice {slice_name!r}; {_SLICES_FILE} defines: {names}")
+        outputs = [await self._run_slice(source, s) for s in chosen]
+        return "\n".join(outputs)
+
+    async def _run_slice(self, source: Source, spec: dict[str, Any]) -> str:
+        """Run one slice through scripts/ci/pytest.sh slice, with services if it needs them."""
+        needs_services = spec["services"] == "true"
+        container = (
+            self._service_test_container(source) if needs_services else self.ci_env(source)
+        )
+        container = (
+            container.with_mounted_cache(_MODEL_CACHE_DIR, dag.cache_volume("fastembed-models"))
+            .with_env_variable("ENV", "test")
+            .with_env_variable("MODEL_CACHE_DIR", _MODEL_CACHE_DIR)
+            .with_env_variable("MEMORY_MODEL_CACHE_DIR", _MODEL_CACHE_DIR)
+            .with_workdir("/app/apps/api")
+        )
+        prelude = ""
+        if needs_services:
+            # CI prefetches the models once and serves them from one sidecar, so
+            # xdist workers do not each load ~1.3 GB of ONNX weights. The sidecar
+            # runs in the background, so it must share the pytest exec.
+            container = container.with_exec(
+                ["uv", "run", "--frozen", "--no-sync", "python", "-c", _PREFETCH_MODELS]
+            )
+            prelude = (
+                "(cd /app && GITHUB_ENV=/tmp/sidecar.env"
+                " bash scripts/ci/embedding-sidecar.sh start)"
+                " && set -a && . /tmp/sidecar.env && set +a && "
+            )
+        workers = "0" if spec["serial"] == "true" else spec["workers"]
+        runs = " && ".join(
+            f"bash /app/scripts/ci/pytest.sh {step}" for step in ["slice", *spec["after"]]
         )
         output = await (
-            self._service_test_container(source)
-            # Run pytest, then emit its real exit code as the final line. The shell
-            # exits 0 so Dagger returns the full (untruncated) stdout instead of an
-            # ExecError; this function fails itself on a non-zero pytest code.
-            .with_exec(["sh", "-c", f'{pytest_cmd}; echo "GAIA_PYTEST_EXIT=$?"'])
+            container.with_env_variable("SLICE_NAME", spec["name"])
+            .with_env_variable("SLICE_PATHS", spec["paths"])
+            .with_env_variable("SLICE_IGNORE", spec["ignore"])
+            .with_env_variable("XDIST_N", workers)
+            # What a PR lane runs under (main.yml test-python).
+            .with_env_variable("HYPOTHESIS_PROFILE", "ci")
+            # Emit the runner's real exit code as the final line: the shell exits 0
+            # so Dagger returns the full stdout, and _assert_pytest_passed fails on it.
+            .with_exec(
+                [
+                    "bash",
+                    "-c",
+                    f'{prelude}{runs}; echo "GAIA_PYTEST_EXIT=$?"',
+                ]
+            )
             .stdout()
         )
         self._assert_pytest_passed(output)
@@ -317,7 +378,20 @@ class GaiaCi:
             .with_env_variable("POSTGRES_PASSWORD", "gaia")
             .with_env_variable("POSTGRES_DB", "gaia_test")
             .with_exposed_port(5432)
-            .as_service()
+            .as_service(
+                args=[
+                    "postgres",
+                    "-c",
+                    "max_connections=300",
+                    "-c",
+                    "fsync=off",
+                    "-c",
+                    "synchronous_commit=off",
+                    "-c",
+                    "full_page_writes=off",
+                ],
+                use_entrypoint=True,
+            )
         )
 
     @function
@@ -327,8 +401,9 @@ class GaiaCi:
             dag.container()
             .from_(_REDIS_IMAGE)
             .with_exposed_port(6379)
-            .with_exec(["redis-server", "--databases", "32"])
-            .as_service()
+            .as_service(
+                args=["redis-server", "--databases", "32", "--save", "", "--appendonly", "no"]
+            )
         )
 
     @function

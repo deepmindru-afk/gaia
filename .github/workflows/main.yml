@@ -157,6 +157,8 @@ jobs:
       has_typescript: ${{ steps.affected.outputs.has_typescript }}
       python_projects: ${{ steps.affected.outputs.python_projects }}
       typescript_projects: ${{ steps.affected.outputs.typescript_projects }}
+      # The test-python matrix, from the one slice definition CI and Dagger share.
+      python_slices: ${{ steps.slices.outputs.python_slices }}
       # The branch every lane below diffs against. Resolved here, once — see the
       # note at the top of scripts/ci/changes.sh for why the event payload
       # cannot be trusted for it on a stacked PR.
@@ -185,6 +187,9 @@ jobs:
           main-branch-name: master
       - name: Validate release manifest
         run: node scripts/ci/release.mjs validate-manifest
+      - name: Read the test-python slice matrix
+        id: slices
+        run: bash scripts/ci/pytest.sh slices >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/setup-node-pnpm
       - name: Detect affected
         id: affected
@@ -351,41 +356,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slice:
-          # node: only the bridge slice (tests/integration/real/test_device_bridge_e2e.py)
-          # drives the real `gaia bridge` CLI via tsx; every other slice skips the
-          # Node setup (pnpm self-installer alone cost the integration lane 8 s).
-          # unit + meta need no service containers, sidecar or Node (verified on
-          # the box: 10,542 passed, 0 errors, nothing running). contracts needs
-          # Redis/Mongo, so it rides with integration.
-          # Static worker shares: the lanes start together, so a runtime probe of
-          # "workers already running" sees zero on every lane and each took 16 —
-          # 32+ workers on 16 threads (8 physical cores). Shares sum to the box.
-          # integration 4 / unit-b 7 / unit-a 5 (2026-08-28, box idle, -n 6..16):
-          # the integration slice's wall is FLAT from 6 to 16 workers (58-66 s,
-          # 53-58 % of its allotted threads — it waits on pg/mongo/chroma/sidecar)
-          # while each extra worker burns ~38 CPU-s of collection + imports, so
-          # its share goes to unit-b, whose wall is ~30 s fixed + ~270 CPU-s / n.
-          # unit is two slices on two runner instances: xdist re-collects the
-          # whole slice in EVERY worker (measured 20 s for 13.2k tests, CPU-bound),
-          # so 10 workers on one slice burn ~200 s of CPU on collection alone.
-          # Halving the slice halves per-worker collection and takes the lane's
-          # contention with integration off a single instance. services/agents/
-          # storage ≈ 5.2k tests; the rest of unit + meta ≈ 6.4k.
-          - { name: unit-a, paths: "tests/unit/services tests/unit/agents tests/unit/storage", ignore: "", node: "false", services: "false", workers: "5", serial: "false" }
-          - { name: unit-b, paths: "tests/unit tests/meta", ignore: "--ignore=tests/unit/services --ignore=tests/unit/agents --ignore=tests/unit/storage", node: "false", services: "false", workers: "7", serial: "false" }
-          # Long tests first. py-spy sampling of this lane showed 47% of worker
-          # time idle in the scheduler tail: the slice ends on a few 5-15s
-          # e2e/memory tests while the other workers sit finished. Handing
-          # those out first makes the tail out of quick tests instead.
-          - { name: integration, paths: "tests/integration/real tests/e2e tests/stress tests/integration tests/contracts", ignore: "--ignore=tests/integration/real/test_device_bridge_e2e.py", node: "false", services: "true", workers: "4", serial: "false" }
-          # The device-bridge e2e TRUNCATEs bridge_devices on the lane's shared
-          # Postgres (clean_bridge_tables); under xdist another worker's fixture
-          # wipes its rows mid-test ("Refresh token is invalid"). Serial, in
-          # its own slice.
-          # serial: GitHub's expression engine treats the string "0" as falsy, so a
-          # `workers: "0"` fell through to the detected 16 and the 4 tests raced.
-          - { name: bridge, paths: "tests/integration/real/test_device_bridge_e2e.py", ignore: "", node: "true", services: "true", workers: "0", serial: "true" }
+        # scripts/ci/lib/test-slices.json, which Dagger's test-python reads too;
+        # the worker-share rationale lives beside its reader in pytest.sh.
+        slice: ${{ fromJSON(needs.detect.outputs.python_slices) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -457,38 +430,14 @@ jobs:
         run: |
           echo "Runner: ${{ needs.select-runner.outputs.runner_label }} (self_hosted=${{ needs.select-runner.outputs.is_self_hosted }}) nproc=$(nproc) xdist=$XDIST_N slice=${{ matrix.slice.name }}"
           bash scripts/ci/pytest.sh slice
-      # ── gaia-shared ────────────────────────────────────────────────────────
-      # Its OWN pytest invocation, never a slice path. gaia-shared lives under
-      # libs/, and handing pytest paths from two trees at once moves rootdir to
-      # the repo root — apps/api/pytest.ini stops being the inifile, so
-      # asyncio_mode=auto and the marker registrations vanish and the entire
-      # slice dies (measured: 2145 failed, 891 errors, run 33301137881).
-      # A separate run keeps each invocation's rootdir and ini intact. It had a
-      # step in the retired test-python-coverage job and was lost with it.
+      # The suites a slice runs after its own — `after` in test-slices.json;
+      # pytest.sh shared-suite / contract-fuzz say why each is its own run.
       - name: gaia-shared tests
-        if: matrix.slice.name == 'unit-b'
-        working-directory: apps/api
-        run: |
-          uv run --frozen pytest ../../libs/shared/py/tests \
-            --tb=short -q --override-ini=addopts=--strict-markers
-          echo "gaia-shared tests: OK"
-      # ── Schemathesis contract fuzz ─────────────────────────────────────────
-      # Its own step, not a slice member: it boots a REAL server and must run
-      # serially and isolated, and the slice runs exclude `-m schemathesis`
-      # (the plugin costs ~2 s of import per xdist worker on lanes that never
-      # use it). It had a step in the retired test-python-coverage job and was
-      # lost with that job — nothing has fuzzed the API contract since. It runs
-      # in the integration slice because that is the lane with the services up.
+        if: contains(matrix.slice.after, 'shared-suite')
+        run: bash scripts/ci/pytest.sh shared-suite
       - name: Schemathesis contract fuzz (isolated live-server run)
-        if: matrix.slice.name == 'integration'
-        working-directory: apps/api
-        env:
-          USE_REAL_SERVICES: "1"
-        run: |
-          bash ../../scripts/ci/pytest.sh flake-gate \
-            uv run --frozen pytest tests/integration/real/test_schemathesis.py -q --tb=short \
-            -m schemathesis -p schemathesis --override-ini=addopts=--strict-markers --timeout=600
-          echo "Schemathesis: OK"
+        if: contains(matrix.slice.after, 'contract-fuzz')
+        run: bash scripts/ci/pytest.sh contract-fuzz
       # ── Record the map (master / dispatch only) ────────────────────────────
       # !cancelled(): a lane with a red test still produced a valid file→test map,
       # and a missing map makes every PR run the whole slice.
