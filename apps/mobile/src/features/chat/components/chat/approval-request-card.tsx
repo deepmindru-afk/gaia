@@ -6,7 +6,7 @@ import type {
 } from "@gaia/shared/chat";
 import * as Haptics from "expo-haptics";
 import { Button, Chip } from "heroui-native";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Alert, Pressable, TextInput, View } from "react-native";
 import {
   AlertCircleIcon,
@@ -48,7 +48,7 @@ const RESOLVED_ICONS: Record<
 };
 
 function ArgsPreview({ args }: { args: Record<string, unknown> }) {
-  const { rows, omitted } = useMemo(() => flattenArgsPreview(args), [args]);
+  const { rows, omitted } = flattenArgsPreview(args);
   if (rows.length === 0) return null;
   return (
     <View

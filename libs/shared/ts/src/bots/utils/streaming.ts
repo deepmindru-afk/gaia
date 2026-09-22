@@ -21,7 +21,7 @@
 import type { AnalyticsContext } from "../../analytics";
 import { BOT_EVENTS } from "../../analytics/events/bots";
 import type { ApprovalRequestData } from "../../chat";
-import { formatApprovalAge } from "../../chat";
+import { formatApprovalAge } from "../../chat/approvals";
 import type { GaiaClient } from "../api";
 import { BOT_STREAM_ERROR, isReactDirectiveOrPrefix } from "../api/chat-stream";
 import type { ChatRequest, PlatformName } from "../types";

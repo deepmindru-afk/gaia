@@ -20,7 +20,8 @@ import { Text } from "@/components/ui/text";
 
 import { ApprovalRequestCard } from "../components/chat/approval-request-card";
 import { EmailComposeCard } from "../components/chat/email-compose-card";
-import { ToolCardHeader, ToolCardShell } from "./primitives";
+import { ToolCardHeader } from "./primitives/tool-card-header";
+import { ToolCardShell } from "./primitives/tool-card-shell";
 import type { EmailComposeData, ToolDataEntry } from "./registry";
 import {
   ArtifactCard,

@@ -55,9 +55,9 @@ export function CalendarEventReadonlySection({
             </div>
 
             <div className="space-y-2">
-              {dayEvents.map((option, index) => (
+              {dayEvents.map((option) => (
                 <EventCard
-                  key={`${option.summary}:${option.start ?? index}`}
+                  key={`${option.summary}:${option.start ?? ""}:${option.end ?? ""}`}
                   eventColor={option.background_color || DEFAULT_EVENT_COLOR}
                   variant="display"
                 >
