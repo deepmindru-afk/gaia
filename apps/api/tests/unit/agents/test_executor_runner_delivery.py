@@ -2239,8 +2239,7 @@ class TestRunBoundaryCarriesWorkflowExecution:
 
 
 class TestCommsDirectiveDelivery:
-    """Comms can answer a not-mention-worthy background update with a control line:
-    SILENCE (deliver nothing) or REACT (a one-emoji acknowledgment)."""
+    """Comms can answer a not-mention-worthy background update with a control line: SILENCE (deliver nothing) or REACT (a one-emoji acknowledgment)."""
 
     async def test_silence_delivers_nothing_on_any_surface(self) -> None:
         with patch.object(rd, "capture_event") as capture:
@@ -2293,8 +2292,7 @@ class TestCommsDirectiveDelivery:
     async def test_react_attaches_a_native_reaction_when_the_platform_id_is_known(
         self,
     ) -> None:
-        """The recorded platform id turns the ack into a real reaction: the
-        reaction envelope goes out and no text bubble is sent."""
+        """The recorded platform id turns the ack into a real reaction: the reaction envelope goes out and no text bubble is sent."""
         run = replace(_run(), user_message_id="user-msg-1")
         with (
             patch.object(
@@ -2344,8 +2342,7 @@ class TestCommsDirectiveDelivery:
         }
 
     async def test_react_falls_back_to_text_without_a_platform_id(self) -> None:
-        """Older turns and non-bot triggers have no recorded platform id: the
-        emoji goes out as a text bubble and the ack is never lost."""
+        """Older turns and non-bot triggers have no recorded platform id: the emoji goes out as a text bubble and the ack is never lost."""
         run = replace(_run(), user_message_id="user-msg-1")
         with (
             patch.object(
@@ -2374,8 +2371,7 @@ class TestCommsDirectiveDelivery:
         assert platform.await_args.args[2] == "👍"
 
     async def test_web_badge_payload_carries_kind_and_reaction_target(self) -> None:
-        """The web client renders an emoji-ack as a badge on the answered
-        message, not a new bubble — it needs kind + target in the push."""
+        """The web client renders an emoji-ack as a badge on the answered message, not a new bubble — it needs kind + target in the push."""
         run = replace(_run(), user_message_id="user-msg-1")
         with (
             patch.object(
@@ -2425,8 +2421,7 @@ class TestCommsDirectiveDelivery:
         assert message_id
 
     async def test_react_spawns_no_deferred_follow_ups(self) -> None:
-        """Follow-up chips attach to a rendered message; a badge has none, so
-        generating them burns an LLM call for chips that go nowhere."""
+        """Follow-up chips attach to a rendered message; a badge has none, so generating them burns an LLM call for chips that go nowhere."""
         run = replace(_run(), user_message_id="user-msg-1")
         with (
             patch.object(

@@ -1,6 +1,6 @@
 """The execute proxy tool — and the tool space it is confined to.
 
-`execute` sits in EVERY subagent's tool set and resolves names globally, so it
+execute sits in EVERY subagent's tool set and resolves names globally, so it
 is the one tool that can reach outside its agent's space. The factory is what
 stops that: the unscoped instance is the executor's (its space IS the registry),
 and a subagent builds one bound to its own dict.
@@ -36,8 +36,7 @@ async def _invoke(tool, tool_name: str = "GMAIL_SEND_EMAIL") -> str:
 
 @pytest.mark.unit
 class TestDispatchTicketNames:
-    """Ticket operations ride the proxy under reserved names — no bound tool,
-    no schema; the branch runs before resolution, space checks, and validation."""
+    """Ticket operations ride the proxy under reserved names — no bound tool, no schema; the branch runs before resolution, space checks, and validation."""
 
     def _config(self) -> dict[str, object]:
         return {
@@ -104,8 +103,7 @@ class TestDispatchTicketNames:
         assert "Revoked" in str(result.output)
 
     async def test_missing_id_is_guidance_not_failure(self) -> None:
-        """A ticket call without an id answers with the shape, not an error —
-        refusals are read by the model, not counted as failures."""
+        """A ticket call without an id answers with the shape, not an error — refusals are read by the model, not counted as failures."""
         from app.agents.tools.execute.dispatch import dispatch_tool
 
         result = await dispatch_tool(
@@ -119,16 +117,14 @@ class TestDispatchTicketNames:
         assert '{"id"' in str(result.output)
 
     async def test_ticket_names_never_resolve(self) -> None:
-        """Fail closed: even if a provider catalog one day contains 'approve',
-        resolution refuses it — tickets dispatch before resolution, always."""
+        """Fail closed: even if a provider catalog one day contains 'approve', resolution refuses it — tickets dispatch before resolution, always."""
         from app.agents.tools.execute.resolver import resolve_tool
 
         assert await resolve_tool("u1", "approve") is None
         assert await resolve_tool("u1", "revoke") is None
 
     async def test_tickets_refused_on_integration_only_surface(self) -> None:
-        """Sandbox scripts carry no conversation identity, so every ticket
-        check would miss — refuse loudly instead."""
+        """Sandbox scripts carry no conversation identity, so every ticket check would miss — refuse loudly instead."""
         from app.agents.tools.execute import dispatch as dispatch_module
         from app.agents.tools.execute.dispatch import dispatch_tool
 
@@ -148,8 +144,7 @@ class TestDispatchTicketNames:
         assert "conversation ticket" in result.error.detail
 
     async def test_ticket_bypasses_caller_tool_space(self) -> None:
-        """Control-plane ops belong to no provider space: a scoped subagent
-        redeems its own ticket even though 'approve' is in no registry."""
+        """Control-plane ops belong to no provider space: a scoped subagent redeems its own ticket even though 'approve' is in no registry."""
         from app.agents.tools.execute import dispatch as dispatch_module
         from app.agents.tools.execute.dispatch import dispatch_tool
         from app.models.hil_models import LedgerState
@@ -180,16 +175,13 @@ class TestDispatchTicketNames:
 @pytest.mark.unit
 class TestExecuteToolScope:
     async def test_the_registry_instance_is_unscoped(self) -> None:
-        """The executor's space is the whole registry — scoping it would refuse
-        every tool it is supposed to run."""
+        """The executor's space is the whole registry — scoping it would refuse every tool it is supposed to run."""
         with patch(f"{MODULE}.dispatch_tool", new=AsyncMock(return_value=_ok())) as dispatch:
             await _invoke(execute)
         assert dispatch.await_args.kwargs["scoped_tool_names"] is None
 
     async def test_a_scoped_instance_passes_its_live_tool_set(self) -> None:
-        """Read at CALL time, not build time: a subagent keeps adding to its dict
-        (todo tools, finish_task) after `execute` is put in it, and a snapshot
-        taken then would refuse every tool added afterwards."""
+        """Read at CALL time, not build time: a subagent keeps adding to its dict (todo tools, finish_task) after execute is put in it, and a snapshot taken then would refuse every tool added afterwards."""
         scoped_tools: dict[str, StructuredTool] = {}
         proxy = build_execute_tool(scoped_tools)
         scoped_tools["GMAIL_SEND_EMAIL"] = StructuredTool.from_function(
@@ -200,8 +192,7 @@ class TestExecuteToolScope:
         assert dispatch.await_args.kwargs["scoped_tool_names"] == {"GMAIL_SEND_EMAIL"}
 
     async def test_a_scoped_instance_keeps_the_proxy_name(self) -> None:
-        """The name is a constant five other seams key on (HIL unwrap, the stream
-        formatter, the analytics dedupe) — a per-agent instance must not rename it."""
+        """The name is a constant five other seams key on (HIL unwrap, the stream formatter, the analytics dedupe) — a per-agent instance must not rename it."""
         assert build_execute_tool({}).name == EXECUTE_TOOL_NAME == execute.name
 
     async def test_a_refusal_comes_back_as_a_structured_error(self) -> None:

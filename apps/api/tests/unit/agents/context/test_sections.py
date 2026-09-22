@@ -230,9 +230,10 @@ class TestUserPreferences:
 
 @pytest.mark.unit
 class TestIntegrationsManifest:
-    """The executor activates integrations itself, so its header states the list
-    is live and names the parenthesised id as the ``activate_integration`` id.
-    Comms gets the short form."""
+    """The executor activates integrations itself, so its header states the list is live and names the parenthesised id as the activate_integration id.
+
+    Comms gets the short form.
+    """
 
     @staticmethod
     def _connected() -> AsyncMock:
@@ -506,9 +507,7 @@ class TestSkills:
 @pytest.mark.unit
 class TestConversationIdReachesSections:
     def test_from_configurable_carries_conversation_id(self) -> None:
-        """Ledger-backed sections (open pendings) read the conversation off the
-        closed context shape — proven against the actual data path, not just
-        the field existing."""
+        """Ledger-backed sections (open pendings) read the conversation off the closed context shape — proven against the actual data path, not just the field existing."""
         ctx = SectionContext.from_configurable(
             AgentTier.EXECUTOR, {"conversation_id": "c1", "user_id": "u1"}
         )

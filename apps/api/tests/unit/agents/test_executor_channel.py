@@ -67,8 +67,7 @@ class TestInbox:
         ]
 
     async def test_read_is_not_destructive(self, inbox: ExecutorInbox) -> None:
-        """A run may die between reading and committing; a read that consumed
-        would lose the user's message with nothing left to recover it from."""
+        """A run may die between reading and committing; a read that consumed would lose the user's message with nothing left to recover it from."""
         await inbox.append("t1", "also check spam")
 
         await inbox.read()
@@ -101,10 +100,7 @@ class TestInbox:
     async def test_clear_does_not_drop_a_concurrent_append(
         self, inbox: ExecutorInbox, redis
     ) -> None:
-        """BUG: cancelling a run counted then deleted the inbox in two steps, so a
-        steering append that landed in between was counted and swept away. clear()
-        now detaches the batch atomically, so an append arriving after the detach
-        lands on a fresh list and survives, and the count is only the batch."""
+        """BUG: cancelling a run counted then deleted the inbox in two steps, so a steering append that landed in between was counted and swept away."""
         await inbox.append("pending", "the task being cancelled")
 
         entered = asyncio.Event()
@@ -145,9 +141,7 @@ class TestInbox:
     async def test_interruption_carries_the_redirect_as_its_own_entry(
         self, inbox: ExecutorInbox
     ) -> None:
-        """BUG: the redirect used to be folded into the notice text, so the two
-        were indistinguishable — and finalize, seeing pending work, started a
-        fresh run for a BARE stop whose task was the stop notice itself."""
+        """BUG: the redirect used to be folded into the notice text, so the two were indistinguishable — and finalize, seeing pending work, started a fresh run for a BARE stop whose task was the stop notice itself."""
         await inbox.announce_interruption("search my calendar instead")
 
         notice, redirect = await inbox.read()
@@ -241,8 +235,7 @@ class TestDrainHook:
     async def test_pending_work_is_staged_for_the_model_node_to_commit(
         self, inbox: ExecutorInbox
     ) -> None:
-        """Without the staging the message reaches ONE model call and is then
-        gone from the thread — the whole bug this channel exists to avoid."""
+        """Without the staging the message reaches ONE model call and is then gone from the thread — the whole bug this channel exists to avoid."""
         await inbox.append("t1", "also check spam")
 
         result = await drain_inbox_hook({"messages": []}, CONFIG, None)
@@ -261,9 +254,7 @@ class TestDrainHook:
         assert result.get(INJECTED_MESSAGES_KEY, []) == []
 
     async def test_injecting_does_not_remove_the_entry(self, inbox: ExecutorInbox) -> None:
-        """Staging is not committing: a run that dies at the model call must
-        leave the entry pending, so the thread stays the only record of what
-        was actually delivered."""
+        """Staging is not committing: a run that dies at the model call must leave the entry pending, so the thread stays the only record of what was actually delivered."""
         await inbox.append("t1", "also check spam")
 
         await drain_inbox_hook({"messages": []}, CONFIG, None)
@@ -292,9 +283,7 @@ class TestDrainHook:
     async def test_the_wrapped_thread_id_is_not_mistaken_for_the_conversation(
         self, inbox: ExecutorInbox
     ) -> None:
-        """The executor runs on ``executor_<conversation>``. A drain keyed on
-        thread_id looks in ``executor:inbox:executor_<conv>``, which nothing
-        writes to, so the channel silently does nothing at all."""
+        """The executor runs on executor_<conversation>."""
         await inbox.append("t1", "also check spam")
         thread_only = {"configurable": {"thread_id": f"executor_{CONVERSATION}"}}
 

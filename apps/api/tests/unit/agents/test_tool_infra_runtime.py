@@ -269,9 +269,7 @@ async def _run_provider_subagent_factory(
 
 @pytest.mark.asyncio
 async def test_the_subagent_stack_is_wired_with_the_parents_llm_and_space():
-    """The middleware options carry the parent's llm (summarization/compaction
-    ride it) and tool space — and never request spawn: subagents cannot spawn
-    sub-subagents (see test_subagent_cannot_spawn for the factory-level pin)."""
+    """The middleware options carry the parent's llm (summarization/compaction ride it) and tool space — and never request spawn: subagents cannot spawn sub-subagents (see test_subagent_cannot_spawn for the factory-level pin)."""
     llm = BindableToolsFakeModel(responses=[], profile={"max_input_tokens": 1_000_000})
     full_tools = {
         "normal_tool": normal_tool,
@@ -469,12 +467,7 @@ async def test_spawn_graph_disables_retrieve_when_the_parent_did():
 
 @pytest.mark.asyncio
 async def test_spawn_graph_wires_identity_middleware_and_hooks_into_create_agent():
-    """The spawn's identity and guardrails ride on these exact kwargs: the agent
-    name keys threads/logs, the middleware list is what gives a spawn the HIL
-    gate, and the pre-model chain drains the spawn's own subagent mailbox (so the
-    executor can steer it) but carries no todo hook. create_agent selects behavior
-    purely by these kwarg names, so a renamed key or dropped value silently falls
-    back to its own default."""
+    """The spawn's identity and guardrails ride on these exact kwargs: the agent name keys threads/logs, the middleware list is what gives a spawn the HIL gate, and the pre-model chain drains the spawn's own subagent mailbox (so the executor can steer it) but carries no todo hook."""
     llm = _FakeLLM()
     captured = await _spawn_graph_agent_kwargs(
         registry={"vfs_read": vfs_read},
@@ -1065,10 +1058,10 @@ class TestDiscoveryResponseIsIndentedJson:
 
 
 class TestDiscoveryHasNoProviderSubagentSurface:
-    """Discovery returns real tools plus two narrow entry kinds: subagent:
-    pointers to per-user MCP integrations (the sole subagent surface) and
-    integration: pointers to not-yet-connected integrations. Provider and
-    built-in integrations surface as tools, never as pointers."""
+    """Discovery returns real tools plus two narrow entry kinds: subagent: pointers to per-user MCP integrations (the sole subagent surface) and integration: pointers to not-yet-connected integrations.
+
+    Provider and built-in integrations surface as tools, never as pointers.
+    """
 
     def test_buckets_exist_for_mcp_and_new_integrations(self) -> None:
         payload = _render(
@@ -1146,8 +1139,7 @@ class TestDiscoveryToolEntries:
 
 
 class TestDiscoveryZeroMatchSignal:
-    """A search that matched nothing must say so: reporting it as a find is
-    what sent the model re-querying the same dead index."""
+    """A search that matched nothing must say so: reporting it as a find is what sent the model re-querying the same dead index."""
 
     def test_a_zero_match_search_says_so(self) -> None:
         payload = _render([], options=_DiscoveryOptions(total_candidates=0))
@@ -1182,9 +1174,7 @@ class TestDiscoveryZeroMatchSignal:
         )
 
     def test_the_found_instruction_survives_verbatim(self) -> None:
-        """Two of these clauses exist because the model got them wrong: calling
-        an integration tool by name instead of via execute, and treating an
-        integration as something to hand work off to."""
+        """Two of these clauses exist because the model got them wrong: calling an integration tool by name instead of via execute, and treating an integration as something to hand work off to."""
         assert _render(["x"], options=_DiscoveryOptions(total_candidates=1))["next"] == (
             "Load with retrieve_tools(exact_tool_names=[...]): internal tools bind "
             "and are called by name, integration tools (ALLCAPS) return schemas to "

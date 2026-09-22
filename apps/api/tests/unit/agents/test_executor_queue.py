@@ -1,9 +1,9 @@
 """Unit tests for the executor busy lock and detached-run materialization.
 
 There is no queue any more: work handed to a busy executor goes to that
-conversation's inbox (``executor_channel``) and the live run absorbs it. What
-remains in ``executor_queue`` is the per-conversation busy lock, the
-collection-wake claim, and ``prepare_run_from_item`` — the path a HIL resume
+conversation's inbox (executor_channel) and the live run absorbs it. What
+remains in executor_queue is the per-conversation busy lock, the
+collection-wake claim, and prepare_run_from_item — the path a HIL resume
 rebuilds its run through.
 
 Redis is real (fakeredis) here on purpose. The lock's whole job is atomic
@@ -64,9 +64,7 @@ def _clean_registry():
 
 @pytest.fixture
 async def redis() -> fakeredis.aioredis.FakeRedis:
-    """The real ``redis_cache`` wrapper over a fake server, exactly as production
-    reaches it — ``decode_responses=True`` included, since the lock is compared
-    as a string."""
+    """Provide the real redis_cache wrapper over a fake server, exactly as production reaches it — decode_responses=True included, since the lock is compared as a string."""
     client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     with patch.object(redis_cache, "redis", client):
         yield client
@@ -75,7 +73,7 @@ async def redis() -> fakeredis.aioredis.FakeRedis:
 
 @pytest.fixture
 def stream_side():
-    """The two side effects a detached run has outside Redis."""
+    """Capture the two side effects a detached run has outside Redis."""
     with (
         patch.object(eq, "StreamManager") as stream_manager,
         patch.object(eq, "websocket_manager") as websocket,
@@ -151,12 +149,11 @@ class TestAcquireLock:
 
 
 class TestAdoptingAReservation:
-    """A workflow fire claims its conversation before the turn that dispatches
-    the executor, so the lock that executor finds held is its OWN fire's claim.
+    """A workflow fire claims its conversation before the turn that dispatches the executor, so the lock that executor finds held is its OWN fire's claim.
 
-    Adopting it is what makes the claim a hand-off. Without it the fire would
-    queue its own dispatch into the inbox of a live run that does not exist, and
-    report a clean success with nothing in it.
+    Adopting it is what makes the claim a hand-off. Without it the fire would queue its own
+    dispatch into the inbox of a live run that does not exist, and report a clean success with
+    nothing in it.
     """
 
     async def test_the_reservation_is_taken_over_and_the_value_becomes_the_runs_own(
@@ -169,9 +166,7 @@ class TestAdoptingAReservation:
         assert await redis.get(BUSY_KEY) == build_lock_value("s1", "t1")
 
     async def test_a_lock_somebody_else_took_is_never_stolen(self, redis) -> None:
-        """The reservation can lapse on TTL and be re-taken by a genuinely
-        different run. A plain overwrite would then put two executors on one
-        conversation — the exact failure the lock exists to stop."""
+        """The reservation can lapse on TTL and be re-taken by a genuinely different run."""
         await try_acquire_lock(BUSY_KEY, build_lock_value("other", "t9"))
 
         adopted = await adopt_lock(
@@ -182,8 +177,7 @@ class TestAdoptingAReservation:
         assert await redis.get(BUSY_KEY) == build_lock_value("other", "t9")
 
     async def test_an_expired_reservation_is_not_resurrected(self, redis) -> None:
-        """Nobody holds the lock: adopting would write a lock this run never
-        acquired, past the NX check that is supposed to grant it."""
+        """Nobody holds the lock: adopting would write a lock this run never acquired, past the NX check that is supposed to grant it."""
         adopted = await adopt_lock(
             CONVERSATION, build_lock_value(None, "fire-1"), build_lock_value("s1", "t1")
         )
@@ -192,8 +186,7 @@ class TestAdoptingAReservation:
         assert await redis.get(BUSY_KEY) is None
 
     async def test_the_adopted_lock_carries_a_full_ttl(self, redis) -> None:
-        """The reservation\'s TTL has been counting down since the fire started;
-        the run that adopts it gets its own full window."""
+        """The reservation's TTL has been counting down since the fire started; the run that adopts it gets its own full window."""
         reserved = build_lock_value(None, "fire-1")
         await redis.set(BUSY_KEY, reserved, ex=5)
 
@@ -221,9 +214,7 @@ class TestLockOwnership:
         assert await get_lock_state(CONVERSATION, "s1", "t1") is LockState.FOREIGN
 
     async def test_a_run_without_a_task_id_still_owns_its_own_lock(self, redis) -> None:
-        """A chat run carries no task_id, so its lock value is ``stream:`` with the
-        task half EMPTY. Comparing against anything else makes every such run
-        read its own lock as foreign and refuse to release it."""
+        """A chat run carries no task_id, so its lock value is stream: with the task half EMPTY."""
         await redis.set(BUSY_KEY, "s1:")
         assert await get_lock_state(CONVERSATION, "s1", None) is LockState.OURS
 
@@ -253,8 +244,7 @@ class TestLockOwnership:
         assert await redis.get(BUSY_KEY) == build_lock_value("other", "t9")
 
     async def test_extend_re_arms_our_own_lock(self, redis) -> None:
-        """A run parked on a HIL approval outlives its lock's original TTL; if the
-        lock lapses a new run takes the thread and discards the checkpoint."""
+        """A run parked on a HIL approval outlives its lock's original TTL; if the lock lapses a new run takes the thread and discards the checkpoint."""
         await redis.set(BUSY_KEY, build_lock_value("s1", "t1"), ex=5)
 
         assert await extend_lock_if_owned(CONVERSATION, "s1", "t1", 900) is True
@@ -290,8 +280,7 @@ class TestWithoutRedis:
             assert await get_lock_state(CONVERSATION, "s1", "t1") is LockState.OURS
 
     async def test_busy_fails_closed(self) -> None:
-        """The HIL early decision reads this: "cannot tell" must mean "no
-        collector is alive", or a decision is recorded that nobody will act on."""
+        """The HIL early decision reads this: "cannot tell" must mean "no collector is alive", or a decision is recorded that nobody will act on."""
         with _no_redis():
             assert await is_executor_busy(CONVERSATION) is False
 
@@ -326,17 +315,14 @@ class TestCollectionWake:
         assert await claim_collection_wake("conv-2") is True
 
     async def test_the_marker_expires_so_a_lost_run_cannot_mute_collection(self, redis) -> None:
-        """Crash insurance: a run that dies after claiming would otherwise
-        suppress every future wake-up for that conversation forever."""
+        """Crash insurance: a run that dies after claiming would otherwise suppress every future wake-up for that conversation forever."""
         await claim_collection_wake(CONVERSATION)
 
         assert await redis.ttl(COLLECT_KEY) == EXECUTOR_COLLECT_MARKER_TTL
 
 
 class TestBuildRunItem:
-    """``build_run_item`` is the single serialized shape a detached run is
-    rebuilt from — fields must default so an ordinary item never accidentally
-    carries resume-only identity."""
+    """build_run_item is the single serialized shape a detached run is rebuilt from — fields must default so an ordinary item never accidentally carries resume-only identity."""
 
     def test_omits_bot_message_id_by_default(self) -> None:
         item = build_run_item(task="do it", configurable={"user_id": "u1"}, identity=_identity())
@@ -438,18 +424,16 @@ class TestSafeConfigurable:
 
 
 class TestPrepareRunFromItem:
-    """Materializing a DETACHED run — one that owns its own stream instead of
-    sharing a comms turn's. The HIL approval resume is its main consumer, the
-    collection wake-up the other; both re-dispatch a run whose original owner is
-    gone, so both SEIZE the lock rather than acquire it."""
+    """Materializing a DETACHED run — one that owns its own stream instead of sharing a comms turn's.
+
+    The HIL approval resume is its main consumer, the collection wake-up the other; both re-
+    dispatch a run whose original owner is gone, so both SEIZE the lock rather than acquire it.
+    """
 
     async def test_seizes_the_lock_in_the_form_its_owner_reads_back(
         self, redis, stream_side
     ) -> None:
-        """Written with the RAW client, not ``redis_cache.set``: the wrapper
-        JSON-encodes the string, and the quoted value never matches the raw read
-        in ``get_lock_state`` — so the new run reads its OWN lock as foreign and
-        leaves it wedged until the TTL."""
+        """Written with the RAW client, not redis_cache.set: the wrapper JSON-encodes the string, and the quoted value never matches the raw read in get_lock_state — so the new run reads its OWN lock as foreign and leaves it wedged until the TTL."""
         prepared = await prepare_run_from_item(CONVERSATION, _item(), claim=LockClaim.SEIZE)
 
         assert prepared is not None
@@ -461,11 +445,7 @@ class TestPrepareRunFromItem:
     async def test_acquire_refuses_a_conversation_someone_else_holds(
         self, redis, stream_side
     ) -> None:
-        """BUG: this SET was unconditional for every caller. One finalize starts
-        a collection run and then carries pending work, so the second SET
-        overwrote the first run's lock value — two runs on one LangGraph thread,
-        and the first run's ownership-checked release became a no-op that leaked
-        the lock for its whole TTL."""
+        """BUG: this SET was unconditional for every caller."""
         held = build_lock_value("live-stream", "task-0")
         await redis.set(BUSY_KEY, held)
 
@@ -504,8 +484,7 @@ class TestPrepareRunFromItem:
         assert prepared.task == "summarize my inbox"
 
     async def test_registers_a_session_pre_marked_spawned(self, redis, stream_side) -> None:
-        """Nothing else registers one for a detached run — no chat_service turn
-        owns it — and an unspawned session reads as "the executor never ran"."""
+        """Nothing else registers one for a detached run — no chat_service turn owns it — and an unspawned session reads as "the executor never ran"."""
         prepared = await prepare_run_from_item(CONVERSATION, _item(), claim=LockClaim.SEIZE)
 
         assert prepared is not None
@@ -578,9 +557,7 @@ class TestPrepareRunFromItem:
         assert run.executor_owns_tool_data is True
 
     async def test_bot_message_id_threads_into_the_resumed_run(self, redis, stream_side) -> None:
-        """A HIL resume continues the ORIGINAL turn's message: the resumed run
-        and the browser both need that id, or the client opens a second
-        placeholder and renders its own tool accordion beside the first."""
+        """A HIL resume continues the ORIGINAL turn's message: the resumed run and the browser both need that id, or the client opens a second placeholder and renders its own tool accordion beside the first."""
         item = _item(identity=_identity(bot_message_id="orig-msg-1"))
 
         prepared = await prepare_run_from_item(CONVERSATION, item, claim=LockClaim.SEIZE)
@@ -599,10 +576,12 @@ class TestPrepareRunFromItem:
 
 @pytest.mark.regression
 class TestRunItemCarriesWorkflowExecution:
-    """The execution id exists only on the workflow task's wide event. A HIL
-    resume rebuilds the run in some OTHER context (the approval request, the
-    previous run's finalize), so the stored item has to carry it or the resumed
-    run's calls are unattributable to the run."""
+    """The execution id exists only on the workflow task's wide event.
+
+    A HIL resume rebuilds the run in some OTHER context (the approval request, the previous run's
+    finalize), so the stored item has to carry it or the resumed run's calls are unattributable to
+    the run.
+    """
 
     async def test_the_item_records_the_execution_in_flight(self) -> None:
         from shared.py.wide_events import WorkflowContext, log, wide_task

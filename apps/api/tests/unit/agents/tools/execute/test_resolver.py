@@ -106,10 +106,7 @@ class TestResolveTool:
         service.get_tools_by_name.assert_awaited_once()
 
     async def test_a_catalog_miss_is_remembered_instead_of_re_asked(self) -> None:
-        """Resolution sits on the tool-call critical path — the HIL gate resolves a
-        name twice before the call may run, plus once per sibling, and the
-        approvals node replays. A hallucinated ALLCAPS name was a fresh Composio
-        round trip every one of those times."""
+        """Resolution sits on the tool-call critical path — the HIL gate resolves a name twice before the call may run, plus once per sibling, and the approvals node replays."""
         client = MagicMock()
         client.find_integration.return_value = None
         service = MagicMock()
@@ -126,8 +123,7 @@ class TestResolveTool:
         service.get_tools_by_name.assert_awaited_once()
 
     async def test_a_hung_catalog_lookup_gives_up_instead_of_stalling_the_turn(self) -> None:
-        """A degraded Composio must fail this one resolution, not hold the gate —
-        and therefore the whole turn — open for as long as it takes to answer."""
+        """A degraded Composio must fail this one resolution, not hold the gate — and therefore the whole turn — open for as long as it takes to answer."""
         client = MagicMock()
         client.find_integration.return_value = None
         service = MagicMock()

@@ -78,11 +78,10 @@ def _construct(factory: Callable[[], Any]) -> Any:
 def _retries(llm: Any) -> bool:
     """Whether the SDK client will run its own retry loop.
 
-    Two SDKs answer this differently. The OpenRouter SDK ignores ``max_retries=0``
-    (it then applies a one-hour default), so its truth lives in ``retry_config``,
-    which ``without_sdk_retry`` sets to a non-backoff strategy. The OpenAI SDK
-    (the custom dev lane runs ``ChatOpenAI``) has no such config and *does* honor
-    ``max_retries=0`` — there the count is the honest signal.
+    The OpenRouter SDK ignores max_retries=0 (applies a one-hour default), so
+    its truth lives in retry_config, which without_sdk_retry sets non-backoff.
+    The OpenAI SDK (the dev lane's ChatOpenAI) honors max_retries=0 — there the
+    count is the honest signal.
     """
     sdk_config = getattr(getattr(llm, "client", None), "sdk_configuration", None)
     if sdk_config is not None:

@@ -713,9 +713,7 @@ class TestTheClockIsRenderedInTheUsersTimezone:
 
 
 class TestOpenuiVariantReachesTheModel:
-    """The static per-channel prompt selection runs for real here (the real
-    ``create_system_message`` is not patched), so the test proves the variant
-    that reaches the model, not just that a selector was called."""
+    """The static per-channel prompt selection runs for real here (the real create_system_message is not patched), so the test proves the variant that reaches the model, not just that a selector was called."""
 
     @pytest.mark.asyncio
     async def test_web_serves_the_openui_variant(self) -> None:

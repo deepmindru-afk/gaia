@@ -523,10 +523,7 @@ class TestBuildExecutorGraph:
         assert "activate_integration" in registry
 
     async def test_activate_integration_bound_and_handoff_kept(self):
-        """Activation leads with activate_integration but keeps handoff bound: it
-        is the only path for per-user MCP integrations, which cannot be activated
-        in-context, so both live in the bound set and the registry.
-        """
+        """Activation leads with activate_integration but keeps handoff bound: it is the only path for per-user MCP integrations, which cannot be activated in-context, so both live in the bound set and the registry."""
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -559,9 +556,7 @@ class TestBuildExecutorGraph:
         assert kwargs["tools_config"].initial_tool_ids == expected
 
     async def test_no_join_tool_bound(self):
-        """Neither wait_for_subagents nor any successor is bound: background
-        results arrive via the executor inbox and steering needs no join.
-        """
+        """Neither wait_for_subagents nor any successor is bound: background results arrive via the executor inbox and steering needs no join."""
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -629,10 +624,9 @@ class TestBuildExecutorGraph:
             mock_ca.assert_called_once()
             kwargs = mock_ca.call_args.kwargs
             assert kwargs["agent_config"].agent_name == "executor_agent"
-            # Exact equality, not membership: a renamed id silently drops that
-            # tool from the executor's initial bind set, and membership lets the
-            # typo through as long as one asserted name survives.
-            # activate_integration leads unconditionally.
+            # Exact equality, not membership: a renamed id silently drops that tool
+            # from the executor's initial bind set, and membership passes as long as
+            # one name survives. activate_integration leads unconditionally.
             assert kwargs["tools_config"].initial_tool_ids == [
                 "activate_integration",
                 "handoff",

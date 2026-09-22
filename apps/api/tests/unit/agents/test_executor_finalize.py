@@ -150,8 +150,7 @@ class TestCancelledRouting:
         assert get_session("s1") is None
 
     async def test_cancelled_live_run_defers_to_comms_ownership(self, boundaries) -> None:
-        """Live cancel: the comms stream attaches the cards — the executor must
-        NOT persist them too, or every stopped turn would show duplicates."""
+        """Live cancel: the comms stream attaches the cards — the executor must NOT persist them too, or every stopped turn would show duplicates."""
         boundaries.stream_manager.is_cancelled.return_value = True
         run = _run(RunKind.LIVE)
         create_session("s1", RunKind.LIVE)
@@ -228,8 +227,7 @@ class TestCompletedRouting:
 class TestDoneSignalAndOrdering:
     @pytest.mark.parametrize("cancelled", [True, False])
     async def test_done_event_is_always_signalled(self, boundaries, cancelled) -> None:
-        """The chat stream blocks on this event — a missed signal hangs the SSE
-        until the wait timeout, regardless of how the run ended."""
+        """The chat stream blocks on this event — a missed signal hangs the SSE until the wait timeout, regardless of how the run ended."""
         boundaries.stream_manager.is_cancelled.return_value = cancelled
         session = create_session("s1", RunKind.LIVE)
 
@@ -238,8 +236,7 @@ class TestDoneSignalAndOrdering:
         assert session.done_event.is_set()
 
     async def test_returned_note_is_snapshotted_before_done_signal(self, boundaries) -> None:
-        """Once done_event fires, the chat stream drains + tears down the session
-        in parallel — reading the note after would race teardown."""
+        """Once done_event fires, the chat stream drains + tears down the session in parallel — reading the note after would race teardown."""
         session = create_session("s1", RunKind.LIVE)
         done_state_at_note_time: list[bool] = []
         boundaries.note.side_effect = lambda _sid: (
@@ -256,11 +253,11 @@ class TestBackgroundRunCardsSurviveTheCommsDrain:
     """A scheduled workflow's tool cards must reach the bot message it saves.
 
     The comms silent path and the executor's delivery read the run's cards off
-    the SAME session. ``call_agent_silent`` waits on ``done_event``, drains, and
-    tears the session down in its ``finally`` — so a delivery that reads the
+    the SAME session. call_agent_silent waits on done_event, drains, and
+    tears the session down in its finally — so a delivery that reads the
     session AFTER signalling done finds nothing left. The symptom: a workflow
     run whose execution record listed every tool call saved a bot message with
-    an empty ``tool_data``, and the chat showed no "Used N tools" thread.
+    an empty tool_data, and the chat showed no "Used N tools" thread.
     """
 
     @staticmethod
@@ -297,7 +294,7 @@ class TestBackgroundRunCardsSurviveTheCommsDrain:
         run = _run(RunKind.LIVE, workflow_id="wf-1", source_category=SourceCategory.BG)
 
         async def comms_silent_path() -> None:
-            """What ``call_agent_silent`` does around a workflow's graph run."""
+            """Run what call_agent_silent does around a workflow's graph run."""
             await await_executor_done("s1")
             drain_executor_tool_data("s1")
             teardown_executor_capture("s1")
@@ -319,10 +316,7 @@ class TestCancelStillCarriesHandedOverWork:
     """Adversarial test for the lock/hand-off lifecycle, written red-first."""
 
     async def test_stop_does_not_strand_work_handed_over_mid_run(self, boundaries) -> None:
-        """BUG B: the user hands the running executor a second thing, then presses
-        Stop. A Stop targets the RUNNING task, not the work added after it — so
-        the cancelled run's finalize must still carry that inbox entry into a
-        fresh run, or the acknowledged ask silently never runs and expires."""
+        """BUG B: the user hands the running executor a second thing, then presses Stop."""
         boundaries.stream_manager.is_cancelled.return_value = True
         create_session("s1", RunKind.QUEUED)
         boundaries.pending = [InboxEntry(id="e1", text="the handed-over ask")]
@@ -346,11 +340,11 @@ class TestCancelStillCarriesHandedOverWork:
 
 
 class TestRecordPause:
-    """``_record_pause`` must fail the run, never the process, when the write fails.
+    """_record_pause must fail the run, never the process, when the write fails.
 
     A batch pause with no resumable context is worse than an error: it holds the
     busy lock for its full TTL waiting on a resume that can never come. The
-    caller (``run_executor_background``) treats a False return as "fail this
+    caller (run_executor_background) treats a False return as "fail this
     run" — so a write failure here must surface as False, not an exception.
     """
 
@@ -377,10 +371,7 @@ class TestRecordPause:
 
 
 class TestFinalizeDeliveryFailureDoesNotStrandTheHandoff:
-    """A delivery/close failure inside finalize must not skip the lock release and
-    inbox hand-off below it — otherwise handed-over work strands and the busy lock
-    leaks until its TTL (see the comment on the guarding except in
-    _finalize_executor_run)."""
+    """A delivery/close failure inside finalize must not skip the lock release and inbox hand-off below it — otherwise handed-over work strands and the busy lock leaks until its TTL (see the comment on the guarding except in _finalize_executor_run)."""
 
     async def test_delivery_blowing_up_still_carries_the_handed_over_work(self, boundaries) -> None:
         run = _run(RunKind.QUEUED)
@@ -404,12 +395,7 @@ class TestFinalizeDeliveryFailureDoesNotStrandTheHandoff:
     async def test_a_swallowed_delivery_failure_is_named_in_the_wide_event(
         self, boundaries
     ) -> None:
-        """Swallowing the exception is deliberate — losing it is not.
-
-        ``log.error`` is what puts the failure in the wide event's ``errors[]``;
-        without the cause in it, a user whose result never arrived leaves an
-        event that says the run finished cleanly.
-        """
+        """Swallowing the exception is deliberate — losing it is not."""
         create_session("s1", RunKind.QUEUED)
         boundaries.deliver.side_effect = RuntimeError("telegram rejected the message")
 
@@ -425,8 +411,7 @@ class TestFinalizeDeliveryFailureDoesNotStrandTheHandoff:
     async def test_a_swallowed_lock_release_failure_is_named_in_the_wide_event(
         self, boundaries
     ) -> None:
-        """The other swallowing except in finalize. Its message is the only thing
-        separating a failed lock release from a failed delivery in the event."""
+        """The other swallowing except in finalize."""
         create_session("s1", RunKind.QUEUED)
         boundaries.release.side_effect = RuntimeError("redis went away")
 
@@ -472,8 +457,7 @@ class TestLockThenInboxHandoff:
         )
 
     async def test_an_empty_inbox_starts_no_second_run(self, boundaries) -> None:
-        """Nothing was handed over, so nothing is carried — otherwise every run
-        would spawn a successor with an empty task, forever."""
+        """Nothing was handed over, so nothing is carried — otherwise every run would spawn a successor with an empty task, forever."""
         create_session("s1", RunKind.QUEUED)
 
         with patch.object(er, "run_executor_background", new_callable=AsyncMock) as spawn:
@@ -485,10 +469,11 @@ class TestLockThenInboxHandoff:
 
 
 class TestThePausedRunKeepsItsLock:
-    """A run parked on a HIL approval is NOT over: its thread is checkpointed with
-    pending work, so no other run may take it. Releasing the lock — or letting its
-    TTL lapse while the user takes hours to answer — lets the next run take that
-    thread and discard the interrupt."""
+    """A run parked on a HIL approval is NOT over: its thread is checkpointed with pending work, so no other run may take it.
+
+    Releasing the lock — or letting its TTL lapse while the user takes hours to answer — lets the
+    next run take that thread and discard the interrupt.
+    """
 
     async def test_a_pause_re_arms_the_lock_instead_of_releasing_it(self, boundaries) -> None:
         session = create_session("s1", RunKind.QUEUED)
@@ -538,8 +523,7 @@ class _FakeRedisCache:
 
 @contextmanager
 def _real_lock_lifecycle(cache: _FakeRedisCache):
-    """Drive finalize with the REAL lock functions over an in-memory Redis, so
-    what the status hook reads afterwards is what the lock actually says."""
+    """Drive finalize with the REAL lock functions over an in-memory Redis, so what the status hook reads afterwards is what the lock actually says."""
     with ExitStack() as stack:
         stack.enter_context(patch.object(eq, "redis_cache", cache))
         stack.enter_context(patch.object(executor_status, "redis_cache", cache))
@@ -564,11 +548,12 @@ async def _status_frames(thread_id: str) -> list[str]:
 
 
 class TestTheBusyLockDoesNotOutliveTheResult:
-    """The lock is what tells comms a task is in flight. Released only at the very
-    end of finalize, it was still held while the user read the result — comms'
-    next turn was handed "a background task is STILL RUNNING" about work it had
-    already delivered — and anything that raised on the way there left it held
-    for the full 30-minute TTL."""
+    """The lock is what tells comms a task is in flight.
+
+    Released only at the very end of finalize, it was still held while the user read the result —
+    comms' next turn was handed "a background task is STILL RUNNING" about work it had already
+    delivered — and anything that raised on the way there left it held for the full 30-minute TTL.
+    """
 
     async def test_the_status_frame_is_gone_once_the_result_is_delivered(self) -> None:
         cache = _FakeRedisCache()
@@ -599,9 +584,7 @@ class TestTheBusyLockDoesNotOutliveTheResult:
         assert lock_key not in cache.client.store
 
     async def test_a_stale_finalize_never_frees_a_newer_runs_lock(self) -> None:
-        """cancel_executor frees the lock and a NEW run acquires it; the OLD
-        cancelled run's finalize firing later must leave that lock alone, or two
-        executors end up running on one conversation."""
+        """Cancel_executor frees the lock and a NEW run acquires it; the OLD cancelled run's finalize firing later must leave that lock alone, or two executors end up running on one conversation."""
         cache = _FakeRedisCache()
         lock_key = f"{EXECUTOR_BUSY_PREFIX}conv-1"
         cache.client.store[lock_key] = build_lock_value("newer-stream", "task-9")
@@ -693,9 +676,7 @@ class TestFinalizeCarriesOnlyWorkTheThreadNeverTook:
         assert still_pending == ["e2"]
 
     async def test_work_staged_into_a_model_call_that_failed_is_still_carried(self) -> None:
-        """BUG: the run marked an entry delivered BEFORE the model call, so a
-        call that then failed left it neither answered nor carried — it sat in
-        Redis until its TTL. Nothing is in the thread, so it carries."""
+        """BUG: the run marked an entry delivered BEFORE the model call, so a call that then failed left it neither answered nor carried — it sat in Redis until its TTL."""
         cache = _FakeInboxCache()
 
         with ExitStack() as stack:
@@ -716,10 +697,7 @@ class TestFinalizeCarriesOnlyWorkTheThreadNeverTook:
         assert still_pending == ["e1"]
 
     async def test_a_bare_stop_starts_no_run(self) -> None:
-        """BUG: cancel_executor appends its interruption notice, and the
-        cancelled run's own finalize read it back as pending work — so pressing
-        Stop spawned a fresh run whose task WAS "the task you were working on
-        was INTERRUPTED". The notice is context for the next run, not work."""
+        """BUG: cancel_executor appends its interruption notice, and the cancelled run's own finalize read it back as pending work — so pressing Stop spawned a fresh run whose task WAS "the task you were working on was INTERRUPTED"."""
         cache = _FakeInboxCache()
 
         with ExitStack() as stack:
@@ -761,10 +739,11 @@ class TestFinalizeCarriesOnlyWorkTheThreadNeverTook:
 
 
 class TestTheCardNoteOnlyGoesWhereCardsRender:
-    """``returned_to_frontend`` tells comms "these items are already on screen,
-    don't re-type them". On a bot conversation there is no screen — the reply is
-    plain text over the platform API — so the note suppresses the only copy of
-    the data the user would ever see."""
+    """returned_to_frontend tells comms "these items are already on screen, don't re-type them".
+
+    On a bot conversation there is no screen — the reply is plain text over the platform API — so
+    the note suppresses the only copy of the data the user would ever see.
+    """
 
     async def test_a_telegram_run_gets_no_card_suppression_note(self, boundaries) -> None:
         run = _run(RunKind.QUEUED, source_category=SourceCategory.BOT)
@@ -784,8 +763,7 @@ class TestTheCardNoteOnlyGoesWhereCardsRender:
         assert boundaries.deliver.await_args.args[3] == CARD_NOTE
 
     async def test_a_scheduled_workflow_run_gets_no_note(self, boundaries) -> None:
-        """Its delivery is text-only too, and the narrator was already dropping
-        the note for it — building it was wasted work with one more way to leak."""
+        """Its delivery is text-only too, and the narrator was already dropping the note for it — building it was wasted work with one more way to leak."""
         run = _run(RunKind.QUEUED, workflow_id="wf-1", source_category=SourceCategory.BG)
 
         await er._finalize_executor_run(run, TASK, "result", "final")
@@ -825,10 +803,11 @@ class TestExecutorRunSource:
 
 
 class TestBuildRunItem:
-    """The one serialized run-context shape, written by the queue and by the HIL
-    resume store and read back by ``prepare_run_from_item``. A renamed or dropped
-    key here is invisible on write and only shows when a resumed run silently
-    loses what a queued run kept."""
+    """The one serialized run-context shape, written by the queue and by the HIL resume store and read back by prepare_run_from_item.
+
+    A renamed or dropped key here is invisible on write and only shows when a resumed run silently
+    loses what a queued run kept.
+    """
 
     def test_every_field_survives_the_round_trip_shape(self) -> None:
         item = build_run_item(
@@ -851,8 +830,7 @@ class TestBuildRunItem:
         assert item["bot_message_id"] == "bot-msg-1"
 
     def test_a_plain_enqueue_carries_no_bot_message_id(self) -> None:
-        """Only a HIL pause sets it; a queued run must still carry the key, as
-        ``prepare_run_from_item`` reads it unconditionally."""
+        """Only a HIL pause sets it; a queued run must still carry the key, as prepare_run_from_item reads it unconditionally."""
         item = build_run_item(
             task="t",
             configurable={"user_id": "user-1"},
@@ -870,8 +848,7 @@ class TestBuildRunItem:
 
 class TestHeldCardsFlushedAtFinalize:
     async def test_finalize_flushes_held_cards_before_done_signal(self, boundaries) -> None:
-        """Held PENDING cards must go live at run end — otherwise the open
-        client never renders them until a full refresh re-fetches messages."""
+        """Held PENDING cards must go live at run end — otherwise the open client never renders them until a full refresh re-fetches messages."""
         from app.services.hil import bridge
 
         boundaries.stream_manager.is_cancelled.return_value = False

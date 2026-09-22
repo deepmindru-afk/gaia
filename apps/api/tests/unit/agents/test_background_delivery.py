@@ -34,7 +34,7 @@ def _ctx(**overrides: object) -> SimpleNamespace:
 
 
 def _harness(execute_result: object) -> tuple[MagicMock, MagicMock]:
-    """Mocked inbox class + stream driver; returns (inbox_instance, writer)."""
+    """Mock the inbox class and stream driver; return (inbox_instance, writer)."""
     inbox = MagicMock()
     inbox.append = AsyncMock()
     writer = MagicMock()
@@ -85,8 +85,7 @@ class TestResultDelivery:
         assert "boom" in inbox.append.await_args.args[1]
 
     async def test_park_announces_itself_instead_of_going_silent(self) -> None:
-        """A parked approval has no review path yet; silence until expiry
-        would strand it invisibly. The inbox note keeps a witness."""
+        """A parked approval has no review path yet; silence until expiry would strand it invisibly."""
         from app.agents.core.background.subagent_runner import run_subagent_background
 
         inbox, writer = _harness(None)

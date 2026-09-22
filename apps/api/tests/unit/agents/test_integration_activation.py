@@ -37,10 +37,7 @@ class TestActivationContext:
         assert "gmail-draft-send" in context
 
     async def test_worker_notes_are_reframed_for_the_executor(self, monkeypatch) -> None:
-        """The static prompt was written for a delegated worker graph ("call
-        finish_task", "report to the parent"). Injected bare into activation
-        context it misidentifies the reader, so the section must countermand
-        the delegation framing while keeping the domain notes."""
+        """The static prompt was written for a delegated worker graph ("call finish_task", "report to the parent")."""
         from app.agents.core.subagents.integration_activation import _activation_context
 
         monkeypatch.setattr(
@@ -66,12 +63,7 @@ class TestActivationContext:
         assert await _activation_context("gmail", None) == ""
 
     async def test_enrichment_failure_degrades_to_partial_not_raise(self, monkeypatch) -> None:
-        """A transient store failure mid-enrichment must not abort activation.
-
-        The tools are already registered and bound by the time this runs, so a
-        failed instructions/skills lookup degrades to the sections gathered so
-        far rather than propagating and failing the whole tool call.
-        """
+        """A transient store failure mid-enrichment must not abort activation."""
         from app.agents.core.subagents.integration_activation import _activation_context
 
         monkeypatch.setattr(
@@ -124,7 +116,7 @@ class TestActivateTools:
 
 
 def _split_registry(known: set[str], integration_names: set[str]) -> MagicMock:
-    """A registry mock that classifies ``integration_names`` as execute-routed."""
+    """Build a registry mock that classifies integration_names as execute-routed."""
     registry = MagicMock()
     registry.get_category.return_value = MagicMock(tools=[MagicMock()] * 40)
     registry.get_tool_meta.side_effect = lambda n: MagicMock() if n in known else None
@@ -142,7 +134,7 @@ def _split_registry(known: set[str], integration_names: set[str]) -> MagicMock:
 
 
 def _resolved_tool(name: str):  # type: ignore[no-untyped-def]
-    """A resolvable fake integration tool with a real renderable schema."""
+    """Build a resolvable fake integration tool with a real renderable schema."""
     from langchain_core.tools import tool as langchain_tool
 
     from app.agents.tools.execute.resolver import ResolvedTool
@@ -157,10 +149,11 @@ def _resolved_tool(name: str):  # type: ignore[no-untyped-def]
 
 
 class TestAutoBind:
-    """Parity with the integration's own subagent, which preloads these as
-    schema docs at startup. Activation binds the internal helpers and
-    documents the integration tools — binding an integration tool here would
-    reintroduce the provider-side binding the proxy exists to remove."""
+    """Parity with the integration's own subagent, which preloads these as schema docs at startup.
+
+    Activation binds the internal helpers and documents the integration tools — binding an
+    integration tool here would reintroduce the provider-side binding the proxy exists to remove.
+    """
 
     @staticmethod
     def _patch_registries(monkeypatch, registry: MagicMock) -> None:
@@ -195,8 +188,7 @@ class TestAutoBind:
         assert "NOT bound" in docs
 
     async def test_drops_names_the_registry_does_not_hold(self, monkeypatch) -> None:
-        """An unregistered name is silently ignored at bind time, so reporting it
-        as bound would tell the model it can call something it cannot."""
+        """An unregistered name is silently ignored at bind time, so reporting it as bound would tell the model it can call something it cannot."""
         from app.agents.core.subagents.integration_activation import _activate_tools
 
         subagent = _subagent()
@@ -217,8 +209,7 @@ class TestAutoBind:
         assert preloaded == ["GMAIL_FETCH_MESSAGES"]
 
     async def test_unrenderable_preload_warns_instead_of_binding(self, monkeypatch) -> None:
-        """When docs cannot render, the tool is reported — not silently bound
-        behind the proxy's back."""
+        """When docs cannot render, the tool is reported — not silently bound behind the proxy's back."""
         from app.agents.core.subagents.integration_activation import _activate_tools
 
         subagent = _subagent()
@@ -282,9 +273,7 @@ class TestActivateIntegrationTool:
         assert "7 tools" in self._text(result)
 
     async def test_reply_preloads_docs_and_binds_only_helpers(self) -> None:
-        """The reply carries integration schemas as docs while selected_tool_ids
-        holds only the internal helpers — an integration tool must never be
-        both documented-as-unbound and bound."""
+        """The reply carries integration schemas as docs while selected_tool_ids holds only the internal helpers — an integration tool must never be both documented-as-unbound and bound."""
         from app.agents.core.subagents.integration_activation import activate_integration
 
         docs = "2 integration tool(s) preloaded below.\n## GMAIL_FETCH_MESSAGES"
@@ -310,12 +299,7 @@ class TestActivateIntegrationTool:
         assert self._bound(result) == ["query_json"]
 
     async def test_unconnected_integration_returns_the_connect_prompt(self) -> None:
-        """Activating an unconnected integration must gate on the connection check.
-
-        That check is what renders the connect card. Registering its tools anyway
-        would bind tools that fail at call time with an auth error, and the user
-        would never see a button.
-        """
+        """Activating an unconnected integration must gate on the connection check."""
         from app.agents.core.subagents.integration_activation import activate_integration
 
         connect = AsyncMock(return_value="Connect your Gmail account to continue.")
@@ -352,10 +336,7 @@ class TestActivateIntegrationTool:
         assert "is now active" in self._text(result)
 
     async def test_per_user_mcp_integration_routes_to_handoff(self) -> None:
-        """Its tools live only in the caller's MCP session, so activation cannot bind
-        them. Instead of dead-ending, it points the model at handoff, which runs the
-        integration in its own per-user graph.
-        """
+        """Its tools live only in the caller's MCP session, so activation cannot bind them."""
         from app.agents.core.subagents.integration_activation import activate_integration
 
         with (
@@ -373,9 +354,7 @@ class TestActivateIntegrationTool:
         assert "handoff(" in text and "per-user" in text
 
     async def test_custom_mcp_dict_routes_to_handoff(self) -> None:
-        """A custom MCP integration resolves as a CustomMcpSubagent (from the
-        repository), not a registry Subagent. It is per-user, so it routes to
-        handoff too."""
+        """A custom MCP integration resolves as a CustomMcpSubagent (from the repository), not a registry Subagent."""
         from app.agents.core.subagents.handoff_tools import CustomMcpSubagent
         from app.agents.core.subagents.integration_activation import activate_integration
 
@@ -410,8 +389,7 @@ class TestActivateIntegrationTool:
         assert "3 tools" in self._text(result)
 
     async def test_successful_activation_stamps_the_conversation(self) -> None:
-        """Discovery searches activated namespaces, so a success that yields
-        tools must stamp — otherwise retrieve_tools stays blind to them."""
+        """Discovery searches activated namespaces, so a success that yields tools must stamp — otherwise retrieve_tools stays blind to them."""
         from app.agents.core.subagents.integration_activation import activate_integration
 
         mark = AsyncMock()
@@ -433,8 +411,7 @@ class TestActivateIntegrationTool:
         mark.assert_awaited_once_with("c9", "gmail")
 
     async def test_empty_activation_does_not_stamp(self) -> None:
-        """Nothing became available — stamping would add a fruitless namespace
-        search to every later discovery call in the conversation."""
+        """Nothing became available — stamping would add a fruitless namespace search to every later discovery call in the conversation."""
         from app.agents.core.subagents.integration_activation import activate_integration
 
         mark = AsyncMock()
@@ -494,8 +471,7 @@ class TestActivateIntegrationTool:
         assert "retrieve_tools searches gmail too" in self._text(result)
 
     async def test_zero_tool_activation_does_not_point_at_retrieve_tools(self) -> None:
-        """Nothing registered — "use retrieve_tools" would send the model after
-        tools that do not exist."""
+        """Nothing registered — "use retrieve_tools" would send the model after tools that do not exist."""
         from app.agents.core.subagents.integration_activation import activate_integration
 
         with (

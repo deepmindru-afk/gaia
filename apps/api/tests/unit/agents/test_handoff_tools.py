@@ -813,9 +813,7 @@ def _resolved_subagent(agent_name: str, integration_id: str) -> Iterator[MagicMo
 
 @pytest.mark.unit
 class TestHandoffRejectsAForeignProviderInTheTask:
-    """A task that names one provider while being routed to another produces a
-    result claiming work the target never did — eight GAIA todos were reported
-    to the user as "8 tasks created (Todoist)" from exactly this input."""
+    """A task that names one provider while being routed to another produces a result claiming work the target never did — eight GAIA todos were reported to the user as "8 tasks created (Todoist)" from exactly this input."""
 
     PROD_TASK = (
         "Create these 8 separate tasks on Aryan's todo list (Todoist). Each one is its "
@@ -1642,9 +1640,7 @@ class TestHandoffBuildsItsDispatch:
 
 @pytest.mark.unit
 class TestHandoffPassesTheRunModeToTheRejectionCheck:
-    """``background`` and ``stream_id`` decide the dispatch path: a call with a
-    stream_id is forced to background (the background branch guards the session
-    slot itself), so the blocking-collision refusal only sees runs without one."""
+    """background and stream_id decide the dispatch path: a call with a stream_id is forced to background (the background branch guards the session slot itself), so the blocking-collision refusal only sees runs without one."""
 
     @staticmethod
     @contextmanager
@@ -1706,9 +1702,10 @@ class TestHandoffPassesTheRunModeToTheRejectionCheck:
 
 
 class TestHandoffRefusesProviderIds:
-    """Provider and built-in integrations are not handoff targets: the tool
-    redirects to activate_integration instead of building a graph. Only
-    per-user MCP integrations proceed to dispatch."""
+    """Provider and built-in integrations are not handoff targets: the tool redirects to activate_integration instead of building a graph.
+
+    Only per-user MCP integrations proceed to dispatch.
+    """
 
     async def test_provider_id_redirects_to_activation(self):
         subagent = _make_subagent("gmail", "gmail", "Gmail", managed_by="composio")
@@ -1740,9 +1737,10 @@ class TestHandoffRefusesProviderIds:
 
 
 class TestActivationForcesBackgroundHandoff:
-    """The executor only reaches handoff for per-user MCP subagents; those run
-    in the background by default so the executor stays alive to steer/cancel
-    them. The switch is the dispatch path taken."""
+    """The executor only reaches handoff for per-user MCP subagents; those run in the background by default so the executor stays alive to steer/cancel them.
+
+    The switch is the dispatch path taken.
+    """
 
     @staticmethod
     def _patches(bg: AsyncMock, blocking: AsyncMock):

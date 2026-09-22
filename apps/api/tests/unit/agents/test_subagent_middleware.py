@@ -381,11 +381,7 @@ class TestSpawnSubagentTool:
 
 
 class TestSpawnToolInheritance:
-    """Under integration activation the executor binds an integration's tools in
-    its own turn and delegates bulky work to a spawn, so those tools have to ride
-    into the spawn — both as the child's starting bind set and, crucially, in the
-    runtime that keys the (cached) spawn graph, or a graph compiled before the
-    activation would reject them as out of scope."""
+    """Under integration activation the executor binds an integration's tools in its own turn and delegates bulky work to a spawn, so those tools have to ride into the spawn — both as the child's starting bind set and, crucially, in the runtime that keys the (cached) spawn graph, or a graph compiled before the activation would reject them as out of scope."""
 
     async def test_inherits_parent_tools_when_enabled(self):
         mw = _ready_middleware(inherit_parent_tools=True, excluded_tool_names={"handoff"})

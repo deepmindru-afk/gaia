@@ -1,6 +1,8 @@
-"""Provider subagents can never spawn sub-subagents — structurally, not by
-caller discipline. The executor keeps spawn_subagent; the tool must simply not
-exist one tier down, whatever options a caller passes."""
+"""Provider subagents can never spawn sub-subagents — structurally, not by caller discipline.
+
+The executor keeps spawn_subagent; the tool must simply not exist one tier down, whatever options a
+caller passes.
+"""
 
 from unittest.mock import MagicMock
 

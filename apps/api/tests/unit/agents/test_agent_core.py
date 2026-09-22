@@ -95,8 +95,7 @@ FAKE_CONFIG = {
 
 @pytest.fixture(autouse=True)
 def _no_real_analytics():
-    """Keep every test hermetic: agent lifecycle events are asserted through
-    this mock and never reach a real PostHog client."""
+    """Keep every test hermetic: agent lifecycle events are asserted through this mock and never reach a real PostHog client."""
     with patch("app.agents.core.agent.capture_event") as mock_capture:
         yield mock_capture
 
@@ -183,11 +182,7 @@ class TestCoreAgentLogic:
 
     @pytest.mark.asyncio
     async def test_the_users_onboarding_data_reaches_build_agent_config(self):
-        """``onboarding_preferences(user.get("onboarding"))`` is real, unmocked
-        code in ``_core_agent_logic`` — this proves the pair it derives actually
-        lands on the ``build_agent_config`` call (so the executor and every
-        subagent it hands off to can inherit it), not just that extraction
-        doesn't crash."""
+        """Onboarding_preferences(user.get("onboarding")) is real, unmocked code in _core_agent_logic — this proves the pair it derives actually lands on the build_agent_config call (so the executor and every subagent it hands off to can inherit it), not just that extraction doesn't crash."""
         user = _make_user(
             onboarding={
                 "preferences": {"profession": "engineer"},
@@ -425,9 +420,7 @@ class TestCallAgent:
 
     @pytest.mark.asyncio
     async def test_bot_message_id_added_to_config(self):
-        """A HIL pause on this turn's executor resumes onto this SAME bot message.
-        Losing the id there mints a rival message and the user watches the wrong
-        one."""
+        """A HIL pause on this turn's executor resumes onto this SAME bot message."""
 
         async def _fake_stream(*args, **kwargs):
             yield "data: [DONE]\n\n"
@@ -753,8 +746,7 @@ class TestCallAgentSilent:
 
     @pytest.mark.asyncio
     async def test_a_graph_failure_propagates_instead_of_becoming_a_result_string(self):
-        """A swallowed failure returned as a normal result reads as success to every
-        caller — which is how workflows reported success through the Gemini 429s."""
+        """A swallowed failure returned as a normal result reads as success to every caller — which is how workflows reported success through the Gemini 429s."""
         patches = _common_patches()
         with (
             patches["construct"],
@@ -1070,9 +1062,9 @@ class TestCallAgentSilent:
 
 
 def _fresh_config() -> dict:
-    """A config object this test owns.
+    """Build a config object this test owns.
 
-    ``_core_agent_logic`` MUTATES ``config["configurable"]``, so the shared
+    _core_agent_logic MUTATES config["configurable"], so the shared
     module-level FAKE_CONFIG cannot be used by anything that asserts on those
     writes — one test would see the previous test's key.
     """
@@ -1080,9 +1072,9 @@ def _fresh_config() -> dict:
 
 
 class TestTheLaneTheRunResolves:
-    """This is the top-level run: ``build_agent_config`` resolves the comms lane
-    here and the executor plus every subagent inherit it whole. Everything the run
-    is has to reach that one call — a blanked or dropped argument is a turn that
+    """Assemble the top-level run: build_agent_config resolves the comms lane here and the executor plus every subagent inherit it whole.
+
+    Everything the run is has to reach that one call — a blanked or dropped argument is a turn that
     silently loses its tool scope, its trace, or its identity.
     """
 
@@ -1097,9 +1089,8 @@ class TestTheLaneTheRunResolves:
             patches["get_graph"],
             patches["build_state"],
             # dev_option is None only in production: with ENV unpinned this passes
-            # in CI (no .env) and fails on every developer machine, where
-            # apps/api/.env sets ENV=development and the dev selector resolves an
-            # option. Pinned the same way TestTheDevModelSelector pins it.
+            # in CI (no .env) but fails on developer machines, where apps/api/.env
+            # sets ENV=development. Pinned like TestTheDevModelSelector.
             patch.object(agent_module.settings, "ENV", "production"),
             patch(
                 "app.agents.core.agent.build_agent_config",
@@ -1107,10 +1098,9 @@ class TestTheLaneTheRunResolves:
                 return_value=_fresh_config(),
             ) as build_config,
             patches["log"],
-            # Pinned, as the dev-selector classes below already do: the dev model
-            # menu is live only in development, and a developer's own .env sets
-            # ENV=development — so an unpinned run resolves DEV_DEFAULT_MODEL and
-            # this expectation holds in CI and nowhere else.
+            # Pinned as the dev-selector classes below do: the dev model menu is
+            # live only in development, and a developer's .env sets ENV=development,
+            # so an unpinned run resolves DEV_DEFAULT_MODEL and holds only in CI.
             patch.object(agent_module.settings, "ENV", "production"),
         ):
             await _core_agent_logic(
@@ -1156,8 +1146,7 @@ class TestTheLaneTheRunResolves:
 
     @pytest.mark.asyncio
     async def test_a_background_trigger_run_says_so(self):
-        """The mode and the todo come from the trigger context, and the executor
-        inherits both — a wrong value here routes the result to the wrong place."""
+        """The mode and the todo come from the trigger context, and the executor inherits both — a wrong value here routes the result to the wrong place."""
         patches = _common_patches()
         with (
             patches["construct"],
@@ -1184,8 +1173,10 @@ class TestTheLaneTheRunResolves:
 
 
 class TestTheDevModelSelector:
-    """DEV-ONLY: the chat-header model picker. It wins over plan routing inside
-    resolve_lane, and must be inert in production."""
+    """DEV-ONLY: the chat-header model picker.
+
+    It wins over plan routing inside resolve_lane, and must be inert in production.
+    """
 
     async def _dev_option_for(self, request, env="development", dev_default=None):
         patches = _common_patches()
@@ -1215,8 +1206,7 @@ class TestTheDevModelSelector:
 
     @pytest.mark.asyncio
     async def test_expressing_no_preference_takes_the_env_configured_default(self):
-        """``use_default_models`` is what routes bots, scripts and plain requests
-        onto the dev model too, so it cannot be ignored here."""
+        """Use_default_models is what routes bots, scripts and plain requests onto the dev model too, so it cannot be ignored here."""
         option = await self._dev_option_for(
             _make_request(comms_model=None, use_default_models=True),
             dev_default="deepseek-v4",
@@ -1235,9 +1225,7 @@ class TestTheDevModelSelector:
 
 
 class TestTheExecutorsOwnDevModel:
-    """The executor builds its own configurable and would otherwise inherit
-    comms's lane, so its dev pick rides down on the configurable for
-    prepare_executor_execution to resolve."""
+    """The executor builds its own configurable and would otherwise inherit comms's lane, so its dev pick rides down on the configurable for prepare_executor_execution to resolve."""
 
     async def _configurable(self, request, env="development", dev_default=None):
         config = _fresh_config()
@@ -1350,17 +1338,15 @@ class TestTheWorkflowKeysTheRunStashes:
             "workflow_notify_on_completion": False,
             "playbook_fallback": "hash_drift at step 3",
             # The claim its fire took on this conversation, carried through so
-            # ``call_executor`` adopts it instead of queueing the run behind it.
-            # Read under a different spelling here and every workflow run goes
-            # to the inbox of a live run that does not exist.
+            # call_executor adopts it instead of queueing the run behind it. Read
+            # under a different spelling and every workflow run goes to a dead inbox.
             "executor_lock_reservation": ":fire-task-1",
             "playbook_replayed_calls": None,
         }
 
     @pytest.mark.asyncio
     async def test_a_run_with_no_playbook_brief_stashes_the_key_holding_none(self):
-        """Present-and-None, not absent: the runner distinguishes "no fallback
-        was briefed" from "this run was never a workflow"."""
+        """Present-and-None, not absent: the runner distinguishes "no fallback was briefed" from "this run was never a workflow"."""
         config = _fresh_config()
         patches = _common_patches()
         with (
@@ -1399,15 +1385,13 @@ class TestTheWorkflowKeysTheRunStashes:
 
 
 class TestTheOptionsEachEntryPointDerives:
-    """``call_agent`` / ``call_agent_silent`` re-pack their own arguments into a
-    fresh ``AgentRunOptions`` for ``_core_agent_logic``. Every field is a run
-    property that has no second source: a blanked or dropped one is a turn that
-    loses its token accounting, its surface, or its Langfuse trace, and the run
-    still completes normally. The whole object is compared, so an extra or
-    missing field fails too.
+    """call_agent / call_agent_silent re-pack their own arguments into a fresh AgentRunOptions for _core_agent_logic.
 
-    The stand-in carries ``_core_agent_logic``'s real signature so a dropped
-    positional argument raises here rather than quietly rebinding.
+    Every field is a run property that has no second source: a blanked or dropped one is a turn
+    that loses its token accounting, its surface, or its Langfuse trace, and the run still
+    completes normally. The whole object is compared, so an extra or missing field fails too. The
+    stand-in carries _core_agent_logic's real signature so a dropped positional argument raises
+    here rather than quietly rebinding.
     """
 
     @staticmethod

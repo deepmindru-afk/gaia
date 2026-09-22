@@ -1,6 +1,6 @@
 """The executor prompt must only teach tools the executor can call.
 
-The executor leads with `activate_integration` and keeps `handoff` bound solely
+The executor leads with activate_integration and keeps handoff bound solely
 for per-user MCP integrations that cannot be activated in-context. So the prompt
 teaches handoff only as that fallback, and no join tool at all: background
 outcomes arrive on their own. Anything else would produce calls that mislead the
@@ -28,9 +28,7 @@ def activation_prompt() -> str:
 
 class TestNoUnboundToolsTaught:
     def test_handoff_is_taught_only_as_the_per_user_fallback(self, activation_prompt) -> None:
-        """Handoff is bound under the flag for per-user MCP, so the prompt may name
-        it — but only as that fallback, never as the generic delegation path the
-        rewrites replaced with activation."""
+        """Handoff is bound under the flag for per-user MCP, so the prompt may name it — but only as that fallback, never as the generic delegation path the rewrites replaced with activation."""
         handoff_lines = [
             line.strip() for line in activation_prompt.splitlines() if "handoff(" in line
         ]
@@ -49,8 +47,7 @@ class TestNoUnboundToolsTaught:
         assert "arrive" in activation_prompt
 
     def test_the_baseline_prompt_does_name_them(self) -> None:
-        """Guards the rewrites from passing vacuously if the source prompt drops
-        handoff on its own — then these rewrites are dead code, not protection."""
+        """Guards the rewrites from passing vacuously if the source prompt drops handoff on its own — then these rewrites are dead code, not protection."""
         assert "handoff" in EXECUTOR_AGENT_PROMPT.lower()
         assert "wait_for_subagents" not in EXECUTOR_AGENT_PROMPT.lower()
         assert "collect_subagent_results" not in EXECUTOR_AGENT_PROMPT.lower()
@@ -70,9 +67,11 @@ class TestNoUnboundToolsTaught:
 
 
 class TestAnchorsStayValid:
-    """Every rewrite is anchored to the source prompt. When someone edits that
-    prompt and an anchor stops matching, this fails instead of the executor
-    silently keeping a handoff passage."""
+    """Every rewrite is anchored to the source prompt.
+
+    When someone edits that prompt and an anchor stops matching, this fails instead of the executor
+    silently keeping a handoff passage.
+    """
 
     @pytest.mark.parametrize("anchor", [a for a, _ in _PHRASE_REWRITES])
     def test_phrase_anchor_present_in_source(self, anchor: str) -> None:
@@ -90,9 +89,7 @@ class TestAnchorsStayValid:
 
 
 class TestDegradesGracefully:
-    """build_activation_executor_prompt runs at import time (agent_template
-    builds _EXECUTOR_BASE on import), so one edited sentence in the source
-    prompt must skip just that rewrite with a warning — never prevent startup."""
+    """build_activation_executor_prompt runs at import time (agent_template builds _EXECUTOR_BASE on import), so one edited sentence in the source prompt must skip just that rewrite with a warning — never prevent startup."""
 
     def test_stale_phrase_anchor_is_skipped_not_raised(
         self, monkeypatch: pytest.MonkeyPatch

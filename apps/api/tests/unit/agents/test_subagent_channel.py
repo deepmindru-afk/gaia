@@ -1,6 +1,6 @@
 """The per-subagent mailbox — the executor steering ONE running subagent.
 
-Mirrors ``test_executor_channel`` one tier down. The point these prove that the
+Mirrors test_executor_channel one tier down. The point these prove that the
 executor-inbox tests cannot: a steer the executor addressed to a specific
 subagent thread reaches that subagent and NO sibling, and the inject/retire rule
 is the shared one — so a subagent absorbs only what the executor sent it.

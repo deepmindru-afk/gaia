@@ -772,8 +772,7 @@ class TestBackgroundStructuredRunnable:
 
     @patch("app.agents.llm.client.get_helper_llm")
     def test_fallbacks_ride_the_models_array_primary_first(self, mock_helper: MagicMock) -> None:
-        """OpenRouter tries `models` in order on transport errors only — the
-        primary stays first, and the provider order it already carried survives."""
+        """OpenRouter tries models in order on transport errors only — the primary stays first, and the provider order it already carried survives."""
         mock_helper.return_value.model_kwargs = {"provider": {"order": ["google"]}}
 
         _aux_structured_runnable(
@@ -800,8 +799,7 @@ class TestBackgroundStructuredRunnable:
 
     @patch("app.agents.llm.client.get_helper_llm")
     def test_no_fallbacks_means_no_models_array(self, mock_helper: MagicMock) -> None:
-        """Without fallbacks there is exactly one model_copy — no empty array
-        for OpenRouter to interpret."""
+        """Without fallbacks there is exactly one model_copy — no empty array for OpenRouter to interpret."""
         mock_helper.return_value.model_kwargs = None
 
         _aux_structured_runnable(self._Shape, 0.1, None)

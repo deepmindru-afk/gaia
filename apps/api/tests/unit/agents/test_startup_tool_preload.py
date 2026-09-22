@@ -1,11 +1,11 @@
 """Startup tool preload: integration tools load as schema docs, never as bindings.
 
 Regression contract for the execute-proxy cutover: a subagent's declared
-startup tools (``auto_bind_tools`` + ``extra_initial_tools``) split by kind —
-internal tools bind into ``initial_tool_ids`` as before, while integration
-tools (Composio ``require_integration`` categories + per-user MCP) are
+startup tools (auto_bind_tools + extra_initial_tools) split by kind —
+internal tools bind into initial_tool_ids as before, while integration
+tools (Composio require_integration categories + per-user MCP) are
 excluded from binding and instead render as schema docs injected into the
-run's context, executed via ``execute``.
+run's context, executed via execute.
 """
 
 from types import SimpleNamespace
@@ -26,7 +26,7 @@ def _registry(
     integration_names: set[str],
     internal_names: set[str],
 ) -> MagicMock:
-    """A registry where ALLCAPS names are integration tools, the rest internal."""
+    """Build a registry where ALLCAPS names are integration tools, the rest internal."""
     registry = MagicMock()
     registry.get_category_of_tool.side_effect = (
         lambda n: "int_cat" if n in integration_names else "general"
@@ -151,8 +151,10 @@ class TestRenderPreloadBlock:
 
 @pytest.mark.unit
 class TestFactoryDoesNotBindIntegrationTools:
-    """The bug pin: gmail-style auto_bind integration tools must not reach
-    ``initial_tool_ids`` (provider ``bind_tools``). Internal extras still do."""
+    """The bug pin: gmail-style auto_bind integration tools must not reach initial_tool_ids (provider bind_tools).
+
+    Internal extras still do.
+    """
 
     async def test_integration_auto_bind_excluded_from_initial_ids(self) -> None:
         from app.agents.core.subagents.base_subagent import (
@@ -250,9 +252,7 @@ class TestFactoryDoesNotBindIntegrationTools:
 
 @pytest.mark.unit
 class TestPrepareInjectsPreloadDocs:
-    """`prepare_subagent_execution` opens the run with the integration's
-    startup schemas inside the static system message — no binding, no
-    retrieve_tools round trip."""
+    """prepare_subagent_execution opens the run with the integration's startup schemas inside the static system message — no binding, no retrieve_tools round trip."""
 
     async def test_system_message_carries_preloaded_schemas(self) -> None:
         from langchain_core.tools import tool as langchain_tool

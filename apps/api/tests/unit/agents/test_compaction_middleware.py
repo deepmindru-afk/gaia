@@ -1805,10 +1805,11 @@ class TestWritePathAndIdentityKwargs:
 
 
 class TestCommandReturningToolsAreCompacted:
-    """`spawn_subagent` and `activate_integration` return a Command so they can bind
-    tools or drive the graph — their ToolMessage rides inside it. Before this was
-    unwrapped, `awrap_tool_call` returned early on anything that was not a bare
-    ToolMessage, so those outputs were never compacted at any size."""
+    """spawn_subagent and activate_integration return a Command so they can bind tools or drive the graph — their ToolMessage rides inside it.
+
+    Before this was unwrapped, awrap_tool_call returned early on anything that was not a bare
+    ToolMessage, so those outputs were never compacted at any size.
+    """
 
     @staticmethod
     async def _run(mw, payload: str, update_extra: dict | None = None):
@@ -1839,8 +1840,7 @@ class TestCommandReturningToolsAreCompacted:
         assert len(message.content) < len(big)
 
     async def test_the_tool_s_own_bindings_survive_compaction(self) -> None:
-        """The Command exists to bind tools. Compaction must not drop them, and the
-        offload miners must be added alongside rather than replace them."""
+        """The Command exists to bind tools."""
         mw = WorkspaceCompactionMiddleware(max_output_chars=1000)
         big = json.dumps([{"i": i} for i in range(500)])
 
@@ -1859,8 +1859,7 @@ class TestCommandReturningToolsAreCompacted:
         assert result.update["selected_tool_ids"] == ["read"]
 
     async def test_a_multi_message_command_passes_through(self) -> None:
-        """Only a single-ToolMessage Command is a tool output; anything else is
-        graph control flow and must not be rewritten."""
+        """Only a single-ToolMessage Command is a tool output; anything else is graph control flow and must not be rewritten."""
         mw = WorkspaceCompactionMiddleware(max_output_chars=1000)
         big = json.dumps([{"i": i} for i in range(500)])
         update = {"messages": [_tool_msg(big), _tool_msg(big)]}

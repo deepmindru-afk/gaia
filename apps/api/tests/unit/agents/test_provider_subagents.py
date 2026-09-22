@@ -404,9 +404,7 @@ class TestCreateSubagent:
 
 
 class TestRegisterIntegrationTools:
-    """The returned category is how `activate_integration` finds the tools it just
-    loaded — a wrong or missing name leaves the executor believing an integration
-    has no tools, so it is asserted here rather than inferred from create_subagent."""
+    """The returned category is how activate_integration finds the tools it just loaded — a wrong or missing name leaves the executor believing an integration has no tools, so it is asserted here rather than inferred from create_subagent."""
 
     async def test_composio_returns_the_toolkit_category(self):
         from app.agents.core.subagents.provider_subagents import register_integration_tools
@@ -463,8 +461,7 @@ class TestRegisterIntegrationTools:
             assert await register_integration_tools(subagent) is None
 
     async def test_auth_required_mcp_refuses_to_register(self):
-        """Its tools are per-user and never enter the process-global registry;
-        registering them there would expose one user's session to every other."""
+        """Its tools are per-user and never enter the process-global registry; registering them there would expose one user's session to every other."""
         from app.agents.core.subagents.provider_subagents import register_integration_tools
 
         subagent = _make_subagent(

@@ -576,9 +576,7 @@ class TestExecuteSubagentStream:
         assert "Second" not in result.text
 
     async def test_executor_cancel_stops_the_stream_with_a_cancelled_result(self):
-        """A targeted executor cancel (its flag raised) stops the subagent at the
-        next superstep and returns a SUBAGENT_CANCELLED result, so the executor
-        learns it stopped rather than reading a silent partial."""
+        """A targeted executor cancel (its flag raised) stops the subagent at the next superstep and returns a SUBAGENT_CANCELLED result, so the executor learns it stopped rather than reading a silent partial."""
 
         async def _fake_astream(*args, **kwargs):
             yield ("updates", {"agent": {"messages": []}})

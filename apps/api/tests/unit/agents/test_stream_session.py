@@ -234,9 +234,7 @@ class TestToolOutputOwnership:
 
 @pytest.mark.regression
 class TestExecutorRunCarriesWorkflowExecution:
-    """The execution id lives only on the workflow task's wide event, never in
-    ``configurable``; the run built inside that boundary has to pick it up or
-    every executor call it makes is unattributable to the run in the ledger."""
+    """The execution id lives only on the workflow task's wide event, never in configurable; the run built inside that boundary has to pick it up or every executor call it makes is unattributable to the run in the ledger."""
 
     async def test_from_configurable_reads_the_execution_id_off_the_boundary(self) -> None:
         from shared.py.wide_events import WorkflowContext, log, wide_task

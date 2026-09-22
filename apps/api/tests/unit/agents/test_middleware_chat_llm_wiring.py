@@ -589,8 +589,7 @@ class TestCommsAndSubagentDelegation:
         assert summarizer.model is llm
 
     def test_a_subagent_delegates_the_exact_options(self, monkeypatch) -> None:
-        """Everything the caller passed reaches the stack verbatim — except
-        ``enabled``, which is forced off below."""
+        """Everything the caller passed reaches the stack verbatim — except enabled, which is forced off below."""
         captured = _spy_on_stack(monkeypatch)
         llm = _fake_llm()
         options = SubagentStackOptions(enabled=True, llm=llm, tool_space="gmail")
@@ -607,8 +606,7 @@ class TestCommsAndSubagentDelegation:
         }
 
     def test_a_subagent_can_never_spawn_however_it_was_asked_to(self, monkeypatch) -> None:
-        """Only the executor spawns. A caller asking for spawn wiring on a
-        subagent gets it dropped, so no subagent can start a sub-subagent."""
+        """Only the executor spawns."""
         captured = _spy_on_stack(monkeypatch)
 
         create_subagent_middleware(

@@ -1,5 +1,7 @@
-"""dispatch_tool — validation stands in for constrained decoding; analytics
-attribute the REAL tool. These are the proxy's two load-bearing behaviors."""
+"""dispatch_tool — validation stands in for constrained decoding; analytics attribute the REAL tool.
+
+These are the proxy's two load-bearing behaviors.
+"""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -226,7 +228,7 @@ class TestIntegrationOnlySurface:
 class TestSubagentToolSpace:
     """A subagent's tool space must bound the proxy, not just its bindings.
 
-    `execute` is in every subagent's tool set, and dispatch resolves names
+    execute is in every subagent's tool set, and dispatch resolves names
     globally — so without a scope the proxy ran any registered tool by name,
     and the in-band refusal retrieve_tools returns ("They belong to the main
     executor, not this subagent") was advice the model could simply route
@@ -279,10 +281,7 @@ class TestSubagentToolSpace:
         assert result.ok is True
 
     async def test_an_on_demand_tool_outside_the_space_is_also_refused(self) -> None:
-        """MCP tools and on-demand catalog slugs resolve outside every tool
-        space, so a scoped subagent must not reach another integration's tool by
-        resolving it on demand — the proxy refuses any resolved name outside the
-        subagent's set, whether or not it came from the registry."""
+        """MCP tools and on-demand catalog slugs resolve outside every tool space, so a scoped subagent must not reach another integration's tool by resolving it on demand — the proxy refuses any resolved name outside the subagent's set, whether or not it came from the registry."""
         tool = _tool(name="notion_mcp_search")
         with (
             patch(
@@ -309,9 +308,7 @@ class TestSubagentToolSpace:
         )
 
     async def test_a_subagents_own_on_demand_tool_in_scope_still_runs(self) -> None:
-        """No over-refusal: a subagent carries its own MCP/on-demand tools in its
-        tool set by name (every connected MCP tool, its whole registered
-        toolkit), so an unregistered resolution whose name IS in scope runs."""
+        """No over-refusal: a subagent carries its own MCP/on-demand tools in its tool set by name (every connected MCP tool, its whole registered toolkit), so an unregistered resolution whose name IS in scope runs."""
         tool = _tool(name="notion_mcp_search")
         with (
             patch(
@@ -352,8 +349,7 @@ class TestSubagentToolSpace:
 @pytest.mark.unit
 class TestDispatchOutcomeReporting:
     async def test_an_infrastructure_failure_is_never_stamped_ok(self) -> None:
-        """`execute.outcome` is the migration's health metric. Stamping it
-        before the invoke reported every failed dispatch as a success."""
+        """Execute.outcome is the migration's health metric."""
         tool = _tool()
         tool.ainvoke = AsyncMock(side_effect=ConnectionError("provider down"))
         stamped: dict[str, object] = {}
@@ -377,8 +373,7 @@ class TestDispatchOutcomeReporting:
         assert stamped == {"tool": "GMAIL_SEND_EMAIL"}
 
     async def test_a_hung_tool_is_bounded_and_reported_as_unknown_effect(self) -> None:
-        """The sandbox route had no bound of its own, so its client gave up
-        first and the script's retry re-applied a mutation still in flight."""
+        """The sandbox route had no bound of its own, so its client gave up first and the script's retry re-applied a mutation still in flight."""
         tool = _tool()
 
         async def _never_returns(*_args: object, **_kwargs: object) -> None:
@@ -414,8 +409,7 @@ class TestDispatchOutcomeReporting:
         )
 
     async def test_an_exempt_tool_is_not_bounded(self) -> None:
-        """Long-running orchestration tools manage their own lifecycles — the
-        in-graph node exempts them, and a proxied call must not be tighter."""
+        """Long-running orchestration tools manage their own lifecycles — the in-graph node exempts them, and a proxied call must not be tighter."""
         tool = _tool(name="deep_research", schema=None)
         with (
             patch(
