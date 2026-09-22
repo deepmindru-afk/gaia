@@ -3,6 +3,9 @@
 import json
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+import pytest
+
 from app.constants.outbound import (
     OUTBOUND_TTL_SECONDS_DEFAULT,
     OUTBOUND_TTL_SECONDS_GREETING,
@@ -532,3 +535,11 @@ class TestPublishOutboundReaction:
         )
         assert env.reaction is not None
         assert env.reaction.emoji == "👍"
+
+    def test_payloadless_envelope_is_rejected_naming_every_accepted_payload(self) -> None:
+        with pytest.raises(ValidationError) as rejected:
+            OutboundMessageEnvelope(platform="telegram", destination_id="4242")
+
+        assert [error["msg"] for error in rejected.value.errors()] == [
+            "Value error, envelope requires text, text_parts, attachment, or reaction"
+        ]
