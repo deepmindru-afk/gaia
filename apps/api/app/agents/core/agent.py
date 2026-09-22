@@ -200,6 +200,7 @@ async def _core_agent_logic(
     # Established here (comms has the full user document) so the executor and
     # every subagent inherit it — worker tiers read it off configurable.
     user_preferences, writing_style = onboarding_preferences(user.onboarding)
+    workflow = request.selectedWorkflow
 
     # This is the top-level run, so build_agent_config resolves the comms lane
     # here; the executor and every subagent inherit it whole.
@@ -219,8 +220,8 @@ async def _core_agent_logic(
             user_messages=background_authorization(
                 recent_user_messages(request.messages, request.message),
                 execution_mode=str(execution_mode),
-                workflow_title=_workflow_text(request.selectedWorkflow, "title"),
-                workflow_description=_workflow_text(request.selectedWorkflow, "description"),
+                workflow_title=workflow.title if workflow else "",
+                workflow_description=workflow.description if workflow else "",
                 todo_title=trigger.todo_title or "",
             ),
             user_request=request.message,
@@ -271,12 +272,6 @@ async def _core_agent_logic(
     )
 
     return graph, initial_state, config
-
-
-def _workflow_text(selected_workflow: object, field: str) -> str:
-    """Read one text field off the run's workflow card, or "" without one."""
-    value = getattr(selected_workflow, field, "")
-    return value if isinstance(value, str) else ""
 
 
 async def call_agent(
