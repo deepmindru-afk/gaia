@@ -132,20 +132,12 @@ async def publish_ledger_request(
     owner_run_type: str = "",
     owner_id: str = "",
 ) -> None:
-    """Surface a ledger PENDING card — exactly once per registration.
+    """Surface a ledger PENDING card exactly once per registration.
 
-    Same ``approval_request`` wire shape as the barrier path (same tool_name,
-    so web TOOL_RENDERERS and bot streaming render it with no registry
-    changes); the ledger-only fields (rationale, age 0, version 0) ride as
-    optional extras old clients ignore. Called only on fresh registration —
-    the dedup hit means the card is already up, so the caller skips this.
-
-    On a live run the card is HELD, not streamed: the frame is recorded on
-    the session (so the end-of-run drain persists it) but no SSE chunk or
-    push goes out until the run ends. A revoke before then removes the
-    unshown frame instead of tombstoning it, so the user never sees work
-    the model already withdrew. Background runs hold nothing — nobody is
-    watching, and the push is the only signal.
+    Same approval_request wire shape as the barrier path, so clients render it
+    unchanged. On a live run the card is HELD (recorded on the session for the
+    end-of-run drain, no SSE until then); background runs publish immediately,
+    nobody being there to watch the stream.
     """
     log.set(hil={"approval_id": approval_id, "tool": tool_call.name, "stream_id": stream_id})
     entry = _approval_entry(
@@ -181,10 +173,9 @@ async def publish_ledger_request(
             conversation_id, user_id=user_id
         )
     if not held:
-        # Background runs, detached queued runs, and runs with no session at
-        # all publish immediately: nobody is watching this stream (or there is
-        # no stream to drain), so holding would hide the card until a drain
-        # that never comes.
+        # Background, detached-queued, and session-less runs publish immediately:
+        # nobody is watching this stream (or there is none to drain), so holding
+        # would hide the card until a drain that never comes.
         await _publish_entry(stream_id, entry)
         _schedule_pending_notification(user_id, conversation_id, approval_id, summary)
         return
@@ -196,13 +187,9 @@ async def sync_conversation_approval_flag(conversation_id: str, user_id: str) ->
     """Rewrite one conversation's sidebar flag from its pending ledger rows.
 
     Called wherever a row leaves the pending set (decide, revoke, cancel,
-    reconcile): the flag follows the ledger, never leads it. Pending-only by
-    design: an approval is permission, and once decided the user has nothing
-    left to tap — the sidebar row must vanish on next reload while execution
-    continues in the background. Ledger liveness (dedup, list_open) still
-    tracks APPROVED tickets; this flag tracks "needs the user", which is
-    PENDING alone. Best-effort — a stale flag only mislists a conversation,
-    never misdecides an approval.
+    reconcile): the flag follows the ledger, never leads it. Pending-only, since
+    the flag tracks "needs the user" and a decided approval needs nothing.
+    Best-effort — a stale flag only mislists a conversation, never misdecides.
     """
     try:
         rows = await approval_ledger_repository.list_open(conversation_id)
@@ -414,16 +401,10 @@ def settle_session_approval_frame(
 ) -> bool:
     """Flip an already-recorded card frame to its terminal status, in place.
 
-    Revoke and late decisions otherwise miss the persisted message (it is
-    created at drain time, after the run ends) while the stale PENDING frame
-    drains back onto it — resurrecting a settled card. Mutating in place
-    means the drain upsert is a no-op safety net, not a resurrection path.
-
-    With ``drop_if_unpublished``, a still-held frame (never streamed live) is
-    removed instead of flipped: a revoke before the run ends means the user
-    never saw the card, so there is nothing to tombstone. Best-effort like
-    every other delivery here: returns whether a frame was settled or
-    dropped, never raises.
+    Mutating in place keeps the drain upsert a no-op safety net, not a path that
+    resurrects a settled card from a stale PENDING frame. With drop_if_unpublished
+    a still-held frame is removed instead (the user never saw it, so there is
+    nothing to tombstone). Returns whether a frame was settled or dropped.
     """
     try:
         session = get_session(stream_id)
@@ -453,19 +434,22 @@ def settle_session_approval_frame(
             settled = True
         session.tool_events[:] = kept
         return settled
-    except Exception:
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} Approval frame settle failed",
+            approval_id=approval_id,
+            error_type=type(e).__name__,
+        )
         return False
 
 
 async def flush_held_approval_cards(stream_id: str) -> int:
-    """Publish held PENDING cards at run end — the open client never renders
-    them otherwise until a full refresh re-fetches messages.
+    """Publish held PENDING cards at run end so the open client renders them.
 
-    Only rows still PENDING go live; anything decided or revoked meanwhile is
-    dropped unseen (a card the user never saw needs no tombstone). Each frame
-    clears its held marker as it publishes, so a second flush is a no-op and
-    live frames can never duplicate. Best-effort: returns the flushed count,
-    never raises.
+    Without this they surface only after a full refresh re-fetches messages.
+    Only rows still PENDING go live; decided or revoked ones are dropped unseen.
+    Each frame clears its held marker as it publishes, so a second flush is a
+    no-op. Best-effort: returns the flushed count, never raises.
     """
     try:
         session = get_session(stream_id)
@@ -516,7 +500,12 @@ async def flush_held_approval_cards(stream_id: str) -> int:
             flushed += 1
         session.tool_events[:] = kept
         return flushed
-    except Exception:
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} Held card flush aborted",
+            stream_id=stream_id,
+            error_type=type(e).__name__,
+        )
         return 0
 
 

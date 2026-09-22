@@ -89,9 +89,12 @@ _LLMT = TypeVar("_LLMT", bound=BaseChatModel)
 
 
 def without_sdk_retry(llm: _LLMT) -> _LLMT:
-    """Leave retrying to :func:`with_llm_retry`; the SDK's own loop nests under
-    ours and turned 3 attempts into 40 requests. ``max_retries=0`` does NOT
-    disable it — the SDK then applies a one-hour default; only this does."""
+    """Disable the SDK's own retry loop so with_llm_retry is the only one.
+
+    The SDK loop nests under ours and turned 3 attempts into 40 requests.
+    max_retries=0 does NOT disable it (the SDK then applies a one-hour
+    default); only clearing retry_config does.
+    """
     sdk_client = getattr(llm, "client", None)
     sdk_config = getattr(sdk_client, "sdk_configuration", None)
     if sdk_config is None:
@@ -302,30 +305,23 @@ def init_custom_llm() -> LanguageModelLike:
     """
     if settings.GAIA_SIM_MODE:
         return _sim_llm()
-    # Only the model pin: the custom lane runs ChatOpenAI, which has no
-    # ``reasoning`` field for _openrouter_wire_configurables to bind, and this
-    # lane's binding keys omit reasoning/model_kwargs anyway. model_name is the
-    # field id ChatOpenAI and ChatOpenRouter both expose (see _MODEL_FIELD).
+    # Only the model pin: the custom lane runs ChatOpenAI (no reasoning field to
+    # bind, binding keys omit reasoning/model_kwargs). model_name is the field id
+    # both ChatOpenAI and ChatOpenRouter expose (see _MODEL_FIELD).
     return _build_custom_llm().configurable_fields(model_name=_MODEL_FIELD)
 
 
 def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
-    """The bare custom-endpoint chat model, before the configurable wiring.
+    """Build the bare custom-endpoint chat model, before the configurable wiring.
 
-    Split out because a structured one-shot needs the model itself:
-    ``with_structured_output`` lives on the chat model, not on the configurable
-    wrapper ``init_custom_llm`` hands back.
-
-    Deliberately ChatOpenAI, not ChatOpenRouter: the openrouter SDK strictly
-    validates the response envelope (it requires ``system_fingerprint``), and
-    OpenAI-compatible lanes that omit it — e.g. OpenCode Zen — fail response
-    validation on every call. The openai SDK tolerates the missing field. The
-    tradeoff is no reasoning-block parsing on this lane; acceptable for dev.
+    Split out because a structured one-shot needs the model itself, which the
+    configurable wrapper init_custom_llm hides. ChatOpenAI not ChatOpenRouter:
+    the openrouter SDK requires a system_fingerprint that OpenAI-compatible
+    lanes omit, failing every call; the openai SDK tolerates it.
     """
-    # Some discounted lanes sit behind Cloudflare, which 403s (error 1010)
-    # programmatic User-Agents. A browser UA on the underlying httpx clients
-    # passes the check; ChatOpenAI takes them directly (unlike ChatOpenRouter,
-    # whose default_headers path crashes — see init_openrouter_llm).
+    # Discounted lanes behind Cloudflare 403 (error 1010) programmatic UAs; a
+    # browser UA on the httpx clients passes. ChatOpenAI takes them directly
+    # (ChatOpenRouter's default_headers path crashes — see init_openrouter_llm).
     from langchain_openai import ChatOpenAI  # noqa: PLC0415
 
     browser_headers = {
@@ -1295,10 +1291,10 @@ def _aux_structured_runnable(
 ) -> Runnable:
     """Build the structured runnable every auxiliary one-shot runs on.
 
-    The helper LLM re-pointed at ``model_name`` (default :data:AUX_MODEL_NAME),
-    with the aux sticky-routing session. ``fallback_model_names`` rides the
-    OpenRouter ``models`` array: same primary first, tried in order on
-    rate limits/downtime — verdicts never trigger it.
+    The helper LLM re-pointed at model_name (default AUX_MODEL_NAME), with the
+    aux sticky-routing session. fallback_model_names rides the OpenRouter models
+    array: same primary first, tried in order on rate limits/downtime — verdicts
+    never trigger it.
     """
     # The alias must be set via model_copy, NOT .bind(model=...):
     # with_structured_output rebuilds via bind_tools, which drops a bound

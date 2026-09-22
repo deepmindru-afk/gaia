@@ -555,7 +555,7 @@ async def compact_tool_output(
 
 
 def _as_tool_message_command(result: object) -> Command[Any] | None:
-    """``result`` when it is a Command whose payload is exactly one ToolMessage.
+    """Return result when it is a Command whose payload is exactly one ToolMessage.
 
     None for anything else — a multi-message or message-less Command is not a
     tool output and must pass through untouched.
@@ -573,12 +573,12 @@ def _merge_into_command(
     bound: ToolMessage | Command[Any],
     message: ToolMessage,
 ) -> Command[Any]:
-    """Write the compacted message (and any offload binds) back into ``original``.
+    """Write the compacted message (and any offload binds) back into original.
 
     Mutates the Command's own update dict rather than building a new Command, so
-    a `goto`/`resume` the tool set survives compaction. ``selected_tool_ids`` is
-    unioned, never replaced: the tool's own bindings and the offload miners both
-    have to reach the model.
+    a goto/resume the tool set survives compaction. selected_tool_ids is unioned,
+    never replaced: the tool's own bindings and the offload miners both have to
+    reach the model.
     """
     # A dict by construction — _as_tool_message_command only matches that shape.
     update = cast(dict[str, Any], original.update)
@@ -628,12 +628,9 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
     ) -> ToolMessage | Command[Any]:
         result = await handler(request)
 
-        # A tool that binds tools or drives the graph returns a Command, but its
-        # output is still a ToolMessage inside it (spawn_subagent,
-        # activate_integration). Reach in: an unwrapped Command means that output
-        # is never compacted however large it grows, which is exactly the payload
-        # most worth shedding. The Command object itself is preserved and updated
-        # in place so any goto/resume it carries survives.
+        # A tool that binds tools or drives the graph returns a Command wrapping a
+        # ToolMessage (spawn_subagent, activate_integration); unwrapped it is never
+        # compacted. Updated in place so any goto/resume it carries survives.
         command = _as_tool_message_command(result)
         message = command.update["messages"][0] if command is not None else result
         if not isinstance(message, ToolMessage):
@@ -675,10 +672,9 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
         )
         message = compacted if compacted is not None else message
 
-        # Whether we just offloaded the output or the tool self-offloaded (gmail,
-        # which is excluded from compaction), surface the file-mining tools the
-        # moment a marker is present. Keyed on the offload itself, so it covers
-        # every producer uniformly.
+        # Whether we offloaded the output or the tool self-offloaded (gmail, which
+        # is excluded from compaction), surface the file-mining tools on any marker.
+        # Keyed on the offload itself, so it covers every producer uniformly.
         bound = self._bind_offload_tools(message, request)
         if command is None:
             return bound
