@@ -27,6 +27,7 @@ from app.agents.core.graph_builder.build_graph import (
     EXECUTOR_INITIAL_TOOL_IDS,
     build_executor_graph,
 )
+from app.agents.core.subagents.handoff_tools import CustomMcpSubagent
 from app.agents.tools.todo_tools import TODO_TOOL_NAMES
 from tests.helpers import BindableToolsFakeModel
 
@@ -228,7 +229,7 @@ class TestActivationThroughRealExecutorGraph:
             ]
         )
         registry = _stub_registry()
-        custom = {"id": "abc123", "name": "My MCP", "managed_by": "mcp", "mcp_config": {}}
+        custom = CustomMcpSubagent(id="abc123", name="My MCP", managed_by="mcp", mcp_config={})
 
         p1, p2, p3, p4 = _run_executor(model, registry)
         with (
@@ -278,7 +279,7 @@ class TestActivationThroughRealExecutorGraph:
             ]
         )
         registry = _stub_registry()
-        custom = {"id": "abc123", "name": "My MCP", "managed_by": "mcp", "mcp_config": {}}
+        custom = CustomMcpSubagent(id="abc123", name="My MCP", managed_by="mcp", mcp_config={})
 
         # Short-circuit handoff at its resolution seam: a returned error string is
         # proof its body executed, without building a real per-user graph here.

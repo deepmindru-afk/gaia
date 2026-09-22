@@ -29,8 +29,6 @@ import fakeredis.aioredis
 from langgraph.store.memory import InMemoryStore
 import pytest
 
-from app.agents.core.background.executor_runner import DETACHED_EXECUTOR_TASK_NAME
-from app.agents.core.background.redis_writer import STREAM_PUBLISH_TASK_NAME
 from app.agents.core.background.session import teardown_session
 from app.agents.core.graph_builder import build_graph as build_graph_module
 from app.agents.core.graph_manager import GraphManager
@@ -60,8 +58,8 @@ from app.models.message_models import MessageRequestWithHistory
 from app.models.user_models import AuthenticatedUser
 from app.services.chat import stream as chat_stream
 from app.services.hil import resolution
-from app.utils import background_tasks
 from app.workers.tasks.hil_sweep_tasks import sweep_hil_approvals
+from tests.e2e._harness.background import drain_background_runs, drain_publishes
 from tests.e2e._harness.transcript import Frame, Transcript
 from tests.e2e.test_agent_chain import call, streaming_model
 
@@ -378,28 +376,6 @@ class HilWorld:
         ]
 
 
-def _tasks_named(*names: str) -> list[asyncio.Task[object]]:
-    """Live background tasks carrying any of names.
-
-    Filtering by name rather than draining the whole keep-alive set: that set
-    also holds work which outlives a single turn, so awaiting all of it would
-    hang here forever instead of failing a test.
-    """
-    wanted = set(names)
-    return [t for t in background_tasks._background_tasks if t.get_name() in wanted]
-
-
-async def drain_publishes() -> None:
-    """Wait out the fire-and-forget XADDs the background writer scheduled.
-
-    make_redis_stream_writer is a sync callable that schedules each publish
-    through spawn_background_task, so reading the log without waiting reads a
-    truncated stream.
-    """
-    while pending := _tasks_named(STREAM_PUBLISH_TASK_NAME):
-        await asyncio.gather(*pending, return_exceptions=True)
-
-
 async def drain_resumes() -> None:
     """Wait out the executor runs resolve_approval dispatched.
 
@@ -411,21 +387,6 @@ async def drain_resumes() -> None:
     while resolution._resume_tasks:
         await asyncio.gather(*list(resolution._resume_tasks), return_exceptions=True)
     await drain_publishes()
-
-
-async def drain_background_runs() -> None:
-    """Wait out every executor task still in flight, whatever spawned it.
-
-    Two module-level keep-alive sets (spawn_background_task and HIL's own resume
-    set) can each spawn into the other, so draining one once is not enough — this
-    loops until both empty. Load-bearing for isolation: hil_world's patches are
-    process-wide, so a run that outlives its test corrupts the next test's store.
-    """
-    while pending := [
-        *_tasks_named(STREAM_PUBLISH_TASK_NAME, DETACHED_EXECUTOR_TASK_NAME),
-        *resolution._resume_tasks,
-    ]:
-        await asyncio.gather(*pending, return_exceptions=True)
 
 
 @asynccontextmanager
