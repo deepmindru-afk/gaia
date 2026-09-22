@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 import json
+import math
 import re
 from typing import Literal, Protocol
 
@@ -168,7 +169,7 @@ def summarize_history(rows: list[ApprovalLedgerDocument]) -> AutoHistory:
     # hand-built ones are aware, and mixed comparison raises.
     latest = max(
         denies,
-        key=lambda row: row.decided_at.timestamp() if row.decided_at is not None else float("-inf"),
+        key=lambda row: row.decided_at.timestamp() if row.decided_at is not None else -math.inf,
         default=None,
     )
     return AutoHistory(
@@ -401,7 +402,7 @@ def _is_id_like(target: str) -> bool:
 
 def ungrounded_targets(
     args: dict[str, object],
-    user_text: str,
+    user_turns: list[str],
     prior_calls: list[PriorCall],
     known: frozenset[str] | None = None,
 ) -> list[str]:
@@ -412,19 +413,20 @@ def ungrounded_targets(
     user's own approved runs (known) are provenance. A prior output grounds only
     when it identifies: a single result returned the thing; a list needs the user.
     """
-    normalized_user = _normalize(user_text)
-    provenance_parts = [f"{call.name} {args_preview(call.args)}" for call in prior_calls]
-    for call in prior_calls:
-        if call.output.strip() and _output_identifies(call.output):
-            provenance_parts.append(call.output)
-    normalized_priors = _normalize("\n".join(provenance_parts))
+    provenance = [f"{call.name} {args_preview(call.args)}" for call in prior_calls]
+    provenance += [
+        call.output
+        for call in prior_calls
+        if call.output.strip() and _output_identifies(call.output)
+    ]
+    # Matched per source: a target straddling two turns or two priors came from neither.
+    sources = [_normalize(text) for text in [*user_turns, *provenance]]
     normalized_known = {_normalize(target) for target in known or frozenset()}
-    user_tokens = set(normalized_user.split())
+    user_tokens = {token for turn in user_turns for token in _normalize(turn).split()}
     return [
         target
         for target in _target_values(args)
-        if _normalize(target) not in normalized_user
-        and _normalize(target) not in normalized_priors
+        if not any(_normalize(target) in source for source in sources)
         and _normalize(target) not in normalized_known
         and _local_part(target) not in user_tokens
     ]
@@ -435,10 +437,13 @@ def _local_part(target: str) -> str:
 
     "Reply yes to Sarah's thread" grounds sarah@x.com: the name matches, only
     the domain was resolved. Equality on the local part — a "bob" in the text
-    never grounds "bobby@evil.com".
+    never grounds "bobby@evil.com". A string with a second "@" is no address,
+    so it has no local part to ground.
     """
-    local, _, _ = target.partition("@")
-    return local if "@" in target else ""
+    local, at, domain = target.partition("@")
+    if not at or "@" in domain:
+        return ""  # pragma: no mutate — user_tokens are non-empty lowercase words, so no literal here can ever be one
+    return local
 
 
 def _target_values(args: object) -> list[str]:
@@ -449,20 +454,15 @@ def _target_values(args: object) -> list[str]:
     (body, subject, text) are not targets either: a code like "q3" in a body is
     content the choice criteria judge, not a who/which/how-much.
     """
-    return _target_values_in(args, ())
-
-
-def _target_values_in(args: object, key_path: tuple[str, ...]) -> list[str]:
-    """Target collection with the field path, so prose fields are skipped."""
     found: list[str] = []
     if isinstance(args, dict):
         for key, value in args.items():
             if str(key).lower() in _PROSE_FIELDS:
                 continue
-            found += _target_values_in(value, key_path + (str(key),))
+            found += _target_values(value)
     elif isinstance(args, list):
         for value in args:
-            found += _target_values_in(value, key_path)
+            found += _target_values(value)
     elif isinstance(args, str):
         candidate = _target_string(args.strip())
         if candidate is not None:

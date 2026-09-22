@@ -16,6 +16,7 @@ from app.services.hil.intent import (
     IntentDecision,
     JudgedCall,
     _Verdict,
+    history_line,
     judge_intent,
     summarize_history,
 )
@@ -106,3 +107,54 @@ async def test_a_single_deny_blocks_accept_until_an_approval_lands() -> None:
     assert (await _judge(AutoHistory(denied_recent=1))).outcome == "ask"
     assert (await _judge(AutoHistory(approved_recent=1, denied_recent=1))).outcome == "ask"
     assert (await _judge(AutoHistory(approved_recent=2, denied_recent=1))).outcome == "accept"
+
+
+def test_the_newest_deny_wins_whatever_the_row_order() -> None:
+    now = datetime.now(UTC)
+    rows = [
+        _row(LedgerState.DENIED, feedback="undated", decided_at=None),
+        _row(LedgerState.DENIED, feedback="older", decided_at=now - timedelta(days=2)),
+        _row(LedgerState.DENIED, feedback="newest", decided_at=now),
+    ]
+
+    h = summarize_history(rows)
+
+    assert (h.last_deny_feedback, h.last_deny_at) == ("newest", now)
+
+
+def test_known_targets_come_only_from_approved_runs_capped_at_twenty() -> None:
+    approved = [_row(LedgerState.EXECUTED, args={"to": f"friend{i}@x.com"}) for i in range(25)]
+    denied = _row(LedgerState.DENIED, args={"to": "stranger@x.com"})
+
+    h = summarize_history([denied, *approved])
+
+    assert h.known_targets == tuple(f"friend{i}@x.com" for i in range(20))
+
+
+def test_history_line_with_only_approvals_still_reports_counts() -> None:
+    line = history_line(AutoHistory(approved_recent=2), "send_email")
+
+    assert line == "Recent decisions on send_email: 2 approved, 0 denied."
+
+
+def test_history_line_carries_the_last_reason_and_eight_known_targets() -> None:
+    targets = tuple(f"t{i}@x.com" for i in range(9))
+    history = AutoHistory(
+        approved_recent=3, denied_recent=1, last_deny_feedback="too pricey", known_targets=targets
+    )
+
+    line = history_line(history, "send_email")
+
+    assert line == (
+        "Recent decisions on send_email: 3 approved, 1 denied. Latest deny reason: "
+        "'too pricey'. Known from past runs: " + ", ".join(targets[:8]) + "."
+    )
+
+
+async def test_a_history_hold_explains_itself() -> None:
+    d = await _judge(AutoHistory(approved_recent=1, denied_recent=3))
+
+    assert d.reason == (
+        "You denied 3 recent send_email call(s), so this one needs your "
+        "go-ahead even though it looks authorized."
+    )
