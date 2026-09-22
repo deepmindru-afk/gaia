@@ -217,7 +217,7 @@ async def format_tool_call_entry(
     # from the unwrapped identity), else every card collapses to a generic
     # "Execute" row. The proxy's task_description becomes the card's label.
     call_args: dict[str, object] = tool_call.get("args", {}) or {}
-    task_description: str | None = None
+    task_description: str | None = None  # pragma: no mutate — only read as truthy; "" equals None
     unwrapped_name, unwrapped_args = unwrap_execute_call(tool_name_raw, call_args)
     if unwrapped_name != tool_name_raw:
         # A renamed call is by construction an execute call, so these are its args.
