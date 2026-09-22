@@ -4,17 +4,22 @@ Postgres, the document writer and the two LLM calls are mocked; the size cap,
 the retry, the fact-check and the agenda rendering under test are real.
 """
 
+import asyncio
 from datetime import UTC, datetime
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
+from fakeredis.aioredis import FakeRedis
 import pytest
 
 from app.constants.memory import (
     AGENDA_CATEGORY_PATH,
     AGENDA_INJECTED_ITEM_CAP,
     CONSOLIDATION_FACTS_LIMIT,
+    CONSOLIDATION_PENDING_KEY,
+    CONSOLIDATION_PENDING_TTL,
     DOCUMENT_TARGET_MAX_CHARS,
     MemoryDocType,
     MemoryEntityType,
@@ -797,3 +802,47 @@ class TestFormatInputs:
             "## Previous version of the document (a draft — the facts below outrank it)\n"
             "(no previous version)\n\n(no facts)"
         )
+
+
+PENDING_KEY = CONSOLIDATION_PENDING_KEY.format(user_id=USER)
+
+
+@pytest.fixture
+def released_debounce(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """Hold the debounce window open until the test sets the returned event."""
+    release = asyncio.Event()
+    monkeypatch.setattr(consolidation, "_debounce_wait", release.wait)
+    return release
+
+
+@pytest.mark.unit
+class TestDebouncedScheduling:
+    async def test_ingestions_inside_the_window_cost_one_merged_consolidation(
+        self, fake_redis: FakeRedis, released_debounce: asyncio.Event
+    ) -> None:
+        with patch.object(consolidation, "consolidate", AsyncMock(return_value=[])) as run:
+            await consolidation.schedule_consolidation(USER, {MemoryDocType.USER_MD})
+            await consolidation.schedule_consolidation(USER, {MemoryDocType.PEOPLE_MD})
+            await consolidation.schedule_consolidation(USER, {MemoryDocType.USER_MD})
+            pending = json.loads(await fake_redis.get(PENDING_KEY))
+            ttl = await fake_redis.ttl(PENDING_KEY)
+            released_debounce.set()
+            await consolidation._waiters[USER]
+
+        assert pending == {"doc_types": ["people_md", "user_md"]}
+        assert CONSOLIDATION_PENDING_TTL - 5 <= ttl <= CONSOLIDATION_PENDING_TTL
+        run.assert_awaited_once_with(USER, [MemoryDocType.PEOPLE_MD, MemoryDocType.USER_MD])
+        assert await fake_redis.exists(PENDING_KEY) == 0
+        assert USER not in consolidation._waiters
+
+    async def test_a_pending_set_cleared_before_the_window_ends_consolidates_nothing(
+        self, fake_redis: FakeRedis, released_debounce: asyncio.Event
+    ) -> None:
+        with patch.object(consolidation, "consolidate", AsyncMock(return_value=[])) as run:
+            await consolidation.schedule_consolidation(USER, {MemoryDocType.MEMORY_MD})
+            waiter = consolidation._waiters[USER]
+            await fake_redis.delete(PENDING_KEY)
+            released_debounce.set()
+            await waiter
+
+        run.assert_not_awaited()
