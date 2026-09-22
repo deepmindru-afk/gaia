@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 from httpx import AsyncClient
 
-from app.models.hil_models import HILMode, HILPreferences
+from app.models.hil_models import HILMode, HILPreferences, LedgerState
 from app.schemas.hil_schemas import BatchDecisionOutcome
+from app.services.hil.ledger_decide import LedgerDecision
 from app.services.hil.resolution import (
     ApprovalNotResumableError,
     ApprovalRequestForbiddenError,
@@ -343,9 +344,6 @@ class TestLedgerDecisionRouting:
         mock_decide: AsyncMock,
         client: AsyncClient,
     ):
-        from app.models.hil_models import LedgerState
-        from app.services.hil.ledger_decide import LedgerDecision
-
         mock_flag.return_value = True
         mock_decide.return_value = LedgerDecision(
             committed=True,
@@ -383,7 +381,8 @@ class TestLedgerDecisionRouting:
         mock_resolve.assert_awaited_once()
         mock_decide.assert_not_awaited()
 
-    @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
+    # The batch loop lives in ledger_decide.decide_ledger_batch, so decide_ledger is patched there.
+    @patch("app.services.hil.ledger_decide.decide_ledger", new_callable=AsyncMock)
     @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
     @patch("app.api.v1.endpoints.approvals.resolve_approvals_batch", new_callable=AsyncMock)
     async def test_batch_decision_routes_each_item_to_ledger(
@@ -393,9 +392,6 @@ class TestLedgerDecisionRouting:
         mock_decide: AsyncMock,
         client: AsyncClient,
     ):
-        from app.models.hil_models import LedgerState
-        from app.services.hil.ledger_decide import LedgerDecision
-
         mock_flag.return_value = True
         mock_decide.side_effect = [
             LedgerDecision(
@@ -442,9 +438,6 @@ class TestLedgerAutoPolicyParity:
         mock_decide: AsyncMock,
         client: AsyncClient,
     ):
-        from app.models.hil_models import LedgerState
-        from app.services.hil.ledger_decide import LedgerDecision
-
         mock_flag.return_value = True
         mock_decide.return_value = LedgerDecision(
             committed=False,
@@ -469,9 +462,6 @@ class TestLedgerStaleVersionHonesty:
     async def test_stale_version_returns_success_false(
         self, mock_flag: AsyncMock, mock_decide: AsyncMock, client: AsyncClient
     ):
-        from app.models.hil_models import LedgerState
-        from app.services.hil.ledger_decide import LedgerDecision
-
         mock_flag.return_value = True
         mock_decide.return_value = LedgerDecision(
             committed=False,

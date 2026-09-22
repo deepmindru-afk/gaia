@@ -16,7 +16,11 @@ from app.db.repositories.approval_ledger import (
     ApprovalLedgerRepository,
     approval_ledger_repository,
 )
-from app.models.hil_models import LedgerState
+from app.models.hil_models import ApprovalProposal, LedgerState
+
+_PROPOSAL = ApprovalProposal(
+    conversation_id="c1", fingerprint="fp", tool_name="T", args={}, summary="s"
+)
 
 
 def _doc(
@@ -63,13 +67,7 @@ class TestRegister:
     async def test_inserts_pending_and_returns_new_id(
         self, repo: ApprovalLedgerRepository, collection: MagicMock
     ) -> None:
-        ap_id = await repo.register(
-            conversation_id="c1",
-            fingerprint="fp",
-            tool_name="T",
-            args={},
-            summary="s",
-        )
+        ap_id = await repo.register(_PROPOSAL)
 
         assert ap_id.startswith("ap_")
         inserted = collection.insert_one.await_args.args[0]
@@ -84,9 +82,7 @@ class TestRegister:
         cursor.to_list = AsyncMock(return_value=[_doc(state="approved")])
         collection.find = MagicMock(return_value=cursor)
 
-        ap_id = await repo.register(
-            conversation_id="c1", fingerprint="fp", tool_name="T", args={}, summary="s"
-        )
+        ap_id = await repo.register(_PROPOSAL)
 
         assert ap_id == "ap_1"
         collection.insert_one.assert_not_awaited()
@@ -99,9 +95,7 @@ class TestRegister:
         cursor.to_list = AsyncMock(return_value=[_doc(state="revoked")])
         collection.find = MagicMock(return_value=cursor)
 
-        ap_id = await repo.register(
-            conversation_id="c1", fingerprint="fp", tool_name="T", args={}, summary="s"
-        )
+        ap_id = await repo.register(_PROPOSAL)
 
         assert ap_id != "ap_1"
         collection.insert_one.assert_awaited_once()

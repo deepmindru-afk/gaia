@@ -21,22 +21,38 @@ from collections.abc import Awaitable, Mapping
 import json
 import os
 from pathlib import Path
+import re
 import time
 from typing import Any
 
 import httpx
 
-from app.constants.hil import HIL_JEV_ACCEPT_LINE, HIL_JEV_REJECT_FLOOR
+from app.config.settings import get_settings
+from app.constants.hil import HIL_JEV_ACCEPT_LINE, HIL_JEV_REJECT_FLOOR, JevChoice
 
 # Canonical question + mapping live in app (prompts.py, jev_judge.py) — the
 # suite imports them so editing the judge text IS retuning, and every run
 # journals the questions version it graded.
-from app.services.hil.intent import AutoHistory, JudgedCall
-from app.services.hil.jev_judge import decide_from_verdict
+from app.services.hil.intent import (
+    AutoContext,
+    AutoHistory,
+    JudgedCall,
+    history_line,
+    judge_intent,
+)
+from app.services.hil.jev_judge import (
+    JevCase,
+    JevVerdict,
+    ask_jev,
+    ask_jev_forbid,
+    decide_from_verdict,
+    map_jev_choice,
+    needs_forbid_check,
+)
 from app.services.hil.prompts import JEV_QUESTIONS_VERSION
 from app.services.hil.utils import PriorCall
 from scripts.evals.core.cases import load_case_files
-from scripts.evals.core.cost import EvalCostTracker
+from scripts.evals.core.cost import EvalCostTracker, estimate_tokens
 from scripts.evals.core.gates import score_gates
 from scripts.evals.core.providers import EvalConfig, ProviderConfig
 from scripts.evals.core.runner import Suite, register_suite
@@ -100,6 +116,23 @@ def _eval_assistant_turns(setup: Mapping[str, Any]) -> list[str]:
     return [str(t) for t in turns]
 
 
+def _eval_case(setup: Mapping[str, Any]) -> JevCase:
+    """What prod weighs a verdict against, built from a case's setup block."""
+    return JevCase(
+        call=_eval_call(setup),
+        user_messages=[str(t) for t in setup.get("turns", [])],
+        prior_calls=_eval_priors(setup),
+        history=_eval_history(setup),
+    )
+
+
+def _settled_forbid(forbid: str | None, forbid_conf: float, reject_floor: float) -> str | None:
+    """Settle the double-check as prod's _forbid_verdict does: forbidden only past the floor."""
+    if forbid == JevChoice.FORBIDDEN and forbid_conf < reject_floor:
+        return JevChoice.PERMITTED
+    return forbid
+
+
 class JudgeTransport:
     """One case: build judge state from the YAML, run one backend, journal all."""
 
@@ -153,16 +186,13 @@ class JudgeTransport:
         )
 
     async def _run_llm(self, setup: Mapping[str, Any]) -> tuple[str, str, tuple[int, int]]:
-        from app.services.hil.intent import judge_intent
-        from scripts.evals.core.cost import estimate_tokens
-
-        turns = [str(t) for t in setup.get("turns", [])]
+        case = _eval_case(setup)
+        turns = case.user_messages
         decision = await judge_intent(
-            user_id="hil-judge-eval",
+            AutoContext(user_id="hil-judge-eval", history=case.history),
             user_messages=turns,
-            call=_eval_call(setup),
-            prior_calls=_eval_priors(setup),
-            history=_eval_history(setup),
+            call=case.call,
+            prior_calls=case.prior_calls,
             assistant_turns=_eval_assistant_turns(setup),
         )
         # App-side metering owns LLM cost, so journal an openly-labelled
@@ -177,31 +207,18 @@ class JudgeTransport:
     async def _run_jev(
         self, setup: Mapping[str, Any], provider: ProviderConfig
     ) -> tuple[str, str, tuple[int, int]]:
-        from app.config.settings import get_settings
-        from app.services.hil.intent import history_line
-        from app.services.hil.jev_judge import (
-            ask_jev,
-            ask_jev_forbid,
-            decide_from_verdict,
-            map_jev_choice,
-            needs_forbid_check,
-        )
-
         key = get_settings().OPENROUTER_API_KEY
         if not key:
             raise ProviderError(provider.name, "OPENROUTER_API_KEY unset")
-        history = _eval_history(setup)
-        turns = [str(t) for t in setup.get("turns", [])]
-        priors = _eval_priors(setup)
-        call = _eval_call(setup)
-        assistant_turns = _eval_assistant_turns(setup)
+        case = _eval_case(setup)
+        turns, call, history = case.user_messages, case.call, case.history
         try:
             choice, confidence, probs, tokens_in, tokens_out = await ask_jev(
                 user_messages=turns,
                 call=call,
-                prior_calls=priors,
+                prior_calls=case.prior_calls,
                 history=history,
-                assistant_turns=assistant_turns,
+                assistant_turns=_eval_assistant_turns(setup),
             )
         except httpx.HTTPError as e:
             raise ProviderError(provider.name, f"decisions API failed: {e}") from e
@@ -229,18 +246,13 @@ class JudgeTransport:
                 forbid, forbid_conf = "unclear-forbid", 0.0
         # Grade the PROD path (mapping + grounding vetoes), not just the choice.
         decision = decide_from_verdict(
-            choice=choice,
-            confidence=confidence,
-            probabilities=probs,
-            user_messages=turns,
-            call=call,
-            prior_calls=priors,
-            history=history,
-            forbid=(
-                forbid
-                if forbid != "forbidden" or forbid_conf >= HIL_JEV_REJECT_FLOOR
-                else "permitted"
+            JevVerdict(
+                choice=choice,
+                confidence=confidence,
+                probabilities=probs,
+                forbid=_settled_forbid(forbid, forbid_conf, HIL_JEV_REJECT_FLOOR),
             ),
+            case,
         )
         history_text = history_line(history, str(setup.get("tool")))
         detail = (
@@ -260,8 +272,6 @@ class JudgeTransport:
 
 def detail_state(detail: str) -> dict[str, Any]:
     """Split the journaled detail back into fields the sweep reads offline."""
-    import re as _re
-
     parts: dict[str, Any] = {"detail": detail}
     head, _, probs_raw = detail.partition(" probs=")
     choice, _, conf = head.partition(" conf=")
@@ -270,7 +280,7 @@ def detail_state(detail: str) -> dict[str, Any]:
         parts["confidence"] = float(conf.strip())
     except ValueError:
         parts["confidence"] = 0.0
-    forbid_match = _re.search(r"forbid=([a-z-]+):([\d.]+)", detail)
+    forbid_match = re.search(r"forbid=([a-z-]+):([\d.]+)", detail)
     parts["forbid_choice"] = forbid_match.group(1) if forbid_match else None
     try:
         parts["forbid_conf"] = float(forbid_match.group(2)) if forbid_match else 0.0
@@ -302,32 +312,21 @@ def sweep_journal(run_dir: Path) -> str:
                 rows.append(json.loads(line))
     rows = [r for r in rows if (r.get("end_state") or {}).get("choice")]
 
-    from scripts.evals.suites.hil_judge import (
-        _eval_history,
-    )
-
     def _regrade(row: dict[str, Any], accept: float, reject: float) -> str:
         """Full pipeline outcome for one journaled case: mapping + vetoes."""
         es = row["end_state"]
-        setup = es.get("setup") or {}
-        call = _eval_call(setup)
-        priors = _eval_priors(setup)
-        forbid = es.get("forbid_choice")
         return decide_from_verdict(
-            choice=str(es["choice"]),
-            confidence=float(es["confidence"]),
-            probabilities=dict(es.get("probabilities") or {}),
-            user_messages=[str(t) for t in setup.get("turns", [])],
-            call=call,
-            prior_calls=priors,
-            history=_eval_history(setup),
+            JevVerdict(
+                choice=str(es["choice"]),
+                confidence=float(es["confidence"]),
+                probabilities=dict(es.get("probabilities") or {}),
+                forbid=_settled_forbid(
+                    es.get("forbid_choice"), float(es.get("forbid_conf") or 0.0), reject
+                ),
+            ),
+            _eval_case(es.get("setup") or {}),
             accept_line=accept,
             reject_floor=reject,
-            forbid=(
-                forbid
-                if forbid != "forbidden" or float(es.get("forbid_conf") or 0.0) >= reject
-                else "permitted"
-            ),
         ).outcome
 
     graded = sum(
@@ -343,10 +342,10 @@ def sweep_journal(run_dir: Path) -> str:
             score = 0
             dangerous = 0
             for r in rows:
-                out = _regrade(r, accept, reject)
+                regraded = _regrade(r, accept, reject)
                 want = str((r.get("expected") or {}).get("outcome"))
-                score += out == want
-                dangerous += out == "accept" and want != "accept"
+                score += regraded == want
+                dangerous += regraded == "accept" and want != "accept"
             best.append((score, -dangerous, accept, reject))
     best.sort(reverse=True)
     out = [
