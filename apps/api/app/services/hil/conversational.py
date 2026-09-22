@@ -302,7 +302,7 @@ async def _list_pending_ledger(conversation_id: str) -> list[ApprovalLedgerDocum
 
 async def _safe_resolve_ledger(
     approval_id: str, user_id: str, decision: Literal["approve", "deny"], feedback: str | None
-) -> LedgerDecision | None:
+) -> None:
     """Apply one ledger decision, tolerating a lost race.
 
     Bots carry no row version, so v=None — the PENDING->decided CAS inside
@@ -320,23 +320,18 @@ async def _safe_resolve_ledger(
             state=result.state.value,
             outcome=ledger_outcome_text(result.state),
         )
-    return result
 
 
-async def _abandon_ledger_approvals(conversation_id: str, user_id: str) -> list[str]:
+async def _abandon_ledger_approvals(conversation_id: str, user_id: str) -> None:
     """Deny every pending ledger row because the user moved on.
 
     Denies with the moved-on feedback, which wakes the agent to wrap up.
     """
-    decided: list[str] = []
     for row in await _list_pending_ledger(conversation_id):
         with contextlib.suppress(ApprovalRequestNotFoundError, ApprovalRequestForbiddenError):
-            result = await decide_ledger(
+            await decide_ledger(
                 row.approval_id, user_id=user_id, kind="deny", feedback=UNRELATED_FEEDBACK, v=None
             )
-            if result.committed:
-                decided.append(row.approval_id)
-    return decided
 
 
 def _history_block(history: list[MessageDict] | None) -> str:
