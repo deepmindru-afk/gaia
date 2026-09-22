@@ -213,10 +213,9 @@ async def format_tool_call_entry(
     if not tool_name_raw:
         return None
 
-    # An execute-proxied call renders as its REAL tool — name, category, icon
-    # and inputs all come from the unwrapped identity, or every card in the
-    # "Used N tools" thread collapses to a generic "Execute" row. The proxy's
-    # task_description becomes the card's display label.
+    # An execute-proxied call renders as its REAL tool (name/category/icon/inputs
+    # from the unwrapped identity), else every card collapses to a generic
+    # "Execute" row. The proxy's task_description becomes the card's label.
     call_args: dict[str, Any] = tool_call.get("args", {}) or {}
     task_description: str | None = None
     unwrapped_name, unwrapped_args = unwrap_execute_call(tool_name_raw, call_args)

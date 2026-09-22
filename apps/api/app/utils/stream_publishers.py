@@ -69,15 +69,12 @@ class ExtractedToolData(BaseModel):
 
 
 def optional_stream_writer() -> Callable[[dict[str, Any]], None] | None:
-    """The graph stream writer, or None outside a graph run.
+    """Return the graph stream writer, or None outside a graph run.
 
-    Tools run in two contexts: inside a LangGraph run (model-invoked, writer
-    present) and via backend dispatch (ticket redeem, sandbox, workflows —
-    no Pregel runtime). ``get_stream_writer()`` raises outside a run
-    (``KeyError: __pregel_runtime`` under a bare runnable config,
-    ``RuntimeError`` with no config at all), so call sites that treat the
-    writer as a best-effort UI hint must use this and skip when it returns
-    None. The tool's return value — not the writer — carries the result.
+    get_stream_writer() raises outside a Pregel runtime (backend dispatch: ticket
+    redeem, sandbox, workflows), so call sites that treat the writer as a
+    best-effort UI hint use this and skip when it returns None. The result travels
+    in the tool's return value, not the writer.
     """
     try:
         writer: StreamWriter = get_stream_writer()

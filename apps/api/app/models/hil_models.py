@@ -117,10 +117,9 @@ class HILApprovalRecord(MongoDocument):
     # Stamped when the resume run is dispatched; a decided record without it is
     # a crashed resume the sweep re-dispatches.
     resumed_at: datetime | None = None
-    # Set only when a *detached background subagent* parked on this approval. The
-    # subagent's graph is checkpointed under this deterministic thread id — durable
-    # state, never the in-process session — for the HIL rework to resume. ``None``
-    # for every other approval (interactive tool calls, blocking handoffs).
+    # Set only when a detached background subagent parked on this approval: its
+    # graph is checkpointed under this deterministic thread id (durable, not the
+    # in-process session). None for every other approval.
     subagent_thread_id: str | None = None
     subagent_agent_name: str | None = None
     # Reserved for the HIL rework: stamped once a parked subagent has been resumed
@@ -195,16 +194,14 @@ class ApprovalLedgerDocument(MongoDocument):
     preview: str = ""
     owner_agent: str = ""
     blocked_by: list[str] = Field(default_factory=list)
-    # Background owner parked on this approval, for the resume driver: who to
-    # wake when it decides. ("workflow"|"todo", the workflow/todo id.) Empty on
-    # live runs, which resume through the executor inbox instead. Set once at
-    # registration from the run's configurable; never changes after.
+    # Background owner parked on this approval, for the resume driver: who to wake
+    # when it decides ("workflow"|"todo" plus the id). Empty on live runs, which
+    # resume through the executor inbox; set once at registration.
     owner_run_type: str = ""
     owner_id: str = ""
-    # Whether a resume was already enqueued for this approval. The approve tap
-    # and any retry/reconnect share it: exactly one resume per approval, and
-    # every further resume needs a fresh user approval (the human is the loop
-    # breaker, so no count cap is needed).
+    # Whether a resume was already enqueued: the approve tap and any retry/reconnect
+    # share it, so exactly one resume per approval. Every further resume needs a
+    # fresh user approval (the human is the loop breaker).
     owner_resumed: bool = False
     state: LedgerState = LedgerState.PENDING
     feedback: str | None = None

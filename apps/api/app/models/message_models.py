@@ -96,9 +96,8 @@ class MessageRequestWithHistory(BaseModel):
     executor_model: str | None = None
     use_default_models: bool = True
     # Platform-native id of the user's message (WhatsApp wamid, Telegram
-    # message_id, Discord id, Slack ts). Set only by bot turns so the id is
-    # persisted on the saved user message for later native reactions. Web and
-    # other clients leave it None.
+    # message_id, Discord id, Slack ts). Set only by bot turns for later native
+    # reactions; web and other clients leave it None.
     platform_message_id: str | None = None
 
 

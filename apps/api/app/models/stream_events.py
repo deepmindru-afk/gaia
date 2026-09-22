@@ -103,11 +103,9 @@ class ApprovalRequestEntryData(BaseModel):
     feedback: str | None
     auto_reason: str | None
     timeout_seconds: int
-    # Ledger-backed approvals (executor-free HIL): the agent's one-line why,
-    # seconds since registration (clients render "asked 2d ago"), and the row
-    # version the client saw (decide calls echo it back; stale v never
-    # overwrites). All optional — old-path cards omit them and old clients
-    # ignore what they don't know.
+    # Ledger-backed approvals (executor-free HIL): the agent's one-line why, age in
+    # seconds, and the row version the client saw (echoed back on decide; stale v
+    # never overwrites). All optional — old-path cards omit them.
     rationale: str | None = None
     age_seconds: int | None = None
     ledger_version: int | None = None

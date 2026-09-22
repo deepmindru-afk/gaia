@@ -45,15 +45,10 @@ def create_system_message(
 ) -> SystemMessage:
     """Return the STATIC main system prompt for the given agent.
 
-    The content is byte-identical across every user on the same channel so the
-    provider's implicit prompt cache can match across users — the first web
-    user of the day warms the cache, every subsequent web user hits it on
-    turn 1. For comms, the per-channel variants embed the output-format
-    addendum (OpenUI on web/mobile/desktop; text-only restrictions on
-    messaging platforms).
-
-    All user, time, and memory context is assembled by ``app.agents.context``
-    and delivered in its own messages — never in this static prefix.
+    Byte-identical across every user on the same channel so the provider's prompt
+    cache matches across users; comms variants embed the per-channel output-format
+    addendum. All user/time/memory context is assembled by app.agents.context and
+    delivered in its own messages, never in this static prefix.
     """
     del user_id, user_name  # intentionally unused — static prefix only
     if agent_type == "executor":
