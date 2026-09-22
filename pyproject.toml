@@ -480,10 +480,7 @@ unfixable = [
 # positionally to every registered custom tool handler regardless of whether
 # a given handler needs it.
 "apps/api/app/services/composio/custom_tools/gmail_tools.py" = ["ARG001"]
-# ANN401: generic decorator/proxy/settings surfaces that genuinely accept or
-# return arbitrary data -- Any is the correct type here, not a shortcut.
-"apps/api/app/db/redis.py" = ["ANN401"]
-# ANN401: the same two shapes, in the shared package. wide_events is the
+# ANN401: wide_events is the
 # structured-logging sink -- log.set()/warning()/error() take an arbitrary bag of
 # JSON-serializable event fields that is only stored and serialized, never
 # operated on. `object` would be the honest type for the bag itself but forces a
