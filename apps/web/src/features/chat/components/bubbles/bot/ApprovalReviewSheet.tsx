@@ -17,11 +17,14 @@ import type {
   BatchDecisionOutcome,
 } from "@shared/chat";
 import { formatApprovalAge } from "@shared/chat";
+import { flattenArgsPreview } from "@shared/utils";
 import { useState } from "react";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
-import { flattenArgsPreview } from "@/features/chat/utils/argsPreview";
-import { resolveBatchOutcomeStatus } from "@/features/chat/utils/batchOutcome";
+import {
+  BATCH_OUTCOME_REASON,
+  resolveBatchOutcomeStatus,
+} from "@/features/chat/utils/batchOutcome";
 import { toast } from "@/lib/toast";
 
 interface SheetDecision {
@@ -45,15 +48,15 @@ interface ApprovalReviewSheetProps {
 
 /**
  * Settle one batch outcome: server truth wins over the tapped button, so a
- * lost race never paints the wrong verdict. Returns true when the item stays
- * for review (genuinely stale), false when settled and removed.
+ * lost race never paints the wrong verdict. Any other uncommitted item keeps
+ * its decision in the sheet for review or retry.
  */
 function settleBatchOutcome(
   outcome: BatchDecisionOutcome,
   made: SheetDecision,
   onSettled: ApprovalReviewSheetProps["onSettled"],
   removeDecision: (approvalId: string) => void,
-): boolean {
+): void {
   if (outcome.resolved) {
     onSettled(
       outcome.approval_id,
@@ -61,9 +64,9 @@ function settleBatchOutcome(
       made.feedback.trim() || null,
     );
     removeDecision(outcome.approval_id);
-    return false;
+    return;
   }
-  if (outcome.reason === "not_found") {
+  if (outcome.reason === BATCH_OUTCOME_REASON.NOT_FOUND) {
     onSettled(
       outcome.approval_id,
       resolveBatchOutcomeStatus(
@@ -73,9 +76,7 @@ function settleBatchOutcome(
       made.feedback.trim() || null,
     );
     removeDecision(outcome.approval_id);
-    return false;
   }
-  return true;
 }
 
 /**
@@ -138,21 +139,17 @@ export default function ApprovalReviewSheet({
           return next;
         });
       };
-      let stale = 0;
       for (const outcome of response.outcomes) {
         const made = decisions[outcome.approval_id];
-        if (!made) continue;
-        if (settleBatchOutcome(outcome, made, onSettled, removeDecision)) {
-          stale += 1;
-        }
+        if (made) settleBatchOutcome(outcome, made, onSettled, removeDecision);
       }
-      if (stale > 0) {
+      const kept = response.outcomes.filter(
+        (o) => !o.resolved && o.reason !== BATCH_OUTCOME_REASON.NOT_FOUND,
+      );
+      if (kept.some((o) => o.reason === BATCH_OUTCOME_REASON.STALE)) {
         toast.error("Some approvals already moved — kept for review");
       }
-      const failed = response.outcomes.filter(
-        (o) => !o.resolved && o.reason !== "not_found" && o.reason !== "stale",
-      );
-      if (failed.length > 0) {
+      if (kept.some((o) => o.reason !== BATCH_OUTCOME_REASON.STALE)) {
         toast.error("Some approvals couldn't be submitted — please try again");
       }
     } catch {

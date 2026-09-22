@@ -1,12 +1,10 @@
 /**
- * Flatten tool args into preview rows for approval cards (RN port).
+ * Flatten tool args into preview rows for approval cards, on web and mobile.
  *
- * Same algorithm as web's `apps/web/src/features/chat/utils/argsPreview.ts`:
- * the old card filtered to top-level scalars, so a calendar create
- * (`{events: [...]}` plus metadata) showed one row and dropped the events.
- * This walks one level into objects and arrays of objects, grouping array
- * items (Event 1, Event 2) so the card shows what will happen, not the
- * schema shape. Reimplemented here for React Native — do not import web code.
+ * Top-level scalars alone drop the real content of a calendar create
+ * (`{events: [...]}`), so this walks one level into objects and arrays of
+ * objects, grouping array items (Event 1, Event 2) so the card shows what
+ * will happen, not the schema shape.
  */
 
 export interface ArgsPreviewRow {

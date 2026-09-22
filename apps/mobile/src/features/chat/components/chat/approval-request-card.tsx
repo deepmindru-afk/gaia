@@ -4,7 +4,7 @@ import type {
   ApprovalScope,
   ApprovalStatus,
 } from "@gaia/shared/chat";
-import { statusAfterDecision } from "@gaia/shared/utils";
+import { flattenArgsPreview, statusAfterDecision } from "@gaia/shared/utils";
 import * as Haptics from "expo-haptics";
 import { Button, Chip } from "heroui-native";
 import { useRef, useState } from "react";
@@ -22,7 +22,6 @@ import {
   APPROVAL_RESOLVED_META,
   approvalOutcomeText,
 } from "@/features/chat/utils/approval-status";
-import { flattenArgsPreview } from "@/features/chat/utils/args-preview";
 
 interface ApprovalRequestCardProps {
   data: ApprovalRequestData;
