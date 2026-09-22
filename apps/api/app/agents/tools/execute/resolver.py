@@ -55,6 +55,11 @@ _materialized_composio_tools: dict[str, BaseTool] = {}
 _unknown_composio_slugs: set[str] = set()
 
 
+def is_catalog_slug(tool_name: str) -> bool:
+    """Whether a name has a Composio catalog slug's ALLCAPS_SNAKE shape."""
+    return tool_name.isupper()
+
+
 async def resolve_tool(user_id: str | None, tool_name: str) -> ResolvedTool | None:
     """The canonical tool for a model-supplied name, or ``None`` if unknown."""
     if tool_name in TICKET_NAMES:
@@ -125,9 +130,9 @@ async def _materialize_composio_tool(tool_name: str) -> ResolvedTool | None:
     cached = _materialized_composio_tools.get(tool_name)
     if cached is not None:
         return ResolvedTool(name=tool_name, tool=cached, is_integration=True)
-    # Catalog slugs are ALLCAPS_SNAKE; anything else cannot be a Composio slug,
-    # and asking Composio for it costs a network round-trip per model typo.
-    if not tool_name.replace("_", "").isupper() or tool_name in _unknown_composio_slugs:
+    # Anything else cannot be a Composio slug, and asking Composio for it
+    # costs a network round-trip per model typo.
+    if not is_catalog_slug(tool_name) or tool_name in _unknown_composio_slugs:
         return None
     async with asyncio.timeout(COMPOSIO_CATALOG_LOOKUP_TIMEOUT_SECONDS):
         tools = await get_composio_service().get_tools_by_name([tool_name])
