@@ -12,6 +12,5 @@ async def sweep_hil_approvals(ctx: Mapping[str, object]) -> str:  # noqa: ARG001
     log.set(
         expired_count=counts["expired"],
         redispatched_count=counts["redispatched"],
-        deferred_subagent_count=counts["deferred_subagent"],
     )
-    return f"expired={counts['expired']} redispatched={counts['redispatched']} deferred_subagent={counts['deferred_subagent']}"
+    return f"expired={counts['expired']} redispatched={counts['redispatched']}"

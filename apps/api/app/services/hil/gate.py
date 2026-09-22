@@ -30,11 +30,12 @@ from app.agents.tools.execute.dispatch import DispatchError, _validate_args
 from app.constants.hil import (
     HIL_EXEMPT_TOOLS,
     HIL_STATUS_KWARG,
+    SUBAGENT_RESUME_CONFIG_KEY,
     HILToolMessageStatus,
 )
 from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
-from app.models.agent_models import AgentConfigurable
+from app.models.agent_models import AgentConfigurable, SubagentResumeItem
 from app.models.hil_models import (
     ApprovalLedgerDocument,
     ApprovalProposal,
@@ -112,6 +113,10 @@ class GateContext:
     # which resume through the executor inbox instead of re-enqueueing.
     owner_run_type: str = ""
     owner_id: str = ""
+    # A background subagent's own run: its thread and the recipe that resumes it,
+    # filed on every approval it raises so a decision can resume it from anywhere.
+    subagent_thread_id: str | None = None
+    subagent_resume: SubagentResumeItem | None = None
 
 
 @dataclass(frozen=True)
@@ -356,8 +361,17 @@ def read_gate_context(request: ToolCallRequest) -> GateContext | None:
             owner_run_type, owner_id = "workflow", workflow_id
         elif todo_id:
             owner_run_type, owner_id = "todo", todo_id
+    subagent_resume = configurable.get(SUBAGENT_RESUME_CONFIG_KEY)
     return GateContext(
-        stream_id, user_id, conversation_id, turns, pausable, owner_run_type, owner_id
+        stream_id,
+        user_id,
+        conversation_id,
+        turns,
+        pausable,
+        owner_run_type,
+        owner_id,
+        subagent_thread_id=configurable.get("thread_id") if subagent_resume else None,
+        subagent_resume=subagent_resume,
     )
 
 
@@ -445,6 +459,8 @@ async def _decide(
             summary=summary,
             integration_name=integration_name,
             auto_reason=auto_reason,
+            subagent_resume=context.subagent_resume,
+            subagent_thread_id=context.subagent_thread_id,
         )
         return _Pending(approval_id, call.name, summary, integration_name)
     except GraphBubbleUp:

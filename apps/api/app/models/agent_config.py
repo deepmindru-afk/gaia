@@ -10,6 +10,7 @@ under the same names, so consumers keep importing from there.
 """
 
 from collections.abc import Mapping
+from enum import StrEnum
 from typing import Any, Literal, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
@@ -28,6 +29,29 @@ CONFIGURABLE_KEY = "configurable"
 #: The execution mode a run is in. ``background`` runs have no user waiting on
 #: them, which is what suppresses HIL pauses and the executor wake-up path.
 ExecutionMode = Literal["interactive", "background"]
+
+
+class SubagentKind(StrEnum):
+    """Which delegation tool a subagent run came from — and so how it is rebuilt."""
+
+    SPAWN = "spawn"
+    MCP = "mcp"
+
+
+class SubagentResumeItem(TypedDict):
+    """How to rebuild a background subagent run, in any process, from what its tool was given.
+
+    integration_id is the per-user MCP id for an MCP run, empty for a spawn;
+    parent_configurable is the executor's configurable, persist-safe.
+    """
+
+    kind: SubagentKind
+    tool_call_id: str
+    task: str
+    context: str
+    integration_id: str
+    inherited_tool_names: list[str]
+    parent_configurable: "AgentConfigurable"
 
 
 class AgentConfigurable(TypedDict, total=False):
@@ -80,8 +104,8 @@ class AgentConfigurable(TypedDict, total=False):
     #: and inherited parent-overrides. Absent for non-chat roots.
     user_request: str | None
     user_message_id: str
-    #: The live comms turn's own bot message id. Threaded into ``call_executor``
-    #: so a resumed HIL pause reconciles onto this SAME message, not a new one.
+    #: The live turn's bot message id (a resumed HIL pause reconciles onto it). On an
+    #: executor run, the message its frames render into and its background subagents fold into.
     bot_message_id: str
     #: Onboarding preferences / writing style, established once at a run tree's
     #: root and inherited unchanged by every child agent. Absent when the root
@@ -153,6 +177,9 @@ class AgentConfigurable(TypedDict, total=False):
     #: Set only on a HIL resume re-dispatch; the handoff tool probes it to tell
     #: a replayed call from a fresh one. Keyed by ``HIL_RESUME_CONFIG_KEY``.
     hil_resume_replay: bool
+    #: Set only on a background subagent's own run: the recipe the HIL gate files
+    #: on its approvals. Keyed by ``SUBAGENT_RESUME_CONFIG_KEY``.
+    subagent_resume: SubagentResumeItem
     #: DEV-ONLY: the DEV_MODEL_OPTIONS key picked for the executor in the dev
     #: model switcher, since the executor builds its own configurable.
     dev_executor_model: str

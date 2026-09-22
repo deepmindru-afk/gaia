@@ -37,6 +37,7 @@ from app.constants.cache import EXECUTOR_BUSY_PREFIX
 from app.constants.memory import ReconcileOutcome
 from app.core.lazy_loader import providers
 from app.core.stream_manager import stream_manager
+from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
 from app.memory.ingestion import RetainedMemory
 from app.models.chat_models import ToolDataEntry
@@ -139,6 +140,11 @@ class ChainRun:
     executor_model: StreamingScriptedModel | None = None
     #: The handed-off subagent's scripted model, when the chain reaches one.
     subagent_model: StreamingScriptedModel | None = None
+    #: Every stream announced over ``executor.stream_started``, in order — a
+    #: background subagent's own, and any detached executor run's.
+    announced: list[dict[str, Any]] = field(default_factory=list)
+    #: Each stream's frames on its own, keyed by stream id (the comms stream included).
+    by_stream: dict[str, Transcript] = field(default_factory=dict)
 
     def attached_entries(self) -> list[dict[str, Any]]:
         return [entry for call_ in self.attached for entry in call_["entries"]]
@@ -199,6 +205,10 @@ async def run_chain(
         run.attached.append(kwargs)
         return True
 
+    async def _broadcast(_user_id: str, payload: dict[str, Any]) -> None:
+        if payload.get("type") == "executor.stream_started":
+            run.announced.append(payload)
+
     async def _deliver(
         _run: Any,
         text: str,
@@ -241,6 +251,7 @@ async def run_chain(
         patch("app.services.chat.stream.save_conversation_async", new=_save),
         patch.object(chat_stream.conversation_repository, "append_message_tool_data", new=_attach),
         patch("app.agents.core.background.executor_runner.deliver_result", new=_deliver),
+        patch.object(websocket_manager, "broadcast_to_user", new=_broadcast),
         patch(
             "app.services.files.FileService.list_conversation_files",
             new=AsyncMock(return_value=[]),
@@ -324,8 +335,15 @@ async def run_chain(
         if subagent is not None:
             await providers.areset(SUBAGENT_AGENT)
 
-    frames = [chunk async for chunk in stream_manager.subscribe_stream(stream_id)]
-    run.transcript = Transcript.from_sse("".join(frames))
+    # What the client saw: the turn's own stream, then each stream it was told
+    # to follow, in the order it was told.
+    streams = [stream_id, *(str(payload["stream_id"]) for payload in run.announced)]
+    chunks: list[str] = []
+    for each in streams:
+        frames = [chunk async for chunk in stream_manager.subscribe_stream(each)]
+        run.by_stream[each] = Transcript.from_sse("".join(frames))
+        chunks.extend(frames)
+    run.transcript = Transcript.from_sse("".join(chunks))
     return run
 
 
@@ -542,8 +560,8 @@ def fetched_page(text: str = "The executor is GAIA's worker tier.") -> AsyncMock
 
 
 class TestExecutorToSubagent:
-    async def test_all_three_tiers_land_on_one_stream(self) -> None:
-        """Comms opened the stream; the executor and subagent publish onto it from a detached task two levels down."""
+    async def test_all_three_tiers_reach_the_client(self) -> None:
+        """Comms and the executor share the turn's stream; the background subagent publishes on its own."""
         run = await run_chain(
             "explain the executor",
             comms=comms_delegating_script(),
@@ -553,7 +571,23 @@ class TestExecutorToSubagent:
         )
 
         assert run.transcript.tool_names() == ["call_executor", "handoff", "fetch_webpages"]
+        assert run.by_stream[run.stream_id].tool_names() == ["call_executor", "handoff"]
         assert run.transcript.subagent_ids() != []
+
+    async def test_the_subagents_own_stream_folds_into_the_turns_message(self) -> None:
+        """The subagent outlives the turn, so it streams on a stream of its own that the client folds into the turn's message."""
+        run = await run_chain(
+            "explain the executor",
+            comms=comms_delegating_script(),
+            executor=executor_handoff_script(),
+            subagent=subagent_fetch_script(),
+            fetch_webpage=fetched_page(),
+        )
+
+        row_id = run.transcript.subagent_ids()[0]
+        (announced,) = [payload for payload in run.announced if payload["task_id"] == row_id]
+        assert announced["bot_message_id"] == run.saved[0]["bot_message_id"]
+        assert run.by_stream[str(announced["stream_id"])].tool_names() == ["fetch_webpages"]
 
     async def test_the_subagents_tool_call_carries_its_subagent_id(self) -> None:
         """The frontend routes on subagent_id alone — untagged, the card would render at the turn's root instead of inside the subagent."""
@@ -601,8 +635,8 @@ class TestExecutorToSubagent:
         handoff = run.transcript.tool_call("handoff").index
         assert handoff < start < fetch
 
-    async def test_a_chat_turn_handoff_returns_the_background_spawn_acknowledgement(self) -> None:
-        """A turn with a stream_id always backgrounds the handoff, so the executor can steer it instead of blocking."""
+    async def test_a_chat_turn_handoff_returns_the_background_acknowledgement(self) -> None:
+        """A live turn backgrounds the handoff by default, and the acknowledgement names the id the executor steers it by."""
         run = await run_chain(
             "explain the executor",
             comms=comms_delegating_script(),
@@ -611,10 +645,12 @@ class TestExecutorToSubagent:
             fetch_webpage=fetched_page(),
         )
 
-        assert run.transcript.result_for("handoff") == (
-            f"Subagent {SUBAGENT_AGENT} started in background. "
-            "Steer it with message_subagent/cancel_subagent; its result arrives automatically."
-        )
+        row_id = run.transcript.subagent_ids()[0]
+        ack = run.transcript.result_for("handoff")
+        assert ack is not None
+        assert f"started in the background as subagent {row_id}" in ack
+        assert f'message_subagent(subagent_id="{row_id}"' in ack
+        assert f'cancel_subagent(subagent_id="{row_id}")' in ack
 
     async def test_the_subagents_answer_lands_in_a_collection_run_that_delivers_it(self) -> None:
         """The subagent's own text now reaches the executor through its inbox; nothing else carries it back."""
@@ -633,7 +669,8 @@ class TestExecutorToSubagent:
             for message in prompt
             if isinstance(message, HumanMessage)
         ]
-        assert any(f"{SUBAGENT_AGENT}: {SUBAGENT_ANSWER}" in text for text in shown), (
+        row_id = run.transcript.subagent_ids()[0]
+        assert any(f"(subagent {row_id}): {SUBAGENT_ANSWER}" in text for text in shown), (
             "the subagent's answer never reached the executor"
         )
         assert [result_type for _text, result_type in run.delivered] == ["final", "final"]
@@ -649,6 +686,12 @@ class TestExecutorToSubagent:
             fetch_webpage=fetched_page(),
         )
 
+        (saved_on,) = [
+            call_["message_id"]
+            for call_ in run.attached
+            if any(entry["tool_name"] == "subagent_group" for entry in call_["entries"])
+        ]
+        assert saved_on == run.saved[0]["bot_message_id"]
         group = next(
             entry for entry in run.attached_entries() if entry["tool_name"] == "subagent_group"
         )

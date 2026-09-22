@@ -219,6 +219,9 @@ SUBAGENT_CANCEL_TTL = ONE_HOUR_TTL
 # address live subagents by a stable id.
 RUNNING_SUBAGENTS_PREFIX = "subagents:running:"
 RUNNING_SUBAGENTS_TTL = ONE_HOUR_TTL
+# One live run per subagent checkpoint thread (SET NX, value = subagent_id): two
+# runs on one LangGraph thread corrupt its checkpoint. Held for the run's lifetime.
+RUNNING_SUBAGENT_THREAD_PREFIX = "subagents:thread:"
 # Max time a caller waits for a detached executor to finish before draining
 # whatever tool events were collected. Matches the busy lock TTL — the executor
 # cannot outlive its lock, so waiting longer would be pointless.

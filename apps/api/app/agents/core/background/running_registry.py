@@ -5,15 +5,19 @@ to steer it (message_subagent) or stop it (cancel_subagent). This is that
 handle: a Redis hash keyed by conversation_id whose fields are subagent ids, so
 the executor can enumerate exactly what is live and address one by id.
 
-Registered when a subagent starts, deregistered when it finishes — running only.
-A finished or HIL-parked subagent is not here (a parked one has stopped and is
-resumed through its own approval path, not steered).
+Claiming a run also claims its checkpoint thread, so one thread never carries two
+live runs. Claimed when a run starts, released when it finishes or parks — running
+only. A parked subagent is not here; its resume claims it again.
 """
 
 from dataclasses import asdict
 import json
 
-from app.constants.cache import RUNNING_SUBAGENTS_PREFIX, RUNNING_SUBAGENTS_TTL
+from app.constants.cache import (
+    RUNNING_SUBAGENT_THREAD_PREFIX,
+    RUNNING_SUBAGENTS_PREFIX,
+    RUNNING_SUBAGENTS_TTL,
+)
 from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache
 from app.models.agent_models import RunningSubagent
@@ -27,19 +31,39 @@ class RunningSubagents:
         self.conversation_id = conversation_id
         self._key = f"{RUNNING_SUBAGENTS_PREFIX}{conversation_id}"
 
-    async def register(self, subagent: RunningSubagent) -> None:
-        """Mark a subagent live. Idempotent on subagent_id."""
-        if not redis_cache.client:
-            return
-        await redis_cache.client.hset(
+    async def claim(self, subagent: RunningSubagent) -> bool:
+        """Mark a subagent live; False when another run already holds its thread.
+
+        Without Redis there is nothing to coordinate on, so the run is allowed —
+        the same degradation the executor busy lock applies.
+        """
+        client = redis_cache.client
+        if not client:
+            return True
+        thread_key = f"{RUNNING_SUBAGENT_THREAD_PREFIX}{subagent.subagent_thread_id}"
+        if not await client.set(
+            thread_key, subagent.subagent_id, nx=True, ex=RUNNING_SUBAGENTS_TTL
+        ):
+            return False
+        await client.hset(
             self._key, mapping={subagent.subagent_id: json.dumps(asdict(subagent), sort_keys=True)}
         )
-        await redis_cache.client.expire(self._key, RUNNING_SUBAGENTS_TTL)
+        await client.expire(self._key, RUNNING_SUBAGENTS_TTL)
+        return True
 
-    async def deregister(self, subagent_id: str) -> None:
-        """Drop a subagent that has finished."""
-        if redis_cache.client:
-            await redis_cache.client.hdel(self._key, subagent_id)
+    async def deregister(self, subagent: RunningSubagent) -> None:
+        """Drop a subagent that finished or parked, freeing its thread."""
+        client = redis_cache.client
+        if client:
+            await client.hdel(self._key, subagent.subagent_id)
+            await client.delete(f"{RUNNING_SUBAGENT_THREAD_PREFIX}{subagent.subagent_thread_id}")
+
+    async def holds_thread(self, subagent_thread_id: str) -> bool:
+        """Whether a live run is on this checkpoint thread right now."""
+        client = redis_cache.client
+        return bool(
+            client and await client.exists(f"{RUNNING_SUBAGENT_THREAD_PREFIX}{subagent_thread_id}")
+        )
 
     async def list(self) -> list[RunningSubagent]:
         """Every currently-running subagent for this conversation."""

@@ -58,7 +58,7 @@ async def redis():
 
 class TestListRunningSubagents:
     async def test_lists_a_running_subagent(self, redis) -> None:
-        await RunningSubagents(CONV).register(_sub("s1"))
+        assert await RunningSubagents(CONV).claim(_sub("s1"))
         out = await list_running_subagents.ainvoke({}, config=CONFIG)
         assert "s1" in out and "gmail" in out
 
@@ -69,7 +69,7 @@ class TestListRunningSubagents:
 
 class TestMessageSubagent:
     async def test_steer_lands_in_the_targeted_mailbox(self, redis) -> None:
-        await RunningSubagents(CONV).register(_sub("s1"))
+        assert await RunningSubagents(CONV).claim(_sub("s1"))
         await message_subagent.ainvoke(
             {"subagent_id": "s1", "message": "narrow to Q1 2024"}, config=CONFIG
         )
@@ -87,7 +87,7 @@ class TestMessageSubagent:
 
 class TestCancelSubagent:
     async def test_cancel_raises_the_targeted_flag(self, redis) -> None:
-        await RunningSubagents(CONV).register(_sub("s1"))
+        assert await RunningSubagents(CONV).claim(_sub("s1"))
         await cancel_subagent.ainvoke({"subagent_id": "s1"}, config=CONFIG)
         assert await SubagentCancel(THREAD).is_requested() is True
 

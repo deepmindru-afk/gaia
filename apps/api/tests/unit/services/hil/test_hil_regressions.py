@@ -187,12 +187,30 @@ class TestExemptSiblingsThatPauseSuppressAutoApproval:
             messages=[
                 ai_message_with_calls(
                     {"id": "call-1", "name": "send_email", "args": {}},
-                    {"id": "call-2", "name": pausing_tool, "args": {}},
+                    {"id": "call-2", "name": pausing_tool, "args": {"background": False}},
                 )
             ],
         )
 
         assert await has_pausing_sibling(request, USER_ID, "call-1") is True
+
+    @pytest.mark.parametrize("delegation_tool", ["handoff", "spawn_subagent"])
+    async def test_a_background_delegation_sibling_does_not_block(
+        self, delegation_tool: str
+    ) -> None:
+        # A background run parks on its own thread and never re-runs this node, so it
+        # must not cost the gated sibling its auto-approval.
+        request = make_request(
+            call_id="call-1",
+            messages=[
+                ai_message_with_calls(
+                    {"id": "call-1", "name": "send_email", "args": {}},
+                    {"id": "call-2", "name": delegation_tool, "args": {}},
+                )
+            ],
+        )
+
+        assert await has_pausing_sibling(request, USER_ID, "call-1") is False
 
     async def test_a_harmless_exempt_sibling_still_does_not_block(self) -> None:
         # The fix must not degrade into "any exempt sibling blocks", which would disable
@@ -221,7 +239,7 @@ class TestExemptSiblingsThatPauseSuppressAutoApproval:
             messages=[
                 ai_message_with_calls(
                     {"id": "call-1", "name": "send_email", "args": {}},
-                    {"id": "call-2", "name": "handoff", "args": {}},
+                    {"id": "call-2", "name": "handoff", "args": {"background": False}},
                 )
             ],
         )
@@ -541,7 +559,7 @@ class TestCancelledRunIsNotResurrectedByItsApproval:
             counts = await sweep_approvals()
             await drain_spawned_tasks()
 
-        assert counts == {"expired": 0, "redispatched": 0, "deferred_subagent": 0}
+        assert counts == {"expired": 0, "redispatched": 0}
         assert runner.await_count == 0
 
     async def test_clearing_the_resume_context_actually_unsets_the_field(self) -> None:
@@ -554,7 +572,10 @@ class TestCancelledRunIsNotResurrectedByItsApproval:
 
         approval_id, update = repository.update.await_args.args
         assert approval_id == "a1"
-        assert update.model_dump(exclude_unset=True) == {"resume_item": None}
+        assert update.model_dump(exclude_unset=True) == {
+            "resume_item": None,
+            "subagent_resume": None,
+        }
 
     async def test_an_uncancelled_approval_still_resumes_normally(self) -> None:
         # The guard must not cost the feature: an ordinary approval still runs.

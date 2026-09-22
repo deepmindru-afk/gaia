@@ -44,6 +44,7 @@ from app.models.hil_models import (
     HILApprovalStatus,
     LedgerState,
 )
+from app.models.user_models import AuthenticatedUser
 from app.schemas.hil_schemas import BatchDecisionItem, BatchDecisionOutcome
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.hil.approvals_store import list_pending_for_conversation
@@ -287,7 +288,7 @@ async def _reclaim_dead_holder(conversation_id: str) -> bool:
 
     A dead holder bricks delivery (deliver_to_executor appends to an inbox no
     live run drains). Reclaim only when all hold: lock present, stream has no
-    live session, older than STALE_HOLDER_MIN_AGE, no parked barrier approval.
+    live session, older than STALE_HOLDER_MIN_AGE, no paused executor approval.
     Compare-and-delete; never raises — on any doubt the lock stands.
     """
     try:
@@ -305,7 +306,7 @@ async def _reclaim_dead_holder(conversation_id: str) -> bool:
         if EXECUTOR_BUSY_TTL - ttl < STALE_HOLDER_MIN_AGE_SECONDS:
             return False
         for record in await list_pending_for_conversation(conversation_id):
-            if record.resume_item is not None or record.subagent_thread_id:
+            if record.resume_item is not None:
                 return False
         return await break_holder_lock(conversation_id, holder)
     except Exception as e:
@@ -332,7 +333,7 @@ async def _deliver_ticket(row: ApprovalLedgerDocument) -> None:
     await _reclaim_dead_holder(row.conversation_id)
     await deliver_to_executor(
         row.conversation_id,
-        {"user_id": row.user_id or ""},
+        AuthenticatedUser(user_id=row.user_id or ""),
         _ticket_task(row),
     )
 
@@ -360,7 +361,7 @@ async def _deliver_verdict(row: ApprovalLedgerDocument, outcome: str, result: ob
         await _reclaim_dead_holder(row.conversation_id)
         await deliver_to_executor(
             row.conversation_id,
-            {"user_id": row.user_id or ""},
+            AuthenticatedUser(user_id=row.user_id or ""),
             task,
         )
     except Exception as e:

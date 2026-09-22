@@ -44,7 +44,7 @@ class TestMidFinalizeWorkGetsARun:
         """Busy at entry (old run finalizing), free after the append (released, carry missed it)."""
         busy, start, append = _seams(busy=[True, False], started=True)
         with busy, start as start_mock, append as append_mock:
-            await er.deliver_to_executor(CONVERSATION, {"user_id": "u1"}, TASK)
+            await er.deliver_to_executor(CONVERSATION, AuthenticatedUser(user_id="u1"), TASK)
 
         append_mock.assert_awaited_once()  # the work is never dropped from the inbox
         start_mock.assert_awaited_once()  # ...nor left without a run to drain it
@@ -53,7 +53,7 @@ class TestMidFinalizeWorkGetsARun:
     async def test_a_live_run_absorbs_the_append_with_no_extra_start(self) -> None:
         busy, start, append = _seams(busy=[True, True], started=False)
         with busy, start as start_mock, append as append_mock:
-            await er.deliver_to_executor(CONVERSATION, {"user_id": "u1"}, TASK)
+            await er.deliver_to_executor(CONVERSATION, AuthenticatedUser(user_id="u1"), TASK)
 
         append_mock.assert_awaited_once()
         start_mock.assert_not_awaited()
@@ -61,11 +61,27 @@ class TestMidFinalizeWorkGetsARun:
     async def test_an_idle_conversation_starts_a_run_for_the_task_itself(self) -> None:
         busy, start, append = _seams(busy=[False], started=True)
         with busy, start as start_mock, append as append_mock:
-            await er.deliver_to_executor(CONVERSATION, {"user_id": "u1"}, TASK)
+            await er.deliver_to_executor(CONVERSATION, AuthenticatedUser(user_id="u1"), TASK)
 
         start_mock.assert_awaited_once()
         assert start_mock.await_args.args[2] == TASK
         append_mock.assert_not_awaited()
+
+
+class TestTaggedWorkTravelsThroughTheInbox:
+    async def test_an_idle_conversation_gets_the_entry_framed_and_a_carry_run(self) -> None:
+        # A subagent result must reach the model framed as a subagent result, so it is
+        # never the run's bare task, even when the conversation is idle.
+        busy, start, append = _seams(busy=[False], started=True)
+        with busy, start as start_mock, append as append_mock:
+            await er.deliver_to_executor(
+                CONVERSATION, AuthenticatedUser(user_id="u1"), TASK, tag=AgentTag.SUBAGENT_RESULT
+            )
+
+        append_mock.assert_awaited_once()
+        assert append_mock.await_args.args[1:] == (TASK, AgentTag.SUBAGENT_RESULT)
+        start_mock.assert_awaited_once()
+        assert start_mock.await_args.args[2] == EXECUTOR_CARRY_TASK
 
 
 class _FakeRedisClient:
@@ -159,7 +175,7 @@ class TestTheRealLockAndInbox:
             patch.object(er, "_spawn_detached_run") as spawn,
             patch.object(ExecutorInbox, "append", finalize_the_old_run_then_append),
         ):
-            await er.deliver_to_executor(CONVERSATION, {"user_id": "u1"}, TASK)
+            await er.deliver_to_executor(CONVERSATION, AuthenticatedUser(user_id="u1"), TASK)
             pending = await ExecutorInbox(CONVERSATION).read()
 
         spawn.assert_called_once()

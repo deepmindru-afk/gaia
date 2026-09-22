@@ -38,7 +38,11 @@ from app.agents.prompts.workflow_prompts import (
     WORKFLOW_SILENT_NOTIFY_SECTION,
 )
 from app.constants.agents import AgentTag, wrap_agent_payload
-from app.constants.general import EXECUTOR_THREAD_PREFIX, FINISH_TASK_NAME
+from app.constants.general import (
+    EXECUTOR_INTEGRATION_ID,
+    EXECUTOR_THREAD_PREFIX,
+    FINISH_TASK_NAME,
+)
 from app.constants.hil import LANGGRAPH_INTERRUPT_KEY
 from app.constants.llm import EXECUTOR_RECURSION_LIMIT
 from app.constants.log_tags import LogTag
@@ -205,6 +209,9 @@ class SubagentExecutionContext:
     initial_state: SubagentInitialState
     user_id: str | None = None
     stream_id: str | None = None
+    #: The stream of the turn that dispatched a background run onto its own
+    #: stream: a Stop on that turn stops the run too.
+    parent_stream_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -420,10 +427,14 @@ def _finalize_run(run: _StreamRun) -> SubagentOutcome:
             run_messages=tuple(run.run_messages),
         )
 
-    # A subagent that only narrated and never ran a tool didn't do the work — return
-    # an actionable signal so the parent re-issues the handoff instead of treating the
-    # planning text as the result.
-    if not run.tool_ran and not run.emitted_tool_calls and run.complete_message:
+    # A worker that only narrated did no work: say so, so its delegator re-issues it.
+    # The executor is nobody's delegate; its words are its answer (collection runs report).
+    if (
+        run.ctx.integration_id != EXECUTOR_INTEGRATION_ID
+        and not run.tool_ran
+        and not run.emitted_tool_calls
+        and run.complete_message
+    ):
         log.warning("subagent_returned_narration_only", subagent_name=run.ctx.agent_name)
         final_message = (
             f"The {run.ctx.agent_name} subagent ended without running any tool; it only "
@@ -514,8 +525,7 @@ async def execute_subagent_stream(
             # "async" — its mid-run checkpoints are needed.
             durability="exit",
         ):
-            # Check for cancellation
-            if ctx.stream_id and await stream_manager.is_cancelled(ctx.stream_id):
+            if await _stream_cancelled(ctx):
                 log.info(
                     f"{LogTag.AGENT} Subagent stream cancelled by user", stream_id=ctx.stream_id
                 )
@@ -564,6 +574,14 @@ async def execute_subagent_stream(
         status=_segment_status(outcome, cancelled=cancelled),
     )
     return outcome
+
+
+async def _stream_cancelled(ctx: SubagentExecutionContext) -> bool:
+    """Whether the user stopped this run's stream, or the turn that dispatched it."""
+    for stream_id in (ctx.stream_id, ctx.parent_stream_id):
+        if stream_id and await stream_manager.is_cancelled(stream_id):
+            return True
+    return False
 
 
 def _segment_status(outcome: SubagentOutcome, *, cancelled: bool) -> str:
@@ -729,7 +747,7 @@ def merge_approvals(payloads: list[HilInterruptPayload]) -> HilInterruptPayload:
 
     The first payload's own fields stay at the top level, so callers reading a single
     approval (resume_for_gate) are unaffected; approval_ids is what the batch
-    readers use (executor_runner._paused_approval_ids).
+    readers use (paused_approval_ids).
     """
     if not payloads:
         return {}
@@ -739,6 +757,17 @@ def merge_approvals(payloads: list[HilInterruptPayload]) -> HilInterruptPayload:
     merged = payloads[0].copy()
     merged["approval_ids"] = ids
     return merged
+
+
+def paused_approval_ids(payload: HilInterruptPayload) -> tuple[str, ...]:
+    """Every approval id a pause carries — the batch first, then the single id."""
+    batch = payload.get("approval_ids")
+    if isinstance(batch, list):
+        ids = tuple(str(a) for a in batch if a)
+        if ids:
+            return ids
+    single = payload.get("approval_id")
+    return (str(single),) if single else ()
 
 
 def compose_executor_brief(
@@ -920,7 +949,7 @@ async def prepare_executor_execution(
         agent_name="executor_agent",
         config=config,
         configurable=new_configurable,
-        integration_id="executor",
+        integration_id=EXECUTOR_INTEGRATION_ID,
         initial_state={"messages": messages, "todos": []},
         user_id=user_id,
         stream_id=stream_id,

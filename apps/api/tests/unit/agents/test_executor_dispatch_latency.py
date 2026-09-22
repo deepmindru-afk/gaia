@@ -526,7 +526,7 @@ class TestBackgroundRunExactWiring:
         with self._env(run, perf_values=[1000.0, 1000.0, 1000.5]) as env:
             await run_executor_background(run=run, task="the task", configurable=configurable)
 
-        env.execute.assert_awaited_once_with("the task", configurable, "exec-args", None)
+        env.execute.assert_awaited_once_with("the task", configurable, run, None)
 
     async def test_ttft_helper_receives_the_run_and_its_start(self) -> None:
         run = _run("exec-ttft-args")

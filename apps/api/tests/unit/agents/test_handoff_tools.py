@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import AIMessage, ToolMessage
@@ -13,9 +14,8 @@ from app.agents.core.subagents.handoff_tools import (
     CustomMcpSubagent,
     _get_subagent_by_id,
     _handoff_rejection,
-    _HandoffDispatch,
     _resolve_subagent,
-    _run_blocking_handoff,
+    build_handoff_delegation,
     check_integration_connection,
     handoff,
     index_custom_mcp_as_subagent,
@@ -25,10 +25,14 @@ from app.agents.core.subagents.subagent_runner import SubagentOutcome, subagent_
 from app.constants.cache import SUBAGENT_CACHE_PREFIX, SUBAGENT_CACHE_TTL
 from app.constants.hil import HIL_RESUME_CONFIG_KEY
 from app.db.repositories.user_integrations import user_integration_repository
+from app.models.agent_models import SubagentKind
 from app.models.integration_models import Integration
 from app.models.mcp_config import MCPConfig, SubAgentConfig
 from app.models.subagent_models import Subagent
 from app.utils.agent_utils import IntegrationMetadata
+
+HANDOFF = "app.agents.core.subagents.handoff_tools"
+DELEGATION = "app.agents.core.subagents.delegation"
 
 
 def _integration(integration_id: str, name: str, **overrides: object) -> Integration:
@@ -788,27 +792,19 @@ class TestConnectionChecksUseTheirArguments:
 
 
 @contextmanager
-def _resolved_subagent(agent_name: str, integration_id: str) -> Iterator[MagicMock]:
-    """Stand up everything a handoff needs past resolution, so only what it does with the task text is under test."""
+def _resolved_subagent(agent_name: str, integration_id: str) -> Iterator[AsyncMock]:
+    """Stand up everything a handoff needs past resolution; yield the runner it hands off to."""
     ctx = SimpleNamespace(agent_name=agent_name, integration_id=integration_id)
     with (
         patch(
-            "app.agents.core.subagents.handoff_tools.prepare_subagent_execution",
+            f"{HANDOFF}.prepare_subagent_execution",
             new_callable=AsyncMock,
             return_value=(ctx, None, None),
         ),
-        patch(
-            "app.agents.core.subagents.handoff_tools._has_parked_subagent",
-            new_callable=AsyncMock,
-            return_value=False,
-        ),
-        patch(
-            "app.agents.core.subagents.handoff_tools._run_blocking_handoff",
-            new_callable=AsyncMock,
-            return_value="subagent ran",
-        ) as dispatch,
+        patch(f"{HANDOFF}._has_parked_subagent", new_callable=AsyncMock, return_value=False),
+        patch(f"{HANDOFF}.delegate", new_callable=AsyncMock, return_value="subagent ran") as run,
     ):
-        yield dispatch
+        yield run
 
 
 @pytest.mark.unit
@@ -821,63 +817,148 @@ class TestHandoffRejectsAForeignProviderInTheTask:
     )
 
     async def test_the_prod_task_is_rejected_before_the_subagent_runs(self) -> None:
-        with _resolved_subagent("todo_agent", "todos") as dispatch:
+        with _resolved_subagent("todo_agent", "todos") as run:
             result = await handoff.coroutine(
                 subagent_id="todos",
                 task=self.PROD_TASK,
                 config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
             )
 
-        dispatch.assert_not_awaited()
+        run.assert_not_awaited()
         assert "Todoist" in result
         assert "activate_integration" in result
         assert "subagent:todoist" not in result
 
     async def test_the_same_task_without_the_provider_name_dispatches(self) -> None:
-        with _resolved_subagent("todo_agent", "todos") as dispatch:
+        with _resolved_subagent("todo_agent", "todos") as run:
             result = await handoff.coroutine(
                 subagent_id="todos",
                 task="Create these 8 separate tasks on Aryan's todo list.",
                 config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
             )
 
-        dispatch.assert_awaited_once()
+        run.assert_awaited_once()
         assert result == "subagent ran"
 
     async def test_the_provider_named_is_free_to_be_the_target(self) -> None:
-        with _resolved_subagent("todoist_agent", "todoist") as dispatch:
+        with _resolved_subagent("todoist_agent", "todoist") as run:
             result = await handoff.coroutine(
                 subagent_id="todoist",
                 task="Create 8 tasks in Todoist.",
                 config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
             )
 
-        dispatch.assert_awaited_once()
+        run.assert_awaited_once()
         assert result == "subagent ran"
 
 
 @pytest.mark.unit
-class TestBackgroundHandoffWithoutAStream:
-    """background=True needs a stream_id to route the result back; without one the handoff still runs, but blocking.
+class TestHandoffRunsOnTheSharedRunner:
+    """handoff decides nothing about how it runs: it hands the delegation and the caller's choice to the one runner spawn_subagent also uses."""
 
-    The executor has to be told, or it calls wait_for_subagents() for a
-    result that already arrived and waits on nothing.
-    """
-
-    async def test_the_result_is_prefixed_with_the_fallback_warning(self) -> None:
-        with _resolved_subagent("todo_agent", "todos") as dispatch:
-            result = await handoff.coroutine(
-                subagent_id="todos",
-                task="Create a task.",
-                background=True,
+    async def test_it_defaults_to_the_background(self) -> None:
+        with _resolved_subagent("mcp_agent", "my-mcp") as run:
+            await handoff.coroutine(
+                subagent_id="my-mcp",
+                task="Fetch the rows.",
                 config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
             )
 
-        dispatch.assert_awaited_once()
-        assert result == (
-            "[WARNING: background handoff fell back to blocking: "
-            "stream_id not propagated into executor configurable] subagent ran"
+        assert run.await_args.kwargs == {"background": True, "probe_parked": False}
+
+    async def test_background_false_waits_for_the_result(self) -> None:
+        with _resolved_subagent("mcp_agent", "my-mcp") as run:
+            await handoff.coroutine(
+                subagent_id="my-mcp",
+                task="Fetch the rows.",
+                background=False,
+                config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
+            )
+
+        assert run.await_args.kwargs["background"] is False
+
+    async def test_a_resume_replay_arms_the_checkpoint_probe(self) -> None:
+        with _resolved_subagent("mcp_agent", "my-mcp") as run:
+            await handoff.coroutine(
+                subagent_id="my-mcp",
+                task="Fetch the rows.",
+                config={
+                    "configurable": {
+                        "user_id": "u1",
+                        "thread_id": "t1",
+                        HIL_RESUME_CONFIG_KEY: True,
+                    }
+                },
+            )
+
+        assert run.await_args.kwargs["probe_parked"] is True
+
+    async def test_a_user_id_only_in_run_metadata_is_the_one_the_subagent_runs_for(self) -> None:
+        with patch(
+            f"{HANDOFF}.prepare_subagent_execution",
+            new_callable=AsyncMock,
+            return_value=(None, None, "stop here"),
+        ) as prepare:
+            result = await handoff.coroutine(
+                subagent_id="gmail",
+                task="Fetch the unread messages.",
+                config={"configurable": {"thread_id": "t1"}, "metadata": {"user_id": "u-meta"}},
+                tool_call_id="tc1",
+            )
+
+        assert result == "stop here"
+        assert prepare.call_args.kwargs["configurable"]["user_id"] == "u-meta"
+
+
+@pytest.mark.unit
+class TestHandoffBuildsItsDelegation:
+    """build_handoff_delegation is also how a parked MCP subagent is rebuilt, so every field it sets is load-bearing twice."""
+
+    @staticmethod
+    def _prepared(metadata: IntegrationMetadata | None) -> Any:
+        ctx = SimpleNamespace(agent_name="custom_mcp_ab12", integration_id="ab12")
+        return patch(
+            f"{HANDOFF}.prepare_subagent_execution",
+            new_callable=AsyncMock,
+            return_value=(ctx, metadata, None),
         )
+
+    async def test_the_row_takes_the_integrations_display_metadata(self) -> None:
+        metadata = IntegrationMetadata(
+            icon_url="https://cdn.test/mcp.png", integration_id="ab12", name="Team Wiki"
+        )
+        parent = {"user_id": "u1", "thread_id": "executor_c1"}
+        with self._prepared(metadata):
+            delegation = await build_handoff_delegation("ab12", "find the doc", parent, "tc1")
+
+        assert not isinstance(delegation, str)
+        assert delegation.kind is SubagentKind.MCP
+        assert delegation.subagent_id == subagent_row_id("tc1")
+        assert delegation.integration_id == "ab12"
+        assert delegation.parent_configurable is parent
+        assert delegation.integration_metadata is metadata
+        assert (delegation.display.name, delegation.display.icon_url) == (
+            "Team Wiki",
+            "https://cdn.test/mcp.png",
+        )
+        assert delegation.display.agent_type == "handoff"
+
+    async def test_without_metadata_the_row_falls_back_to_the_agent_and_integration(self) -> None:
+        with self._prepared(None):
+            delegation = await build_handoff_delegation("ab12", "find the doc", {}, "tc1")
+
+        assert not isinstance(delegation, str)
+        assert delegation.display.name == "custom_mcp_ab12"
+        assert delegation.display.tool_category == "ab12"
+        assert delegation.display.icon_url is None
+
+    async def test_an_unresolvable_subagent_returns_the_reason(self) -> None:
+        with patch(
+            f"{HANDOFF}.prepare_subagent_execution",
+            new_callable=AsyncMock,
+            return_value=(None, None, "not connected"),
+        ):
+            assert await build_handoff_delegation("ab12", "t", {}, "tc1") == "not connected"
 
 
 @pytest.mark.unit
@@ -910,30 +991,25 @@ class TestWorkflowHandoffCarriesTheSubagentsCallRecord:
 
     @contextmanager
     def _running_subagent(self) -> Iterator[None]:
-        """Real _run_blocking_handoff over a faked subagent stream — the record append under test lives inside it, must not be mocked."""
+        """Run the real runner over a faked subagent stream; the record append under test lives inside it."""
         ctx = SimpleNamespace(
             agent_name="gmail_agent",
             integration_id="gmail",
             configurable={},
             config={},
         )
+        registry = MagicMock(claim=AsyncMock(return_value=True), deregister=AsyncMock())
         with (
             patch(
-                "app.agents.core.subagents.handoff_tools.prepare_subagent_execution",
+                f"{HANDOFF}.prepare_subagent_execution",
                 new_callable=AsyncMock,
                 return_value=(ctx, None, None),
             ),
+            patch(f"{HANDOFF}._has_parked_subagent", new_callable=AsyncMock, return_value=False),
+            patch(f"{DELEGATION}.RunningSubagents", return_value=registry),
+            patch(f"{DELEGATION}.get_stream_writer", return_value=MagicMock()),
             patch(
-                "app.agents.core.subagents.handoff_tools._has_parked_subagent",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.get_stream_writer",
-                return_value=MagicMock(),
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                f"{DELEGATION}.execute_subagent_stream",
                 new_callable=AsyncMock,
                 return_value=self._outcome(),
             ),
@@ -950,6 +1026,7 @@ class TestWorkflowHandoffCarriesTheSubagentsCallRecord:
                         "user_id": "u1",
                         "thread_id": "t1",
                         "workflow_id": "wf1",
+                        "execution_mode": "background",
                     }
                 },
             )
@@ -963,6 +1040,7 @@ class TestWorkflowHandoffCarriesTheSubagentsCallRecord:
             result = await handoff.coroutine(
                 subagent_id="gmail",
                 task="Fetch the unread messages.",
+                background=False,
                 config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
             )
 
@@ -1161,272 +1239,18 @@ class TestAuthMcpResolutionUsesItsArguments:
 
 
 # ---------------------------------------------------------------------------
-# _run_blocking_handoff
-# ---------------------------------------------------------------------------
-
-
-def _blocking_ctx() -> SimpleNamespace:
-    """Build the parts of a SubagentExecutionContext that _run_blocking_handoff touches."""
-    return SimpleNamespace(
-        agent_name="gmail_agent",
-        integration_id="gmail",
-        configurable={},
-        config={},
-        initial_state={"intent": "triage the inbox"},
-    )
-
-
-def _stream_event(writer: MagicMock, key: str) -> dict[str, object]:
-    return next(call.args[0][key] for call in writer.call_args_list if key in call.args[0])
-
-
-@pytest.mark.asyncio
-class TestBlockingHandoffLifecycleEvents:
-    """subagent_start is the UI row for the run: its name, icon and category are the resolved integration's.
-
-    Its id must be the replay-stable row id, or an approval pause orphans
-    a spinner and opens a duplicate on resume.
-    """
-
-    @staticmethod
-    @contextmanager
-    def _subagent_run(writer: MagicMock, outcome: SubagentOutcome) -> Iterator[None]:
-        with (
-            patch("app.agents.core.subagents.handoff_tools.get_stream_writer", return_value=writer),
-            patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
-                new_callable=AsyncMock,
-                return_value=outcome,
-            ),
-        ):
-            yield
-
-    async def test_the_start_event_carries_the_integrations_display_metadata(self):
-        writer = MagicMock()
-        dispatch = _HandoffDispatch(
-            metadata=IntegrationMetadata(
-                icon_url="https://cdn.test/gmail.png",
-                integration_id="gmail_custom",
-                name="Gmail Inbox",
-            ),
-            agent_name="gmail_agent",
-            integration_id="gmail",
-            tool_call_id="tc1",
-        )
-        with self._subagent_run(writer, SubagentOutcome(text="done")):
-            result = await _run_blocking_handoff(_blocking_ctx(), dispatch)
-
-        start = _stream_event(writer, "subagent_start")
-        assert result == "done"
-        assert start["subagent_name"] == "Gmail Inbox"
-        assert start["icon_url"] == "https://cdn.test/gmail.png"
-        assert start["tool_category"] == "gmail_custom"
-        assert start["subagent_id"] == subagent_row_id("tc1")
-        assert _stream_event(writer, "subagent_end")["subagent_id"] == subagent_row_id("tc1")
-
-    async def test_a_subagent_without_metadata_falls_back_to_its_agent_and_integration(self):
-        writer = MagicMock()
-        dispatch = _HandoffDispatch(
-            metadata=None,
-            agent_name="gmail_agent",
-            integration_id="gmail",
-            tool_call_id="tc1",
-        )
-        with self._subagent_run(writer, SubagentOutcome(text="done")):
-            await _run_blocking_handoff(_blocking_ctx(), dispatch)
-
-        start = _stream_event(writer, "subagent_start")
-        assert start["subagent_name"] == "gmail_agent"
-        assert start["tool_category"] == "gmail"
-        assert "icon_url" not in start
-
-    async def test_a_resume_replay_recovers_the_parked_thread_instead_of_rerunning_it(self):
-        """Re-invoking a thread that already holds work redoes every side effect from before the pause — the emails go out twice."""
-        writer = MagicMock()
-        dispatch = _HandoffDispatch(
-            metadata=None,
-            agent_name="gmail_agent",
-            integration_id="gmail",
-            tool_call_id="tc1",
-            probe_parked=True,
-        )
-        with (
-            patch("app.agents.core.subagents.handoff_tools.get_stream_writer", return_value=writer),
-            patch(
-                "app.agents.core.subagents.handoff_tools.recover_from_checkpoint",
-                new_callable=AsyncMock,
-                return_value=SubagentOutcome(text="recovered"),
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
-                new_callable=AsyncMock,
-            ) as rerun,
-        ):
-            result = await _run_blocking_handoff(_blocking_ctx(), dispatch)
-
-        assert result == "recovered"
-        rerun.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-class TestBlockingRunRegistration:
-    """Blocking handoffs register in RunningSubagents like background ones.
-
-    Without this, list_running_subagents only ever shows background work: a
-    parallel list/message call landing mid-run reports nothing live.
-    """
-
-    @staticmethod
-    def _live_ctx() -> SimpleNamespace:
-        return SimpleNamespace(
-            agent_name="gmail_agent",
-            integration_id="gmail",
-            configurable={"conversation_id": "c1"},
-            config={"configurable": {"thread_id": "t1"}},
-            initial_state={"intent": "triage the inbox"},
-        )
-
-    @staticmethod
-    def _dispatch() -> _HandoffDispatch:
-        return _HandoffDispatch(
-            metadata=None,
-            agent_name="gmail_agent",
-            integration_id="gmail",
-            tool_call_id="tc1",
-        )
-
-    async def test_registers_with_live_ids_and_deregisters_on_completion(self):
-        writer = MagicMock()
-        registry = MagicMock()
-        registry.register = AsyncMock()
-        registry.deregister = AsyncMock()
-        with (
-            patch("app.agents.core.subagents.handoff_tools.get_stream_writer", return_value=writer),
-            patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
-                new_callable=AsyncMock,
-                return_value=SubagentOutcome(text="done"),
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.RunningSubagents",
-                return_value=registry,
-            ) as running_cls,
-        ):
-            result = await _run_blocking_handoff(self._live_ctx(), self._dispatch())
-
-        assert result == "done"
-        running_cls.assert_called_with("c1")
-        registered = registry.register.await_args.args[0]
-        assert registered.subagent_id == subagent_row_id("tc1")
-        assert registered.subagent_thread_id == "t1"
-        assert registered.integration_id == "gmail"
-        assert "triage" in registered.task_summary
-        registry.deregister.assert_awaited_once_with(subagent_row_id("tc1"))
-
-    async def test_deregisters_even_when_the_run_raises(self):
-        writer = MagicMock()
-        registry = MagicMock()
-        registry.register = AsyncMock()
-        registry.deregister = AsyncMock()
-        with (
-            patch("app.agents.core.subagents.handoff_tools.get_stream_writer", return_value=writer),
-            patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("graph exploded"),
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.RunningSubagents",
-                return_value=registry,
-            ),
-            pytest.raises(RuntimeError, match="graph exploded"),
-        ):
-            await _run_blocking_handoff(self._live_ctx(), self._dispatch())
-
-        registry.register.assert_awaited_once()
-        registry.deregister.assert_awaited_once_with(subagent_row_id("tc1"))
-
-    async def test_no_ids_means_no_registration(self):
-        """Recovery probes and id-less runs must not write registry junk."""
-        writer = MagicMock()
-        with (
-            patch("app.agents.core.subagents.handoff_tools.get_stream_writer", return_value=writer),
-            patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
-                new_callable=AsyncMock,
-                return_value=SubagentOutcome(text="done"),
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.RunningSubagents",
-            ) as running_cls,
-        ):
-            await _run_blocking_handoff(_blocking_ctx(), self._dispatch())
-
-        running_cls.assert_not_called()
-
-    async def test_every_run_across_an_approval_pause_reaches_the_call_record(self):
-        """A resumed run is a second run; dropping its messages loses the call the user approved from the playbook the executor writes."""
-        writer = MagicMock()
-        paused = SubagentOutcome(
-            text="",
-            interrupt={"approval_id": "a1"},
-            run_messages=(
-                AIMessage(
-                    content="",
-                    tool_calls=[{"name": "GMAIL_SEND", "args": {"to": "a@b.c"}, "id": "tc_a"}],
-                ),
-                ToolMessage(content="sent", tool_call_id="tc_a"),
-            ),
-        )
-        finished = SubagentOutcome(
-            text="both sent",
-            run_messages=(
-                AIMessage(
-                    content="",
-                    tool_calls=[{"name": "GMAIL_SEND", "args": {"to": "d@e.f"}, "id": "tc_b"}],
-                ),
-                ToolMessage(content="sent", tool_call_id="tc_b"),
-            ),
-        )
-        dispatch = _HandoffDispatch(
-            metadata=None,
-            agent_name="gmail_agent",
-            integration_id="gmail",
-            tool_call_id="tc1",
-            record_calls=True,
-        )
-        with (
-            patch("app.agents.core.subagents.handoff_tools.get_stream_writer", return_value=writer),
-            patch(
-                "app.agents.core.subagents.handoff_tools.resume_for_gate",
-                return_value={"status": "approved"},
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
-                new_callable=AsyncMock,
-                side_effect=[paused, finished],
-            ),
-        ):
-            result = await _run_blocking_handoff(_blocking_ctx(), dispatch)
-
-        assert result.startswith("both sent")
-        assert 'GMAIL_SEND({"to":"a@b.c"})' in result
-        assert 'GMAIL_SEND({"to":"d@e.f"})' in result
-
-
-# ---------------------------------------------------------------------------
 # _handoff_rejection
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 class TestHandoffRejectionMessages:
-    """A refusal is the executor's only instruction on what to do instead (wait_for_subagents()), so the wording is behaviour, not decoration.
+    """A refusal is the executor's only instruction on what to do instead, so the wording is behaviour, not decoration.
 
     Dropping the name gives the model "the None subagent is paused" to act on.
     """
 
-    async def test_a_parked_subagent_refuses_new_work_with_the_collect_instruction(self):
+    async def test_a_parked_subagent_refuses_new_work_and_says_its_result_is_coming(self):
         ctx = SimpleNamespace(agent_name="gmail_agent", integration_id="gmail")
         probed: list[object] = []
 
@@ -1434,271 +1258,20 @@ class TestHandoffRejectionMessages:
             probed.append(candidate)
             return candidate is ctx
 
-        with patch("app.agents.core.subagents.handoff_tools._has_parked_subagent", new=_parked):
-            rejection = await _handoff_rejection(ctx, "do the work", False, "s1")
+        with patch(f"{HANDOFF}._has_parked_subagent", new=_parked):
+            rejection = await _handoff_rejection(ctx, "do the work")
 
         assert rejection == (
             "The gmail_agent subagent is paused waiting for the user's approval. "
-            "Its outcome will be delivered on resolution; send it nothing meanwhile."
+            "It resumes on its own once the user decides and its result arrives in your "
+            "inbox; send it nothing meanwhile."
         )
         assert probed == [ctx]
 
-    async def test_a_blocking_handoff_refuses_to_collide_with_a_live_background_run(self):
-        """The slot is keyed by (stream_id, integration_id); a nulled key checks a slot nobody holds, letting two runs share one thread."""
+    async def test_an_unparked_subagent_with_a_clean_task_may_run(self):
         ctx = SimpleNamespace(agent_name="gmail_agent", integration_id="gmail")
-
-        def _has_bg(stream_id: str, integration_id: str) -> bool:
-            return (stream_id, integration_id) == ("", "gmail")
-
-        with (
-            patch(
-                "app.agents.core.subagents.handoff_tools._has_parked_subagent",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.has_bg_integration", side_effect=_has_bg
-            ),
-        ):
-            rejection = await _handoff_rejection(ctx, "do the work", False, None)
-
-        assert rejection == (
-            "A background gmail_agent subagent is already running on this "
-            "integration. Steer it with message_subagent or wait for its result to arrive."
-        )
-
-    async def test_a_background_handoff_is_left_to_the_session_slot_claim(self):
-        """The background branch enforces one-per-integration itself via claim_bg_integration; refusing here too would break parallel dispatch."""
-        ctx = SimpleNamespace(agent_name="gmail_agent", integration_id="gmail")
-        with (
-            patch(
-                "app.agents.core.subagents.handoff_tools._has_parked_subagent",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-            patch("app.agents.core.subagents.handoff_tools.has_bg_integration", return_value=True),
-        ):
-            assert await _handoff_rejection(ctx, "do the work", True, "s1") is None
-
-
-# ---------------------------------------------------------------------------
-# handoff — what it hands to the runners
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestHandoffBuildsItsDispatch:
-    """Everything past resolution travels in one _HandoffDispatch.
-
-    A nulled or dropped field silently downgrades the run: no metadata on
-    the UI row, no checkpoint probe on a resume replay, no call record for
-    a workflow.
-    """
-
-    @staticmethod
-    @contextmanager
-    def _blocking_run(metadata: IntegrationMetadata | None) -> Iterator[dict[str, object]]:
-        ctx = SimpleNamespace(agent_name="gmail_agent", integration_id="gmail")
-        seen: dict[str, object] = {"ctx": ctx, "calls": []}
-
-        async def _run(run_ctx: object, dispatch: object) -> str:
-            seen["calls"].append((run_ctx, dispatch))  # type: ignore[attr-defined]  # the seen bag holds mixed value types; mypy narrows to the first
-            return "subagent ran"
-
-        with (
-            patch(
-                "app.agents.core.subagents.handoff_tools.prepare_subagent_execution",
-                new_callable=AsyncMock,
-                return_value=(ctx, metadata, None),
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools._has_parked_subagent",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-            patch("app.agents.core.subagents.handoff_tools._run_blocking_handoff", new=_run),
-        ):
-            yield seen
-
-    async def test_the_dispatch_carries_the_metadata_ids_and_run_mode_flags(self) -> None:
-        metadata = IntegrationMetadata(icon_url=None, integration_id="gmail", name="Gmail")
-        with self._blocking_run(metadata) as seen:
-            result = await handoff.coroutine(
-                subagent_id="gmail",
-                task="Fetch the unread messages.",
-                config={
-                    "configurable": {
-                        "user_id": "u1",
-                        "thread_id": "t1",
-                        "workflow_id": "wf1",
-                        HIL_RESUME_CONFIG_KEY: "replay",
-                    }
-                },
-                tool_call_id="tc1",
-            )
-
-        assert result == "subagent ran"
-        (run_ctx, dispatch) = seen["calls"][0]  # type: ignore[index]  # the seen bag holds mixed value types; mypy narrows to the first
-        assert run_ctx is seen["ctx"]
-        assert dispatch == _HandoffDispatch(
-            metadata=metadata,
-            agent_name="gmail_agent",
-            integration_id="gmail",
-            tool_call_id="tc1",
-            probe_parked=True,
-            record_calls=True,
-        )
-
-    async def test_a_user_id_only_in_run_metadata_is_the_one_the_subagent_runs_for(self) -> None:
-        with (
-            patch(
-                "app.agents.core.subagents.handoff_tools.prepare_subagent_execution",
-                new_callable=AsyncMock,
-                return_value=(None, None, "stop here"),
-            ) as prepare,
-        ):
-            result = await handoff.coroutine(
-                subagent_id="gmail",
-                task="Fetch the unread messages.",
-                config={"configurable": {"thread_id": "t1"}, "metadata": {"user_id": "u-meta"}},
-                tool_call_id="tc1",
-            )
-
-        assert result == "stop here"
-        assert prepare.call_args.kwargs["configurable"]["user_id"] == "u-meta"
-
-    async def test_the_background_fallback_runs_the_very_same_context_and_dispatch(self) -> None:
-        with self._blocking_run(None) as seen:
-            result = await handoff.coroutine(
-                subagent_id="gmail",
-                task="Fetch the unread messages.",
-                background=True,
-                config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
-                tool_call_id="tc1",
-            )
-
-        (run_ctx, dispatch) = seen["calls"][0]  # type: ignore[index]  # the seen bag holds mixed value types; mypy narrows to the first
-        assert run_ctx is seen["ctx"]
-        assert dispatch == _HandoffDispatch(
-            metadata=None,
-            agent_name="gmail_agent",
-            integration_id="gmail",
-            tool_call_id="tc1",
-        )
-        assert result == (
-            "[WARNING: background handoff fell back to blocking: "
-            "stream_id not propagated into executor configurable] subagent ran"
-        )
-
-    async def test_a_background_dispatch_is_handed_the_runs_stream_id(self) -> None:
-        """Sid routes the detached result back to this conversation's bucket and keys its integration slot — the wrong one strands it."""
-        ctx = SimpleNamespace(agent_name="gmail_agent", integration_id="gmail")
-        calls: list[tuple[object, object, object]] = []
-
-        async def _dispatch(run_ctx: object, dispatch: object, sid: object) -> str:
-            calls.append((run_ctx, dispatch, sid))
-            return "started"
-
-        with (
-            patch(
-                "app.agents.core.subagents.handoff_tools.prepare_subagent_execution",
-                new_callable=AsyncMock,
-                return_value=(ctx, None, None),
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools._has_parked_subagent",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools._dispatch_background_handoff",
-                new=_dispatch,
-            ),
-        ):
-            result = await handoff.coroutine(
-                subagent_id="gmail",
-                task="Fetch the unread messages.",
-                background=True,
-                config={"configurable": {"user_id": "u1", "thread_id": "t1", "stream_id": "s1"}},
-                tool_call_id="tc1",
-            )
-
-        assert result == "started"
-        assert calls == [
-            (
-                ctx,
-                _HandoffDispatch(
-                    metadata=None,
-                    agent_name="gmail_agent",
-                    integration_id="gmail",
-                    tool_call_id="tc1",
-                ),
-                "s1",
-            )
-        ]
-
-
-@pytest.mark.unit
-class TestHandoffPassesTheRunModeToTheRejectionCheck:
-    """background and stream_id decide the dispatch path: a call with a stream_id is forced to background (the background branch guards the session slot itself), so the blocking-collision refusal only sees runs without one."""
-
-    @staticmethod
-    @contextmanager
-    def _live_background_run_on(stream_id: str) -> Iterator[None]:
-        ctx = SimpleNamespace(agent_name="gmail_agent", integration_id="gmail")
-
-        def _has_bg(seen_stream_id: str, integration_id: str) -> bool:
-            return (seen_stream_id, integration_id) == (stream_id, "gmail")
-
-        async def _dispatch(_ctx: object, _handoff: object, _sid: object) -> str:
-            return "started"
-
-        with (
-            patch(
-                "app.agents.core.subagents.handoff_tools.prepare_subagent_execution",
-                new_callable=AsyncMock,
-                return_value=(ctx, None, None),
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools._has_parked_subagent",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.has_bg_integration", side_effect=_has_bg
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools._run_blocking_handoff",
-                new_callable=AsyncMock,
-                return_value="subagent ran",
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools._dispatch_background_handoff",
-                new=_dispatch,
-            ),
-        ):
-            yield
-
-    async def test_a_stream_handoff_is_forced_to_background(self) -> None:
-        with self._live_background_run_on("s1"):
-            result = await handoff.coroutine(
-                subagent_id="gmail",
-                task="Fetch the unread messages.",
-                config={"configurable": {"user_id": "u1", "thread_id": "t1", "stream_id": "s1"}},
-            )
-
-        assert result == "started"
-
-    async def test_a_background_handoff_is_not_refused_by_that_same_slot(self) -> None:
-        with self._live_background_run_on("s1"):
-            result = await handoff.coroutine(
-                subagent_id="gmail",
-                task="Fetch the unread messages.",
-                background=True,
-                config={"configurable": {"user_id": "u1", "thread_id": "t1", "stream_id": "s1"}},
-            )
-
-        assert result == "started"
+        with patch(f"{HANDOFF}._has_parked_subagent", new_callable=AsyncMock, return_value=False):
+            assert await _handoff_rejection(ctx, "do the work") is None
 
 
 class TestHandoffRefusesProviderIds:
@@ -1734,60 +1307,3 @@ class TestHandoffRefusesProviderIds:
                 config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
             )
         assert "Unknown integration" in result
-
-
-class TestActivationForcesBackgroundHandoff:
-    """The executor only reaches handoff for per-user MCP subagents; those run in the background by default so the executor stays alive to steer/cancel them.
-
-    The switch is the dispatch path taken.
-    """
-
-    @staticmethod
-    def _patches(bg: AsyncMock, blocking: AsyncMock):
-        ctx = SimpleNamespace(agent_name="custommcp_agent", integration_id="custommcp")
-        return (
-            patch(
-                "app.agents.core.subagents.handoff_tools.prepare_subagent_execution",
-                AsyncMock(return_value=(ctx, None, None)),
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools._handoff_rejection",
-                AsyncMock(return_value=None),
-            ),
-            patch("app.agents.core.subagents.handoff_tools._dispatch_background_handoff", bg),
-            patch("app.agents.core.subagents.handoff_tools._run_blocking_handoff", blocking),
-        )
-
-    async def test_with_stream_id_forces_background(self):
-        bg, blocking = AsyncMock(return_value="[bg]"), AsyncMock(return_value="[blocking]")
-        p1, p2, p3, p4 = self._patches(bg, blocking)
-        with p1, p2, p3, p4:
-            result = await handoff.ainvoke(
-                {
-                    "args": {"subagent_id": "custommcp", "task": "do it"},
-                    "name": "handoff",
-                    "type": "tool_call",
-                    "id": "tc-1",
-                },
-                config={"configurable": {"user_id": "u1", "stream_id": "s-1"}},
-            )
-        assert result.content == "[bg]"
-        bg.assert_awaited_once()
-        blocking.assert_not_awaited()
-
-    async def test_without_stream_id_stays_blocking(self):
-        bg, blocking = AsyncMock(return_value="[bg]"), AsyncMock(return_value="[blocking]")
-        p1, p2, p3, p4 = self._patches(bg, blocking)
-        with p1, p2, p3, p4:
-            result = await handoff.ainvoke(
-                {
-                    "args": {"subagent_id": "custommcp", "task": "do it"},
-                    "name": "handoff",
-                    "type": "tool_call",
-                    "id": "tc-1",
-                },
-                config={"configurable": {"user_id": "u1"}},
-            )
-        assert result.content == "[blocking]"
-        blocking.assert_awaited_once()
-        bg.assert_not_awaited()

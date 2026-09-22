@@ -52,9 +52,6 @@ class StreamSession:
     #: Why, when it failed: the executor's own error text, or the wait's.
     executor_failure: str | None = None
     tool_events: list[dict[str, Any]] = field(default_factory=list)
-    # Integrations with a background handoff in flight: guards against a
-    # second concurrent handoff sharing (and corrupting) the same thread id.
-    bg_integrations: set[str] = field(default_factory=set)
     # Voice-mode streams: the executor's finalize step publishes a TTS-only
     # ``voice_tts`` frame with its narrated answer for the voice agent to speak.
     voice_mode: bool = False
@@ -95,6 +92,25 @@ class RunIdentity:
     #: started. Metric-only: a HIL resume is ``RunKind.QUEUED`` (it runs on its
     #: own stream) but never queued on the lock, so it must not label as queued.
     queued: bool = False
+
+
+def run_user_from_configurable(configurable: AgentConfigurable) -> AuthenticatedUser:
+    """Rebuild the user a run acts for from its configurable — the identity a detached run starts from."""
+    return _user_from_view(AgentConfigurableView.model_validate(configurable))
+
+
+def _user_from_view(view: AgentConfigurableView) -> AuthenticatedUser:
+    # A bare identity (no auth path produced it — see AuthenticatedUser.auth_provider).
+    # An absent identity key rebuilds as "", one carried as None stays None.
+    present = view.model_fields_set
+    return AuthenticatedUser(
+        user_id=view.user_id or "",
+        email=view.email if "email" in present else "",
+        name=view.user_name if "user_name" in present else "",
+        # Carry the home timezone forward so the comms re-voicing run reads the
+        # user's zone via build_agent_config instead of silently falling back to UTC.
+        timezone=view.user_timezone,
+    )
 
 
 @dataclass(frozen=True)
@@ -144,22 +160,10 @@ class ExecutorRun:
         flight off the boundary it is being built in.
         """
         view = AgentConfigurableView.model_validate(configurable)
-        # An absent identity key rebuilds as "", one carried as None stays None.
-        present = view.model_fields_set
         return cls(
             stream_id=identity.stream_id,
             conversation_id=identity.conversation_id,
-            # A bare identity rebuilt from the run's configurable (no auth path
-            # produced it — see AuthenticatedUser.auth_provider).
-            user=AuthenticatedUser(
-                user_id=view.user_id or "",
-                email=view.email if "email" in present else "",
-                name=view.user_name if "user_name" in present else "",
-                # Carry the home timezone forward so the comms re-voicing run
-                # reads the user's zone via build_agent_config instead of
-                # silently falling back to UTC.
-                timezone=view.user_timezone,
-            ),
+            user=_user_from_view(view),
             kind=identity.kind,
             task_id=identity.task_id,
             user_message_id=identity.user_message_id,
@@ -191,6 +195,11 @@ class ExecutorRun:
     @property
     def is_queued(self) -> bool:
         return self.kind is RunKind.QUEUED
+
+    @property
+    def render_message_id(self) -> str | None:
+        """The chat message this run's frames render into: the live turn's, a resumed turn's, or its own placeholder."""
+        return self.bot_message_id or (self.task_id if self.is_queued else None)
 
     @property
     def renders_native_cards(self) -> bool:
@@ -342,30 +351,3 @@ def claim_tool_output(stream_id: str, tool_call_id: str, subagent_id: str | None
         return False
     session.streamed_tool_outputs.add(tool_call_id)
     return True
-
-
-def claim_bg_integration(stream_id: str, integration_id: str) -> bool:
-    """Claim the one background-handoff slot for an integration this run.
-
-    False means one is already in flight — the caller must fall back to a
-    blocking handoff, because a second detached subagent for the same integration
-    would share its deterministic checkpoint thread id.
-    """
-    session = get_or_create_session(stream_id)
-    if integration_id in session.bg_integrations:
-        return False
-    session.bg_integrations.add(integration_id)
-    return True
-
-
-def release_bg_integration(stream_id: str, integration_id: str) -> None:
-    """Release an integration's background-handoff slot (task finished or parked)."""
-    session = _sessions.get(stream_id)
-    if session is not None:
-        session.bg_integrations.discard(integration_id)
-
-
-def has_bg_integration(stream_id: str, integration_id: str) -> bool:
-    """Whether a background handoff for this integration is in flight this run."""
-    session = _sessions.get(stream_id)
-    return bool(session and integration_id in session.bg_integrations)
