@@ -127,8 +127,26 @@ interface SseFrame {
   notice?: { text: string };
   text?: string;
   message_boundary?: MessageBoundary;
+  emoji_ack?: { emoji: string; reacts_to_message_id?: string };
   done?: boolean;
   conversation_id?: string;
+}
+
+/**
+ * Whether streamed text is a comms `REACT: <emoji>` control line — or a
+ * prefix of one while the directive is still split across frames.
+ *
+ * Held back so per-chunk adapters never paint the directive before the
+ * `emoji_ack` replaces it. Case-insensitive, leading whitespace allowed
+ * (mirrors `interpret_comms_output`); multi-line is always an ordinary reply.
+ */
+export function isReactDirectiveOrPrefix(text: string): boolean {
+  const candidate = text.replace(/^\s+/, "");
+  if (candidate === "" || candidate.includes("\n")) return candidate === "";
+  const upper = candidate.toUpperCase();
+  const keyword = "REACT:";
+  if (keyword.startsWith(upper)) return true;
+  return upper.startsWith(keyword);
 }
 
 /** Maps a raw transport error message to the user-facing copy to surface. */
@@ -163,6 +181,10 @@ async function streamChatOnce(
   // confirms the message was a real reply (a handoff preamble streams first and can be
   // retracted). `fullText` is the whole reply on render-at-end platforms (Discord/WhatsApp/iMessage).
   let pendingText = "";
+  // How much of `pendingText` has already been forwarded via `onChunk`. A
+  // held-back REACT directive is forwarded as nothing until it is
+  // disambiguated, so the forwarded prefix can lag the buffered whole.
+  let forwardedLength = 0;
   let conversationId = "";
   let streamError: Error | null = null;
 
@@ -172,6 +194,7 @@ async function streamChatOnce(
       ? `${fullText}${NEW_MESSAGE_BREAK_TOKEN}${pendingText}`
       : pendingText;
     pendingText = "";
+    forwardedLength = 0;
   };
 
   const ctx = {
@@ -189,6 +212,9 @@ async function streamChatOnce(
         platform_user_id: request.platformUserId,
         channel_id: request.channelId,
         is_dm: request.isDm ?? false,
+        ...(request.platformMessageId
+          ? { platform_message_id: request.platformMessageId }
+          : {}),
         ...(request.fileIds && request.fileIds.length > 0
           ? { file_ids: request.fileIds }
           : {}),
@@ -257,12 +283,36 @@ async function streamChatOnce(
         }
         if (frame.text) {
           pendingText += frame.text;
-          await onChunk(frame.text);
+          if (!isReactDirectiveOrPrefix(pendingText)) {
+            // Ordinary reply text — forward whatever has not been sent yet. A
+            // prefix that only looked like a directive (`Real…`) flushes whole
+            // here once the next frame disambiguates it.
+            const delta = pendingText.slice(forwardedLength);
+            forwardedLength = pendingText.length;
+            await onChunk(delta);
+          }
+          // Otherwise this is the REACT control line (or its split prefix):
+          // hold it back so per-chunk adapters never paint the directive. The
+          // `emoji_ack` below replaces the buffers with the bare emoji.
+        }
+        if (frame.emoji_ack) {
+          // The `REACT: <emoji>` ack: the delivered message is the bare emoji,
+          // not the raw directive. Replace both buffers so onDone reports it.
+          pendingText = "";
+          forwardedLength = 0;
+          fullText = frame.emoji_ack.emoji;
+          // The directive itself was never forwarded, so without this the
+          // streaming platforms (which render from onChunk) would show
+          // nothing. Deliver the emoji as the turn's one chunk instead.
+          if (fullText) {
+            await onChunk(fullText);
+          }
         }
         if (frame.message_boundary) {
           const { discarded } = frame.message_boundary;
           if (discarded) {
             pendingText = "";
+            forwardedLength = 0;
           } else {
             keepPendingText();
           }

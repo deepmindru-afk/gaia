@@ -15,13 +15,17 @@ export {
   APPROVAL_REQUEST_TOOL_NAME,
   approvalOutcomeLabel,
   DEFAULT_HIL_MODE,
+  formatApprovalAge,
   isSettled,
+  RECONFIRM_AGE_SECONDS,
   toolAsks,
   toolOverrideValue,
   upsertApprovalToolData,
 } from "./approvals";
 export type { ToolFixture } from "./fixtures";
 export { getFixture, TOOL_FIXTURES } from "./fixtures";
+export type { ReactionBadge, ReactionFoldable } from "./reactions";
+export { foldReactionAcks, isReactionAck } from "./reactions";
 export type {
   ChatStreamEvent,
   StreamToolDataEntry,
@@ -52,7 +56,6 @@ export type {
   CalendarEventDateTime,
   CalendarFetchData,
   CalendarListFetchData,
-  CalendarOptions,
   CodeChartData,
   CodeData,
   CodeOutput,

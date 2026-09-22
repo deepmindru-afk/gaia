@@ -7,15 +7,38 @@ import type {
   ApprovalRequestData,
   ApprovalStatus,
 } from "@shared/chat";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
+import { resolveBatchOutcomeStatus } from "@/features/chat/utils/batchOutcome";
 import { toast } from "@/lib/toast";
 import ApprovalRequestSection from "./ApprovalRequestSection";
 import { useApprovalResolver } from "./ApprovalResolveContext";
+import ApprovalReviewSheet from "./ApprovalReviewSheet";
+
+/** A withdrawn approval stays visible just long enough to prove the agent
+ * self-corrected — then collapses. Silent deletion reads as "did it send?". */
+const TOMBSTONE_MS = 10000;
+
+function RevokedTombstone({ item }: { item: ApprovalRequestData }) {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setVisible(false), TOMBSTONE_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  if (!visible) return null;
+  return (
+    <div className="w-full rounded-2xl bg-zinc-800/60 p-3 text-xs text-zinc-500">
+      Agent withdrew: {item.summary} — no action needed.
+    </div>
+  );
+}
 
 interface ApprovalRequestGroupProps {
   items: ApprovalRequestData[];
+  /** The conversation owning these cards — clears that stream's gate instead
+   * of the active one. */
+  conversationId?: string;
 }
 
 /**
@@ -29,6 +52,7 @@ interface ApprovalRequestGroupProps {
  */
 export default function ApprovalRequestGroup({
   items,
+  conversationId,
 }: ApprovalRequestGroupProps) {
   const resolveApproval = useApprovalResolver();
   const [batchSubmitting, setBatchSubmitting] =
@@ -36,6 +60,8 @@ export default function ApprovalRequestGroup({
   const markApprovalDecided = useMarkApprovalDecided();
 
   const pending = items.filter((item) => item.status === "pending");
+  const revoked = items.filter((item) => item.status === "revoked");
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const settle = (
     approvalId: string,
@@ -55,14 +81,21 @@ export default function ApprovalRequestGroup({
           decision,
         })),
       });
-      markApprovalDecided();
+      markApprovalDecided(conversationId);
       const status: ApprovalStatus =
         decision === "approve" ? "approved" : "denied";
       for (const outcome of response.outcomes) {
-        // "not_found" means it was already resolved elsewhere — settle it here
-        // too so the card doesn't linger; a genuinely failed item stays pending.
-        if (outcome.resolved || outcome.reason === "not_found") {
+        // Settle to the server's state, not the tapped button: not_found means
+        // the row was decided elsewhere. Falls back to the tap when the server
+        // sent no state.
+        if (outcome.resolved) {
           settle(outcome.approval_id, status, null);
+        } else if (outcome.reason === "not_found") {
+          settle(
+            outcome.approval_id,
+            resolveBatchOutcomeStatus(outcome.status, status),
+            null,
+          );
         }
       }
       if (
@@ -88,7 +121,6 @@ export default function ApprovalRequestGroup({
           <Button
             color="primary"
             size="sm"
-            isLoading={batchSubmitting === "approve"}
             isDisabled={batchSubmitting !== null}
             onPress={() => decideAll("approve")}
           >
@@ -97,12 +129,21 @@ export default function ApprovalRequestGroup({
           <Button
             variant="flat"
             size="sm"
-            isLoading={batchSubmitting === "deny"}
             isDisabled={batchSubmitting !== null}
             onPress={() => decideAll("deny")}
           >
             Decline all
           </Button>
+          {pending.length >= 3 && (
+            <Button
+              variant="bordered"
+              size="sm"
+              isDisabled={batchSubmitting !== null}
+              onPress={() => setSheetOpen(true)}
+            >
+              {`Review ${pending.length}`}
+            </Button>
+          )}
         </div>
       )}
       {pending.length > 0 && (
@@ -116,6 +157,7 @@ export default function ApprovalRequestGroup({
               key={item.approval_id}
               data={item}
               disabled={batchSubmitting !== null}
+              conversationId={conversationId}
               onDecided={(status, feedback) =>
                 settle(item.approval_id, status, feedback)
               }
@@ -123,6 +165,16 @@ export default function ApprovalRequestGroup({
           ))}
         </div>
       )}
+      {revoked.map((item) => (
+        <RevokedTombstone key={item.approval_id} item={item} />
+      ))}
+      <ApprovalReviewSheet
+        items={pending}
+        open={sheetOpen}
+        conversationId={conversationId}
+        onClose={() => setSheetOpen(false)}
+        onSettled={settle}
+      />
     </div>
   );
 }

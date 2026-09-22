@@ -20,6 +20,7 @@
  * @module
  */
 
+import { BOT_EVENTS } from "@gaia/shared/analytics";
 import {
   BaseBotAdapter,
   type BotCommand,
@@ -29,6 +30,7 @@ import {
   handleStreamingChat,
   hashLogIdentifier,
   type OutboundAttachment,
+  type OutboundReaction,
   type PlatformName,
   type RichMessage,
   type RichMessageTarget,
@@ -51,7 +53,32 @@ interface SlackMessageEvent {
   channel?: string;
   channel_type?: string;
   subtype?: string;
+  ts?: string;
 }
+
+/**
+ * Emoji → Slack shortcode for the ack reactions comms emits. reactions.add
+ * takes a name (white_check_mark), not the glyph. Curated to the small set
+ * comms actually uses for acknowledgments; anything unmapped falls back to a
+ * text bubble at the call site.
+ */
+const SLACK_EMOJI_SHORTCODES: Record<string, string> = {
+  "👍": "thumbsup",
+  "👎": "thumbsdown",
+  "✅": "white_check_mark",
+  "☑️": "ballot_box_with_check",
+  "👌": "ok_hand",
+  "👏": "clap",
+  "🙏": "pray",
+  "❤️": "heart",
+  "🎉": "tada",
+  "👀": "eyes",
+  "💯": "100",
+  "🔥": "fire",
+  "✔️": "heavy_check_mark",
+  "❌": "x",
+  "🤝": "handshake",
+};
 
 /** Minimal Slack Web API client shape used by the adapter. */
 interface SlackWebClient {
@@ -190,6 +217,7 @@ export class SlackAdapter extends BaseBotAdapter {
         userId,
         content,
         false,
+        event.ts,
       );
     });
 
@@ -207,6 +235,7 @@ export class SlackAdapter extends BaseBotAdapter {
         msg.user,
         msg.text,
         true,
+        msg.ts,
       );
     });
   }
@@ -298,6 +327,56 @@ export class SlackAdapter extends BaseBotAdapter {
     }
   }
 
+  protected override async deliverOutboundReaction(
+    destinationId: string,
+    reaction: OutboundReaction,
+    isChannel: boolean,
+  ): Promise<void> {
+    // reactions.add takes a shortcode (white_check_mark), not the emoji.
+    // Unmapped emoji falls back to the text bubble — logged, never lost.
+    const name = SLACK_EMOJI_SHORTCODES[reaction.emoji];
+    if (!name) {
+      this.adapterLogger.warn("outbound_reaction_unmapped_emoji", {
+        emoji: reaction.emoji,
+      });
+      await this.deliverOutbound(destinationId, reaction.emoji, isChannel);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "fallback_text", reason: "unmapped_emoji" },
+      );
+      return;
+    }
+    const channel = isChannel
+      ? destinationId
+      : await this.resolveDmChannel(destinationId);
+    try {
+      await this.app.client.reactions.add({
+        channel,
+        timestamp: reaction.target_platform_message_id,
+        name,
+      });
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "native" },
+      );
+    } catch (err) {
+      this.adapterLogger.warn("outbound_reaction_attach_failed", {
+        channel_hash: hashLogIdentifier(channel),
+        ...(err instanceof Error
+          ? { error_type: err.name, error: err.message }
+          : { error: String(err) }),
+      });
+      await this.deliverOutbound(destinationId, reaction.emoji, isChannel);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "fallback_text", reason: "attach_failed" },
+      );
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Gaia streaming
   // ---------------------------------------------------------------------------
@@ -347,6 +426,7 @@ export class SlackAdapter extends BaseBotAdapter {
     userId: string,
     message: string,
     isDm: boolean,
+    inboundTs?: string,
   ): Promise<void> {
     const result = await client.chat.postMessage({
       channel: channelId,
@@ -382,7 +462,14 @@ export class SlackAdapter extends BaseBotAdapter {
 
     await handleStreamingChat(
       this.gaia,
-      { message, platform: "slack", platformUserId: userId, channelId, isDm },
+      {
+        message,
+        platform: "slack",
+        platformUserId: userId,
+        channelId,
+        isDm,
+        platformMessageId: inboundTs,
+      },
       async (text: string) => {
         await client.chat.update({
           channel: channelId,

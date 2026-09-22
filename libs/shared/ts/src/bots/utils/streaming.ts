@@ -21,8 +21,9 @@
 import type { AnalyticsContext } from "../../analytics";
 import { BOT_EVENTS } from "../../analytics/events/bots";
 import type { ApprovalRequestData } from "../../chat";
+import { formatApprovalAge } from "../../chat/approvals";
 import type { GaiaClient } from "../api";
-import { BOT_STREAM_ERROR } from "../api/chat-stream";
+import { BOT_STREAM_ERROR, isReactDirectiveOrPrefix } from "../api/chat-stream";
 import type { ChatRequest, PlatformName } from "../types";
 import { segmentIntoBubbles } from "./bubbles";
 import { isMessageGoneError, retryAfterMs } from "./delivery-errors";
@@ -54,8 +55,10 @@ function formatExpiry(seconds: number): string {
  * pending approvals are surfaced out-of-band (see handleApprovalUpdate); settled
  * ones are narrated by the agent's streamed reply. */
 function formatApprovalPrompt(data: ApprovalRequestData): string {
+  const age =
+    data.age_seconds != null ? ` (${formatApprovalAge(data.age_seconds)})` : "";
   return (
-    `**Approval needed:** ${data.summary}\n` +
+    `**Approval needed:** ${data.summary}${age}\n` +
     `Reply **yes** to approve or **no** to decline. This expires in ${formatExpiry(data.timeout_seconds)}.`
   );
 }
@@ -364,6 +367,9 @@ async function _handleStream(
       (chunk) => {
         pending += chunk;
         if (streamDone || !streaming) return;
+        // A directive-shaped chunk must not open a bubble — previewBubble skips
+        // an empty preview but not a directive one.
+        if (isReactDirectiveOrPrefix(pending)) return;
 
         const now = Date.now();
         if (now - lastEditTime >= editIntervalMs) {

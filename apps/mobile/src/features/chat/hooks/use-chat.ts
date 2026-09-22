@@ -1,8 +1,12 @@
 import type { TurnAccumulator } from "@gaia/shared/chat";
-import { applyStreamEvent, createTurnAccumulator } from "@gaia/shared/chat";
+import {
+  applyStreamEvent,
+  createTurnAccumulator,
+  foldReactionAcks,
+} from "@gaia/shared/chat";
 import type { FlashListRef } from "@shopify/flash-list";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { chatDb } from "@/lib/db/chatDb";
 import { useChatStore } from "@/stores/chat-store";
@@ -139,7 +143,15 @@ export function useChat(
     ),
   );
 
-  const messages = streamingMessages ?? cachedMessages ?? EMPTY_MESSAGES;
+  const rawMessages = streamingMessages ?? cachedMessages ?? EMPTY_MESSAGES;
+
+  // Reaction acks fold onto their targets here so an emoji-ack renders as a
+  // badge on the answered message instead of a stray bubble — web parity via
+  // the same shared fold `useConversation` uses. Stored records stay unfolded.
+  const messages = useMemo(
+    () => foldReactionAcks(rawMessages, (message) => message.text),
+    [rawMessages],
+  );
 
   const streamingState = useChatStore(
     useShallow((state) => state.streamingState),

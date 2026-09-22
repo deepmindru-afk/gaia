@@ -6,6 +6,10 @@ import {
   toClientMessages,
 } from "@/features/chat/api/chatApi";
 import { MAX_SYNC_CONVERSATIONS } from "@/features/chat/constants";
+import {
+  apiRowHasLiveApproval,
+  isApprovalFlagStale,
+} from "@/features/chat/utils/approvalFlag";
 import { db, type IConversation, type IMessage } from "@/lib/db/chatDb";
 import { useChatStore } from "@/stores/chatStore";
 import {
@@ -111,6 +115,8 @@ const mapApiMessagesToStored = (
       selectedWorkflow: message.selectedWorkflow,
       replyToMessageId: message.replyToMessage?.id ?? null,
       replyToMessageData: message.replyToMessage ?? null,
+      kind: message.kind ?? null,
+      reacts_to_message_id: message.reacts_to_message_id ?? null,
     } satisfies IMessage;
   });
 
@@ -143,6 +149,9 @@ const identifyStaleConversations = (
       conv.updatedAt || conv.createdAt,
     ]),
   );
+  const localFlagMap = new Map(
+    localConversations.map((conv) => [conv.id, conv.hasLiveApproval]),
+  );
 
   const staleItems: ConversationSyncItem[] = [];
 
@@ -155,6 +164,15 @@ const identifyStaleConversations = (
       staleItems.push({
         conversation_id: conversationId,
         last_updated: undefined,
+      });
+      continue;
+    }
+
+    if (isApprovalFlagStale(localFlagMap.get(conversationId), remote)) {
+      // Flag flipped without touching updatedAt — refetch for the dot.
+      staleItems.push({
+        conversation_id: conversationId,
+        last_updated: localUpdatedAt.toISOString(),
       });
       continue;
     }
@@ -328,6 +346,7 @@ export const batchSyncConversations = async (): Promise<void> => {
           isSystemGenerated: conversation.is_system_generated ?? false,
           systemPurpose: conversation.system_purpose ?? null,
           isUnread: conversation.is_unread ?? false,
+          hasLiveApproval: apiRowHasLiveApproval(conversation),
           artifacts,
           createdAt: new Date(conversation.createdAt ?? 0),
           updatedAt: conversation.updatedAt
@@ -387,6 +406,7 @@ export const applySyncedConversation = async (
     isSystemGenerated: conversation.is_system_generated ?? false,
     systemPurpose: conversation.system_purpose ?? null,
     isUnread: conversation.is_unread ?? false,
+    hasLiveApproval: apiRowHasLiveApproval(conversation),
     artifacts,
     createdAt: new Date(conversation.createdAt ?? 0),
     updatedAt: conversation.updatedAt

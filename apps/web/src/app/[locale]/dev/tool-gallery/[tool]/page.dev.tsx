@@ -5,10 +5,8 @@ import { useParams } from "next/navigation";
 import type { JSX } from "react";
 import ErrorBoundary from "@/components/shared/ErrorBoundary";
 import CalendarListCard from "@/features/calendar/components/CalendarListCard";
-import CalendarListFetchCard from "@/features/calendar/components/CalendarListFetchCard";
 import { CalendarDeleteSection } from "@/features/chat/components/bubbles/bot/CalendarDeleteSection";
 import { CalendarEditSection } from "@/features/chat/components/bubbles/bot/CalendarEditSection";
-import CalendarEventSection from "@/features/chat/components/bubbles/bot/CalendarEventSection";
 import CodeExecutionSection from "@/features/chat/components/bubbles/bot/CodeExecutionSection";
 import ContactListSection from "@/features/chat/components/bubbles/bot/ContactListSection";
 import DeepResearchResultsTabs from "@/features/chat/components/bubbles/bot/DeepResearchResultsTabs";
@@ -78,9 +76,6 @@ function GalleryRenderer({ fixture }: { fixture: ToolFixture }): JSX.Element {
     case "people_search_data":
       // biome-ignore lint/suspicious/noExplicitAny: gallery-only
       return <PeopleSearchSection people_search_data={data as any} />;
-    case "calendar_options":
-      // biome-ignore lint/suspicious/noExplicitAny: gallery-only
-      return <CalendarEventSection calendar_options={data as any} />;
     case "calendar_delete_options":
       // biome-ignore lint/suspicious/noExplicitAny: gallery-only
       return <CalendarDeleteSection calendar_delete_options={data as any} />;
@@ -90,9 +85,6 @@ function GalleryRenderer({ fixture }: { fixture: ToolFixture }): JSX.Element {
     case "calendar_fetch_data":
       // biome-ignore lint/suspicious/noExplicitAny: gallery-only
       return <CalendarListCard events={data as any} />;
-    case "calendar_list_fetch_data":
-      // biome-ignore lint/suspicious/noExplicitAny: gallery-only
-      return <CalendarListFetchCard calendars={data as any} />;
     case "todo_data": {
       // biome-ignore lint/suspicious/noExplicitAny: gallery-only
       const d = data as any;

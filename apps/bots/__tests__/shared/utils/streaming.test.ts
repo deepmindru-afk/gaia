@@ -50,6 +50,7 @@ const KEPT = { boundary: { discarded: false } } as const;
 function streamingGaia(
   chunks: StreamStep[],
   approvalAfter?: number,
+  approval?: Partial<ApprovalRequestData>,
 ): GaiaClient {
   return {
     chatStream: async (
@@ -101,6 +102,7 @@ function streamingGaia(
             status: "pending",
             feedback: null,
             timeout_seconds: 3600,
+            ...approval,
           } as ApprovalRequestData);
         }
       }
@@ -153,11 +155,13 @@ async function deliver(
   {
     editable = true,
     approvalAfter,
+    approval,
     failEdit,
     failStream,
   }: {
     editable?: boolean;
     approvalAfter?: number;
+    approval?: Partial<ApprovalRequestData>;
     /** Throws on the Nth edit (0-based), emulating a platform rejection. */
     failEdit?: { at: number; error: unknown };
     /** The transport error to fail the whole stream with, instead of streaming. */
@@ -209,7 +213,7 @@ async function deliver(
 
   await handleStreamingChat(
     failStream === undefined
-      ? streamingGaia(chunks, approvalAfter)
+      ? streamingGaia(chunks, approvalAfter, approval)
       : failingGaia(failStream),
     {
       message: "drive the streamer",
@@ -344,6 +348,19 @@ describe("handleStreamingChat delivery", () => {
     // Whatever streamed after the prompt must land in its own message.
     expect(bubbles.at(-1)).toContain("Now the rest of the answer");
     expect(bubbles.at(-1)).not.toContain("Approval needed");
+  });
+
+  it("shows how long ago the approval was asked", async () => {
+    // Ledger-backed approvals carry age_seconds; the prompt should surface it
+    // so a user answering hours later knows the request is stale.
+    const { bubbles } = await deliver("telegram", ["Checking that first. "], {
+      approvalAfter: 0,
+      approval: { age_seconds: 3700 },
+    });
+
+    const prompt = bubbles.find((b) => b.includes("Approval needed"));
+    expect(prompt).toBeDefined();
+    expect(prompt).toContain("asked 1h ago");
   });
 
   it("never shows a break token, whole or partially received", async () => {
