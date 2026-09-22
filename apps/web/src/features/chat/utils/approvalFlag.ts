@@ -5,9 +5,7 @@ import type { ConversationSummary } from "@shared/api/generated";
  * (which carries `has_live_approval`), optional so cached rows that predate
  * the field keep compiling — they read as no live approval until refetched.
  */
-type ApprovalFlagRow = Partial<
-  Pick<ConversationSummary, "has_live_approval">
->;
+type ApprovalFlagRow = Partial<Pick<ConversationSummary, "has_live_approval">>;
 
 export type { ApprovalFlagRow };
 

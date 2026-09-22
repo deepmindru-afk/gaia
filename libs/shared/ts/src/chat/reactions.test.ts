@@ -10,11 +10,15 @@ interface TextMessage extends ReactionFoldable {
   text: string;
 }
 
-function contentMessage(overrides: Partial<ContentMessage> & { id: string }): ContentMessage {
+function contentMessage(
+  overrides: Partial<ContentMessage> & { id: string },
+): ContentMessage {
   return { content: "hello", ...overrides };
 }
 
-function textMessage(overrides: Partial<TextMessage> & { id: string }): TextMessage {
+function textMessage(
+  overrides: Partial<TextMessage> & { id: string },
+): TextMessage {
   return { text: "hello", ...overrides };
 }
 

@@ -182,9 +182,7 @@ const TOOL_RENDERERS: Partial<RendererMap> = {
   // null renderer left them blank. Read-only list, no draft or add flows
   // (those moved to HIL approvals by design).
   calendar_list_fetch_data: (data) => (
-    <CalendarListFetchSection
-      calendars={Array.isArray(data) ? data : [data]}
-    />
+    <CalendarListFetchSection calendars={Array.isArray(data) ? data : [data]} />
   ),
 
   // Support ticket
