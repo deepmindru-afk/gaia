@@ -10,8 +10,10 @@ in calendar_tool.py / calendar_models.py; the tests that pin them down are
 marked with a "BUG:" comment.
 """
 
+import asyncio
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta, tzinfo
+import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -55,10 +57,17 @@ from app.services.composio.proxy_client import ProxyRequest
 from app.utils.calendar_utils import CALENDAR_API_BASE
 from app.utils.concurrency import reset_captured_loop, run_on_captured_loop
 from app.utils.errors import AppError
+from tests.helpers import captured_wide_event
 
 MODULE = "app.agents.tools.integrations.calendar_tool"
 AUTH: dict[str, Any] = {"user_id": "user-42"}
 EXECUTE_REQUEST = MagicMock()
+# How a rejected draft reads inside "All events failed validation: [...]".
+_NO_ZONE_FAILURE = (
+    "'error': 'start_datetime has no UTC offset and no home timezone is configured: "
+    "pass an explicit offset (e.g. 2026-09-21T11:00:00+05:30).'"
+)
+_EMPTY_RANGE_FAILURE = "'error': 'end_datetime must be after start_datetime.'"
 
 
 def _tools() -> dict[str, Any]:
@@ -1306,6 +1315,108 @@ class TestCreateEvent:
         body = proxy.call_args.args[0].body
         assert body["start"] == {"dateTime": "2026-01-15T23:00:00+05:30"}
         assert body["end"] == {"dateTime": "2026-01-16T01:30:00+05:30"}
+
+    def test_the_stored_zone_is_read_for_the_calling_user(self, tools, writer) -> None:
+        lookup = AsyncMock(return_value=UserDocument.model_validate({"timezone": "Asia/Calcutta"}))
+        with (
+            patch(f"{MODULE}.get_config", return_value={"configurable": {}}),
+            patch(f"{MODULE}.user_repository.get", new=lookup),
+        ):
+            self._run(
+                tools,
+                CreateEventInput(
+                    events=[SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")],
+                ),
+            )
+        lookup.assert_awaited_once_with(AUTH["user_id"])
+
+    async def _rejected_warnings(self, tools, lookup: AsyncMock) -> list[dict[str, Any]]:
+        naive = CreateEventInput(
+            events=[SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")],
+        )
+        with (
+            patch(f"{MODULE}.get_config", return_value={"configurable": {}}),
+            patch(f"{MODULE}.user_repository.get", new=lookup),
+        ):
+            async with captured_wide_event() as event:
+                with pytest.raises(ValueError, match=re.escape(_NO_ZONE_FAILURE)):
+                    await asyncio.to_thread(self._run, tools, naive)
+        return event["warnings"]
+
+    async def test_a_failed_user_lookup_is_a_warning_and_a_clear_rejection(
+        self, tools, writer
+    ) -> None:
+        lookup = AsyncMock(side_effect=ConnectionError("mongo down"))
+        (warning,) = await self._rejected_warnings(tools, lookup)
+        assert warning["msg"].endswith("Could not load user for effective timezone")
+        assert warning["user_id"] == AUTH["user_id"]
+        assert warning["error_type"] == "ConnectionError"
+
+    @pytest.mark.regression
+    async def test_an_unrecognized_stored_zone_is_rejected_not_booked_at_utc(
+        self, tools, writer
+    ) -> None:
+        """Timezone.parse falls back to UTC, so an unrecognized stored zone booked naive times at UTC."""
+        user = UserDocument.model_validate({"timezone": "Mars/Olympus"})
+        (warning,) = [
+            w
+            for w in await self._rejected_warnings(tools, AsyncMock(return_value=user))
+            if w["msg"].endswith("Could not parse stored home timezone")
+        ]
+        assert warning["error_type"] == "unrecognized_timezone"
+
+    def test_a_naive_end_is_stamped_even_when_the_start_is_aware(self, tools, writer) -> None:
+        with patch(
+            f"{MODULE}.get_config", return_value={"configurable": {"user_timezone": "+09:00"}}
+        ):
+            _, proxy = self._run(
+                tools,
+                CreateEventInput(
+                    events=[
+                        SingleEventInput(
+                            summary="Call",
+                            start_datetime="2026-01-15T10:00:00+05:30",
+                            end_datetime="2026-01-15T20:00:00",
+                        )
+                    ],
+                ),
+            )
+        body = proxy.call_args.args[0].body
+        assert body["start"] == {"dateTime": "2026-01-15T10:00:00+05:30"}
+        assert body["end"] == {"dateTime": "2026-01-15T20:00:00+09:00"}
+
+    def test_a_rejected_draft_does_not_stop_the_drafts_after_it(self, tools, writer) -> None:
+        out, proxy = self._run(
+            tools,
+            CreateEventInput(
+                events=[
+                    SingleEventInput(summary="Bad", start_datetime="not a date"),
+                    SingleEventInput(
+                        summary="Good",
+                        start_datetime="2026-01-15T10:00:00+05:30",
+                        end_datetime="2026-01-15T11:00:00+05:30",
+                    ),
+                ],
+            ),
+        )
+        assert proxy.call_args.args[0].body["summary"] == "Good"
+        assert [e["summary"] for e in out["created_events"]] == ["Good"]
+        assert [(e["index"], e["summary"]) for e in out["errors"]] == [(0, "Bad")]
+
+    def test_an_event_that_ends_when_it_starts_is_rejected(self, tools, writer) -> None:
+        with pytest.raises(ValueError, match=re.escape(_EMPTY_RANGE_FAILURE)):
+            self._run(
+                tools,
+                CreateEventInput(
+                    events=[
+                        SingleEventInput(
+                            summary="Call",
+                            start_datetime="2026-01-15T10:00:00+05:30",
+                            end_datetime="2026-01-15T10:00:00+05:30",
+                        )
+                    ],
+                ),
+            )
 
     @pytest.mark.regression
     def test_explicit_end_is_the_event_end_no_default_padding(self, tools, writer) -> None:

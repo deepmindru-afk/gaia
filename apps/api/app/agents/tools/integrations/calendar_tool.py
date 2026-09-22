@@ -171,14 +171,16 @@ async def get_effective_timezone(user_id: str) -> tzinfo | None:
     raw = user.timezone if user else None
     if not raw:
         return None
-    try:
-        return Timezone.parse(raw).tzinfo
-    except Exception as e:
+    # try_parse, not parse: parse falls back to UTC, which would silently book
+    # a naive time at UTC instead of rejecting it.
+    parsed = Timezone.try_parse(raw)
+    if parsed is None:
         log.warning(
             f"{LogTag.TOOL} Could not parse stored home timezone",
-            error_type=type(e).__name__,
+            error_type="unrecognized_timezone",
         )
         return None
+    return parsed.tzinfo
 
 
 def _parse_event_datetimes(event: SingleEventInput) -> tuple[datetime, datetime | None]:
