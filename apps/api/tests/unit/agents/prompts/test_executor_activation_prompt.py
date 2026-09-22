@@ -1,10 +1,9 @@
-"""The executor prompt must only teach tools the executor can call.
+"""The activation rewrites must drift loudly, never silently.
 
-The executor leads with activate_integration and keeps handoff bound solely
-for per-user MCP integrations that cannot be activated in-context. So the prompt
-teaches handoff only as that fallback, and no join tool at all: background
-outcomes arrive on their own. Anything else would produce calls that mislead the
-model, invisible until someone reads a transcript, so it is pinned here instead.
+build_activation_executor_prompt runs at import time, so a stale anchor skips
+with a warning instead of raising: one edited sentence must not keep the API
+from starting. The tradeoff is that a skipped rewrite leaves a handoff-era
+passage behind, so these tests pin every anchor and every replacement in CI.
 """
 
 import pytest
@@ -26,16 +25,84 @@ def activation_prompt() -> str:
     return build_activation_executor_prompt()
 
 
+@pytest.mark.unit
+class TestAnchorsStayValid:
+    """Every rewrite is anchored to the source prompt, so an edit that moves an anchor fails here."""
+
+    @pytest.mark.parametrize("anchor", [anchor for anchor, _ in _PHRASE_REWRITES])
+    def test_phrase_anchor_present_in_source(self, anchor: str) -> None:
+        assert anchor in EXECUTOR_AGENT_PROMPT
+
+    @pytest.mark.parametrize(
+        ("start", "end"), [(start, end) for start, end, _ in _SECTION_REWRITES]
+    )
+    def test_section_markers_present_and_ordered(self, start: str, end: str) -> None:
+        start_idx = EXECUTOR_AGENT_PROMPT.find(start)
+        assert start_idx != -1
+        assert EXECUTOR_AGENT_PROMPT.find(end, start_idx + len(start)) != -1
+
+    def test_a_missing_section_start_raises(self) -> None:
+        with pytest.raises(ActivationPromptAnchorError):
+            _replace_section("nothing to match here", "DELEGATION MODEL", "END", "x")
+
+    def test_a_missing_section_end_raises(self) -> None:
+        with pytest.raises(ActivationPromptAnchorError):
+            _replace_section("DELEGATION MODEL without its end", "DELEGATION MODEL", "END", "x")
+
+
+@pytest.mark.unit
+class TestRewritesApply:
+    """The built prompt carries every replacement and none of the legacy text it replaced."""
+
+    @pytest.mark.parametrize("anchor", [anchor for anchor, _ in _PHRASE_REWRITES])
+    def test_no_phrase_anchor_survives_in_the_built_prompt(
+        self, activation_prompt: str, anchor: str
+    ) -> None:
+        assert anchor not in activation_prompt
+
+    @pytest.mark.parametrize("replacement", [replacement for _, replacement in _PHRASE_REWRITES])
+    def test_every_phrase_replacement_lands_in_the_built_prompt(
+        self, activation_prompt: str, replacement: str
+    ) -> None:
+        assert replacement in activation_prompt
+
+    @pytest.mark.parametrize(
+        "replacement", [replacement for _, _, replacement in _SECTION_REWRITES]
+    )
+    def test_every_section_replacement_lands_in_the_built_prompt(
+        self, activation_prompt: str, replacement: str
+    ) -> None:
+        assert replacement in activation_prompt
+
+    def test_replaced_handoff_sections_are_gone(self, activation_prompt: str) -> None:
+        assert "Handoff contract (strict)" not in activation_prompt
+        assert "handoff (specialized provider subagents)" not in activation_prompt
+
+    def test_activation_doctrine_replaces_delegation(self, activation_prompt: str) -> None:
+        assert "activate_integration(integration_id" in activation_prompt
+        assert "Working an activated integration" in activation_prompt
+
+
+@pytest.mark.unit
 class TestNoUnboundToolsTaught:
-    def test_handoff_is_taught_only_as_the_per_user_fallback(self, activation_prompt) -> None:
-        """Handoff is bound under the flag for per-user MCP, so the prompt may name it — but only as that fallback, never as the generic delegation path the rewrites replaced with activation."""
+    """The executor leads with activate_integration and keeps handoff only for per-user MCP."""
+
+    def test_handoff_is_taught_only_as_the_per_user_fallback(self, activation_prompt: str) -> None:
+        """Any handoff line the rewrites failed to replace is a handoff-era instruction left standing."""
         handoff_lines = [
-            line.strip() for line in activation_prompt.splitlines() if "handoff(" in line
+            line.strip() for line in activation_prompt.splitlines() if "handoff" in line.lower()
         ]
         assert handoff_lines, "activation prompt must teach the handoff fallback for per-user MCP"
         assert all("per-user" in line for line in handoff_lines), handoff_lines
 
-    def test_wait_for_subagents_is_not_taught(self, activation_prompt) -> None:
+    def test_no_subagent_routing_id_survives(self, activation_prompt: str) -> None:
+        """Catches drift no per-anchor test can: routing text ADDED to the base prompt with no rewrite entry."""
+        routing = [
+            line.strip() for line in activation_prompt.splitlines() if "subagent:" in line.lower()
+        ]
+        assert routing == [], f"activation prompt still routes to a subagent: {routing}"
+
+    def test_wait_for_subagents_is_not_taught(self, activation_prompt: str) -> None:
         offending = [
             line.strip()
             for line in activation_prompt.splitlines()
@@ -43,20 +110,20 @@ class TestNoUnboundToolsTaught:
         ]
         assert offending == [], f"activation prompt still names a join tool: {offending}"
 
-    def test_background_outcomes_arrive_without_a_join_call(self, activation_prompt) -> None:
+    def test_background_outcomes_arrive_without_a_join_call(self, activation_prompt: str) -> None:
         assert "arrive" in activation_prompt
 
-    def test_the_baseline_prompt_does_name_them(self) -> None:
-        """Guards the rewrites from passing vacuously if the source prompt drops handoff on its own — then these rewrites are dead code, not protection."""
+    def test_the_baseline_prompt_does_name_handoff(self) -> None:
+        """Guards the rewrites from passing vacuously if the source prompt drops handoff on its own."""
         assert "handoff" in EXECUTOR_AGENT_PROMPT.lower()
         assert "wait_for_subagents" not in EXECUTOR_AGENT_PROMPT.lower()
         assert "collect_subagent_results" not in EXECUTOR_AGENT_PROMPT.lower()
 
-    def test_teaches_activation_and_spawn(self, activation_prompt) -> None:
+    def test_teaches_activation_and_spawn(self, activation_prompt: str) -> None:
         assert "activate_integration" in activation_prompt
         assert "spawn_subagent" in activation_prompt
 
-    def test_every_tool_it_names_is_one_the_executor_binds(self, activation_prompt) -> None:
+    def test_every_tool_it_names_is_one_the_executor_binds(self, activation_prompt: str) -> None:
         bound = set(EXECUTOR_INITIAL_TOOL_IDS) | {
             "activate_integration",
             "spawn_subagent",
@@ -66,30 +133,9 @@ class TestNoUnboundToolsTaught:
             assert name in bound and name in activation_prompt
 
 
-class TestAnchorsStayValid:
-    """Every rewrite is anchored to the source prompt.
-
-    When someone edits that prompt and an anchor stops matching, this fails instead of the executor
-    silently keeping a handoff passage.
-    """
-
-    @pytest.mark.parametrize("anchor", [a for a, _ in _PHRASE_REWRITES])
-    def test_phrase_anchor_present_in_source(self, anchor: str) -> None:
-        assert anchor in EXECUTOR_AGENT_PROMPT
-
-    @pytest.mark.parametrize("start,end", [(s, e) for s, e, _ in _SECTION_REWRITES])
-    def test_section_markers_present_and_ordered(self, start: str, end: str) -> None:
-        start_idx = EXECUTOR_AGENT_PROMPT.find(start)
-        assert start_idx != -1
-        assert EXECUTOR_AGENT_PROMPT.find(end, start_idx + len(start)) != -1
-
-    def test_a_missing_anchor_raises_rather_than_shipping(self) -> None:
-        with pytest.raises(ActivationPromptAnchorError):
-            _replace_section("nothing to match here", "DELEGATION MODEL", "END", "x")
-
-
+@pytest.mark.unit
 class TestDegradesGracefully:
-    """build_activation_executor_prompt runs at import time (agent_template builds _EXECUTOR_BASE on import), so one edited sentence in the source prompt must skip just that rewrite with a warning — never prevent startup."""
+    """One edited sentence skips just that rewrite with a warning, never blocks startup."""
 
     def test_stale_phrase_anchor_is_skipped_not_raised(
         self, monkeypatch: pytest.MonkeyPatch
@@ -119,9 +165,9 @@ class TestDegradesGracefully:
         assert "YOUR OUTPUT (INTERNAL" in prompt
 
 
-def test_prompt_is_rewritten_not_merely_copied(activation_prompt) -> None:
+@pytest.mark.unit
+def test_prompt_is_rewritten_not_merely_copied(activation_prompt: str) -> None:
     assert activation_prompt != EXECUTOR_AGENT_PROMPT
-    # The untouched parts must survive: this is a targeted rewrite, not a fork.
     assert "CODING WORKSPACE" in activation_prompt
     assert "RESEARCH EFFORT LADDER" in activation_prompt
     assert "YOUR OUTPUT (INTERNAL" in activation_prompt

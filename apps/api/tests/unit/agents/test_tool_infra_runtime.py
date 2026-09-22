@@ -19,6 +19,7 @@ from app.agents.tools.core import retrieval as retrieval_module
 from app.agents.tools.core.registry import ToolRegistry
 from app.agents.tools.core.retrieval import (
     _render_discovery_response,
+    _split_prefixed_entry,
     get_retrieve_tools_function,
 )
 from app.agents.tools.core.tool_runtime_config import (
@@ -1037,6 +1038,27 @@ def _render(
     query: str | None = None,
 ) -> dict[str, Any]:
     return json.loads(_render_text(final_tools, options=options, query=query))
+
+
+class TestSplitSubagentEntry:
+    def test_an_id_with_a_display_name(self) -> None:
+        assert _split_prefixed_entry("subagent:gmail (Gmail)", "subagent:") == ("gmail", "Gmail")
+
+    def test_a_bare_id_has_no_name(self) -> None:
+        assert _split_prefixed_entry("subagent:gmail", "subagent:") == ("gmail", None)
+
+    def test_a_name_containing_a_bracket_keeps_its_tail(self) -> None:
+        assert _split_prefixed_entry("subagent:x (A (B))", "subagent:") == ("x", "A (B)")
+
+    def test_an_unclosed_bracket_is_not_treated_as_a_name(self) -> None:
+        """An opening bracket alone would otherwise split a malformed id and hand back a truncated name."""
+        assert _split_prefixed_entry("subagent:foo (bar", "subagent:") == ("foo (bar", None)
+
+    def test_an_integration_entry_splits_on_its_own_prefix(self) -> None:
+        assert _split_prefixed_entry("integration:notion (Notion)", "integration:") == (
+            "notion",
+            "Notion",
+        )
 
 
 class TestDiscoveryResponseIsIndentedJson:

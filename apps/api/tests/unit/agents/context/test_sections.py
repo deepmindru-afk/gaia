@@ -230,10 +230,7 @@ class TestUserPreferences:
 
 @pytest.mark.unit
 class TestIntegrationsManifest:
-    """The executor activates integrations itself, so its header states the list is live and names the parenthesised id as the activate_integration id.
-
-    Comms gets the short form.
-    """
+    """The executor acts on integrations itself, so its header names activate_integration; comms gets the short form."""
 
     @staticmethod
     def _connected() -> AsyncMock:
