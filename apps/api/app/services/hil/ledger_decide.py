@@ -272,8 +272,9 @@ def _ticket_task(row: ApprovalLedgerDocument) -> str:
     """Build the wake that turns an approval into a redeem: id, age, and the execute call that honors it."""
     age = "unknown age"
     if row.created_at is not None:
-        seconds = (datetime.now(UTC) - row.created_at).total_seconds()
-        age = f"{int(seconds // 3600)}h{int(seconds % 3600 // 60)}m old"
+        elapsed_minutes = int((datetime.now(UTC) - row.created_at).total_seconds()) // 60
+        hours, minutes = divmod(elapsed_minutes, 60)
+        age = f"{hours}h{minutes}m old"
     return (
         f"APPROVAL_READY {row.approval_id}: the user approved {row.summary} "
         f'({age}). Run it now with execute(tool_name="approve", '
@@ -332,7 +333,7 @@ async def _deliver_ticket(row: ApprovalLedgerDocument) -> None:
     await _reclaim_dead_holder(row.conversation_id)
     await deliver_to_executor(
         row.conversation_id,
-        {"user_id": row.user_id or ""},
+        {"user_id": row.user_id},
         _ticket_task(row),
     )
 
@@ -360,7 +361,7 @@ async def _deliver_verdict(row: ApprovalLedgerDocument, outcome: str, result: ob
         await _reclaim_dead_holder(row.conversation_id)
         await deliver_to_executor(
             row.conversation_id,
-            {"user_id": row.user_id or ""},
+            {"user_id": row.user_id},
             task,
         )
     except Exception as e:
@@ -426,7 +427,7 @@ async def redeem_approved(
             data=dict(row.args),
             # Identity-bearing config, not a bare configurable: the wrappers
             # resolve per-user auth from this (see dispatch_config_for).
-            config=dispatch_config_for(row.user_id or ""),
+            config=dispatch_config_for(row.user_id),
         )
     except Exception as e:
         await approval_ledger_repository.transition(
@@ -705,7 +706,7 @@ async def _broadcast_decision(
     """Tell listening clients a card settled — same shape for decide + revoke."""
     try:
         await websocket_manager.broadcast_to_user(
-            user_id=row.user_id or "",
+            user_id=row.user_id,
             message={
                 "type": "hil_approval_decided",
                 "data": {
