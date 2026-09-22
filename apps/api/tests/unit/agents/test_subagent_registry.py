@@ -6,6 +6,7 @@ refactor that introduced the Subagent dataclass and centralized lookups in
 the registry module.
 """
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -497,5 +498,31 @@ class TestForeignProviderNamedIn:
 
     def test_ordinary_provider_still_flags_lowercase(self, _fake_provider_registry) -> None:
         hit = foreign_provider_named_in("add it to my todoist", "trello")
+        assert hit is not None
+        assert hit.id == "todoist"
+
+    def test_a_skipped_common_word_does_not_hide_a_later_provider(
+        self, _fake_provider_registry
+    ) -> None:
+        hit = foreign_provider_named_in("cut some slack and add it to my todoist", "trello")
+        assert hit is not None
+        assert hit.id == "todoist"
+
+
+class TestInternalSubagentsAreNeverForeignProviders:
+    """Against the real registry, where internal subagents sit between the third-party ones."""
+
+    @pytest.fixture(autouse=True)
+    def _real_matchers(self) -> Iterator[None]:
+        _clear_registry_cache()
+        _third_party_name_matchers.cache_clear()
+        yield
+        _third_party_name_matchers.cache_clear()
+
+    def test_an_internal_subagents_name_is_ordinary_prose(self) -> None:
+        assert foreign_provider_named_in("add these to my todos", "gmail") is None
+
+    def test_a_provider_listed_after_an_internal_subagent_still_flags(self) -> None:
+        hit = foreign_provider_named_in("put it in Todoist", "gmail")
         assert hit is not None
         assert hit.id == "todoist"
