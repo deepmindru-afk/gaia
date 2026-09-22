@@ -60,6 +60,10 @@ HIL_JEV_ACCEPT_LINE = 0.50
 HIL_JEV_REJECT_FLOOR = 0.50
 
 
+# The forbid double-check itself failed; the verdict asks rather than trusting either way.
+JEV_FORBID_CHECK_FAILED = "unclear-forbid"
+
+
 class JevChoice(StrEnum):
     """The choice labels the JEV questions offer (prompts.py criteria) and answers carry."""
 

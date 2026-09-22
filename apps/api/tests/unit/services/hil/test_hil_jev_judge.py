@@ -9,6 +9,7 @@ most confident and asks whether the code around it still refuses.
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.constants.hil import HIL_JEV_REJECT_FLOOR, JevChoice
 from app.services.hil.intent import AutoHistory, IntentDecision, JudgedCall
 from app.services.hil.jev_judge import (
     JevCase,
@@ -20,6 +21,7 @@ from app.services.hil.jev_judge import (
     forbid_tripwire,
     map_jev_choice,
     needs_forbid_check,
+    settle_forbid,
     ungrounded_targets,
 )
 from app.services.hil.utils import PriorCall
@@ -501,3 +503,19 @@ class TestWire:
         assert (choice, conf) == ("unclear", 0.5)
         assert (tokens_in, tokens_out) == (300, 20)
         assert probs == {"unclear": 0.5}
+
+
+class TestSettleForbid:
+    def test_forbidden_at_the_floor_forbids(self) -> None:
+        assert settle_forbid("forbidden", HIL_JEV_REJECT_FLOOR) is JevChoice.FORBIDDEN
+
+    def test_forbidden_below_the_floor_permits(self) -> None:
+        assert settle_forbid("forbidden", HIL_JEV_REJECT_FLOOR - 0.01) is JevChoice.PERMITTED
+
+    def test_any_other_answer_permits_however_confident(self) -> None:
+        """The eval once passed "unclear" through untouched; prod has always settled it to permitted."""
+        assert settle_forbid("unclear", 0.99) is JevChoice.PERMITTED
+
+    def test_the_sweep_can_move_the_floor(self) -> None:
+        assert settle_forbid("forbidden", 0.6, reject_floor=0.7) is JevChoice.PERMITTED
+        assert settle_forbid("forbidden", 0.6, reject_floor=0.5) is JevChoice.FORBIDDEN

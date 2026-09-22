@@ -28,7 +28,11 @@ from typing import Any
 import httpx
 
 from app.config.settings import get_settings
-from app.constants.hil import HIL_JEV_ACCEPT_LINE, HIL_JEV_REJECT_FLOOR, JevChoice
+from app.constants.hil import (
+    HIL_JEV_ACCEPT_LINE,
+    HIL_JEV_REJECT_FLOOR,
+    JEV_FORBID_CHECK_FAILED,
+)
 
 # Canonical question + mapping live in app (prompts.py, jev_judge.py) — the
 # suite imports them so editing the judge text IS retuning, and every run
@@ -48,6 +52,7 @@ from app.services.hil.jev_judge import (
     decide_from_verdict,
     map_jev_choice,
     needs_forbid_check,
+    settle_forbid,
 )
 from app.services.hil.prompts import JEV_QUESTIONS_VERSION
 from app.services.hil.utils import PriorCall
@@ -127,10 +132,10 @@ def _eval_case(setup: Mapping[str, Any]) -> JevCase:
 
 
 def _settled_forbid(forbid: str | None, forbid_conf: float, reject_floor: float) -> str | None:
-    """Settle the double-check as prod's _forbid_verdict does: forbidden only past the floor."""
-    if forbid == JevChoice.FORBIDDEN and forbid_conf < reject_floor:
-        return JevChoice.PERMITTED
-    return forbid
+    """The verdict's forbid for a journaled double-check: none run and a failed check pass through."""
+    if forbid is None or forbid == JEV_FORBID_CHECK_FAILED:
+        return forbid
+    return settle_forbid(forbid, forbid_conf, reject_floor=reject_floor)
 
 
 class JudgeTransport:
@@ -243,7 +248,7 @@ class JudgeTransport:
             except httpx.HTTPError as e:
                 raise ProviderError(provider.name, f"forbid double-check failed: {e}") from e
             except Exception:
-                forbid, forbid_conf = "unclear-forbid", 0.0
+                forbid, forbid_conf = JEV_FORBID_CHECK_FAILED, 0.0
         # Grade the PROD path (mapping + grounding vetoes), not just the choice.
         decision = decide_from_verdict(
             JevVerdict(

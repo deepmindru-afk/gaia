@@ -26,6 +26,7 @@ from app.constants.hil import (
     HIL_JEV_REJECT_FLOOR,
     HIL_JEV_TIMEOUT_SECONDS,
     HIL_JEV_URL,
+    JEV_FORBID_CHECK_FAILED,
     JevChoice,
 )
 from app.constants.log_tags import LogTag
@@ -227,6 +228,18 @@ def needs_forbid_check(mapped_outcome: AutoOutcome, user_messages: list[str]) ->
     return mapped_outcome == "accept" and forbid_tripwire(user_messages)
 
 
+def settle_forbid(
+    choice: str, confidence: float, *, reject_floor: float = HIL_JEV_REJECT_FLOOR
+) -> JevChoice:
+    """Settle a forbid double-check answer: forbidden only at or past the floor, else permitted.
+
+    Pure, shared by prod and the eval transport so the sweep regrades the rule prod runs.
+    """
+    if choice == JevChoice.FORBIDDEN and confidence >= reject_floor:
+        return JevChoice.FORBIDDEN
+    return JevChoice.PERMITTED
+
+
 async def ask_jev(
     *,
     user_messages: list[str],
@@ -389,15 +402,13 @@ class JevIntentJudge:
                 error=str(e),
                 error_type=type(e).__name__,
             )
-            return "unclear-forbid"
+            return JEV_FORBID_CHECK_FAILED
         log.info(
             f"{LogTag.HIL} forbid double-check",
             tool_name=call.tool_name,
             hil={"choice": forbid_choice, "confidence": round(forbid_conf, 3)},
         )
-        if forbid_choice == JevChoice.FORBIDDEN and forbid_conf >= HIL_JEV_REJECT_FLOOR:
-            return JevChoice.FORBIDDEN
-        return JevChoice.PERMITTED
+        return settle_forbid(forbid_choice, forbid_conf)
 
 
 @dataclass(frozen=True)
