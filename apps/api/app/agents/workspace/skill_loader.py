@@ -39,10 +39,11 @@ _BUILTIN_ROOT = (
 
 
 def target_to_subagent(agent_name: str) -> str:
-    """Resolve a subagent agent_name to the canonical subagent id.
+    """Resolve an integration agent_name to the canonical skills_by_subagent key.
 
-    executor maps to itself. An unknown name is returned unchanged and
-    logged rather than silently misfiled.
+    Uses the subagent registry (the source of truth for agent_name -> id).
+    executor maps to itself; an unknown name is returned unchanged and logged
+    rather than silently misfiled.
     """
     agent_name = agent_name.strip()
     if agent_name == EXECUTOR_SUBAGENT_ID:
@@ -50,7 +51,7 @@ def target_to_subagent(agent_name: str) -> str:
     resolved = resolve_subagent_id(agent_name)
     if resolved is None:
         log.set(skill_target=agent_name, component="skill_loader")
-        log.warning(f"{LogTag.AGENT} skill target matches no subagent agent_name")
+        log.warning(f"{LogTag.AGENT} skill target matches no integration agent_name")
         return agent_name
     return resolved
 

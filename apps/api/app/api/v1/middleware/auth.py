@@ -108,6 +108,10 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
             # One-click email unsubscribe — opened from mail clients with no
             # session; the HMAC-signed token authenticates the user itself.
             "/api/v1/notifications/unsubscribe",
+            # Code mode's sandbox callbacks — the E2B script has no session; both
+            # routes authenticate via the run's HMAC token (execute_token.py).
+            "/api/v1/sandbox/execute",
+            "/api/v1/sandbox/tool-schema",
             # Single-purpose file-share downloads: fetched server-side by
             # Composio with no session; the unguessable token authenticates the
             # grant. Trailing slash avoids matching the rest of /api/v1/files.

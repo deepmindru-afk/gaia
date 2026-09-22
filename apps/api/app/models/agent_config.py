@@ -138,6 +138,10 @@ class AgentConfigurable(TypedDict, total=False):
     #: The calls a stopped replay made this fire, as ``RecordedCall`` dumps, so a
     #: rewrite may freeze them. See ``PLAYBOOK_REPLAYED_CALLS_KEY``.
     playbook_replayed_calls: list[dict[str, Any]] | None
+    #: A pre-taken executor busy-lock the dispatch adopts instead of racing for
+    #: a fresh one, so a queued/workflow fire hands its reservation to the run
+    #: it starts. Keyed by ``WORKFLOW_LOCK_CONTEXT_KEY``.
+    executor_lock_reservation: str | None
 
     # --- tracing ------------------------------------------------------------
     #: Stashed here so child agents spawned via ``asyncio.create_task`` re-emit

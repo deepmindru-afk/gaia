@@ -16,6 +16,7 @@ Two guarantees:
 """
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any, Literal, cast
@@ -24,6 +25,7 @@ from langgraph.types import Command
 
 from app.agents.core.background.executor_queue import (
     ExecutorRunItem,
+    LockClaim,
     is_executor_busy,
     prepare_run_from_item,
 )
@@ -43,6 +45,7 @@ from app.services.hil.approvals_store import (
     mark_decided,
     mark_resumed,
 )
+from app.services.hil.bridge import publish_decision
 from app.services.hil.resume_slot import claim_resume_dispatch, release_resume_dispatch
 from app.services.latency_metrics import observe_hil_dispatch_lag, observe_hil_user_wait
 from app.utils.errors import AppError
@@ -230,6 +233,8 @@ async def _resolve_or_close(
     would only raise. Closing it stops it from hijacking every later message via
     the conversational resolver.
     """
+    if record.user_id != user_id:
+        raise ApprovalRequestForbiddenError()
     if record.resume_item is None:
         log.warning(
             f"{LogTag.HIL} Closing approval with no resume context",
@@ -260,9 +265,23 @@ async def _resolve_record(
     """Authorize, transition exactly once, and resume — from an already-loaded record."""
     if record.user_id != user_id:
         raise ApprovalRequestForbiddenError()
-    # Checked BEFORE the decided-transition so an unactionable decision fails the request
-    # rather than reporting false success. Exception: a parked-subagent record decided before
-    # its executor's join needs none, but only while the busy lock proves a collector is alive.
+    # An approval with feedback is a conditional approval, and the stored call
+    # carries no conditions — same conversion as the ledger path and the chat
+    # classifier: record it as denied with the note attached.
+    if kind == "approve" and feedback is not None and feedback.strip() != "":
+        kind = "deny"
+    # Checked BEFORE the decided-transition: a decision we cannot act on must
+    # fail the request (record stays pending; the sweep expires it), never
+    # report success for an action that will silently not run.
+    #
+    # Exception: a parked-subagent record (stamped ``subagent_thread_id``) decided
+    # BEFORE any resume context exists needs none for deny/timeout/abandon — and
+    # can never gain one for approve until the HIL rework supplies a resume
+    # driver. The busy lock is that proof for live collectors: held means an
+    # executor run is around to read this decision durably. A finished executor
+    # means nobody will ever collect — accepting the decision then is a false
+    # "going ahead" for an action that will never run, so it must fail loudly
+    # instead.
     if record.resume_item is None:
         collector_alive = record.subagent_thread_id is not None and await is_executor_busy(
             record.conversation_id
@@ -272,6 +291,17 @@ async def _resolve_record(
         # its whole point is that the action does NOT happen, so it's safe to record.
         if not collector_alive and kind == "approve":
             log.error(f"{LogTag.HIL} No resume context on record", approval_id=record.approval_id)
+            # Settle the card without touching the record: the user sees
+            # finality instead of a live Approve button that 503s forever,
+            # while the record stays pending for the sweep's loud timeout.
+            # Errors already logged inside publish_decision; nothing to add.
+            with contextlib.suppress(Exception):
+                await publish_decision(
+                    record,
+                    HILApprovalStatus.ABANDONED,
+                    stream_id=record.stream_id,
+                    feedback="The paused task cannot be resumed.",
+                )
             raise ApprovalNotResumableError()
 
     decided_by = None if kind == "timeout" else user_id
@@ -302,9 +332,9 @@ async def _resolve_record(
     log.set(hil={"approval_id": record.approval_id, "decision": kind, "tool": record.tool_name})
     resume_status = "denied" if kind == "abandon" else _TERMINAL_STATUS[kind]
     if record.resume_item is None:
-        # No run to dispatch: either a live collector (a parked subagent whose executor
-        # reads this decision at its join) or an un-resumable deny/timeout/abandon closed
-        # in place. Nothing to resume here either way.
+        # No run to dispatch: either a parked subagent whose decision waits for
+        # the HIL rework's resume driver, or an un-resumable deny/timeout/abandon
+        # closed in place. Nothing to resume here either way.
         log.info(
             f"{LogTag.HIL} Decision recorded without a resume dispatch",
             approval_id=record.approval_id,
@@ -324,6 +354,17 @@ async def _dispatch_resume(
     and the loser's decision is already durable on the record. mark_resumed stamps the
     record, so a crash before it is re-dispatched by the sweep from resume_item.
     """
+    if record.subagent_thread_id:
+        # Subagent-parked approvals have no resume driver until the HIL rework:
+        # the join that rediscovered their threads is gone. Refuse loudly so the
+        # decision surfaces as not-resumable instead of dispatching a run that
+        # cannot collect it; expiry still closes the record.
+        log.error(
+            f"{LogTag.HIL} Subagent-parked approval cannot resume without the join (HIL rework)",
+            approval_id=record.approval_id,
+            integration_name=record.integration_name,
+        )
+        raise ApprovalNotResumableError()
     if not await claim_resume_dispatch(record.conversation_id):
         log.info(
             f"{LogTag.HIL} Resume already in flight for conversation; decision will be "
@@ -336,7 +377,12 @@ async def _dispatch_resume(
     # Mongo hands it back as a plain dict). cast rather than isinstance since
     # ExecutorRunItem is total=False, so {} is a valid empty item.
     prepared = await prepare_run_from_item(
-        record.conversation_id, cast(ExecutorRunItem, record.resume_item or {})
+        record.conversation_id,
+        cast(ExecutorRunItem, record.resume_item or {}),
+        # SEIZE: the paused run still holds this conversation's lock on purpose
+        # (it is parked on the approval this decision answers), so the resume has
+        # to take it over rather than wait for a conversation nobody holds.
+        claim=LockClaim.SEIZE,
     )
     if prepared is None:
         log.error(f"{LogTag.HIL} Could not prepare resume run", approval_id=record.approval_id)
@@ -429,7 +475,20 @@ async def sweep_approvals() -> dict[str, int]:
             )
 
     redispatched = 0
+    deferred_subagent = 0
     for record in await list_decided_unresumed(HIL_DECIDED_UNRESUMED_GRACE_SECONDS):
+        # Subagent-parked approvals have no resume driver until the HIL rework:
+        # the join that rediscovered their threads is gone. Redispatching would
+        # wake executor runs that cannot collect them, every sweep, forever —
+        # so skip loudly instead. Expiry above still closes them.
+        if record.subagent_thread_id:
+            deferred_subagent += 1
+            log.warning(
+                f"{LogTag.HIL} Sweep deferring subagent-parked approval (no resume driver)",
+                approval_id=record.approval_id,
+                integration_name=record.integration_name,
+            )
+            continue
         try:
             resume_status = "denied" if record.status == "abandoned" else record.status
             await _dispatch_resume(
@@ -444,6 +503,15 @@ async def sweep_approvals() -> dict[str, int]:
                 error_type=type(e).__name__,
             )
 
-    if expired or redispatched:
-        log.info(f"{LogTag.HIL} Approval sweep", expired=expired, redispatched=redispatched)
-    return {"expired": expired, "redispatched": redispatched}
+    if expired or redispatched or deferred_subagent:
+        log.info(
+            f"{LogTag.HIL} Approval sweep",
+            expired=expired,
+            redispatched=redispatched,
+            deferred_subagent=deferred_subagent,
+        )
+    return {
+        "expired": expired,
+        "redispatched": redispatched,
+        "deferred_subagent": deferred_subagent,
+    }

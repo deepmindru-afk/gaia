@@ -25,13 +25,16 @@ from langgraph.prebuilt import InjectedStore
 from langgraph.store.base import BaseStore, SearchItem
 from pydantic import Field
 
-from app.agents.core.subagents.registry import all_subagents, get_subagent_by_id
+from app.agents.core.subagents.active_integrations import get_active
+from app.agents.core.subagents.registry import get_subagent_by_id
 from app.agents.tools.core.registry import (
     DESKTOP_TOOL_CATEGORY,
     DESKTOP_TOOL_SPACE,
     ToolRegistry,
     get_tool_registry,
 )
+from app.agents.tools.execute.resolver import ResolvedTool, resolve_tool
+from app.agents.tools.execute.schema_docs import render_tool_doc
 from app.agents.tools.research_tool import deep_research
 from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
 from app.config.oauth_config import OAUTH_INTEGRATIONS
@@ -50,6 +53,143 @@ from app.utils.mcp_utils import canonical_tool_name_map
 from shared.py.wide_events import log
 
 WEBPAGE_TOOLS = [web_search_tool.name, fetch_webpages.name, deep_research.name]
+
+
+def _is_execute_routed(tool_registry: ToolRegistry, name: str, mcp_tool_names: set[str]) -> bool:
+    """Whether this tool runs through the execute proxy instead of binding.
+
+    Integration tools — Composio (categories with ``require_integration``) and
+    per-user MCP tools — are proxied; internal tools still bind. This is the
+    permanent classification of the cutover, not a migration flag.
+    """
+    if name in mcp_tool_names:
+        return True
+    category = tool_registry.get_category(tool_registry.get_category_of_tool(name))
+    return category is not None and category.require_integration
+
+
+async def _resolve_for_retrieval(user_id: str | None, name: str) -> ResolvedTool | None:
+    """resolve_tool, degraded to a miss on infra failure.
+
+    Retrieval's resolution is opportunistic (rescue an unmaterialized catalog
+    slug, render a doc); an unreachable Composio/MCP must make the NAME come
+    back unknown, not crash the select_tools node — observed live, the escaped
+    exception retry-looped the graph to its recursion limit. Dispatch keeps the
+    loud path: there the failure belongs to the actual call.
+    """
+    try:
+        return await resolve_tool(user_id, name)
+    except Exception as e:
+        log.warning(
+            f"{LogTag.TOOL} retrieve_tools: resolver unavailable; treating as unknown",
+            tool_name=name,
+            error_type=type(e).__name__,
+        )
+        return None
+
+
+async def _render_proxied_docs(user_id: str | None, names: list[str]) -> list[str]:
+    docs: list[str] = []
+    for name in names:
+        resolved = await _resolve_for_retrieval(user_id, name)
+        if resolved is None:
+            log.warning(
+                f"{LogTag.TOOL} retrieve_tools: proxied tool vanished between "
+                "validation and doc rendering",
+                tool_name=name,
+            )
+            continue
+        docs.append(render_tool_doc(resolved.tool))
+    return docs
+
+
+def partition_startup_tools(
+    tool_registry: ToolRegistry,
+    declared_names: list[str] | None,
+    mcp_tool_names: set[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Partition declared startup tools into ``(bind_now, preload_names)``.
+
+    Pure classification — no I/O, so graph construction reuses the registry
+    it already holds instead of fetching a second one. Integration tools
+    (Composio ``require_integration`` categories and per-user MCP) preload as
+    schema docs for ``execute`` and are never bound; everything else binds as
+    before. Declaration order of each side is preserved.
+    """
+    if not declared_names:
+        return [], []
+    mcp_tool_names = mcp_tool_names or set()
+    bind: list[str] = []
+    preload: list[str] = []
+    for name in dict.fromkeys(declared_names):
+        if _is_execute_routed(tool_registry, name, mcp_tool_names):
+            preload.append(name)
+        else:
+            bind.append(name)
+    return bind, preload
+
+
+async def split_startup_tools(
+    user_id: str | None,
+    declared_names: list[str] | None,
+    mcp_tool_names: set[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """``partition_startup_tools`` with registry and MCP names resolved.
+
+    The seam for run-time callers (handoff seeding, integration activation)
+    that hold no registry. Graph construction uses the pure partition
+    directly against the registry it already fetched.
+    """
+    if not declared_names:
+        return [], []
+    tool_registry = await get_tool_registry()
+    if mcp_tool_names is None:
+        mcp_tool_names = await _user_mcp_tool_names(user_id)
+    return partition_startup_tools(tool_registry, declared_names, mcp_tool_names)
+
+
+async def render_preload_block(user_id: str | None, preload_names: list[str]) -> str:
+    """Schema docs for preloaded tools, for direct injection into context.
+
+    The same docs ``retrieve_tools`` returns in binding mode, under a header
+    saying they are preloaded — NOT bound — and run via ``execute``. Returns
+    ``""`` when nothing renders; unresolvable names degrade per-name inside
+    ``_render_proxied_docs``.
+    """
+    docs = await _render_proxied_docs(user_id, list(preload_names))
+    if not docs:
+        return ""
+    header = (
+        f"{len(docs)} integration tool(s) preloaded below. They are NOT bound as "
+        "callable tools — do NOT call them by name. Build `data` from each schema "
+        "below and call "
+        'execute(task_description="...", tool_name="<NAME>", data={...}):'
+    )
+    return header + "\n\n" + "\n\n".join(docs)
+
+
+async def preloaded_startup_docs(user_id: str | None, integration_id: str) -> str:
+    """One integration's declared startup docs, or ``""`` when there are none.
+
+    The handoff-seeding seam: the caller appends this to the static system
+    message so the run opens with its most-used tools' schemas in context —
+    no ``retrieve_tools`` round trip, no binding. ``use_direct_tools`` graphs
+    bind their space wholesale, so docs there would contradictorily describe
+    bound tools as uncallable — they get none.
+    """
+    subagent = get_subagent_by_id(integration_id)
+    if subagent is None:
+        return ""
+    if subagent.config.use_direct_tools:
+        return ""
+    declared = [
+        *(subagent.config.auto_bind_tools or []),
+        *(subagent.config.extra_initial_tools or []),
+    ]
+    if not declared:
+        return ""
+    _, preload = await split_startup_tools(user_id, declared)
+    return await render_preload_block(user_id, preload)
 
 
 async def _user_mcp_tool_names(user_id: str | None) -> set[str]:
@@ -99,9 +239,9 @@ def _is_platform_tool_space(tool_space: str) -> bool:
     )
 
 
-# retrieve_tools docstring (doubles as LLM-facing tool description). Base
-# covers discovery/binding; the subagent section is appended only when
-# include_subagents=True, so provider/spawned subagents never see it.
+# ---------------------------------------------------------------------------
+# retrieve_tools docstring (doubles as LLM-facing tool description)
+# ---------------------------------------------------------------------------
 
 _RETRIEVE_TOOLS_BASE_DOC = """\
 Discover and load tools for execution. Supports two modes: discovery and binding.
@@ -124,26 +264,29 @@ Rules:
 - Do not search repeatedly to be thorough. If the first result looks right, move to binding.
 - Comma-separated intents work: "list pull requests, get repo info"
 
-BINDING MODE (exact_tool_names)
-Loads tools by exact name so they can be called. Use this after discovery or when you already know the name.
+SCHEMA/BINDING MODE (exact_tool_names)
+Resolves exact names so they can be run. Use this after discovery or when you already know the name. Two outcomes by tool kind:
+- INTEGRATION tools (Gmail, GitHub, Notion, MCP, ... — ALLCAPS names): returns each
+  tool's args schema. They are NEVER bound and CANNOT be called by name. Run them with
+  execute(task_description="...", tool_name="TOOL_NAME", data={...}) where `data`
+  matches the schema exactly. task_description is one short user-facing line.
+  Docs show ARGS only. Before consuming a tool's output or chaining on its fields,
+  learn the return shape first: get_tool_schema("TOOL_NAME") here, or inside bash
+  scripts gaia.schema("TOOL_NAME") / the cached tool-docs file. Never guess fields.
+- INTERNAL tools (snake_case names like plan_tasks): bound as callable tools; call
+  them directly.
 
 Rules:
-- Only bind tools you are about to use in the next 1-2 steps
-- Unknown or invalid names are silently ignored
-- You CANNOT call a tool that has not been bound first
+- Only request tools you are about to use in the next 1-2 steps
+- Unknown names are reported back; do not retry them verbatim
+- If execute returns invalid_args, fix `data` per the error detail and retry once
 
-STANDARD WORKFLOW
-Step 1: retrieve_tools(query="your intent")         → discover tool names
-Step 2: retrieve_tools(exact_tool_names=["TOOL_A"]) → bind for execution
-Step 3: Call the tool directly
+STANDARD WORKFLOW (integration tools)
+Step 1: retrieve_tools(query="your intent")           → discover tool names
+Step 2: retrieve_tools(exact_tool_names=["TOOL_A"])   → get the args schema
+Step 3: execute(task_description="...", tool_name="TOOL_A", data={...})
 
-Shortcut: If you already know the exact tool name, skip Step 1 and go straight to binding.
-
-IF DISCOVERY RETURNS A SUBAGENT (a name starting with "subagent:"): SKIP Step 2
-entirely. Subagents are NOT bound. Go straight to handoff(subagent_id="gmail",
-task="..."). Do NOT call retrieve_tools again to "bind" it, and never call
-retrieve_tools with an empty exact_tool_names. Trying to bind a subagent is the
-single most common mistake here: there is no bind step for a subagent.
+Shortcut: If you already know the exact tool name, skip Step 1.
 
 EFFICIENCY RULES (follow these strictly)
 - Do not call retrieve_tools more than twice for a single task unless the first discovery returned completely irrelevant results
@@ -175,44 +318,29 @@ EXAMPLES
 
 Simple read task:
   retrieve_tools(query="list pull requests")
-  → ["GITHUB_LIST_PULL_REQUESTS", "GITHUB_LIST_PULL_REQUESTS_FOR_REPO", ...]
+  → ["GITHUB_LIST_PULL_REQUESTS", ...]
   retrieve_tools(exact_tool_names=["GITHUB_LIST_PULL_REQUESTS"])
-  → GITHUB_LIST_PULL_REQUESTS(sort="updated", direction="desc")
+  → returns the args schema
+  → execute(task_description="Listing open PRs", tool_name="GITHUB_LIST_PULL_REQUESTS",
+            data={"sort": "updated", "direction": "desc"})
   → First result is the answer. Stop.
 
 Multi-tool task:
   retrieve_tools(query="fetch emails, send reply")
   → ["GMAIL_FETCH_MESSAGES", "GMAIL_REPLY_TO_THREAD", ...]
   retrieve_tools(exact_tool_names=["GMAIL_FETCH_MESSAGES", "GMAIL_REPLY_TO_THREAD"])
-  → GMAIL_FETCH_MESSAGES(...) → find the thread
-  → GMAIL_REPLY_TO_THREAD(...) → send reply. Done.
-
-Write task with verification:
-  retrieve_tools(query="list branches, create pull request")
-  → ["GITHUB_LIST_BRANCHES", "GITHUB_CREATE_PULL_REQUEST", ...]
-  retrieve_tools(exact_tool_names=["GITHUB_LIST_BRANCHES", "GITHUB_CREATE_PULL_REQUEST"])
-  → GITHUB_LIST_BRANCHES(...) → confirm branch name
-  → GITHUB_CREATE_PULL_REQUEST(...) → done.
+  → returns both schemas
+  → execute(task_description="Finding the thread", tool_name="GMAIL_FETCH_MESSAGES", data={...})
+  → execute(task_description="Sending the reply", tool_name="GMAIL_REPLY_TO_THREAD", data={...})
+  → Done.
 """
-
-_RETRIEVE_TOOLS_SUBAGENT_SECTION = """
-
-SUBAGENT TOOLS
-Discovery may also return subagent tools alongside regular tools.
-- Subagent tool format: "subagent:gmail", "subagent:fb9dfd7e05f8"
-- To USE a subagent, call handoff(subagent_id="gmail", task="...") directly.
-- Do NOT pass subagent names back to retrieve_tools, and do NOT try to "bind" them
-  with exact_tool_names. Subagents are never bound, only handed off to; there is no
-  binding step, handoff works immediately on the subagent id (the part after
-  "subagent:").
-- They cannot be executed directly as tools."""
 
 
 class ScoredToolHit(TypedDict):
     """One ranked discovery hit, threaded from a search result to the final list.
 
-    ``id`` is either a tool name or a ``subagent:<id> (Name)`` key; ``score`` is
-    the backing store's relevance, absent on stores that don't rank.
+    ``id`` is a tool name; ``score`` is the backing store's relevance, absent
+    on stores that don't rank.
     """
 
     id: str
@@ -254,15 +382,16 @@ async def _get_user_context(
     user_id: str | None,
     tool_space: str,
     include_subagents: bool = True,
-) -> tuple[set[str], dict[str, str | None], set[str]]:
+) -> tuple[set[str], dict[str, str | None]]:
     """Get user's available namespaces and connected integrations.
 
-    When include_subagents is False, skips computing subagent-related data
-    entirely — no integration queries, no internal subagent resolution.
+    When include_subagents is False, skips the connected-integrations lookup
+    entirely — no integration queries. ``connected_integrations`` labels
+    discovery's tool entries with their source; it is not a subagent surface.
 
     Returns:
-        Tuple of (user_namespaces, connected_integrations, internal_subagents)
-        where connected_integrations maps canonical integration id -> display name.
+        Tuple of (user_namespaces, connected_integrations) where
+        connected_integrations maps canonical integration id -> display name.
     """
     # "general" is always available; tool_space is seeded only for platform
     # integrations (OAUTH_INTEGRATIONS) — a custom MCP's namespace is user-scoped
@@ -272,14 +401,9 @@ async def _get_user_context(
         user_namespaces.add(tool_space)
 
     connected_integrations: dict[str, str | None] = {}
-    internal_subagents: set[str] = set()
-
-    # Only compute subagent data when subagents are included
-    if include_subagents:
-        internal_subagents = {sa.id for sa in all_subagents() if sa.managed_by == "internal"}
 
     if not user_id:
-        return user_namespaces, connected_integrations, internal_subagents
+        return user_namespaces, connected_integrations
 
     try:
         # Union (not assign) so platform seeds survive cache contents.
@@ -301,7 +425,29 @@ async def _get_user_context(
     except Exception as e:
         log.warning(f"{LogTag.TOOL} Failed to get user namespaces", error_type=type(e).__name__)
 
-    return user_namespaces, connected_integrations, internal_subagents
+    return user_namespaces, connected_integrations
+
+
+async def _active_tool_spaces(conversation_id: str | None) -> set[str]:
+    """Tool spaces activated in this conversation, or empty when none.
+
+    Maps stamped integration ids through the registry; an id the registry no
+    longer knows is dropped with a warning rather than searched blind.
+    """
+    active = await get_active(conversation_id)
+    if not active:
+        return set()
+    spaces: set[str] = set()
+    for integration_id in active:
+        subagent = get_subagent_by_id(integration_id)
+        if subagent is not None and subagent.config.tool_space:
+            spaces.add(subagent.config.tool_space)
+        else:
+            log.warning(
+                f"{LogTag.TOOL} Activated integration unknown to the registry; not searching it",
+                integration_id=integration_id,
+            )
+    return spaces
 
 
 def _build_search_tasks(
@@ -312,6 +458,7 @@ def _build_search_tasks(
     include_subagents: bool,
     limit: int,
     include_desktop: bool = False,
+    active_namespaces: set[str] | None = None,
 ) -> list[Awaitable[SearchTaskResult]]:
     """Build list of search tasks to execute.
 
@@ -344,13 +491,28 @@ def _build_search_tasks(
         log.info(f"{LogTag.TOOL} Adding search for general namespace (limited to 5 for core tools)")
         search_tasks.append(store.asearch(("general",), query=query, limit=5))
 
+    # Integrations this conversation activated in-context: their namespaces
+    # join the search so tools beyond the preloaded subset are discoverable
+    # from the activating run. Stamped only after a connection-checked
+    # activation, so membership implies entitlement (see active_integrations)
+    # and the user_namespaces gate above does not apply to them.
+    for namespace in sorted(active_namespaces or ()):
+        if namespace in {tool_space, "general"}:
+            continue
+        log.info(f"{LogTag.TOOL} Adding search for activated namespace", namespace=namespace)
+        search_tasks.append(store.asearch((namespace,), query=query, limit=limit))
+
     # Desktop-executed tools are only discoverable for desktop-app sessions
     # (include_desktop is derived from conversation_source upstream).
     if include_desktop:
         log.info(f"{LogTag.TOOL} Adding search for desktop namespace")
         search_tasks.append(store.asearch((DESKTOP_TOOL_SPACE,), query=query, limit=10))
 
-    # Search subagents namespace
+    # Custom MCP integrations index a pointer doc here (and only MCP does:
+    # provider entries were never written to this namespace). Surfacing it is
+    # what makes an unactivated custom MCP discoverable at all — its tools
+    # live in a per-user namespace this fan-out never enters, so without this
+    # search the model could never learn its id to hand off to.
     if include_subagents:
         log.info(f"{LogTag.TOOL} Adding search for subagents namespace")
         search_tasks.append(store.asearch(("subagents",), query=query, limit=15))
@@ -362,19 +524,24 @@ def _build_search_tasks(
 def _process_public_integration_result(
     result: list[dict[str, Any]],
 ) -> list[ScoredToolHit]:
-    """Process public integration search results."""
-    processed: list[ScoredToolHit] = []
+    """Process public integration search results.
 
+    These are integrations the user has NOT connected: they render as
+    ``integration:<id> (Name)`` entries (never ``subagent:`` — only per-user
+    MCP integrations run as subagents), so the model can activate them
+    directly, which is also what renders the connect card.
+    """
+    processed: list[ScoredToolHit] = []
     for item in result:
         integration_id = item.get("integration_id")
         if integration_id:
-            # Include name for LLM readability
             name = item.get("name")
-            subagent_key = (
-                f"subagent:{integration_id} ({name})" if name else f"subagent:{integration_id}"
+            key = (
+                f"integration:{integration_id} ({name})"
+                if name
+                else f"integration:{integration_id}"
             )
-            processed.append(ScoredToolHit(id=subagent_key, score=item.get("relevance_score", 0)))
-
+            processed.append(ScoredToolHit(id=key, score=item.get("relevance_score", 0)))
     return processed
 
 
@@ -384,6 +551,7 @@ def _process_chroma_search_result(
     tool_registry: ToolRegistry,
     include_subagents: bool,
     tool_space: str = "general",
+    active_namespaces: set[str] | None = None,
 ) -> list[ScoredToolHit]:
     """Process Chroma store search results."""
     processed: list[ScoredToolHit] = []
@@ -391,30 +559,27 @@ def _process_chroma_search_result(
     for item in result:
         tool_key = str(item.key)
 
-        # Handle subagent results from subagents namespace
+        # Subagents-namespace pointers exist for MCP integrations (the writers
+        # of that namespace): static registry MCP pointers (source "mcp") and
+        # custom MCP pointers indexed at connect time (source "custom"). Both
+        # are the one subagent surface discovery keeps, because an MCP's tools
+        # live in a per-user namespace this search never enters — without the
+        # pointer the model could never learn its id to hand off to. Docs with
+        # no source predate the field and are treated as "mcp" for back-compat.
+        # Anything else found here is a stale doc from before provider entries
+        # stopped being indexed under this namespace; drop it, never surface it.
         if hasattr(item, "namespace") and item.namespace == ("subagents",):
             if not include_subagents:
                 continue
-
-            # Get display name from item.value if available (stored during indexing)
-            name = None
-            if hasattr(item, "value") and isinstance(item.value, dict):
-                name = item.value.get("name")
-
-            # Build subagent key with display name for LLM readability
-            if tool_key.startswith("subagent:"):
-                subagent_key = f"{tool_key} ({name})" if name else tool_key
-            else:
-                subagent_key = f"subagent:{tool_key} ({name})" if name else f"subagent:{tool_key}"
-
-            processed.append(ScoredToolHit(id=subagent_key, score=item.score))
-            continue
-
-        # Handle keys with subagent: prefix — skip if subagents not included
-        if tool_key.startswith("subagent:"):
-            if not include_subagents:
+            value = getattr(item, "value", None)
+            if not isinstance(value, dict):
                 continue
-            processed.append(ScoredToolHit(id=tool_key, score=item.score))
+            source = value.get("source", "mcp")
+            if source not in ("custom", "mcp"):
+                continue
+            name = value.get("name")
+            subagent_key = f"subagent:{tool_key} ({name})" if name else f"subagent:{tool_key}"
+            processed.append(ScoredToolHit(id=subagent_key, score=item.score))
             continue
 
         # Filter general namespace results for subagents - only allow webpage tools
@@ -427,13 +592,20 @@ def _process_chroma_search_result(
             if tool_key not in WEBPAGE_TOOLS:
                 continue
 
-        # Filter delegated tools in main agent context
+        # Filter delegated tools in main agent context. Delegated (integration)
+        # tools execute in their owner's context only, so the main agent never
+        # sees them — with one exception: a namespace activated in-conversation
+        # via activate_integration, whose long tail the activation reply
+        # promises is retrievable. Without the exemption the activated search
+        # fan-out matches docs only to drop every one of them here.
         if include_subagents:
-            tool_category_name = tool_registry.get_category_of_tool(tool_key)
-            if tool_category_name:
-                category = tool_registry.get_category(name=tool_category_name)
-                if category and category.is_delegated:
-                    continue
+            namespace_key = "::".join(item.namespace) if getattr(item, "namespace", None) else ""
+            if namespace_key not in (active_namespaces or ()):
+                tool_category_name = tool_registry.get_category_of_tool(tool_key)
+                if tool_category_name:
+                    category = tool_registry.get_category(name=tool_category_name)
+                    if category and category.is_delegated:
+                        continue
 
         # Add regular tools
         if tool_key in available_tool_names:
@@ -448,6 +620,7 @@ async def _process_search_results(
     tool_registry: ToolRegistry,
     include_subagents: bool,
     tool_space: str = "general",
+    active_namespaces: set[str] | None = None,
 ) -> list[ScoredToolHit]:
     """Process all search results and return unified list."""
     all_results: list[ScoredToolHit] = []
@@ -460,10 +633,7 @@ async def _process_search_results(
         if not result:
             continue
 
-        # Determine result type and process accordingly
-        is_public_search = isinstance(result[0], dict)
-
-        if is_public_search:
+        if isinstance(result[0], dict):
             processed = _process_public_integration_result(cast(list[dict[str, Any]], result))
         else:
             items = cast(list[SearchItem], result)
@@ -495,6 +665,7 @@ async def _process_search_results(
                 tool_registry,
                 include_subagents,
                 tool_space,
+                active_namespaces,
             )
 
         all_results.extend(processed)
@@ -518,11 +689,12 @@ def _deduplicate_and_sort(
     return [str(r["id"]) for r in unique_results[:limit]]
 
 
-def _split_subagent_entry(entry: str) -> tuple[str, str | None]:
-    tail = entry[len("subagent:") :]
+def _split_prefixed_entry(entry: str, prefix: str) -> tuple[str, str | None]:
+    """``<prefix><id> (Name)`` -> (id, name)."""
+    tail = entry[len(prefix) :]
     if " (" in tail and tail.endswith(")"):
-        subagent_id, name = tail.split(" (", 1)
-        return subagent_id, name[:-1]
+        entry_id, name = tail.split(" (", 1)
+        return entry_id, name[:-1]
     return tail, None
 
 
@@ -530,23 +702,28 @@ def _render_discovery_response(
     final_tools: list[str],
     tool_registry: ToolRegistry,
     connected_integrations: dict[str, str | None],
-    internal_subagents: set[str],
     query: str | None,
     total_candidates: int,
     limit: int,
 ) -> str:
-    """Render discovery hits as JSON in three buckets: bind, handoff, connect.
+    """Render discovery hits as the JSON the model acts on.
 
-    Availability is the only axis that changes what the model may do next, so it
-    is the top-level split. ``internal_subagents`` is required to tell a built-in
-    capability (always usable) from an integration the user has not connected —
-    without it every built-in was reported as needing a connection it has none of.
+    Only real tools are listed, plus two narrow entry kinds: ``subagent:``
+    pointers to per-user MCP integrations (the sole subagent surface — their
+    tools live in per-user namespaces discovery never enters) and
+    ``integration:`` pointers to not-yet-connected integrations (activating
+    one renders its connect card). Provider and built-in integrations surface
+    as their tools, never as pointers. ``connected_integrations`` only labels
+    each tool entry with its source.
     """
     bindable: list[str] = []
-    subagents: list[tuple[str, str | None]] = []
+    mcp: list[tuple[str, str | None]] = []
+    new: list[tuple[str, str | None]] = []
     for entry in final_tools:
         if entry.startswith("subagent:"):
-            subagents.append(_split_subagent_entry(entry))
+            mcp.append(_split_prefixed_entry(entry, "subagent:"))
+        elif entry.startswith("integration:"):
+            new.append(_split_prefixed_entry(entry, "integration:"))
         else:
             bindable.append(entry)
 
@@ -563,119 +740,49 @@ def _render_discovery_response(
             entry["needs_approval"] = True
         return entry
 
-    def _subagent_entry(sid: str, name: str | None) -> dict[str, str]:
+    def _id_entry(pair: tuple[str, str | None]) -> dict[str, str]:
+        sid, name = pair
         return {"id": sid, "name": name} if name else {"id": sid}
-
-    ready = [_subagent_entry(s, n) for s, n in subagents if s in internal_subagents]
-    connected = [
-        _subagent_entry(s, n)
-        for s, n in subagents
-        if s in connected_integrations and s not in internal_subagents
-    ]
-    needs_connecting = [
-        _subagent_entry(s, n)
-        for s, n in subagents
-        if s not in connected_integrations and s not in internal_subagents
-    ]
 
     payload: dict[str, Any] = {
         "tools_to_bind": [_tool_entry(n) for n in bindable],
-        "subagents_builtin": ready,
-        "subagents_connected": connected,
-        "subagents_needing_connection": needs_connecting,
+        "mcp_subagents": [_id_entry(p) for p in mcp],
+        "new_integrations": [_id_entry(p) for p in new],
     }
     if total_candidates > limit:
         payload["truncated"] = {"shown": len(final_tools), "total": total_candidates}
 
-    # Keyed off the SEARCH, not off what is listed: built-in subagents are injected
-    # unconditionally, so a zero-match search still returns entries. Reporting that
-    # as a find is what sent the model into re-querying the same dead index.
     if total_candidates == 0:
         payload["search_matched_nothing"] = True
         payload["next"] = (
-            "The search matched NOTHING; anything listed above is a built-in that is "
-            "always offered, not a hit. Retry ONCE with a broader query naming the "
-            "action ('send email', not a product name). If you already know the exact "
-            "tool name, skip search and call retrieve_tools(exact_tool_names=[...]). "
-            "Otherwise tell the user the capability is unavailable. Never repeat the "
-            "same query."
+            "The search matched NOTHING. Retry ONCE with a broader query "
+            "naming the action ('send email', not a product name). If you "
+            "already know the exact tool name, skip search and call "
+            "retrieve_tools(exact_tool_names=[...]). Otherwise tell the "
+            "user the capability is unavailable. Never repeat the same query."
         )
     else:
-        payload["next"] = (
-            "Bind with retrieve_tools(exact_tool_names=[...]) then call the tool. "
-            'Subagents are NOT bindable: use handoff(subagent_id="<id>", task="..."). '
-            "Anything under subagents_needing_connection is unusable until the user "
-            "connects it, so ask them first."
-        )
+        steps = [
+            "Load with retrieve_tools(exact_tool_names=[...]): internal tools bind "
+            "and are called by name, integration tools (ALLCAPS) return schemas to "
+            "run via execute and are never bound. Integrations are not subagents: "
+            "act on them yourself."
+        ]
+        if mcp:
+            steps.append(
+                "subagent: entries are per-user MCP integrations, the ONLY "
+                'subagents: delegate with handoff(subagent_id="<id>", task="...").'
+            )
+        if new:
+            steps.append(
+                "new_integrations are not connected yet: call "
+                "activate_integration(id) anyway — that call is what shows the user "
+                "the connect card."
+            )
+        payload["next"] = " ".join(steps)
     if query:
         payload["query"] = query
     return json.dumps(payload, indent=2)
-
-
-def _inject_available_subagents(
-    discovered_tools: list[str],
-    internal_subagents: set[str],
-    connected_integrations: dict[str, str | None],
-    include_subagents: bool,
-) -> list[str]:
-    """Inject available subagents that user has access to.
-
-    Every subagent entry is rendered as ``subagent:<id> (Name)`` whenever a name
-    is known, so the model can tell what ``subagent:<uuid>`` actually is. Names
-    come from the connected-integrations map first, then the in-memory registry.
-    Semantic-search hits often arrive unnamed (a ``subagent:`` key from a tool
-    namespace, or a store that didn't return the value); they get upgraded here
-    and deduped by canonical id so the named and unnamed forms collapse to one.
-    """
-    if not include_subagents:
-        return discovered_tools
-
-    def _resolve_name(integration_id: str) -> str | None:
-        if connected_integrations.get(integration_id):
-            return connected_integrations[integration_id]
-        sa = get_subagent_by_id(integration_id)
-        return sa.name if sa else None
-
-    result: list[str] = []
-    seen_ids: set[str] = set()
-
-    # Pass 1: keep discovered tools in order; upgrade unnamed subagent hits to
-    # carry a name when we can resolve one, and dedupe subagents by canonical id.
-    for entry in discovered_tools:
-        if not entry.startswith("subagent:"):
-            result.append(entry)
-            continue
-        tail = entry[len("subagent:") :]
-        canonical_id = tail.split(" ", 1)[0]
-        if canonical_id in seen_ids:
-            continue
-        seen_ids.add(canonical_id)
-        already_named = "(" in tail
-        if already_named:
-            result.append(entry)
-        else:
-            name = _resolve_name(canonical_id)
-            result.append(f"subagent:{canonical_id} ({name})" if name else entry)
-
-    def _add_subagent(integration_id: str, name: str | None) -> None:
-        if integration_id in seen_ids:
-            return
-        subagent_key = (
-            f"subagent:{integration_id} ({name})" if name else f"subagent:{integration_id}"
-        )
-        result.append(subagent_key)
-        seen_ids.add(integration_id)
-
-    # Add internal subagents (always available) — names come from the registry.
-    for integration_id in internal_subagents:
-        sa = get_subagent_by_id(integration_id)
-        _add_subagent(integration_id, sa.name if sa else None)
-
-    # Add connected integration subagents — names resolved in _get_user_context.
-    for integration_id, name in connected_integrations.items():
-        _add_subagent(integration_id, name)
-
-    return result
 
 
 def get_retrieve_tools_function(
@@ -698,10 +805,12 @@ def get_retrieve_tools_function(
 
     Args:
         tool_space: Namespace to search for tools
-        include_subagents: Whether to include subagent results in search
+        include_subagents: Scoped-agent toggle. False (a scoped worker
+            searching its own space) skips the connected-integrations lookup
+            and the delegated-tool filter, so it sees its own toolkit.
         limit: Maximum number of tool results for semantic search
         bindable_tool_names: The set of tool names this agent's graph can actually
-            bind and execute. When set (scoped agents like provider subagents),
+            bind and execute. When set (scoped agents like MCP workers),
             binding validates against it instead of the global registry, so a tool
             the graph can't execute is never reported as a successful bind. None ->
             validate against the global registry (main executor/comms carry it).
@@ -739,9 +848,7 @@ def get_retrieve_tools_function(
                         "retrieve_tools received no usable argument (an empty "
                         "exact_tool_names counts as none). Next step: pass "
                         "query='what you want to do' to discover, or "
-                        "exact_tool_names=['TOOL_NAME'] to bind a known tool. To use a "
-                        "subagent (a 'subagent:' result), do NOT call retrieve_tools "
-                        "again; call handoff(subagent_id='gmail', task='...') directly."
+                        "exact_tool_names=['TOOL_NAME'] to bind a known tool."
                     )
                 ],
             )
@@ -792,18 +899,16 @@ def get_retrieve_tools_function(
             validated_tool_names: list[str] = []
             unknown_tool_names: list[str] = []
             out_of_scope_tool_names: list[str] = []
-            requested_subagents: list[str] = []
             # requested name -> canonical name, for the aliases we silently resolved
             renamed_tools: dict[str, str] = {}
             for tool_name in exact_tool_names:
                 if tool_name.startswith("subagent:"):
-                    # Subagents are handed off to, never bound. Surface corrective
-                    # guidance instead of echoing the name back as a bind — that made
-                    # a model slip look successful and relied on downstream filtering.
-                    if include_subagents:
-                        requested_subagents.append(tool_name)
-                    else:
-                        unknown_tool_names.append(tool_name)
+                    # Discovery returns subagent: entries only for per-user MCP
+                    # integrations, so one here is either that (handled by the
+                    # model via handoff, never bound) or a hallucination —
+                    # either way it must not bind. Report unknown so the model
+                    # re-discovers instead of echoing it back as a fake bind.
+                    unknown_tool_names.append(tool_name)
                 elif (
                     not desktop_enabled
                     and tool_registry.get_category_of_tool(tool_name) == DESKTOP_TOOL_CATEGORY
@@ -822,6 +927,33 @@ def get_retrieve_tools_function(
                     out_of_scope_tool_names.append(tool_name)
                 else:
                     unknown_tool_names.append(tool_name)
+
+            # Catalog slugs whose toolkit was never materialized are absent from
+            # every local name set — rescue them through the resolver (which
+            # materializes on demand) instead of reporting a capability the
+            # catalog HAS as unknown.
+            still_unknown: list[str] = []
+            for name in unknown_tool_names:
+                if name.replace("_", "").isupper() and await _resolve_for_retrieval(user_id, name):
+                    validated_tool_names.append(name)
+                else:
+                    still_unknown.append(name)
+            unknown_tool_names = still_unknown
+
+            # The cutover: integration tools (Composio + MCP) are never bound —
+            # they run through the execute proxy, so binding-mode returns their
+            # schema docs instead. Internal tools still bind.
+            proxied_names: list[str] = []
+            still_bound: list[str] = []
+            for name in validated_tool_names:
+                if _is_execute_routed(tool_registry, name, mcp_tool_names_set) or (
+                    name not in bindable_set and name.replace("_", "").isupper()
+                ):
+                    proxied_names.append(name)
+                else:
+                    still_bound.append(name)
+            validated_tool_names = still_bound
+            proxied_docs = await _render_proxied_docs(user_id, proxied_names)
 
             if unknown_tool_names:
                 # Surfacing this is important: silently dropping requested tools
@@ -844,31 +976,40 @@ def get_retrieve_tools_function(
                     "mode": "binding",
                     "tools_requested": len(exact_tool_names),
                     "tools_bound": len(validated_tool_names),
-                    "tools_filtered": len(exact_tool_names) - len(validated_tool_names),
+                    "tools_proxied": len(proxied_names),
+                    "tools_filtered": len(exact_tool_names)
+                    - len(validated_tool_names)
+                    - len(proxied_names),
                 }
             )
 
-            # Bind valid tools regardless; add corrective guidance for subagent /
-            # out-of-scope names so the model takes the right path.
-            response = list(validated_tool_names)
-            if requested_subagents:
-                response.append(
-                    "Subagents are not bound with retrieve_tools. Call "
-                    "handoff(subagent_id='<id>', task='...') directly, using the "
-                    "part after 'subagent:'."
-                )
+            # Bind valid tools regardless; add corrective guidance for
+            # out-of-scope names so the model takes the right path. Guidance is
+            # kept in its own list, not filtered back out of `response`: a
+            # name-vs-sentence filter re-emitted every proxied name as a bare
+            # line right under the block saying they are NOT callable by name.
+            guidance: list[str] = []
             if out_of_scope_tool_names:
-                response.append(
+                guidance.append(
                     "These tools are not available inside this subagent and cannot be "
                     f"bound here: {', '.join(out_of_scope_tool_names)}. They belong to the "
                     "main executor, not this subagent. Do not retry binding them; finish "
                     "your task here and let the executor handle them."
                 )
+            response = [*validated_tool_names, *proxied_names, *guidance]
 
             bind_lines: list[str] = []
             if validated_tool_names:
                 bind_lines.append(f"Bound {len(validated_tool_names)} tools, call them directly:")
                 bind_lines.extend(f"  - {name}" for name in validated_tool_names)
+            if proxied_docs:
+                bind_lines.append(
+                    f"{len(proxied_docs)} integration tool(s) ready to run via execute. They "
+                    "are NOT bound as callable tools — do NOT call them by name. Build "
+                    "`data` from each schema below and call "
+                    'execute(task_description="...", tool_name="<NAME>", data={...}):'
+                )
+                bind_lines.extend(proxied_docs)
             if renamed_tools:
                 bind_lines.append(
                     "Resolved to their canonical names, use these from now on: "
@@ -880,7 +1021,7 @@ def get_retrieve_tools_function(
                     "Do not retry these names; run retrieve_tools(query=...) to find "
                     "what actually exists."
                 )
-            bind_lines.extend(line for line in response if line not in validated_tool_names)
+            bind_lines.extend(guidance)
 
             return RetrieveToolsResult(
                 tools_to_bind=validated_tool_names,
@@ -888,14 +1029,15 @@ def get_retrieve_tools_function(
                 response_text="\n".join(bind_lines),
             )
 
-        # Get user context (skips subagent computation when include_subagents=False)
-        (
-            user_namespaces,
-            connected_integrations,
-            internal_subagents,
-        ) = await _get_user_context(user_id, tool_space, include_subagents)
+        # Get user context (namespaces + connected integrations for labels)
+        (user_namespaces, connected_integrations) = await _get_user_context(
+            user_id, tool_space, include_subagents
+        )
 
         # Build and execute search tasks
+        active_namespaces = await _active_tool_spaces(
+            agent_configurable(config).get("conversation_id")
+        )
         search_tasks = _build_search_tasks(
             store,
             query or "",
@@ -904,6 +1046,7 @@ def get_retrieve_tools_function(
             include_subagents,
             limit,
             include_desktop=desktop_enabled,
+            active_namespaces=active_namespaces,
         )
 
         results = await asyncio.gather(*search_tasks, return_exceptions=True)
@@ -966,20 +1109,11 @@ def get_retrieve_tools_function(
             tool_registry,
             include_subagents,
             tool_space,
+            active_namespaces,
         )
 
-        discovered_tools = _deduplicate_and_sort(all_results, limit)
-
-        # Inject available subagents (no-op when include_subagents=False)
-        if include_subagents:
-            final_tools = _inject_available_subagents(
-                discovered_tools,
-                internal_subagents,
-                connected_integrations,
-                include_subagents,
-            )
-        else:
-            final_tools = discovered_tools
+        # Deduplicate and sort
+        final_tools = _deduplicate_and_sort(all_results, limit)
 
         log.set(
             tool_retrieval={
@@ -988,6 +1122,7 @@ def get_retrieve_tools_function(
                 "tool_space": tool_space,
                 "user_id": user_id,
                 "namespaces_searched": sorted(user_namespaces),
+                "active_namespaces": sorted(active_namespaces),
                 "tools_discovered": len(final_tools),
                 "chroma_hits": chroma_hits,
                 "public_hits": public_hits,
@@ -1010,17 +1145,16 @@ def get_retrieve_tools_function(
                 final_tools,
                 tool_registry,
                 connected_integrations,
-                internal_subagents,
                 query,
                 len(all_results),
                 limit,
             ),
         )
 
-    # Assign the LLM-facing docstring from pre-built constants
-    if include_subagents:
-        retrieve_tools.__doc__ = _RETRIEVE_TOOLS_BASE_DOC + _RETRIEVE_TOOLS_SUBAGENT_SECTION
-    else:
-        retrieve_tools.__doc__ = _RETRIEVE_TOOLS_BASE_DOC
+    # The LLM-facing docstring is a static constant (no subagent section:
+    # discovery surfaces subagent: entries only for per-user MCP integrations,
+    # which the handoff tool's own description covers, so nothing teaches
+    # provider handoff here).
+    retrieve_tools.__doc__ = _RETRIEVE_TOOLS_BASE_DOC
 
     return retrieve_tools

@@ -95,6 +95,10 @@ class MessageRequestWithHistory(BaseModel):
     comms_model: str | None = None
     executor_model: str | None = None
     use_default_models: bool = True
+    # Platform-native id of the user's message (WhatsApp wamid, Telegram
+    # message_id, Discord id, Slack ts). Set only by bot turns for later native
+    # reactions; web and other clients leave it None.
+    platform_message_id: str | None = None
 
 
 class MessageRequest(BaseModel):

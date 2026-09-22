@@ -1,9 +1,8 @@
 """
-Skill Management Tools - LangChain tools for the skills subagent.
+Skill Management Tools - LangChain tools for the skills integration.
 
 These tools handle installing, creating, listing, and managing skills.
-The skills subagent is delegated to via handoff when the user wants to
-manage their installed skills.
+They run in-context after activate_integration("skills").
 """
 
 import json
@@ -54,7 +53,7 @@ async def install_skill_from_github(
     target: Annotated[
         str,
         "Where to make the skill available: 'executor', "
-        "or a subagent agent_name like 'gmail_agent', 'github_agent', 'slack_agent'. "
+        "or an integration agent_name like 'gmail_agent', 'github_agent', 'slack_agent'. "
         "Leave empty to use the target from SKILL.md.",
     ] = "",
 ) -> str:
@@ -115,7 +114,7 @@ async def create_skill(
     target: Annotated[
         str,
         "Where to make the skill available: 'executor', "
-        "or a subagent agent_name like 'gmail_agent', 'github_agent', 'slack_agent'.",
+        "or an integration agent_name like 'gmail_agent', 'github_agent', 'slack_agent'.",
     ] = "executor",
 ) -> str:
     """Create a new custom skill from scratch.
@@ -162,7 +161,7 @@ async def list_installed_skills(
     config: RunnableConfig,
     target: Annotated[
         str,
-        "Filter by target: 'executor', or a subagent agent_name. Leave empty to show all skills.",
+        "Filter by target: 'executor', or an integration agent_name. Leave empty to show all skills.",
     ] = "",
 ) -> str:
     """List all installed skills for the current user.
@@ -286,7 +285,7 @@ class LearnedSkillSpec(BaseModel):
     )
     target: str = Field(
         default="executor",
-        description="Where to make the skill available: 'executor' or a subagent agent_name.",
+        description="Where to make the skill available: 'executor' or an integration agent_name.",
     )
     when_to_use: str = Field(
         default="",
@@ -294,7 +293,7 @@ class LearnedSkillSpec(BaseModel):
     )
     integrations: list[str] = Field(
         default_factory=list,
-        description="Integration subagent ids the skill needs connected (e.g. ['gmail'], "
+        description="Integration ids the skill needs connected (e.g. ['gmail'], "
         "['github'], [] for none). These surface as prerequisites in the skill.",
     )
     steps: list[LearnedSkillStep] = Field(
@@ -350,7 +349,7 @@ async def save_learned_skill(
     """Save a reusable skill learned from a successful multi-step run.
 
     Turns the winning tool sequence into a persistent skill the executor (or a
-    subagent) can reuse next time, instead of re-deriving the approach from
+    worker) can reuse next time, instead of re-deriving the approach from
     scratch. The skill is stored per-user, shows up in the agent's "Available
     Skills" listing, and is activated by reading its SKILL.md.
 

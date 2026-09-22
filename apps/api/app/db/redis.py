@@ -4,7 +4,7 @@ Supports generic JSON caching, TTL, pattern-based invalidation, and graceful fal
 Redis is unavailable.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Set as AbstractSet
 from typing import Any, Protocol, TypeVar, cast, overload
 
 from pydantic import TypeAdapter
@@ -91,6 +91,10 @@ class AsyncRedisCommands(Protocol):
         """EXISTS — count of the named keys present."""
         ...
 
+    async def rename(self, src: str, dst: str) -> bool:
+        """RENAME — atomically move a key; raises ResponseError if src is absent."""
+        ...
+
     async def expire(self, name: str, time: int) -> bool:
         """Set a TTL in seconds on an existing key."""
         ...
@@ -123,6 +127,10 @@ class AsyncRedisCommands(Protocol):
         """LTRIM — keep only [start, end]; negative indexes count from the tail."""
         ...
 
+    async def lrem(self, name: str, count: int, value: str) -> int:
+        """LREM — remove matching elements; count=0 removes every copy."""
+        ...
+
     async def rpush(self, name: str, *values: str) -> int:
         """RPUSH — returns the list length after the push."""
         ...
@@ -133,6 +141,18 @@ class AsyncRedisCommands(Protocol):
 
     async def hgetall(self, name: str) -> dict[str, str]:
         """HGETALL — empty dict for a missing key."""
+        ...
+
+    async def hdel(self, name: str, *keys: str) -> int:
+        """HDEL — returns how many named fields were removed."""
+        ...
+
+    async def sadd(self, name: str, *values: str) -> int:
+        """SADD — returns how many members were newly added."""
+        ...
+
+    async def smembers(self, name: str) -> AbstractSet[str]:
+        """SMEMBERS — empty set for a missing key."""
         ...
 
     async def publish(self, channel: str, message: str) -> int:

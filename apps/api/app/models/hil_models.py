@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -47,6 +47,9 @@ class DeclinedCallRecord(TypedDict):
     """
 
     feedback: str | None
+    # Present only on auto-mode refusals (absent on rows written before this
+    # shipped, which correctly read as user-made).
+    auto: NotRequired[bool]
 
 
 class HILPreferences(BaseModel):
@@ -59,6 +62,9 @@ class HILPreferences(BaseModel):
     # tool name -> should-ask (True = always ask, False = always allow). Holds
     # only the tools the user explicitly flipped, so it stays small.
     tool_overrides: dict[str, bool] = Field(default_factory=dict)
+    # Auto mode declines to judge these tools — they always get a card. The
+    # deny-rule half of deny > ask > allow: explicit, per-user, no inference.
+    never_auto_tools: list[str] = Field(default_factory=list)
 
 
 class HILToolRiskRecord(MongoDocument):
@@ -111,14 +117,14 @@ class HILApprovalRecord(MongoDocument):
     # Stamped when the resume run is dispatched; a decided record without it is
     # a crashed resume the sweep re-dispatches.
     resumed_at: datetime | None = None
-    # Set only when a detached background subagent parked here: durable state
-    # (never the in-process session) so wait_for_subagents can rediscover and
-    # resume it via this thread id after the executor's own pause. None otherwise.
+    # Set only when a detached background subagent parked on this approval: its
+    # graph is checkpointed under this deterministic thread id (durable, not the
+    # in-process session). None for every other approval.
     subagent_thread_id: str | None = None
     subagent_agent_name: str | None = None
-    # Stamped by the join once this parked subagent is resumed and collected.
-    # Distinct from resumed_at (records dispatching the executor): one batch
-    # decision wakes the executor once, but each subagent is collected separately.
+    # Reserved for the HIL rework: stamped once a parked subagent has been resumed
+    # and its result collected. Distinct from ``resumed_at`` (which records that a
+    # decision dispatched the *executor*). Unused until a resume driver exists.
     subagent_collected_at: datetime | None = None
 
 
@@ -150,3 +156,60 @@ class HILToolRiskUpdate(BaseModel):
     is_destructive: bool | None = None
     rationale: str | None = None
     classified_at: datetime | None = None
+
+
+class LedgerState(StrEnum):
+    """Where one ledger approval stands. Separate enum from ``HILApprovalStatus``:
+    the ledger has no expiry/timeout states and adds execution tracking — reusing
+    the old enum would let timeout machinery read ledger rows and vice versa."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    REVOKED = "revoked"
+    EXECUTING = "executing"
+    EXECUTED = "executed"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+
+LIVE_LEDGER_STATES = frozenset({LedgerState.PENDING, LedgerState.APPROVED})
+
+
+class ApprovalLedgerDocument(MongoDocument):
+    """One entry in the executor-free approval ledger (``approval_ledger``).
+
+    Uncached and never expiring: rows are decision state read at low volume, and
+    a pending row leaves only by user decision or agent revoke — never by timer.
+    """
+
+    approval_id: str
+    conversation_id: str
+    user_id: str = ""
+    fingerprint: str
+    tool_name: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    summary: str = ""
+    rationale: str = ""
+    preview: str = ""
+    owner_agent: str = ""
+    blocked_by: list[str] = Field(default_factory=list)
+    # Background owner parked on this approval, for the resume driver: who to wake
+    # when it decides ("workflow"|"todo" plus the id). Empty on live runs, which
+    # resume through the executor inbox; set once at registration.
+    owner_run_type: str = ""
+    owner_id: str = ""
+    # Whether a resume was already enqueued: the approve tap and any retry/reconnect
+    # share it, so exactly one resume per approval. Every further resume needs a
+    # fresh user approval (the human is the loop breaker).
+    owner_resumed: bool = False
+    state: LedgerState = LedgerState.PENDING
+    feedback: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    proposing_run_id: str | None = None
+    v: int = 0
+    created_at: datetime | None = None
+    # When this row entered EXECUTING. The lazy reconciler treats EXECUTING
+    # older than the cutoff as crashed (UNKNOWN) — never blind-retried.
+    executing_started_at: datetime | None = None

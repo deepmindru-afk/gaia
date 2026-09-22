@@ -82,7 +82,7 @@ class HilApprovalRepository(MongoRepository[HILApprovalRecord, HILApprovalUpdate
     async def list_parked_subagents_for_conversation(
         self, conversation_id: str
     ) -> list[HILApprovalRecord]:
-        """Return parked detached-subagent records not yet collected by wait_for_subagents, oldest first."""
+        """List a detached background subagent's parked records not yet collected by a resume driver, oldest first."""
         return await self._find(
             {
                 "conversation_id": conversation_id,

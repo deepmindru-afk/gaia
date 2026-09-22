@@ -61,12 +61,20 @@ class IndexedToolEntry(TypedDict):
     and description for subagent entries — _build_put_operations
     discriminates on which one is there; rows read back from Chroma carry
     neither, since only the hash matters for the diff.
+
+    source/name/integration_id ride along on subagent entries only: the
+    PutOp value persists them so retrieval can tell a static MCP pointer
+    (source "mcp") from a custom MCP pointer (source "custom") instead of
+    dropping everything without source "custom" as stale.
     """
 
     hash: str
     namespace: str
     tool: NotRequired[IndexableTool]
     description: NotRequired[str]
+    source: NotRequired[str]
+    name: NotRequired[str]
+    integration_id: NotRequired[str]
 
 
 def _namespace_equals(namespace: str) -> Where:
@@ -125,14 +133,18 @@ def _get_current_tools_with_hashes(
 
 
 def _get_subagent_tools() -> dict[str, IndexedToolEntry]:
-    """Get subagent tools with their hashes.
+    """Get MCP subagent pointers with their hashes.
 
-    Returns:
-        Dictionary mapping subagent tool names to their hash and namespace info
+    Only MCP-managed integrations are indexed: their tools are issued per user
+    in namespaces discovery never enters, so the pointer doc is the only way the
+    model learns their id to hand off. Provider/built-in integrations surface as
+    their own tools, so indexing them would resurrect the removed discovery surface.
     """
     subagent_tools: dict[str, IndexedToolEntry] = {}
 
     for subagent in all_subagents():
+        if subagent.managed_by != "mcp":
+            continue
         cfg = subagent.config
         provider_name = subagent.name
         short_name = subagent.short_name or subagent.id
@@ -149,7 +161,12 @@ def _get_subagent_tools() -> dict[str, IndexedToolEntry]:
         subagent_hash = hashlib.sha256(description.encode()).hexdigest()
 
         subagent_tools[f"subagents::subagent:{subagent.id}"] = IndexedToolEntry(
-            hash=subagent_hash, namespace="subagents", description=description
+            hash=subagent_hash,
+            namespace="subagents",
+            description=description,
+            source="mcp",
+            name=provider_name,
+            integration_id=subagent.id,
         )
 
     return subagent_tools
@@ -272,18 +289,29 @@ def _build_put_operations(
         # Handle regular tools vs subagent tools
         if "tool" in tool_data:
             tool = tool_data["tool"]
-            description = tool.description
+            value: dict[str, str] = {
+                "description": tool.description,
+                "tool_hash": tool_data["hash"],
+            }
         else:
-            # Subagent tool
-            description = tool_data["description"]
+            # Subagent tool: carry source/name/integration_id so retrieval can
+            # tell static ("mcp") from custom ("custom") pointers. Absent keys
+            # stay absent (legacy entries predate them).
+            value = {
+                "description": tool_data["description"],
+                "tool_hash": tool_data["hash"],
+            }
+            if "source" in tool_data:
+                value["source"] = tool_data["source"]
+            if "name" in tool_data:
+                value["name"] = tool_data["name"]
+            if "integration_id" in tool_data:
+                value["integration_id"] = tool_data["integration_id"]
         put_ops.append(
             PutOp(
                 namespace=(tool_data["namespace"],),
                 key=tool_name,
-                value={
-                    "description": description,
-                    "tool_hash": tool_data["hash"],
-                },
+                value=value,
                 index=["description"],
             )
         )

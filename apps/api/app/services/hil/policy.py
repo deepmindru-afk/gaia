@@ -18,6 +18,8 @@ from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.tools import BaseTool
 
 from app.agents.tools.core.registry import ToolRegistry, get_tool_registry
+from app.agents.tools.execute.resolver import resolve_tool
+from app.agents.tools.execute.unwrap import unwrap_execute_call
 from app.constants.hil import HIL_EXEMPT_TOOLS, HIL_PAUSING_TOOLS
 from app.constants.log_tags import LogTag
 from app.models.hil_models import HIL_DEFAULT_MODE, HILPreferences
@@ -73,6 +75,45 @@ def _argument_gate_hit(tool_name: str, args: Mapping[str, Any] | None) -> bool:
     return all(args.get(key) == value for key, value in required.items())
 
 
+async def gated_tool_object(
+    request: ToolCallRequest, user_id: str, tool_name: str
+) -> BaseTool | None:
+    """Resolve the real BaseTool a classification should read, not the proxy.
+
+    A direct call's request.tool is the tool; an execute-proxied call carries the
+    proxy, so the real one is resolved by unwrapped name through dispatch's own
+    resolver. Registry-only resolution missed MCP tools and un-materialized
+    catalog slugs, letting the classifier guess from a bare name and un-gate it.
+    """
+    raw_call = request.tool_call
+    raw_name = (
+        raw_call.get("name", "") if isinstance(raw_call, dict) else getattr(raw_call, "name", "")
+    )
+    if raw_name == tool_name:
+        return tool_of(request)
+    return await _real_tool(user_id, tool_name)
+
+
+async def _real_tool(user_id: str, tool_name: str) -> BaseTool | None:
+    """Return the live tool behind a name, or None when it cannot be resolved.
+
+    Same resilience contract as _stamp_registry: a resolver failure means "no
+    tool object read", and classification still decides by name and fails closed.
+    decide_tool_call denies the call outright on any exception.
+    """
+    try:
+        resolved = await resolve_tool(user_id, tool_name)
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} tool resolution failed; classifying by name alone",
+            tool_name=tool_name,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return None
+    return resolved.tool if resolved else None
+
+
 async def resolve_policy(request: ToolCallRequest, user_id: str, tool_name: str) -> GatingPolicy:
     """Resolve the user's mode plus the gated set into one decision.
 
@@ -86,7 +127,8 @@ async def resolve_policy(request: ToolCallRequest, user_id: str, tool_name: str)
     prefs = await _preferences(user_id)
     if prefs.mode == "always_allow":
         return "allow"
-    if not await is_gated(prefs, tool_name, tool_of(request)):  # args resolved above
+    tool = await gated_tool_object(request, user_id, tool_name)
+    if not await is_gated(prefs, tool_name, tool):  # args resolved above
         return "allow"
     return "auto" if prefs.mode == "auto" else "ask"
 
@@ -121,30 +163,30 @@ async def is_gated(
 async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_id: str) -> bool:
     """Return whether another call in this AI message can pause the run.
 
-    A pause replays the step, so a call that already ran runs twice (one send became two):
-    auto mode withholds auto-approval, and ungated calls reuse gate._run_once_across_replays.
-    HIL_PAUSING_TOOLS pause by name (checked first); gated siblings are classified with their
-    registry tool — a bare name under-detects and poisons the name-keyed destructive flag.
+    A sibling that interrupt()s makes LangGraph replay the whole step, so a
+    handler that ran before the pause runs twice. Auto mode never auto-approves
+    alongside a pausing sibling, and ungated calls memoize by tool_call_id. A
+    sibling pauses either gated (via _real_tool) or exempt (HIL_PAUSING_TOOLS).
     """
+    # Execute-proxied siblings are unwrapped to their real (name, args) here for
+    # the same reason unpack_tool_call unwraps the pending call: the guard must
+    # detect the DESTRUCTIVE sibling, not the harmless proxy wrapping it.
     siblings = [
-        call
+        unwrap_execute_call(str(call["name"]), call.get("args") or {})
         for call in current_tool_calls(request.state)
         if call.get("name") and call.get("id") != tool_call_id
     ]
     if not siblings:
         return False
-    if any(call["name"] in HIL_PAUSING_TOOLS for call in siblings):
+    if any(name in HIL_PAUSING_TOOLS for name, _ in siblings):
         return True
 
     # Forced-ask siblings pause even when HIL is off, since the stamp isn't
     # preference-driven — checked before the always_allow fast path below.
     registry = await _stamp_registry()
-    for call in siblings:
-        name = str(call["name"])
+    for name, args in siblings:
         meta = registry.get_tool_meta(name) if registry else None
-        if (meta is not None and meta.always_gate) or _argument_gate_hit(
-            name, call.get("args") or None
-        ):
+        if (meta is not None and meta.always_gate) or _argument_gate_hit(name, args or None):
             return True
 
     prefs = await get_hil_preferences(user_id)
@@ -152,12 +194,10 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
         # HIL is off, so no preference-driven gate can pause; account mutations
         # already asked in the forced-gate scan above regardless of this mode.
         return False
-    for call in siblings:
-        name = str(call["name"])
+    for name, args in siblings:
         if name in HIL_EXEMPT_TOOLS:
             continue
-        meta = registry.get_tool_meta(name) if registry else None
-        if await is_gated(prefs, name, meta.tool if meta else None, args=call.get("args") or None):
+        if await is_gated(prefs, name, await _real_tool(user_id, name), args=args or None):
             return True
     return False
 

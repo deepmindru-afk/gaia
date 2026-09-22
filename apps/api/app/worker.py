@@ -46,6 +46,7 @@ from app.workers.tasks.scheduler_recovery_tasks import rescan_pending_scheduled_
 from app.workers.tasks.subscription_workflow_tasks import sync_workflows_for_subscription_state
 from app.workers.tasks.tracked_todo_tasks import (
     execute_tracked_todo,
+    resume_tracked_todo,
     safety_net_check_orphaned_todos,
 )
 from app.workers.tasks.trigger_dispatch_tasks import dispatch_todo_subscriptions
@@ -83,6 +84,7 @@ _sweep_idle_sandboxes = arq_task(sweep_idle_sandboxes)
 _prune_inactive_sessions = arq_task(prune_inactive_sessions)
 _prune_checkpoint_versions = arq_task(prune_checkpoint_versions)
 _execute_tracked_todo = arq_task(execute_tracked_todo)
+_resume_tracked_todo = arq_task(resume_tracked_todo)
 _dispatch_todo_subscriptions = arq_task(dispatch_todo_subscriptions)
 _safety_net_check_orphaned_todos = arq_task(safety_net_check_orphaned_todos)
 _maintenance_sweep_tracked_todos = arq_task(maintenance_sweep_tracked_todos)
@@ -125,6 +127,7 @@ WorkerSettings.functions = [
     _prune_inactive_sessions,
     _prune_checkpoint_versions,
     _execute_tracked_todo,
+    _resume_tracked_todo,
     _dispatch_todo_subscriptions,
     _backfill_active_users,
     _backfill_user_memories,

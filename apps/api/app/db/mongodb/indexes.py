@@ -50,9 +50,11 @@ async def create_all_indexes() -> None:
             create_bot_session_indexes(),
             create_e2b_sandbox_indexes(),
             create_hil_approvals_indexes(),
+            create_approval_ledger_indexes(),
             create_pending_platform_registration_indexes(),
             create_llm_call_indexes(),
             create_playbook_indexes(),
+            create_tool_output_shapes_indexes(),
         ]
 
         # Execute all index creation tasks concurrently
@@ -83,9 +85,11 @@ async def create_all_indexes() -> None:
             "bot_sessions",
             "e2b_sandboxes",
             "hil_approvals",
+            "approval_ledger",
             "pending_platform_registrations",
             "llm_calls",
             "playbooks",
+            "tool_output_shapes",
         ]
 
         index_results = {}
@@ -684,6 +688,86 @@ async def create_playbook_indexes() -> None:
     except Exception as e:
         log.error(
             f"{LogTag.MONGO} Error creating playbook indexes",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise
+
+
+async def _dedupe_tool_output_shapes(
+    collection: AsyncIOMotorCollection[dict[str, Any]],
+) -> None:
+    """Collapse pre-existing (scope, tool_name) duplicates before the unique index build.
+
+    A DB that raced under the pre-index code can hold duplicates, which would
+    make the unique index build fail (swallowed) and leave record()'s retry
+    without its guarantee. Observed shapes are regenerable, so keep the
+    most-observed record per key ($push preserves the $sort) and drop the rest.
+    """
+    pipeline: list[dict[str, Any]] = [
+        {"$sort": {"call_count": -1}},
+        {
+            "$group": {
+                "_id": {"scope": "$scope", "tool_name": "$tool_name"},
+                "ids": {"$push": "$_id"},
+            }
+        },
+        {"$match": {"ids.1": {"$exists": True}}},
+    ]
+    async for group in collection.aggregate(pipeline):
+        losers = group["ids"][1:]
+        await collection.delete_many({"_id": {"$in": losers}})
+
+
+async def create_tool_output_shapes_indexes() -> None:
+    """Create indexes for the tool_output_shapes collection.
+
+    Unique on (scope, tool_name): the observed-shape upsert is keyed on this
+    pair, so the index makes "one record per scoped tool" a property of the
+    data, not of timing — it rejects a concurrent insert's loser with
+    DuplicateKeyError, which record() retries into the winner.
+    """
+    tool_output_shapes_collection = get_async_collection("tool_output_shapes")
+    try:
+        await _dedupe_tool_output_shapes(tool_output_shapes_collection)
+        await tool_output_shapes_collection.create_index(
+            [("scope", 1), ("tool_name", 1)], unique=True
+        )
+    except Exception as e:
+        log.error(
+            f"{LogTag.MONGO} Error creating tool_output_shapes indexes",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise
+
+
+async def create_approval_ledger_indexes() -> None:
+    """Create indexes for the approval_ledger collection.
+
+    Unique on approval_id (the CAS filter keys on it). Partial unique on
+    (conversation_id, fingerprint) over live states IS the dedup atomicity —
+    the loser of a concurrent propose reads the winner's id. (conversation_id,
+    state) serves OPEN PENDINGS; (state, executing_started_at) the reconciler.
+    """
+    approval_ledger_collection = get_async_collection("approval_ledger")
+    try:
+        await asyncio.gather(
+            approval_ledger_collection.create_index("approval_id", unique=True),
+            approval_ledger_collection.create_index(
+                [("conversation_id", 1), ("fingerprint", 1)],
+                unique=True,
+                partialFilterExpression={
+                    "state": {"$in": ["pending", "approved"]},
+                },
+                name="conv_fingerprint_live_unique",
+            ),
+            approval_ledger_collection.create_index([("conversation_id", 1), ("state", 1)]),
+            approval_ledger_collection.create_index([("state", 1), ("executing_started_at", 1)]),
+        )
+    except Exception as e:
+        log.error(
+            f"{LogTag.MONGO} Error creating approval_ledger indexes",
             error=str(e),
             error_type=type(e).__name__,
         )

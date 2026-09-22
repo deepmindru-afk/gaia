@@ -1,8 +1,8 @@
 """
 Workflow subagent factory and runner.
 
-This module provides the dedicated workflow subagent that is:
-- NOT registered in oauth_config.py (hidden from handoff discovery)
+This module provides the dedicated workflow authoring worker that is:
+- NOT registered in oauth_config.py (not an integration)
 - Invoked directly by create_workflow tool
 - Uses structured JSON output for workflow drafts
 

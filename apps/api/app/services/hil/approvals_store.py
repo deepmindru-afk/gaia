@@ -150,7 +150,7 @@ async def stamp_subagent_resume(
 ) -> None:
     """Record the parked background subagent's checkpoint thread on its approval.
 
-    The durable link the wait_for_subagents join uses to rediscover and resume this
+    The durable link a future resume driver will use to rediscover and resume this
     subagent after the executor's own pause — the deterministic thread id survives the
     resume where the in-process session does not.
     """

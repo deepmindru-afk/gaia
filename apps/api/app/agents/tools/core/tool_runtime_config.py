@@ -77,14 +77,16 @@ def build_provider_parent_tool_runtime_config(
             "bash",
         ]
     else:
-        # Dynamic mode: provider tools are retrieved on demand via retrieve_tools.
-        # Include auto_bind_tool_names in full so latency-critical tools are
-        # available at agent startup regardless of provider-space status.
+        # Dynamic mode: provider tools are NOT pre-bound (retrieved via
+        # retrieve_tools, or preloaded as schema docs for execute). Bind the
+        # caller's startup list in full; execute/get_tool_schema always bind.
         extra_auto_bind = list(auto_bind_tool_names or [])
         initial = [
             "search_memory",
             "read",
             "bash",
+            "execute",
+            "get_tool_schema",
             *finish,
             *todo_tool_names,
             *extra_auto_bind,
@@ -92,34 +94,6 @@ def build_provider_parent_tool_runtime_config(
 
     return ToolRuntimeConfig(
         initial_tool_names=initial,
-        enable_retrieve_tools=not disable_retrieve_tools,
-        include_subagents_in_retrieve=False,
-    )
-
-
-def build_child_tool_runtime_config(
-    parent_tool_runtime_config: ToolRuntimeConfig,
-    *,
-    use_direct_tools: bool,
-    disable_retrieve_tools: bool,
-    extra_initial_tool_names: list[str] | None = None,
-) -> ToolRuntimeConfig:
-    """Build spawned child tool runtime config from parent mode.
-
-    ``extra_initial_tool_names`` seeds extra tools into the child's initial bind
-    set — used to hand a spawned reader the sandbox-free file miners
-    (query_json/grep) so a chunk-read subagent mines the offloaded file directly
-    instead of falling back to read-whole-file + bash.
-    """
-    extra = extra_initial_tool_names or []
-    if use_direct_tools and disable_retrieve_tools:
-        return ToolRuntimeConfig(
-            initial_tool_names=[*parent_tool_runtime_config.initial_tool_names, *extra],
-            enable_retrieve_tools=False,
-            include_subagents_in_retrieve=False,
-        )
-    return ToolRuntimeConfig(
-        initial_tool_names=["read", "bash", FINISH_TASK_NAME, *extra],
         enable_retrieve_tools=not disable_retrieve_tools,
         include_subagents_in_retrieve=False,
     )

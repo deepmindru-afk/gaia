@@ -491,25 +491,6 @@ async def _execute_via_agent(
         )
         raise
 
-    # The executor was busy, so the request was queued and answered with an
-    # acknowledgement, not a result. Nothing this run asked for has happened,
-    # so it gets no success marker; the queued task delivers on its own.
-    if run.queued_task_id:
-        queued_iso = datetime.now(UTC).isoformat()
-        log.warning(
-            "tracked_todo.agent_dispatch_queued",
-            todo_id=todo_id,
-            queued_task_id=run.queued_task_id,
-        )
-        await tracked_todo_service.append_activity_entry(
-            todo_id=todo_id,
-            user_id=user_id,
-            entry=(
-                f"{queued_iso} ⏸ scheduled run queued behind an in-flight run "
-                f"(task {run.queued_task_id}); not run"
-            ),
-        )
-        return ""
     complete_message = run.message
 
     # End marker: success
@@ -546,6 +527,127 @@ async def _execute_via_agent(
 
     log.info("tracked_todo.agent_completed", todo_id=todo_id)
     return complete_message[:200] if complete_message else ""
+
+
+async def resume_tracked_todo(
+    ctx: Mapping[str, object],  # noqa: ARG001 -- ARQ injects ctx positionally into every registered task
+    todo_id: str,
+    conversation_id: str,
+    approval_id: str,
+    receipt: str,
+    attempt: int = 0,
+) -> str:
+    """Continue a parked execution in its OWN conversation after an approval.
+
+    A resume must inherit the parked run's thread — its reasoning, partial tool
+    results, and checkpoint live there. Reusing the conversation is the deliberate
+    exception to the fresh-uuid rule: resumes are human-gated and rare.
+    """
+    log.set(todo_id=todo_id, approval_id=approval_id)
+    pool = await RedisPoolManager.get_pool()
+    lock_key = f"gaia_todo_exec:{todo_id}"
+
+    acquired = await pool.set(lock_key, "1", nx=True, ex=LOCK_TTL_SECONDS)
+    if not acquired:
+        if attempt >= len(LOCK_DEFER_BACKOFF):
+            log.warning("tracked_todo.resume_lock_held", todo_id=todo_id)
+            return f"resume_dropped:{todo_id} (lock held)"
+        retry_at = datetime.now(UTC) + LOCK_DEFER_BACKOFF[attempt]
+        await enqueue_worker_job(
+            pool,
+            "resume_tracked_todo",
+            todo_id,
+            conversation_id,
+            approval_id,
+            receipt,
+            attempt + 1,
+            _defer_until=retry_at,
+        )
+        return f"resume_deferred:{todo_id} (lock held)"
+
+    doc = await todo_repository.get_by_id(todo_id)
+    if not doc:
+        return f"not_found:{todo_id}"
+    if doc.completed:
+        return f"completed:{todo_id}"
+    user_id = doc.user_id
+    if not user_id:
+        return f"error:{todo_id} (missing user_id)"
+
+    try:
+        user_data, _ = await _load_user_with_tz(user_id)
+        await enforce_daily_cost_budget(user_id, feature_key=TRIGGER_TODO_FEATURE_KEY)
+
+        start_iso = datetime.now(UTC).isoformat()
+        await tracked_todo_service.append_activity_entry(
+            todo_id=todo_id,
+            user_id=user_id,
+            entry=f"{start_iso} ▶ approval resume started ({approval_id}: {receipt} — granted, continuing in this thread)",
+        )
+
+        message = (
+            f"Approval {approval_id} was granted: {receipt} "
+            "The action has run — verify with a read if you need certainty, "
+            "never re-run the granted call blind. Continue the run from here."
+        )
+        run = await call_agent_silent(
+            request=MessageRequestWithHistory(
+                message=message,
+                messages=[{"role": "user", "content": message}],
+                fileIds=[],
+                fileData=[],
+                selectedTool=None,
+            ),
+            conversation_id=conversation_id,
+            user=user_data,
+            options=AgentRunOptions(
+                trigger_context={
+                    **_execution_context(todo_id, None),
+                    "todo_title": doc.title,
+                    "active_todo_id": todo_id,
+                    "execution_mode": "background",
+                    "resume_from_approval": approval_id,
+                }
+            ),
+        )
+
+        complete_message = run.message
+        end_iso = datetime.now(UTC).isoformat()
+        summary = (complete_message or "").strip().replace("\n", " ")[:120]
+        await tracked_todo_service.append_activity_entry(
+            todo_id=todo_id,
+            user_id=user_id,
+            entry=f"{end_iso} ✓ approval resume finished (summary={summary!r})",
+        )
+
+        if doc.notify_on_run:
+            delivered_to = await deliver_result_to_platforms(
+                user=user_data,
+                user_id=user_id,
+                notification_text=complete_message,
+                origin=f'tracked todo "{doc.title}" (id {doc.id})',
+            )
+            capture_event(
+                user_id,
+                AnalyticsEvents.TODO_RUN_RESULT_DELIVERED,
+                {
+                    "delivered": delivered_to is not None,
+                    "platform": delivered_to.value if delivered_to else None,
+                    "trigger_type": _trigger_type(None).value,
+                    "recurring": bool(doc.recurrence),
+                },
+            )
+        return f"resumed:{todo_id}"
+    except Exception as exc:
+        fail_iso = datetime.now(UTC).isoformat()
+        await tracked_todo_service.append_activity_entry(
+            todo_id=todo_id,
+            user_id=user_id,
+            entry=f"{fail_iso} ✗ approval resume failed ({type(exc).__name__})",
+        )
+        raise
+    finally:
+        await pool.delete(lock_key)
 
 
 async def _mark_todo_failed(todo_id: str, user_id: str, doc: TodoDocument) -> None:

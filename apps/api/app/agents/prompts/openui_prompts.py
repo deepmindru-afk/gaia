@@ -34,16 +34,16 @@ SURFACE POLICY, pick the FIRST that matches:
 {_suppression_list}
 2. Composing/sending an email → use the draft tool (native compose card), never :::openui or a TextDocument.
 3. Casual chat, a single-sentence answer, an opinion, emotional support → plain text. No component.
-4. A casual reply, opinion, emotional support, single-sentence answer, or a short UNSTRUCTURED list → plain text/markdown, no component.
+4. A casual reply, or a short UNSTRUCTURED list → plain text/markdown, no component.
 5. Structured data shown inline:
-   - Plain tabular / comparison / key-value data (rows × columns) → a Table component, or a MARKDOWN TABLE in prose. GAIA renders both natively.
-   - Links, or content where links are the point (URLs, sources, references) → clickable MARKDOWN links ([label](url)) in your prose.
-   - Data with a richer visual form (stats/KPIs, a timeline, steps, a file tree, charts/gauges/maps) → the matching :::openui component below. These are interactive and native to GAIA's cards; for these visual types this is a forcing rule, not a preference.
-6. Reusable text the user will copy/paste elsewhere (a prompt, command, env block, config, snippet) → CopyableContent (it has a copy button; mode "inline" for short, "block" for long).
-7. A document the user reviews/edits/reuses (report, letter, memo, email body for review) → TextDocument (editable, with metadata fields).
-8. Longer/substantial content that reads better as its own rendered document → an artifact (a file the executor places in artifacts/). Better for length + readability than cramming a chat bubble.
+   - Plain tabular / comparison / key-value data → a Table component or a MARKDOWN TABLE in prose. Both render natively.
+   - Links, or content where links are the point → clickable MARKDOWN links ([label](url)) in your prose.
+   - Data with a richer visual form (stats/KPIs, a timeline, steps, a file tree, charts/gauges/maps) → the matching :::openui component below. For these visual types this is a forcing rule, not a preference.
+6. Reusable text to copy/paste elsewhere → CopyableContent (mode "inline" for short, "block" for long).
+7. A document to review, edit, or reuse → TextDocument (editable, with metadata fields).
+8. Longer content that reads better as its own document → an artifact (a file the executor places in artifacts/).
 
-OPENUI AND PROSE WORK TOGETHER, NEVER EITHER/OR. The component and your words are LAYERS in the SAME reply, never a choice between two surfaces. Keep your conversational voice, the lead-in, and any opinion/takeaway in plain text; put the structured data in the :::openui component. The card carries the data; your words carry the "here's the gist" and the "so what". A comparison reply is literally: a one-line lead-in (text) + the comparison component (:::openui) + a one-line recommendation (text), all in one message. Markdown carries links; :::openui carries the visual components (stats, charts, timelines, steps, gauges, tables); prose always wraps whichever you pick, so you write prose AND the component, together.
+OPENUI AND PROSE WORK TOGETHER, NEVER EITHER/OR. The component and your words are LAYERS in the SAME reply: lead-in and takeaway stay as plain text around the :::openui block, which carries the data.
 
 Never put :::openui inside greetings, opinions, or plain conversational replies.
 
@@ -63,32 +63,13 @@ Your conversational lines stay as normal text; the component goes between them i
 # overdo it. Component names track the current (react-ui) catalog.
 
 OPENUI_QUALITY_NOTES: str = """
-Capability-aware component picks (use the one whose affordance matches the intent):
-  - Copyable, paste-elsewhere text (prompt/command/env/config/snippet) → CopyableContent.
-  - Editable/reviewable document (report/letter/email body) → TextDocument (metadata fields).
-  - Numbers / trends / KPIs → BarChart / LineChart / AreaChart / PieChart / RadarChart /
-    RadialChart / NumberTicker; a single KPI reads well as a Card with TextContent
-    (label + big value) and a Tag for the delta.
-  - Records / hierarchies / sequences → Card (+ CardHeader), Table (+ Col), FileTree,
-    Timeline, Steps, TagBlock.
-  - Depth-on-demand → Accordion / Tabs, ONLY when each section/tab carries substantial
-    content (never for thin one-liners).
+Specifics the policy above does not spell out:
+  - A single KPI reads well as a Card with TextContent (label + big value) and a Tag for the delta.
+  - Depth-on-demand → Accordion / Tabs, ONLY when each section carries substantial content, never for thin one-liners.
   - Media → ImageGallery, VideoBlock, AudioPlayer, MapBlock.
-  - Buttons CAUTION: GAIA already shows next-step suggestion chips via the follow-up-actions
-    feature. Do NOT use Button/Buttons as the reply's "what next" menu, since that duplicates it.
-    Reserve Button/Buttons for an action tied INSIDE a specific card (e.g. a link on one item).
-
-Quality notes:
-  - Tabular / comparison / key-value data → a Table (Col per column; cells can be Tags), or a
-    plain markdown table in prose. Both render natively.
-  - Timeline for sequences of events with timestamps; Steps for ordered instructions.
-  - Callout for inline notices; operation-result banners are just a Callout.
-  - Prefer one well-chosen component over stacking many. Use Stack only when the content
-    genuinely splits into sections (rows/columns); a `wrap=true` row gives a responsive grid.
-  - Don't reach for a Card by default. Only wrap content in a Card when the boxed surface is
-    actually necessary and fits cohesively (a self-contained unit that benefits from being
-    visually grouped). Plain components, or text plus a single component, are often the cleaner
-    answer. An unnecessary card just adds a heavy box around something that didn't need one.
+  - Timeline for event sequences with timestamps; Steps for ordered instructions; Callout for inline notices.
+  - Prefer one well-chosen component over stacking many. Use Stack only when the content genuinely splits into sections; a `wrap=true` row gives a responsive grid. Do not wrap everything in a Card by default.
+  - Buttons CAUTION: next-step suggestion chips already ship via follow-up-actions. Do NOT use Button/Buttons as the reply's "what next" menu; reserve them for an action tied INSIDE a specific card.
 """
 
 # ---------------------------------------------------------------------------
@@ -101,3 +82,28 @@ OPENUI_INSTRUCTIONS: str = f"""
 {OPENUI_COMPONENT_PROMPT}
 {OPENUI_QUALITY_NOTES}
 """
+
+# ---------------------------------------------------------------------------
+# Comms output-format addenda. Renderable channels (web/mobile/desktop) get one
+# of these two; the per-user choice between them lives in
+# ``app.agents.templates.agent_template.get_comms_static_prompt`` and resolves
+# via ``app.services.feature_flags`` (PostHog flag, env default). Both variants
+# are precomputed there, so the prompt cache sees two buckets per channel,
+# not one per user.
+# ---------------------------------------------------------------------------
+
+# Fallback used when OpenUI is disabled for the user. Renderable channels still
+# render markdown natively, so this keeps tables/links/lists without the ~27k-char
+# component vocabulary. It also resolves the output-format reference in the
+# comms prompt's Delivering Results section.
+MARKDOWN_ONLY_ADDENDUM: str = """
+---Output Format---
+Render structured data with plain markdown, never :::openui component fences (they are disabled):
+- Tabular or comparison data (rows x columns): a markdown table.
+- Links, or content where the link is the point: clickable markdown links ([label](url)).
+- Everything else: short bullet or numbered lists.
+Calendar and email data still stream as native cards, so never re-type those rows; write a short conversational line and let the card show them.
+"""
+
+# The output-format block for renderable channels when OpenUI is enabled.
+OPENUI_ADDENDUM: str = OPENUI_INSTRUCTIONS

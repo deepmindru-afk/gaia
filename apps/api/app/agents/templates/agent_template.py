@@ -15,10 +15,9 @@ in a separate dynamic-context system message placed AFTER this one.
 
 from typing import Final
 
-from app.agents.prompts.comms_prompts import (
-    COMMS_AGENT_PROMPT,
-    EXECUTOR_AGENT_PROMPT,
-    _strip_openui_section,
+from app.agents.prompts.comms_prompts import COMMS_AGENT_PROMPT, _strip_openui_section
+from app.agents.prompts.executor_activation_prompt import (
+    build_activation_executor_prompt,
 )
 from app.agents.prompts.openui_prompts import OPENUI_INSTRUCTIONS
 from app.agents.workspace.operational_docs import GAIA_CORE
@@ -133,7 +132,16 @@ def get_comms_static_prompt(source: str | None) -> str:
 # ``get_comms_static_prompt``.
 COMMS_PROMPT_TEMPLATE: Final[str] = COMMS_PROMPT_DEFAULT
 
-# Carries the always-on operating core (GAIA_CORE): self-knowledge, the
-# self-management menu, and read_manual routing. Appended here, not
-# interpolated per user, so the prompt stays byte-identical for caching.
-EXECUTOR_PROMPT_TEMPLATE: Final[str] = EXECUTOR_AGENT_PROMPT + "\n\n" + GAIA_CORE
+# Activation rewrite of the executor prompt plus the always-on operating core
+# (GAIA_CORE), appended (not interpolated) so it stays byte-identical for the
+# provider cache. A stale anchor skips just that rewrite with a warning (never
+# raises: this runs at import), and the anchor tests pin every rewrite in CI.
+_EXECUTOR_BASE: Final[str] = build_activation_executor_prompt()
+
+
+def get_executor_prompt() -> str:
+    """Return the static executor prompt (activation doctrine, always)."""
+    return _EXECUTOR_BASE + "\n\n" + GAIA_CORE
+
+
+EXECUTOR_PROMPT_TEMPLATE: Final[str] = get_executor_prompt()

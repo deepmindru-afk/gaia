@@ -30,8 +30,14 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from app.agents.middleware.executor import MiddlewareExecutor
+from app.agents.tools.execute.unwrap import unwrap_execute_call
 from app.agents.workspace.offload import mark_offload, pop_offload_descriptor
-from app.constants.llm import TOOL_EXECUTION_TIMEOUT_SECONDS, TOOL_TIMEOUT_EXEMPT_TOOLS
+from app.constants.execute import EXECUTE_TOOL_NAME
+from app.constants.llm import (
+    TOOL_EXECUTION_TIMEOUT_SECONDS,
+    TOOL_TIMEOUT_BACKSTOP_BUFFER_SECONDS,
+    TOOL_TIMEOUT_EXEMPT_TOOLS,
+)
 from app.override.langgraph_bigtool.utils import State
 from app.services.hil.gate import decide_tool_call
 
@@ -46,12 +52,30 @@ def format_tool_error(exc: Exception) -> str:
     return f"Error: {type(exc).__name__}: {exc}"
 
 
-def _timeout_error_text(tool_name: str) -> str:
+def _timeout_error_text(tool_name: str, seconds: float | None) -> str:
+    """Build the timeout error text; seconds is None when an exempt tool timed out itself."""
+    after = f" after {seconds:g}s" if seconds is not None else ""
     return (
-        f"Error: TimeoutError: '{tool_name}' timed out after "
-        f"{TOOL_EXECUTION_TIMEOUT_SECONDS}s. The operation may or may not have "
-        "completed on the provider side — verify its effect before retrying."
+        f"Error: TimeoutError: '{tool_name}' timed out{after}. The operation may or "
+        "may not have completed on the provider side — verify its effect before retrying."
     )
+
+
+def _node_timeout_seconds(tool_call: Mapping[str, Any]) -> float | None:
+    """Return the timeout this node puts on one call; None when it applies none.
+
+    Unwrapped first so a proxied call is judged as its real tool. A proxied call
+    gets the backstop window, not the plain bound: dispatch_tool already bounds the
+    tool at the same deadline, so an equal outer bound made its structured error
+    unreachable. The node backstops what dispatch does not cover (resolution).
+    """
+    name = tool_call.get("name", "")
+    real_name, _ = unwrap_execute_call(name, tool_call.get("args") or {})
+    if real_name in TOOL_TIMEOUT_EXEMPT_TOOLS:
+        return None
+    if name == EXECUTE_TOOL_NAME:
+        return TOOL_EXECUTION_TIMEOUT_SECONDS + TOOL_TIMEOUT_BACKSTOP_BUFFER_SECONDS
+    return TOOL_EXECUTION_TIMEOUT_SECONDS
 
 
 async def timeout_guarded_tool_call(
@@ -64,17 +88,18 @@ async def timeout_guarded_tool_call(
     orchestration tools manage their own lifecycles and are exempt.
     """
     tool_call = request.tool_call
-    tool_name = tool_call.get("name", "")
-    if tool_name in TOOL_TIMEOUT_EXEMPT_TOOLS:
-        return await execute(request)
+    # Reported on timeout as the real tool, not as the proxy.
+    tool_name, _ = unwrap_execute_call(tool_call.get("name", ""), tool_call.get("args", {}) or {})
+    bound = _node_timeout_seconds(tool_call)
     try:
-        async with asyncio.timeout(TOOL_EXECUTION_TIMEOUT_SECONDS):
+        # asyncio.timeout(None) applies no deadline — an exempt tool runs unbounded.
+        async with asyncio.timeout(bound):
             return await execute(request)
     except TimeoutError:
         return ToolMessage(
-            content=_timeout_error_text(tool_name),
+            content=_timeout_error_text(tool_name, bound),
             tool_call_id=tool_call.get("id", ""),
-            name=tool_name,
+            name=tool_call.get("name", ""),
             status="error",
         )
 
@@ -323,13 +348,14 @@ class DynamicToolNode(ToolNode):
 
             tool_input = dict(tc)
             tool_input["type"] = "tool_call"
-            tool_name = tc.get("name", "")
+            # Unwrapped for the timeout text only — the tool actually invoked is
+            # still the proxy itself.
+            tool_name, _ = unwrap_execute_call(tc.get("name", ""), tc.get("args", {}) or {})
+            bound = _node_timeout_seconds(tc)
             try:
-                if tool_name in TOOL_TIMEOUT_EXEMPT_TOOLS:
+                # asyncio.timeout(None) applies no deadline — an exempt tool runs unbounded.
+                async with asyncio.timeout(bound):
                     result = await resolved_tool.ainvoke(tool_input, config=config)
-                else:
-                    async with asyncio.timeout(TOOL_EXECUTION_TIMEOUT_SECONDS):
-                        result = await resolved_tool.ainvoke(tool_input, config=config)
             except GraphBubbleUp:
                 # Control flow, not failure: a GraphInterrupt from a gated tool (or
                 # bubbled up by handoff's subagent graph) must reach the runtime to
@@ -337,16 +363,16 @@ class DynamicToolNode(ToolNode):
                 raise
             except TimeoutError:
                 return ToolMessage(
-                    content=_timeout_error_text(tool_name),
+                    content=_timeout_error_text(tool_name, bound),
                     tool_call_id=tc.get("id", ""),
-                    name=tool_name,
+                    name=tc.get("name", ""),
                     status="error",
                 )
             except Exception as exc:
                 return ToolMessage(
                     content=format_tool_error(exc),
                     tool_call_id=tc.get("id", ""),
-                    name=tool_name,
+                    name=tc.get("name", ""),
                     status="error",
                 )
 

@@ -34,6 +34,7 @@ from app.api.v1.endpoints import (
     platform_auth,
     platform_links,
     reminders,
+    sandbox_execute,
     search,
     sessions,
     shares,
@@ -64,6 +65,7 @@ router.include_router(sessions.router)
 router.include_router(shares.router, tags=["Shares"])
 router.include_router(feedback.router, tags=["Feedback"])
 router.include_router(image.router, tags=["Image"])
+router.include_router(sandbox_execute.router)
 router.include_router(search.router, tags=["Search"])
 router.include_router(calendar.router, tags=["Calendar"])
 router.include_router(notes.router, tags=["Notes/Memories"])

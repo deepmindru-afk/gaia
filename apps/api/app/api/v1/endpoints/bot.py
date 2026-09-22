@@ -54,6 +54,7 @@ from app.services.bot.stream_frames import (
     approval_frame,
     comment_keepalive_frame,
     done_frame,
+    emoji_ack_frame,
     error_frame,
     keepalive_frame,
     message_boundary_frame,
@@ -400,6 +401,15 @@ async def _bot_stream_payload_frame(
     present = data.model_fields_set
     if "message_boundary" in present:
         return message_boundary_frame(data.message_boundary), False
+
+    # A turn resolved to a comms `REACT: <emoji>` ack — the streamed text was
+    # the raw directive, and the bot takes it back and delivers the bare emoji
+    # (shared chat-stream.ts replaces its buffers on this frame).
+    if "emoji_ack" in present and data.emoji_ack is not None:
+        return emoji_ack_frame(
+            emoji=data.emoji_ack.emoji,
+            reacts_to_message_id=data.emoji_ack.reacts_to_message_id,
+        ), False
 
     # Skip web-only fields.
     if present & _WEB_ONLY_STREAM_FIELDS:

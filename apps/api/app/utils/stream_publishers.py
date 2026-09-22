@@ -6,9 +6,12 @@ the same set of side-effecting publishes. These helpers are the single source of
 truth for that behavior so the two call sites cannot drift.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import json
+from typing import Any
 
+from langgraph.config import get_stream_writer
+from langgraph.types import StreamWriter
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.stream_manager import stream_manager
@@ -63,6 +66,21 @@ class ExtractedToolData(BaseModel):
 
     def is_empty(self) -> bool:
         return not (self.tool_data or self.other_data or self.tool_output)
+
+
+def optional_stream_writer() -> Callable[[dict[str, Any]], None] | None:
+    """Return the graph stream writer, or None outside a graph run.
+
+    get_stream_writer() raises outside a Pregel runtime (backend dispatch: ticket
+    redeem, sandbox, workflows), so call sites that treat the writer as a
+    best-effort UI hint use this and skip when it returns None. The result travels
+    in the tool's return value, not the writer.
+    """
+    try:
+        writer: StreamWriter = get_stream_writer()
+    except (KeyError, RuntimeError):
+        return None
+    return writer
 
 
 def accumulate_todo_progress(

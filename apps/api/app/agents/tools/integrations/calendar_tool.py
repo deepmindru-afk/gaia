@@ -16,10 +16,10 @@ from typing import TypeVar
 
 from composio import Composio
 from composio.types import ExecuteRequestFn
-from langgraph.config import get_config, get_stream_writer
+from langgraph.config import get_config
 from pydantic import TypeAdapter
 
-from app.constants.calendar import DEFAULT_CALENDAR_COLOR
+from app.constants.calendar import DEFAULT_CALENDAR_COLOR, DEFAULT_EVENT_DURATION
 from app.constants.log_tags import LogTag
 from app.db.repositories.users import user_repository
 from app.decorators import with_doc
@@ -27,7 +27,6 @@ from app.models.agent_models import read_agent_configurable
 from app.models.calendar_models import (
     AddRecurrenceInput,
     CalendarEventDisplay,
-    CalendarOptionDraft,
     CalendarSummary,
     CreatedEventSummary,
     CreateEventInput,
@@ -49,6 +48,7 @@ from app.models.calendar_models import (
     GoogleConferenceSolutionKey,
     ListCalendarsInput,
     PatchEventInput,
+    SingleEventInput,
 )
 from app.models.common_models import GatherContextInput
 from app.models.integrations.composio import CustomToolAuthCredentials
@@ -69,6 +69,7 @@ from app.utils.calendar_utils import calendar_events_endpoint
 from app.utils.concurrency import run_on_captured_loop
 from app.utils.context_utils import execute_tool
 from app.utils.errors import AppError
+from app.utils.stream_publishers import optional_stream_writer
 from app.utils.timezone import Timezone, home_timezone_from_config
 from shared.py.wide_events import log
 
@@ -107,27 +108,6 @@ def _extract_datetime(dt: GoogleCalendarEventDateTime) -> str:
     return dt.dateTime or dt.date or ""
 
 
-def _format_calendar_option_for_stream(opt: CalendarOptionDraft) -> dict[str, object]:
-    """Format a calendar draft option into CalendarOptions schema for frontend streaming."""
-    formatted: dict[str, object] = {
-        "summary": opt.summary,
-        "description": opt.description,
-        "is_all_day": opt.is_all_day,
-        "calendar_id": opt.calendar_id,
-        "calendar_name": opt.calendar_name,
-        "background_color": opt.color,
-        "start": _extract_datetime(opt.start),
-        "end": _extract_datetime(opt.end),
-    }
-    if opt.location:
-        formatted["location"] = opt.location
-    if opt.attendees:
-        formatted["attendees"] = opt.attendees
-    if opt.create_meeting_room:
-        formatted["create_meeting_room"] = True
-    return formatted
-
-
 def _format_calendar_for_stream(cal: CalendarSummary) -> dict[str, str | None]:
     """Format a calendar entry into CalendarListFetchData schema for frontend streaming."""
     return {
@@ -153,6 +133,90 @@ def _get_user_timezone() -> tzinfo | None:
     return None
 
 
+async def get_effective_timezone(user_id: str) -> tzinfo | None:
+    """Home zone for naive datetimes: run config first, stored profile second.
+
+    Backend dispatch (ticket redeem, sandbox) synthesizes a config carrying
+    only the user id, so the config lookup alone wrongly reports "unknown"
+    for users with a stored zone — and naive datetimes then fail after
+    approval instead of stamping like they do in-graph.
+    """
+    tz = _get_user_timezone()
+    if tz is not None:
+        return tz
+    try:
+        user = await user_repository.get(user_id)
+    except Exception as e:
+        log.warning(
+            f"{LogTag.TOOL} Could not load user for effective timezone",
+            user_id=user_id,
+            error_type=type(e).__name__,
+        )
+        return None
+    raw = user.timezone if user else None
+    if not raw:
+        return None
+    try:
+        return Timezone.parse(raw).tzinfo
+    except Exception as e:
+        log.warning(
+            f"{LogTag.TOOL} Could not parse stored home timezone",
+            error_type=type(e).__name__,
+        )
+        return None
+
+
+def _resolve_event_bounds(
+    event: SingleEventInput, user_id: str
+) -> tuple[GoogleCalendarEventDateTime, GoogleCalendarEventDateTime]:
+    """Google start/end for one event; raises ValueError with a user-facing message on bad input."""
+    try:
+        start_dt = datetime.fromisoformat(event.start_datetime)
+    except ValueError as e:
+        raise ValueError(f"Invalid start_datetime format: {e}") from e
+
+    end_dt: datetime | None = None
+    if event.end_datetime:
+        try:
+            end_dt = datetime.fromisoformat(event.end_datetime)
+        except ValueError as e:
+            raise ValueError(f"Invalid end_datetime format: {e}") from e
+
+    if event.is_all_day:
+        # Google treats an all-day end.date as exclusive, so an inclusive last
+        # day (or a missing end) becomes the following date.
+        last_day = end_dt or start_dt
+        return (
+            GoogleCalendarEventDateTime(date=start_dt.strftime("%Y-%m-%d")),
+            GoogleCalendarEventDateTime(date=(last_day + timedelta(days=1)).strftime("%Y-%m-%d")),
+        )
+
+    if end_dt is None:
+        end_dt = start_dt + DEFAULT_EVENT_DURATION
+
+    if start_dt.tzinfo is None or end_dt.tzinfo is None:
+        user_tz = _run_sync(get_effective_timezone(user_id))
+        if user_tz is None:
+            # Google 400s a naked wall time, and that failure used to land after
+            # the user approved. Fail fast so the model adds an explicit offset.
+            raise ValueError(
+                "start_datetime has no UTC offset and no home timezone is "
+                "configured: pass an explicit offset (e.g. 2026-09-21T11:00:00+05:30)."
+            )
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=user_tz)
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=user_tz)
+
+    if end_dt <= start_dt:
+        raise ValueError("end_datetime must be after start_datetime.")
+
+    return (
+        GoogleCalendarEventDateTime(dateTime=start_dt.isoformat()),
+        GoogleCalendarEventDateTime(dateTime=end_dt.isoformat()),
+    )
+
+
 def register_calendar_custom_tools(composio: Composio) -> list[str]:
     """Register calendar tools as Composio custom tools."""
 
@@ -174,8 +238,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
             else [entry.model_dump() for entry in calendar_list.items]
         )
 
-        writer = get_stream_writer()
-        if summaries:
+        writer = optional_stream_writer()
+        if writer is not None and summaries:
             writer(
                 {
                     "calendar_list_fetch_data": [
@@ -288,8 +352,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
             "busy_hours": round(busy_minutes / 60, 1),
         }
 
-        writer = get_stream_writer()
-        if formatted_events:
+        writer = optional_stream_writer()
+        if writer is not None and formatted_events:
             writer({"calendar_fetch_data": formatted_events})
 
         return result_data
@@ -328,8 +392,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
         except Exception:
             calendar_fetch_data = [event.model_dump() for event in events]
 
-        writer = get_stream_writer()
-        if calendar_fetch_data:
+        writer = optional_stream_writer()
+        if writer is not None and calendar_fetch_data:
             writer({"calendar_fetch_data": calendar_fetch_data})
 
         return {
@@ -368,8 +432,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
         except Exception:
             calendar_search_data = events
 
-        writer = get_stream_writer()
-        if calendar_search_data:
+        writer = optional_stream_writer()
+        if writer is not None and calendar_search_data:
             writer({"calendar_fetch_data": calendar_search_data})
 
         return {
@@ -615,167 +679,95 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
             color_map, name_map = {}, {}
 
         created_events: list[CreatedEventSummary] = []
-        calendar_options: list[CalendarOptionDraft] = []
         errors: list[EventDraftFailure] = []
 
         for index, event in enumerate(request.events):
             try:
-                start_dt = datetime.fromisoformat(event.start_datetime)
+                start, end = _resolve_event_bounds(event, user_id)
             except ValueError as e:
-                errors.append(
-                    EventDraftFailure(
-                        index=index,
-                        summary=event.summary,
-                        error=f"Invalid start_datetime format: {e}",
-                    )
-                )
+                errors.append(EventDraftFailure(index=index, summary=event.summary, error=str(e)))
                 continue
 
-            duration = timedelta(hours=event.duration_hours, minutes=event.duration_minutes)
-            end_dt = start_dt + duration
+            body = GoogleCalendarEventWrite(
+                summary=event.summary,
+                start=start,
+                end=end,
+                description=event.description or None,
+                location=event.location or None,
+                attendees=(
+                    [GoogleCalendarAttendee(email=email) for email in event.attendees]
+                    if event.attendees
+                    else None
+                ),
+                conferenceData=(
+                    GoogleConferenceData(
+                        createRequest=GoogleConferenceCreateRequest(
+                            # naive local now() and UTC now() give the same epoch
+                            requestId=f"meet_{index}_{int(datetime.now(UTC).timestamp())}",  # pragma: no mutate
+                            conferenceSolutionKey=GoogleConferenceSolutionKey(type="hangoutsMeet"),
+                        )
+                    )
+                    if event.create_meeting_room
+                    else None
+                ),
+            )
+            query: dict[str, str] = {"sendUpdates": "all"}
+            if event.create_meeting_room:
+                query["conferenceDataVersion"] = "1"
 
-            if event.is_all_day:
-                # Google treats an all-day `end.date` as exclusive and rejects an
-                # empty range, so a one-day event ends on the following date.
-                # Same convention as calendar_service.create_calendar_event.
-                start = GoogleCalendarEventDateTime(date=start_dt.strftime("%Y-%m-%d"))
-                end = GoogleCalendarEventDateTime(
-                    date=(start_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+            # JSON-native fields: python and json dumps are identical
+            event_body = body.model_dump(mode="json", exclude_none=True)  # pragma: no mutate
+            created_event = GoogleCalendarEventResource.model_validate(
+                proxy_request_sync(
+                    ProxyRequest(
+                        user_id=user_id,
+                        toolkit=CALENDAR_TOOLKIT,
+                        endpoint=calendar_events_endpoint(event.calendar_id),
+                        method="POST",
+                        body=event_body,
+                        query=query,
+                    )
                 )
-            else:
-                if start_dt.tzinfo is None:
-                    user_tz = _get_user_timezone()
-                    if user_tz is not None:
-                        start_dt = start_dt.replace(tzinfo=user_tz)
-                        end_dt = end_dt.replace(tzinfo=user_tz)
-                start = GoogleCalendarEventDateTime(dateTime=start_dt.isoformat())
-                end = GoogleCalendarEventDateTime(dateTime=end_dt.isoformat())
-
-            if request.confirm_immediately:
-                body = GoogleCalendarEventWrite(
+            )
+            created_events.append(
+                CreatedEventSummary(
+                    index=index,
                     summary=event.summary,
+                    event_id=created_event.id,
+                    calendar_id=event.calendar_id,
+                    link=created_event.htmlLink,
                     start=start,
                     end=end,
-                    description=event.description or None,
-                    location=event.location or None,
-                    attendees=(
-                        [GoogleCalendarAttendee(email=email) for email in event.attendees]
-                        if event.attendees
-                        else None
-                    ),
-                    conferenceData=(
-                        GoogleConferenceData(
-                            createRequest=GoogleConferenceCreateRequest(
-                                # naive local now() and UTC now() give the same epoch
-                                requestId=f"meet_{index}_{int(datetime.now(UTC).timestamp())}",  # pragma: no mutate
-                                conferenceSolutionKey=GoogleConferenceSolutionKey(
-                                    type="hangoutsMeet"
-                                ),
-                            )
-                        )
-                        if event.create_meeting_room
-                        else None
-                    ),
                 )
-                query: dict[str, str] = {"sendUpdates": "all"}
-                if event.create_meeting_room:
-                    query["conferenceDataVersion"] = "1"
-
-                # JSON-native fields: python and json dumps are identical
-                event_body = body.model_dump(mode="json", exclude_none=True)  # pragma: no mutate
-                created_event = GoogleCalendarEventResource.model_validate(
-                    proxy_request_sync(
-                        ProxyRequest(
-                            user_id=user_id,
-                            toolkit=CALENDAR_TOOLKIT,
-                            endpoint=calendar_events_endpoint(event.calendar_id),
-                            method="POST",
-                            body=event_body,
-                            query=query,
-                        )
-                    )
-                )
-                created_events.append(
-                    CreatedEventSummary(
-                        index=index,
-                        summary=event.summary,
-                        event_id=created_event.id,
-                        calendar_id=event.calendar_id,
-                        link=created_event.htmlLink,
-                        start=start,
-                        end=end,
-                    )
-                )
-            else:
-                calendar_options.append(
-                    CalendarOptionDraft(
-                        index=index,
-                        summary=event.summary,
-                        description=event.description or "",
-                        is_all_day=event.is_all_day,
-                        start=start,
-                        end=end,
-                        calendar_id=event.calendar_id,
-                        color=color_map.get(event.calendar_id, DEFAULT_CALENDAR_COLOR),
-                        calendar_name=name_map.get(event.calendar_id, "Calendar"),
-                        location=event.location or None,
-                        attendees=event.attendees or None,
-                        create_meeting_room=True if event.create_meeting_room else None,
-                    )
-                )
+            )
 
         # JSON-native fields: python and json dumps are identical
         failures = [error.model_dump(mode="json") for error in errors]  # pragma: no mutate
-        if errors and not created_events and not calendar_options:
+        if errors and not created_events:
             raise ValueError(f"All events failed validation: {failures}")
 
-        if request.confirm_immediately:
-            writer = get_stream_writer()
-            if created_events:
-                displays = [
-                    CalendarEventDisplay(
-                        summary=e.summary,
-                        start_time=_extract_datetime(e.start),
-                        end_time=_extract_datetime(e.end),
-                        calendar_name=name_map.get(e.calendar_id, ""),
-                        background_color=color_map.get(e.calendar_id, DEFAULT_CALENDAR_COLOR),
-                    )
-                    for e in created_events
-                ]
-                # JSON-native fields: python and json dumps are identical
-                dumps = [d.model_dump(mode="json") for d in displays]  # pragma: no mutate
-                writer({"calendar_fetch_data": dumps})
-
+        writer = optional_stream_writer()
+        if writer is not None and created_events:
+            displays = [
+                CalendarEventDisplay(
+                    summary=e.summary,
+                    start_time=_extract_datetime(e.start),
+                    end_time=_extract_datetime(e.end),
+                    calendar_name=name_map.get(e.calendar_id, ""),
+                    background_color=color_map.get(e.calendar_id, DEFAULT_CALENDAR_COLOR),
+                )
+                for e in created_events
+            ]
             # JSON-native fields: python and json dumps are identical
-            created_dumps = [e.model_dump(mode="json") for e in created_events]  # pragma: no mutate
-            return {
-                "created": len(created_events) > 0,
-                "created_events": created_dumps,
-                "errors": failures,
-            }
+            dumps = [d.model_dump(mode="json") for d in displays]  # pragma: no mutate
+            writer({"calendar_fetch_data": dumps})
 
-        writer = get_stream_writer()
-        writer(
-            {
-                "calendar_options": [
-                    _format_calendar_option_for_stream(opt) for opt in calendar_options
-                ]
-            }
-        )
-
+        # JSON-native fields: python and json dumps are identical
+        created_dumps = [e.model_dump(mode="json") for e in created_events]  # pragma: no mutate
         return {
-            "created": False,
-            "calendar_options": [
-                # JSON-native fields: python and json dumps are identical
-                opt.model_dump(mode="json", exclude_none=True)  # pragma: no mutate
-                for opt in calendar_options
-            ],
+            "created": len(created_events) > 0,
+            "created_events": created_dumps,
             "errors": failures,
-            "message": (
-                f"{len(calendar_options)} event(s) have been drafted for review. "
-                "They have NOT been added to your calendar yet. "
-                "Inform the user to confirm or cancel using the event card."
-            ),
         }
 
     @composio.tools.custom_tool(toolkit="GOOGLECALENDAR")

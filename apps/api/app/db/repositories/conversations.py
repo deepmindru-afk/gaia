@@ -55,6 +55,7 @@ _SUMMARY_PROJECTION: dict[str, object] = {
     "system_purpose": 1,
     "is_unread": 1,
     "source": 1,
+    "has_live_approval": 1,
     "createdAt": 1,
     "updatedAt": 1,
 }
@@ -195,6 +196,50 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
                     },
                 }
             },
+            scope=user_id,
+            doc_id=conversation_id,
+            extra_filter={"user_id": user_id},
+        )
+        return matched > 0
+
+    async def mark_background_with_live_approval(
+        self, conversation_id: str, *, user_id: str
+    ) -> bool:
+        """Flag a background run's conversation while it holds a live approval.
+
+        Stamps source BACKGROUND only when unset (never overwrites a real
+        channel), and raises the sidebar flag. No-op when the conversation
+        does not exist yet — the later persist carries no source either way,
+        and the next register/publish for the same owner retries the stamp.
+        """
+        matched = await self._apply_raw_update_unfetched(
+            {"conversation_id": conversation_id},
+            {"$set": {"has_live_approval": True}},
+            scope=user_id,
+            doc_id=conversation_id,
+            extra_filter={"user_id": user_id},
+        )
+        if matched:
+            await self._apply_raw_update_unfetched(
+                {"conversation_id": conversation_id, "source": {"$exists": False}},
+                {"$set": {"source": ConversationSource.BACKGROUND.value}},
+                scope=user_id,
+                doc_id=conversation_id,
+                extra_filter={"user_id": user_id},
+            )
+        return matched > 0
+
+    async def refresh_live_approval_flag(
+        self, conversation_id: str, *, user_id: str, live: bool
+    ) -> bool:
+        """Rewrite the sidebar flag from a fresh live-rows read (ledger side).
+
+        Plain setter by design: the caller (bridge sync helper) owns the
+        ledger read, this owns the conversation write — one collection each.
+        """
+        matched = await self._apply_raw_update_unfetched(
+            {"conversation_id": conversation_id},
+            {"$set": {"has_live_approval": live}},
             scope=user_id,
             doc_id=conversation_id,
             extra_filter={"user_id": user_id},
@@ -348,10 +393,11 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
     async def set_message_approval_status(
         self, conversation_id: str, *, user_id: str, approval_id: str, status: str
     ) -> bool:
-        """Settle a persisted approval_request frame's status wherever it lives in the array.
+        """Settle a persisted approval_request frame's status wherever it lives in the messages array.
 
         Returns whether the frame was there to settle. Does not advance updatedAt.
         """
+        update: dict[str, object] = {"messages.$[msg].tool_data.$[entry].data.status": status}
         matched = await self._apply_raw_update_unfetched(
             # The approval must also be in the match: array filters alone pick which
             # element to write but don't narrow `matched`, so matching on the
@@ -360,7 +406,7 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
                 "conversation_id": conversation_id,
                 "messages.tool_data.data.approval_id": approval_id,
             },
-            {"$set": {"messages.$[msg].tool_data.$[entry].data.status": status}},
+            {"$set": update},
             scope=user_id,
             doc_id=conversation_id,
             extra_filter={"user_id": user_id},
@@ -580,9 +626,26 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
         return {"source": {"$nin": _BOT_SOURCE_VALUES}}
 
     def _active_filter(self, user_id: str) -> dict[str, object]:
+        # Background runs stay out of the sidebar unless one holds a live approval
+        # (its card is the only way to reach it). Sourceless legacy rows match $ne
+        # and stay visible; a null starred reads as unstarred.
         return {
             "user_id": user_id,
-            "$or": [{"starred": {"$exists": False}}, {"starred": False}],
+            "$and": [
+                {
+                    "$or": [
+                        {"starred": {"$exists": False}},
+                        {"starred": False},
+                        {"starred": None},
+                    ]
+                },
+                {
+                    "$or": [
+                        {"source": {"$ne": ConversationSource.BACKGROUND.value}},
+                        {"has_live_approval": True},
+                    ]
+                },
+            ],
             **self._non_bot(),
         }
 

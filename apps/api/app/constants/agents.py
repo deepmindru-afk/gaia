@@ -30,6 +30,16 @@ class AgentTag(StrEnum):
     SUBAGENT_CALL_RECORD = "subagent_call_record"
     LAST_RUN = "last_run"
     PLAYBOOK_FALLBACK = "playbook_fallback"
+    #: The user speaking to an executor run that is already in flight.
+    USER_INTERJECTION = "user_interjection"
+    #: A run the user force-stopped, told to the run that follows it.
+    EXECUTOR_INTERRUPTED = "executor_interrupted"
+    #: A ledger approval decision, told to the run that owns the conversation.
+    HIL_DECISION = "hil_decision"
+    #: The executor steering a subagent run that is already in flight.
+    SUBAGENT_INTERJECTION = "subagent_interjection"
+    #: A subagent the executor force-stopped, told in its returned result.
+    SUBAGENT_CANCELLED = "subagent_cancelled"
 
 
 def wrap_agent_payload(tag: AgentTag, body: str, agent: str | None = None) -> str:
@@ -59,6 +69,11 @@ PLAYBOOK_FALLBACK_CONTEXT_KEY = "playbook_fallback"
 #: without this the write validator refused every rewrite that kept one
 #: ("did not run in this run").
 PLAYBOOK_REPLAYED_CALLS_KEY = "playbook_replayed_calls"
+
+# The trigger-context key carrying the busy-lock value a workflow fire reserved.
+# Written by the workflow worker, read by call_executor so the dispatched
+# executor takes the reservation over instead of queueing behind a stale lock.
+WORKFLOW_LOCK_CONTEXT_KEY = "executor_lock_reservation"
 
 # After this many consecutive suspect replays the worker disables the playbook.
 PLAYBOOK_SUSPECT_STREAK_LIMIT = 2

@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 import hashlib
 import json
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ToolCallRequest
@@ -554,6 +554,43 @@ async def compact_tool_output(
     )
 
 
+def _as_tool_message_command(result: object) -> Command[Any] | None:
+    """Return result when it is a Command whose payload is exactly one ToolMessage.
+
+    None for anything else — a multi-message or message-less Command is not a
+    tool output and must pass through untouched.
+    """
+    if not isinstance(result, Command) or not isinstance(result.update, dict):
+        return None
+    messages = result.update.get("messages")
+    if isinstance(messages, list) and len(messages) == 1 and isinstance(messages[0], ToolMessage):
+        return result
+    return None
+
+
+def _merge_into_command(
+    original: Command[Any],
+    bound: ToolMessage | Command[Any],
+    message: ToolMessage,
+) -> Command[Any]:
+    """Write the compacted message (and any offload binds) back into original.
+
+    Mutates the Command's own update dict rather than building a new Command, so
+    a goto/resume the tool set survives compaction. selected_tool_ids is unioned,
+    never replaced: the tool's own bindings and the offload miners both have to
+    reach the model.
+    """
+    # A dict by construction — _as_tool_message_command only matches that shape.
+    update = cast(dict[str, Any], original.update)
+    update["messages"] = [message]
+    if isinstance(bound, Command) and isinstance(bound.update, dict):
+        update["messages"] = bound.update.get("messages", update["messages"])
+        extra = bound.update.get("selected_tool_ids") or []
+        existing = update.get("selected_tool_ids") or []
+        update["selected_tool_ids"] = [*existing, *(t for t in extra if t not in existing)]
+    return original
+
+
 class WorkspaceCompactionMiddleware(AgentMiddleware):
     """Compacts large tool outputs to the user's persistent workspace.
 
@@ -590,7 +627,13 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
         result = await handler(request)
-        if not isinstance(result, ToolMessage):
+
+        # A tool that binds tools or drives the graph returns a Command wrapping a
+        # ToolMessage (spawn_subagent, activate_integration); unwrapped it is never
+        # compacted. Updated in place so any goto/resume it carries survives.
+        command = _as_tool_message_command(result)
+        message = command.update["messages"][0] if command is not None else result
+        if not isinstance(message, ToolMessage):
             return result
 
         # `ToolCall` is a TypedDict, but tool calls also reach middleware in
@@ -613,7 +656,7 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
             summary_llm = summary_llm.with_config(configurable=configurable)
 
         compacted = await compact_tool_output(
-            content=result.content if hasattr(result, "content") else str(result),
+            content=message.content,
             tool_name=tool_name,
             tool_call_id=tool_call_id,
             user_id=configurable.get("user_id"),
@@ -621,17 +664,21 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
             context_usage=self._get_context_usage(request),
             max_output_chars=self.max_output_chars,
             compaction_threshold=self.compaction_threshold,
-            status=result.status,
+            status=message.status,
             always_persist=tool_name in self.always_persist_tools,
             excluded=tool_name in self.excluded_tools,
-            existing_additional_kwargs=getattr(result, "additional_kwargs", {}),
+            existing_additional_kwargs=getattr(message, "additional_kwargs", {}),
             summary_llm=summary_llm,
         )
-        result = compacted if compacted is not None else result
+        message = compacted if compacted is not None else message
 
-        # Covers both this offload and a tool's own self-offload (gmail,
-        # excluded from compaction) uniformly, keyed on the marker itself.
-        return self._bind_offload_tools(result, request)
+        # Whether we offloaded the output or the tool self-offloaded (gmail, which
+        # is excluded from compaction), surface the file-mining tools on any marker.
+        # Keyed on the offload itself, so it covers every producer uniformly.
+        bound = self._bind_offload_tools(message, request)
+        if command is None:
+            return bound
+        return _merge_into_command(command, bound, message)
 
     def _bind_offload_tools(
         self, result: ToolMessage, request: ToolCallRequest

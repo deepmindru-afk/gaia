@@ -32,13 +32,20 @@ from app.agents.core.background.session import ExecutorRun
 from app.agents.core.background.workflow_platform_delivery import (
     deliver_result_to_platforms,
 )
+from app.agents.core.comms_directive import interpret_comms_output
 from app.agents.core.nodes.follow_up_actions_node import generate_follow_up_actions
+from app.constants.comms import CommsDirectiveKind
+from app.constants.executor import (
+    EXECUTOR_NARRATION_FAILED_ERROR_MESSAGE,
+    EXECUTOR_NARRATION_FAILED_MESSAGE,
+)
 from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
 from app.constants.log_tags import LogTag
 from app.core.websocket_manager import websocket_manager
 from app.db.repositories.conversations import conversation_repository
 from app.models.chat_models import (
     ConversationSource,
+    MessageKind,
     MessageModel,
     ToolDataEntry,
     UpdateMessagesRequest,
@@ -46,10 +53,15 @@ from app.models.chat_models import (
 from app.models.hil_models import HILApprovalStatus
 from app.models.message_models import ReplyToMessageData
 from app.models.user_models import AuthenticatedUser
+from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.conversation_service import update_messages
 from app.services.hil.approvals_store import get_approval
 from app.services.latency_metrics import observe_delivery_narration, observe_delivery_persist
-from app.services.platform_message_service import deliver_message_to_platform, is_bot_platform
+from app.services.platform_message_service import (
+    deliver_message_to_platform,
+    deliver_reaction_to_platform,
+    is_bot_platform,
+)
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import get_trace_id, log, log_context
 
@@ -90,12 +102,12 @@ async def deliver_result(
     *,
     tool_data: list[ToolDataEntry] | None,
 ) -> tuple[str | None, str | None]:
-    """Narrate, persist, and deliver a finished executor run's result.
+    """Narrate a finished executor run through comms, persist it, and deliver it.
 
-    Comms is invoked silently; its text becomes the user-visible message, never the executor's
-    terminal text. Returns (narrated_text, message_id), or (None, None) on failure. Delivers
-    over EXACTLY ONE transport chosen by the conversation's source, not the run. tool_data is
-    None for a live run, whose cards the chat stream attaches — passing them here doubles them.
+    Comms is invoked silently (no SSE); its text is the user-visible message.
+    Returns (narrated_text, message_id); (None, None) on failure; a REACT gives
+    (None, message_id). The message saves, then routes over EXACTLY ONE transport
+    chosen by the conversation's source (workflow notification, bot API, or WS).
     """
     try:
         return await _narrate_and_deliver(run, result_text, result_type, tool_data, returned_note)
@@ -242,11 +254,49 @@ async def _narrate_and_deliver(
 
     notification_text = await _narrate_result(run, result_text, result_type, returned_note)
 
-    # A HIL-resumed run reconciles onto the ORIGINAL message (run.bot_message_id,
-    # see _record_pause) instead of minting a rival one. QUEUED is load-bearing:
-    # every live run also carries bot_message_id, so presence alone would race the comms stream's save.
+    # Comms may answer with a control line instead of a message: SILENCE (deliver
+    # nothing) or REACT (one-emoji ack). One event records the outcome and the
+    # emoji (never reason/text); the delivery prop says how the ack landed.
+    directive = interpret_comms_output(notification_text)
+    is_react = directive.kind is CommsDirectiveKind.REACT
+
+    def _capture_resolution(delivery: str | None = None) -> None:
+        resolution_props: dict[str, Any] = {"outcome": directive.kind.value}
+        if is_react:
+            resolution_props["emoji"] = directive.payload
+        if delivery is not None:
+            resolution_props["delivery"] = delivery
+        capture_event(
+            user_id,
+            AnalyticsEvents.CHAT_BACKGROUND_UPDATE_RESOLVED,
+            resolution_props,
+            dedupe_key=f"chat_background_update_resolved:{run.task_id or run.conversation_id}",
+        )
+
+    message_kind = MessageKind.TEXT
+    if directive.kind is CommsDirectiveKind.SILENCE:
+        log.set(comms_delivery="silenced", silence_reason=directive.payload)
+        _capture_resolution()
+        return None, None
+    if is_react:
+        log.set(comms_delivery="reacted")
+        notification_text = directive.payload
+        message_kind = MessageKind.EMOJI_ACK
+    else:
+        log.set(comms_delivery="message")
+
+    # A HIL-resumed run reconciles onto the ORIGINAL message (run.bot_message_id);
+    # QUEUED is load-bearing because every live run carries bot_message_id but only
+    # _record_pause writes it into a queue item — presence alone would race comms.
     is_hil_resume = run.is_queued and bool(run.bot_message_id)
-    bot_message = _build_bot_message(run, notification_text, tool_data, is_hil_resume=is_hil_resume)
+    bot_message = _build_bot_message(
+        run,
+        notification_text,
+        tool_data,
+        is_hil_resume=is_hil_resume,
+        kind=message_kind,
+        reacts_to=run.user_message_id if is_react else None,
+    )
 
     show_reply_quote, user_msg_content = await _attach_reply_quote(
         run, bot_message, is_hil_resume=is_hil_resume
@@ -267,7 +317,7 @@ async def _narrate_and_deliver(
     conversation_source = await _get_conversation_source(run.conversation_id, user_id)
     is_ws_path = not run.workflow_id and not is_bot_platform(conversation_source)
 
-    if not is_ws_path:
+    if not is_ws_path and not is_react:
         follow_up_actions = await _safe_inline_follow_ups(
             result_type=result_type,
             notification_text=notification_text,
@@ -307,19 +357,42 @@ async def _narrate_and_deliver(
             target=target,
             message_id=bot_message.message_id,
         )
-        return notification_text, bot_message.message_id
+        _capture_resolution("fallback_text" if is_react else "message")
+        return None if is_react else notification_text, bot_message.message_id
 
     # Deliver over exactly one transport, by the conversation's source: bot
     # conversations to their platform API, web/mobile/system to WebSocket (the
     # web list excludes bot sources, so a WebSocket push there would be dropped).
     if is_bot_platform(conversation_source):
-        delivered = await deliver_message_to_platform(
-            conversation_source,
-            user_id,
-            notification_text,
-            conversation_id=run.conversation_id,
-        )
+        delivered = False
         transport = "platform"
+        if is_react:
+            # Native platform reaction anchored to the user's message; falls back
+            # to the one-emoji text bubble below when there is no recorded platform
+            # id or the publish fails, so the acknowledgment is never lost.
+            platform_message_id = await _lookup_platform_message_id(
+                run.conversation_id, run.user_message_id, user_id
+            )
+            if platform_message_id is not None:
+                delivered = await deliver_reaction_to_platform(
+                    conversation_source,
+                    user_id,
+                    platform_message_id,
+                    notification_text,
+                    conversation_id=run.conversation_id,
+                )
+                if delivered:
+                    transport = "reaction"
+                    log.set(platform_reaction="attached")
+            if not delivered:
+                log.set(platform_reaction="fallback_text")
+        if not delivered:
+            delivered = await deliver_message_to_platform(
+                conversation_source,
+                user_id,
+                notification_text,
+                conversation_id=run.conversation_id,
+            )
     else:
         # Broadcast the answer NOW so the spinner clears, then generate follow-up
         # actions in the background and push them as a second update on the same
@@ -331,12 +404,15 @@ async def _narrate_and_deliver(
             tool_data=tool_data,
             follow_up_actions=[],
         )
-        _spawn_deferred_follow_ups(
-            bot_message=bot_message,
-            result_type=result_type,
-            tool_data=tool_data,
-            target=target,
-        )
+        # No follow-ups for a reaction: there is no rendered message to attach
+        # chips to, and generating them burns an LLM call on an emoji.
+        if not is_react:
+            _spawn_deferred_follow_ups(
+                bot_message=bot_message,
+                result_type=result_type,
+                tool_data=tool_data,
+                target=target,
+            )
         delivered = True
         transport = "websocket"
 
@@ -347,7 +423,19 @@ async def _narrate_and_deliver(
         transport=transport,
         delivered=delivered,
     )
-    return notification_text, bot_message.message_id
+    if is_react:
+        _capture_resolution(
+            "reaction"
+            if transport == "reaction"
+            else "badge"
+            if transport == "websocket"
+            else "fallback_text"
+        )
+    else:
+        _capture_resolution("message")
+    # A reaction has no speakable text: voice must not read the emoji aloud,
+    # so it resolves to None here (the ack itself is saved and routed above).
+    return None if is_react else notification_text, bot_message.message_id
 
 
 async def _narrate_result(
@@ -370,11 +458,15 @@ async def _narrate_result(
         returned_note=returned_note,
         workflow_id=run.workflow_id,
     )
-    # If comms is unavailable, fall back to the raw executor text rather than
-    # dropping the message entirely.
+    # Never fall back to result_text: it is the executor's internal monologue,
+    # and on the error path a raw exception string (executor_runner `str(e)`).
     narrated = bool(notification_text)
     if not narrated:
-        notification_text = result_text
+        notification_text = (
+            EXECUTOR_NARRATION_FAILED_ERROR_MESSAGE
+            if result_type == "error"
+            else EXECUTOR_NARRATION_FAILED_MESSAGE
+        )
     observe_delivery_narration(
         time.perf_counter() - narration_start, status="success" if narrated else "fallback"
     )
@@ -393,12 +485,16 @@ def _build_bot_message(
     tool_data: list[ToolDataEntry] | None,
     *,
     is_hil_resume: bool,
+    kind: MessageKind = MessageKind.TEXT,
+    reacts_to: str | None = None,
 ) -> MessageModel:
     """Build the bot message this run's result is saved and delivered as."""
     bot_message = MessageModel(
         type="bot",
         response=notification_text,
         date=datetime.now(UTC).isoformat(),
+        kind=kind,
+        reacts_to_message_id=reacts_to,
     )
     bot_message.message_id = (
         (run.bot_message_id if is_hil_resume else None)
@@ -957,7 +1053,12 @@ async def _broadcast_bot_message(
         "response": notification_text,
         "message_id": bot_message.message_id,
         "date": bot_message.date,
+        "kind": bot_message.kind.value,
     }
+    # An emoji-ack renders as a reaction badge on the message it answers,
+    # not a new bubble — the client needs the target GAIA message id.
+    if bot_message.kind is MessageKind.EMOJI_ACK and bot_message.reacts_to_message_id:
+        ws_payload["reacts_to_message_id"] = bot_message.reacts_to_message_id
     if tool_data:
         ws_payload["tool_data"] = tool_data
     if follow_up_actions:
@@ -998,6 +1099,29 @@ async def _broadcast_message(user_id: str, ws_event: dict[str, object]) -> None:
             )
             if attempt == 0:
                 await asyncio.sleep(0.5)
+
+
+async def _lookup_platform_message_id(
+    conversation_id: str,
+    user_message_id: str | None,
+    user_id: str,
+) -> str | None:
+    """Return the platform-native id of a user message, for anchoring a reaction.
+
+    Returns None when there is no triggering user message (scheduled runs) or the
+    turn predates platform-id recording — the caller falls back to a text bubble.
+    """
+    if not user_message_id:
+        return None
+    try:
+        message = await conversation_repository.get_message(
+            conversation_id, user_message_id, user_id=user_id
+        )
+        if message is not None:
+            return message.platform_message_id
+    except Exception as e:
+        log.warning(f"{LogTag.AGENT} _lookup_platform_message_id: failed", error=str(e))
+    return None
 
 
 async def _lookup_user_message_content(

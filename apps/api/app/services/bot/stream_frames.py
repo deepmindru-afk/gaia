@@ -62,6 +62,11 @@ def message_boundary_frame(boundary: object) -> str:
     return sse_frame({"message_boundary": boundary})
 
 
+def emoji_ack_frame(emoji: str, reacts_to_message_id: str) -> str:
+    """Forward a comms ``REACT`` ack: the client takes the streamed directive back."""
+    return sse_frame({"emoji_ack": {"emoji": emoji, "reacts_to_message_id": reacts_to_message_id}})
+
+
 def error_frame(error_code: str) -> str:
     """Return a terminal error frame; the code is the contract the bot adapters switch on."""
     return sse_frame({"error": error_code})

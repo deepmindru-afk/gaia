@@ -4,7 +4,7 @@ Lives here (rather than in handoff_tools.py) so those modules import from it,
 avoiding a cyclic dependency.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import time
 from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -24,6 +24,7 @@ from app.agents.context.assemble import assemble_context
 from app.agents.context.section_context import SectionContext
 from app.agents.context.tiers import AgentTier
 from app.agents.core.background.session import claim_tool_output, note_tool_output_owner
+from app.agents.core.background.subagent_channel import SubagentCancel
 from app.agents.core.graph_manager import (
     CompiledAgentGraph,
     GraphManager,
@@ -35,6 +36,7 @@ from app.agents.prompts.workflow_prompts import (
     WORKFLOW_AUTO_NOTIFY_SECTION,
     WORKFLOW_SILENT_NOTIFY_SECTION,
 )
+from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.general import EXECUTOR_THREAD_PREFIX, FINISH_TASK_NAME
 from app.constants.hil import LANGGRAPH_INTERRUPT_KEY
 from app.constants.llm import EXECUTOR_RECURSION_LIMIT
@@ -444,6 +446,10 @@ async def execute_subagent_stream(
             # finished task — an empty outcome says "nothing to deliver" outright.
             return SubagentOutcome(text="")
 
+    # The executor addresses a cancel to this subagent by its own thread_id.
+    subagent_thread_id = str(agent_configurable(ctx.config).get("thread_id", ""))
+    cancel = SubagentCancel(subagent_thread_id) if subagent_thread_id else None
+
     # One span per segment; a pause ends its segment here, so the HIL wait that
     # follows never counts as active time. Labelled by integration id: per-call
     # uuids and user-made MCPs would each mint unbounded series.
@@ -463,9 +469,9 @@ async def execute_subagent_stream(
             # build_agent_config returns an AgentRunnableConfig, but run_config may be
             # rebuilt above as a dict spread, which mypy widens back to a plain dict.
             config=cast(RunnableConfig, run_config),
-            # Persist checkpoints only on exit, not every step (default is "async"):
-            # intermediate steps never need to survive a mid-run crash, only the final
-            # state does. Collapses O(steps) writes to one. comms graph keeps "async".
+            # Persist checkpoints only on run exit (this path is one unit of work),
+            # collapsing O(steps) writes to one. The comms graph driver keeps
+            # "async" — its mid-run checkpoints are needed.
             durability="exit",
         ):
             # Check for cancellation
@@ -482,6 +488,30 @@ async def execute_subagent_stream(
             # A list `stream_mode` makes astream yield (mode, payload) tuples, which
             # langgraph's own overload return type does not express.
             stream_mode, payload = cast(tuple[str, Any], event)
+
+            # Targeted cancel from the executor, checked once per superstep (one
+            # redis read per reasoning step). Returns a clean cancelled result so
+            # the executor learns it stopped; the executor and siblings keep running.
+            if (
+                stream_mode == "updates"
+                and ctx.stream_id
+                and cancel
+                and await cancel.is_requested()
+            ):
+                await cancel.clear()
+                log.info(f"{LogTag.AGENT} Subagent cancelled by executor", stream_id=ctx.stream_id)
+                outcome = _finalize_run(run)
+                observe_subagent_run(
+                    time.perf_counter() - segment_start, subagent_id=label, status="cancelled"
+                )
+                return replace(
+                    outcome,
+                    text=wrap_agent_payload(
+                        AgentTag.SUBAGENT_CANCELLED,
+                        outcome.text or "Stopped by the executor before finishing.",
+                    ),
+                )
+
             await _consume_stream_event(run, stream_mode, payload)
     except Exception:
         observe_subagent_run(time.perf_counter() - segment_start, subagent_id=label, status="error")
@@ -531,6 +561,16 @@ def _snapshot_messages(snapshot: StateSnapshot) -> list[AnyMessage]:
     values = getattr(snapshot, "values", None) or {}
     messages = values.get("messages") if isinstance(values, dict) else None
     return messages if isinstance(messages, list) else []
+
+
+async def thread_messages(ctx: SubagentExecutionContext) -> list[AnyMessage]:
+    """Read back what this run's thread holds right now, from its checkpoint.
+
+    The authoritative record of what actually reached the model: a run that died
+    mid-call committed nothing, and only the checkpoint can tell that apart from
+    a call that landed.
+    """
+    return _snapshot_messages(await ctx.subagent_graph.aget_state(cast(RunnableConfig, ctx.config)))
 
 
 def _final_text_from_snapshot(snapshot: StateSnapshot) -> str:
@@ -741,28 +781,42 @@ async def prepare_executor_execution(
     )
     new_configurable = agent_configurable(config)
 
-    # Create system message (executor-specific)
+    # Create system message (executor-specific).
     system_message = create_system_message(
         user_id=user_id,
         agent_type="executor",
         user_name=configurable.get("user_name"),
     )
 
-    # When comms knows the tool_category, hint the executor to go straight to
-    # handoff() and skip ChromaDB discovery — tools are NOT pre-bound, the target
-    # subagent still retrieves its own. Removes one redundant round-trip.
+    # When comms provides a known tool_category, hint the executor to go straight
+    # to activate_integration(...) and skip the ChromaDB discovery call — removes
+    # one redundant round-trip where comms already knows the category.
     enhanced_task = task
     tool_category = configurable.get("tool_category")
     selected_tool = configurable.get("selected_tool")
-    if tool_category and get_subagent_by_id(tool_category):
+    resolved_category = get_subagent_by_id(tool_category) if tool_category else None
+    if tool_category and resolved_category:
         tool_hint = f"the '{selected_tool}' tool" if selected_tool else "the user's request"
-        enhanced_task = (
-            f"{task}\n\n"
-            f"DIRECT EXECUTION HINT: This request should be handled by "
-            f"'{tool_category}'. Skip retrieve_tools discovery and directly "
-            f'call handoff(subagent_id="{tool_category}", task="{task}") to '
-            f"route {tool_hint}."
-        )
+        if (
+            resolved_category.managed_by == "mcp"
+            and resolved_category.mcp_config
+            and resolved_category.mcp_config.requires_auth
+        ):
+            enhanced_task = (
+                f"{task}\n\n"
+                f"DIRECT EXECUTION HINT: This request should be handled by "
+                f"'{tool_category}'. Skip retrieve_tools discovery and directly "
+                f'handoff(subagent_id="{tool_category}", task="...") with the full request, then '
+                f"use its result for {tool_hint}."
+            )
+        else:
+            enhanced_task = (
+                f"{task}\n\n"
+                f"DIRECT EXECUTION HINT: This request should be handled by "
+                f"'{tool_category}'. Skip retrieve_tools discovery and directly "
+                f'call activate_integration(integration_id="{tool_category}"), then '
+                f"act on {tool_hint} yourself with its tools."
+            )
         log.set(
             executor_prep={
                 "direct_hint_applied": True,

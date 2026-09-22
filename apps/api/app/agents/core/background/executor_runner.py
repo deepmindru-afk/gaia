@@ -16,41 +16,48 @@ conversation. TTL of 30 minutes is a safety net — released explicitly.
 from dataclasses import dataclass, replace
 import time
 from typing import NamedTuple
+from uuid import uuid4
 
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from langsmith import traceable
 from pydantic import BaseModel, ConfigDict
 
-from app.agents.core.background.bg_results import has_bg_subagent_results
 from app.agents.core.background.comms_narrator import record_executor_cancellation
 from app.agents.core.background.executor_capture import (
     build_returned_to_frontend_note,
     drain_executor_tool_data,
     teardown_executor_capture,
 )
+from app.agents.core.background.executor_channel import ExecutorInbox, decide_drain
 from app.agents.core.background.executor_queue import (
+    LockClaim,
     PreparedQueuedTask,
     build_run_item,
-    enqueue_collection_run,
     extend_lock_if_owned,
-    reclaim_stranded_task,
+    is_executor_busy,
+    prepare_run_from_item,
     release_lock_if_owned,
 )
 from app.agents.core.background.redis_writer import make_redis_stream_writer
 from app.agents.core.background.result_delivery import deliver_result, persist_cancelled_run
 from app.agents.core.background.session import (
     ExecutorRun,
+    RunIdentity,
     executor_abandoned,
     get_session,
     signal_executor_done,
 )
 from app.agents.core.subagents.subagent_runner import (
+    SubagentExecutionContext,
     execute_subagent_stream,
     prepare_executor_execution,
+    thread_messages,
 )
+from app.constants.agents import AgentTag
 from app.constants.executor import (
     EXECUTOR_APPROVAL_LOST_MESSAGE,
+    EXECUTOR_CARRY_TASK,
     EXECUTOR_PAUSED,
     EXECUTOR_STEP_LIMIT_MESSAGE,
     MESSAGE_ID_KEY,
@@ -62,10 +69,7 @@ from app.core.stream_manager import StreamManager
 from app.models.agent_models import AgentConfigurable, AgentConfigurableView
 from app.models.chat_models import ToolDataEntry
 from app.services.analytics_service import AnalyticsEvents, capture_event
-from app.services.hil.approvals_store import (
-    list_parked_subagents_for_conversation,
-    set_resume_item,
-)
+from app.services.hil.approvals_store import set_resume_item
 from app.services.hil.resume_slot import release_resume_dispatch
 from app.services.latency_metrics import (
     observe_executor_active,
@@ -81,7 +85,7 @@ from shared.py.wide_events import WorkflowContext, get_trace_id, log, wide_task
 
 #: Task name for a queued executor run. Tests drain by this name to wait out
 #: exactly the runs a turn handed off, not every background task in the process.
-QUEUED_EXECUTOR_TASK_NAME = "queued-executor-run"
+DETACHED_EXECUTOR_TASK_NAME = "detached-executor-run"
 
 
 @traceable(name="executor_background", run_type="chain")
@@ -129,6 +133,7 @@ async def run_executor_background(
     ):
         result_text = ""
         result_type = "final"
+        run_ctx: SubagentExecutionContext | None = None
         queue_wait_ms = _queue_wait_ms(run, run_start, configurable, queued=queued)
         ttft_ms: float | None = None
         active_ms: float | None = None
@@ -143,7 +148,7 @@ async def run_executor_background(
             with span() as elapsed_active:
                 result = await _execute_executor(task, configurable, run.stream_id, resume)
             active_ms = round(elapsed_active() * 1000.0, 2)
-            result_text, result_type = result.text, result.type
+            result_text, result_type, run_ctx = result.text, result.type, result.ctx
             ttft_ms = _executor_ttft_ms(run, run_start)
             if ttft_ms is not None:
                 observe_executor_ttft(ttft_ms / 1000.0, queued=queued)
@@ -177,7 +182,7 @@ async def run_executor_background(
                 result_type=result_type,
             )
         finally:
-            await _finalize_executor_run(run, task, result_text, result_type)
+            await _finalize_executor_run(run, task, result_text, result_type, run_ctx)
             if resume is not None:
                 # This run held the conversation's resume slot (claimed at dispatch).
                 # Freeing it AFTER finalize means the next decision can dispatch only
@@ -271,9 +276,10 @@ async def _record_pause(
 ) -> bool:
     """Attach this run's re-dispatch context to every approval it paused on.
 
-    A batch pause (wait_for_subagents) carries several approvals; each gets the
-    same resume context so whichever decision lands first can re-dispatch. A
-    failed write means the caller fails the run rather than parking it forever.
+    Each paused approval gets the same resume context so whichever decision lands
+    first can re-dispatch the run. Returns whether every write landed — it is the only thing that makes
+    the pause resumable, so a failure is not something the run can carry on
+    through: the caller fails the run rather than parking it forever.
     """
     try:
         item = build_run_item(
@@ -318,12 +324,15 @@ class _ExecutorResult(NamedTuple):
     """One executor run's terminal shape.
 
     paused_on holds the approval id(s) when the run stopped on a HIL interrupt
-    instead of finishing — one for a gate pause, several for a batch pause.
+    instead of finishing. ctx is the prepared execution context, kept so finalize
+    can read the thread this run wrote; None when preparation itself failed, in
+    which case no model call happened and nothing was committed.
     """
 
     text: str
     type: str
     paused_on: tuple[str, ...] = ()
+    ctx: SubagentExecutionContext | None = None
 
 
 class _PauseInterrupt(BaseModel):
@@ -363,6 +372,7 @@ async def _execute_executor(
     session's collector via make_redis_stream_writer. The executor inherits comms'
     model/provider/reasoning from configurable (free -> Gemini, paid -> MiniMax M3).
     """
+    ctx: SubagentExecutionContext | None = None
     try:
         with span() as elapsed_prep:
             ctx, error = await prepare_executor_execution(
@@ -390,9 +400,9 @@ async def _execute_executor(
                 # Unresumable: nothing can ever re-dispatch this thread. Fail the
                 # run loudly rather than leave the conversation's lock held.
                 log.error(f"{LogTag.HIL} Executor paused with no approval_id", stream_id=stream_id)
-                return _ExecutorResult("Approval request was malformed", "error")
-            return _ExecutorResult("", EXECUTOR_PAUSED, approval_ids)
-        return _ExecutorResult(outcome.text, "final")
+                return _ExecutorResult("Approval request was malformed", "error", ctx=ctx)
+            return _ExecutorResult("", EXECUTOR_PAUSED, approval_ids, ctx=ctx)
+        return _ExecutorResult(outcome.text, "final", ctx=ctx)
     except GraphRecursionError as e:
         # The executor exhausted its recursion budget. Log the real cause loudly,
         # but hand comms a friendly message instead of the raw traceback string so
@@ -402,10 +412,10 @@ async def _execute_executor(
             stream_id=stream_id,
             error=str(e),
         )
-        return _ExecutorResult(EXECUTOR_STEP_LIMIT_MESSAGE, "error")
+        return _ExecutorResult(EXECUTOR_STEP_LIMIT_MESSAGE, "error", ctx=ctx)
     except Exception as e:
         log.error(f"{LogTag.AGENT} Executor run failed", stream_id=stream_id, error=str(e))
-        return _ExecutorResult(str(e), "error")
+        return _ExecutorResult(str(e), "error", ctx=ctx)
 
 
 async def _finalize_executor_run(
@@ -413,6 +423,7 @@ async def _finalize_executor_run(
     task: str,
     result_text: str,
     result_type: str,
+    ctx: SubagentExecutionContext | None = None,
 ) -> None:
     """Post-run cleanup, in order: signal done → deliver → free the lock → hand it on."""
     if result_type == EXECUTOR_PAUSED:
@@ -431,6 +442,22 @@ async def _finalize_executor_run(
     # tears the session down the moment done_event fires, so a read from inside
     # delivery comes back empty. None means a live run — comms owns those cards.
     tool_data = drain_executor_tool_data(run.stream_id) if run.executor_owns_tool_data else None
+
+    # Held approval cards go live here, before the done signal so the session is
+    # still alive; failure only skips the live push, never finalize — the drain
+    # above already persisted the frames.
+    try:
+        from app.services.hil.bridge import (  # noqa: PLC0415 -- runner is imported too broadly for a top-level hil import
+            flush_held_approval_cards,
+        )
+
+        await flush_held_approval_cards(run.stream_id)
+    except Exception as e:
+        log.error(
+            f"{LogTag.AGENT} Held card flush failed",
+            stream_id=run.stream_id,
+            error_type=type(e).__name__,
+        )
 
     # Signal SSE consumer that tool events are done so it can drain the session
     # into the comms ack and publish [DONE]. Comms re-narration runs in parallel.
@@ -500,46 +527,10 @@ async def _finalize_executor_run(
             observe_executor_e2e(e2e_s, status=end_status, queued=queued)
     observe_executor_run_total(status=end_status, queued=queued)
 
-    # A terminal run leaving landed-but-uncollected subagent work queues a
-    # collection turn NOW, so the hand-off below claims it — otherwise a parked
-    # card has no live collector until a later landing, and decisions refuse meanwhile.
-    if not abandoned:
-        await _queue_collection_if_uncollected(run, task)
-
-    # Hand the conversation on via NX re-acquire (lock is already free). Runs on
-    # every terminal path, cancelled included — a Stop targets only the running
-    # task, so queued tasks must still run; claims nothing if a concurrent call_executor won first.
-    prepared = await reclaim_stranded_task(run.conversation_id)
-    if prepared is not None:
-        _spawn_queued_run(run, prepared)
-
-
-async def _queue_collection_if_uncollected(run: ExecutorRun, task: str) -> None:
-    """Best-effort wake at turn end; the marker dedups against landing-time wakes."""
-    del task
-    if run.workflow_id is not None:
-        return  # headless: the gate denied destructive work; nothing parked to collect
-    try:
-        uncollected = await has_bg_subagent_results(run.conversation_id) or bool(
-            await list_parked_subagents_for_conversation(run.conversation_id)
-        )
-        if uncollected:
-            await enqueue_collection_run(
-                run.conversation_id,
-                {
-                    "user_id": run.user.user_id,
-                    "email": run.user.email or "",
-                    "user_name": run.user.name or "",
-                    "user_timezone": run.user.timezone,
-                },
-                workflow_execution_id=run.workflow_execution_id,
-            )
-    except Exception as e:  # a failed wake must not strand the queue handoff
-        log.error(
-            f"{LogTag.AGENT} Post-run collection check failed",
-            conversation_id=run.conversation_id,
-            error=str(e),
-        )
+    # Work landing after this run's LAST model call has no further reasoning step
+    # to absorb it, so carry it into a fresh run. Runs on EVERY terminal path,
+    # cancelled included: a Stop targets the running task, not later work.
+    await _carry_pending_into_new_run(run, ctx)
 
 
 async def _finalize_paused_run(run: ExecutorRun) -> None:
@@ -656,20 +647,143 @@ async def _close_queued_stream(run: ExecutorRun, was_cancelled: bool) -> None:
         await StreamManager.complete_stream(run.stream_id)
 
 
-def _spawn_queued_run(run: ExecutorRun, prepared: PreparedQueuedTask) -> None:
-    """Spawn the next queued run as a GC-tracked background task."""
+def _spawn_detached_run(prepared: PreparedQueuedTask, conversation_id: str) -> None:
+    """Spawn a run that owns its own stream, as a GC-tracked background task."""
     spawn_background_task(
         run_executor_background(
             run=prepared.run,
             task=prepared.task,
             configurable=prepared.configurable,
         ),
-        name=QUEUED_EXECUTOR_TASK_NAME,
+        name=DETACHED_EXECUTOR_TASK_NAME,
     )
 
     log.info(
-        f"{LogTag.AGENT} Queued executor task spawned",
+        f"{LogTag.AGENT} Detached executor run spawned",
         task_id=prepared.run.task_id,
-        conversation_id=run.conversation_id,
+        conversation_id=conversation_id,
         stream_id=prepared.run.stream_id,
     )
+
+
+async def deliver_to_executor(
+    conversation_id: str,
+    configurable: AgentConfigurable,
+    task: str,
+    *,
+    workflow_execution_id: str | None = None,
+) -> None:
+    """Give the executor work from outside a comms turn — the one way to do it.
+
+    A live run absorbs the task through its inbox; an idle conversation gets a run
+    started to carry it. Either way it becomes a message in an executor thread,
+    never a second parallel answer. The busy check is a fast path, not the
+    decision: the claim inside _start_executor_run is atomic.
+    """
+    if not await is_executor_busy(conversation_id) and await _start_executor_run(
+        conversation_id, configurable, task, workflow_execution_id=workflow_execution_id
+    ):
+        return
+    await ExecutorInbox(conversation_id).append(str(uuid4()), task)
+    log.info(
+        f"{LogTag.AGENT} Work handed to the live executor run",
+        conversation_id=conversation_id,
+    )
+
+
+async def _prepare_executor_run(
+    conversation_id: str,
+    configurable: AgentConfigurable,
+    task: str,
+    *,
+    workflow_execution_id: str | None = None,
+) -> PreparedQueuedTask | None:
+    """Claim the conversation and materialize a detached run for the task.
+
+    None means another run holds the conversation (or Redis is down) and nothing
+    was started.
+    """
+    return await prepare_run_from_item(
+        conversation_id,
+        build_run_item(
+            task=task,
+            configurable={
+                **configurable,
+                "thread_id": conversation_id,
+                "execution_mode": "interactive",
+            },
+            identity=RunIdentity(
+                conversation_id=conversation_id,
+                task_id=str(uuid4()),
+                user_message_id=None,
+            ),
+            workflow_execution_id=workflow_execution_id,
+        ),
+        claim=LockClaim.ACQUIRE,
+    )
+
+
+async def _start_executor_run(
+    conversation_id: str,
+    configurable: AgentConfigurable,
+    task: str,
+    *,
+    workflow_execution_id: str | None = None,
+) -> bool:
+    """Materialize and spawn a detached run for the task. Returns whether it started."""
+    prepared = await _prepare_executor_run(
+        conversation_id, configurable, task, workflow_execution_id=workflow_execution_id
+    )
+    if prepared is None:
+        return False
+    _spawn_detached_run(prepared, conversation_id)
+    return True
+
+
+async def _carry_pending_into_new_run(
+    run: ExecutorRun, ctx: SubagentExecutionContext | None
+) -> None:
+    """Start a run for work this one finished too early to absorb.
+
+    Absorbed is read off the thread, not a marker: an entry injected on a model
+    call that then FAILED was never committed. Only WORK starts a run — a bare
+    stop notice stays pending for the next run's drain instead of spawning one.
+    """
+    try:
+        inbox = ExecutorInbox(run.conversation_id)
+        pending = await inbox.read()
+        if not pending:
+            return
+        drain = decide_drain(pending, await thread_messages(ctx) if ctx else [])
+        for entry in drain.retire:
+            await inbox.retire(entry)
+        carry = drain.inject
+        if not any(entry.tag is not AgentTag.EXECUTOR_INTERRUPTED for entry in carry):
+            return
+
+        # Leave the carried entries in the inbox: the new run's drain hook injects
+        # each (framed with its INBOX_ENTRY_ID) and retires it only once committed —
+        # the crash-safe path. Concatenating + retiring here first lost work on a crash.
+        started = await _start_executor_run(
+            run.conversation_id,
+            {
+                "user_id": run.user.user_id,
+                "email": run.user.email or "",
+                "user_name": run.user.name or "",
+                "user_timezone": run.user.timezone,
+            },
+            EXECUTOR_CARRY_TASK,
+            workflow_execution_id=run.workflow_execution_id,
+        )
+        if not started:
+            log.info(
+                f"{LogTag.AGENT} Pending work left for the run that holds the conversation",
+                conversation_id=run.conversation_id,
+                pending=len(carry),
+            )
+    except Exception as e:  # a failed carry must not break finalize
+        log.error(
+            f"{LogTag.AGENT} Could not carry pending work into a new run",
+            conversation_id=run.conversation_id,
+            error_type=type(e).__name__,
+        )

@@ -23,11 +23,6 @@ from app.agents.core.background.executor_capture import (
     register_executor_capture,
     teardown_executor_capture,
 )
-from app.agents.core.background.session import (
-    executor_failed,
-    executor_failure,
-    queued_without_run,
-)
 from app.agents.core.graph_manager import CompiledAgentGraph, GraphManager
 from app.agents.core.messages import (
     MessageAttachments,
@@ -37,7 +32,11 @@ from app.agents.core.messages import (
 from app.agents.llm.lane import AgentRole, dev_model_id, dev_option_for
 from app.config.langfuse import trace_id_for_message
 from app.config.settings import settings
-from app.constants.agents import PLAYBOOK_FALLBACK_CONTEXT_KEY, PLAYBOOK_REPLAYED_CALLS_KEY
+from app.constants.agents import (
+    PLAYBOOK_FALLBACK_CONTEXT_KEY,
+    PLAYBOOK_REPLAYED_CALLS_KEY,
+    WORKFLOW_LOCK_CONTEXT_KEY,
+)
 from app.constants.cache import BACKGROUND_EXECUTOR_WAIT_TIMEOUT
 from app.constants.log_tags import LogTag
 from app.helpers.agent_helpers import (
@@ -45,6 +44,7 @@ from app.helpers.agent_helpers import (
     AgentLane,
     AgentTracing,
     AgentTurn,
+    background_authorization,
     build_agent_config,
     build_initial_state,
     execute_graph_silent,
@@ -212,7 +212,13 @@ async def _core_agent_logic(
             active_todo_id=active_todo_id,
             execution_mode=execution_mode,
             source=source,
-            user_messages=recent_user_messages(request.messages, request.message),
+            user_messages=background_authorization(
+                recent_user_messages(request.messages, request.message),
+                execution_mode=str(execution_mode),
+                workflow_title=_workflow_text(request.selectedWorkflow, "title"),
+                workflow_description=_workflow_text(request.selectedWorkflow, "description"),
+                todo_title=str((trigger_context or {}).get("todo_title") or ""),
+            ),
             user_request=request.message,
             user_preferences=user_preferences,
             writing_style=writing_style,
@@ -241,12 +247,15 @@ async def _core_agent_logic(
     # Workflow runs carry their id/title so the background executor's delivery
     # path can route the final result to the workflow-completion notification
     # instead of a normal conversation message. Absent for interactive chat.
-    if trigger.workflow_id:
-        configurable["workflow_id"] = trigger.workflow_id
-        configurable["workflow_title"] = trigger.workflow_title
-        configurable["workflow_notify_on_completion"] = trigger.workflow_notify_on_completion
-        configurable["playbook_fallback"] = trigger.playbook_fallback
+    if trigger_context and trigger_context.get("workflow_id"):
+        configurable["workflow_id"] = trigger_context["workflow_id"]
+        configurable["workflow_title"] = trigger_context.get("workflow_title", "")
+        configurable["workflow_notify_on_completion"] = trigger_context.get(
+            "workflow_notify_on_completion", True
+        )
+        configurable["playbook_fallback"] = trigger_context.get(PLAYBOOK_FALLBACK_CONTEXT_KEY)
         configurable["playbook_replayed_calls"] = trigger.playbook_replayed_calls
+        configurable["executor_lock_reservation"] = trigger_context.get(WORKFLOW_LOCK_CONTEXT_KEY)
 
     log.set(
         agent={
@@ -260,6 +269,12 @@ async def _core_agent_logic(
     )
 
     return graph, initial_state, config
+
+
+def _workflow_text(selected_workflow: object, field: str) -> str:
+    """Read one text field off the run's workflow card, or "" without one."""
+    value = getattr(selected_workflow, field, "")
+    return value if isinstance(value, str) else ""
 
 
 async def call_agent(
@@ -443,9 +458,6 @@ async def call_agent_silent(
         return SilentRunResult(
             message=complete_message,
             tool_data=tool_data,
-            queued_task_id=queued_without_run(stream_id),
-            executor_failed=executor_failed(stream_id),
-            executor_failure=executor_failure(stream_id),
         )
 
     except Exception as exc:
