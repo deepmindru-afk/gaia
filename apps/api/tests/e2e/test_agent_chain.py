@@ -583,8 +583,8 @@ class TestExecutorToSubagent:
             o.subagent_id for o in run.transcript.outputs() if o.tool_call_id == "tc_fetch"
         ] == [row_id]
 
-    async def test_the_subagents_work_is_bracketed_by_its_lifecycle_frames(self) -> None:
-        """A tool card outside the subagent_start/subagent_end window has no row to render into."""
+    async def test_the_subagents_work_streams_inside_its_start_frame(self) -> None:
+        """The detached subagent outlives this turn, so only its start brackets the stream; its end reaches comms via the executor."""
         run = await run_chain(
             "explain the executor",
             comms=comms_delegating_script(),
@@ -593,15 +593,10 @@ class TestExecutorToSubagent:
             fetch_webpage=fetched_page(),
         )
 
-        kinds = run.transcript.kinds()
-        start = kinds.index("subagent_start")
-        assert "subagent_end" in kinds, (
-            f"the subagent's end frame never reached the stream: {kinds}"
-        )
-        end = kinds.index("subagent_end")
+        start = run.transcript.kinds().index("subagent_start")
         fetch = run.transcript.tool_call("fetch_webpages").index
         handoff = run.transcript.tool_call("handoff").index
-        assert handoff < start < fetch < end
+        assert handoff < start < fetch
 
     async def test_a_chat_turn_handoff_returns_the_background_spawn_acknowledgement(self) -> None:
         """A turn with a stream_id always backgrounds the handoff, so the executor can steer it instead of blocking."""
@@ -660,11 +655,9 @@ class TestExecutorToSubagent:
 
         assert "fetch_webpages" in nested, f"subagent's work not in the group: {list(nested)}"
         assert nested["fetch_webpages"]["tool_call_id"] == "tc_fetch"
-        # The group carries the joined result, not just the call — a reload has
-        # to render the card populated, not spinning.
-        output = nested["fetch_webpages"].get("output")
-        assert output is not None, f"the persisted group has the call but not its result: {group}"
-        assert "The executor is GAIA's worker tier." in output
+        # Settled, not running, on reload; the answer itself arrives as the
+        # executor's follow-up delivery (see the collection-run test above).
+        assert group["data"]["completed_at"] is not None
 
 
 # ---------------------------------------------------------------------------
