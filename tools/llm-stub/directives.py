@@ -64,8 +64,8 @@ SCRIPTED_CRITERIA = ["scripted directives executed"]
 # graph binds it, then emits the tool itself on the next invocation.
 RETRIEVE_TOOLS_TOOL = "retrieve_tools"
 # The execute proxy: integration tools are never bound (retrieve_tools returns
-# their schema docs instead), so a scripted unavailable tool routes through
-# execute where the proxy is present — binding it would loop forever.
+# their schema docs instead), so a tool still unbound after one retrieval routes
+# through execute — retrieving it again would loop forever.
 EXECUTE_TOOL = "execute"
 
 _DIRECTIVE_OPEN_RE = re.compile(r"\[\[(tool|say):")
@@ -276,6 +276,20 @@ def _emitted_tool_names(messages: Sequence[dict[str, Any]]) -> list[str]:
     return names
 
 
+def _retrieved_tool_names(messages: Sequence[dict[str, Any]]) -> set[str]:
+    """Every name an emitted retrieve_tools call asked to bind."""
+    names: set[str] = set()
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or []:
+            function = call.get("function") or {}
+            if function.get("name") == RETRIEVE_TOOLS_TOOL:
+                args = json.loads(function.get("arguments") or "{}")
+                names.update(args.get("exact_tool_names") or [])
+    return names
+
+
 def _cursor(
     tool_dirs: Sequence[ToolDirective],
     emitted: Sequence[str],
@@ -361,10 +375,15 @@ def _resolve_work(messages: Sequence[dict[str, Any]], available_tools: frozenset
     if di < len(tool_dirs):
         nxt = tool_dirs[di]
         if nxt.name not in available_tools:
+            # retrieve_tools decides: internal tools bind, integration tools come
+            # back as schema docs and stay unbound — those run through execute.
+            retrieved = nxt.name in _retrieved_tool_names(tail)
+            if RETRIEVE_TOOLS_TOOL in available_tools and not retrieved:
+                return ToolCallResponse(
+                    name=RETRIEVE_TOOLS_TOOL,
+                    args={"query": nxt.name, "exact_tool_names": [nxt.name]},
+                )
             if EXECUTE_TOOL in available_tools:
-                # Integration tools never bind under the execute cutover; the
-                # proxy is how a real model runs them, so the stub does too.
-                # Ahead of retrieval on purpose: binding one would loop forever.
                 return ToolCallResponse(
                     name=EXECUTE_TOOL,
                     args={
@@ -372,11 +391,6 @@ def _resolve_work(messages: Sequence[dict[str, Any]], available_tools: frozenset
                         "tool_name": nxt.name,
                         "data": nxt.args,
                     },
-                )
-            if RETRIEVE_TOOLS_TOOL in available_tools:
-                return ToolCallResponse(
-                    name=RETRIEVE_TOOLS_TOOL,
-                    args={"query": nxt.name, "exact_tool_names": [nxt.name]},
                 )
         return ToolCallResponse(name=nxt.name, args=nxt.args)
     return SayResponse(say.text if say is not None else DEFAULT_REPLY)

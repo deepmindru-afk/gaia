@@ -552,16 +552,42 @@ def test_interrupt_note_with_quoted_directive_is_ignored():
     assert isinstance(resolve_response([note], WORK_TOOLS), SayResponse)
 
 
-def test_unbound_tool_routes_through_execute_when_proxy_present():
-    """Execute cutover: an unbindable scripted integration tool routes through execute.
+def test_an_unbound_internal_tool_is_retrieved_even_when_execute_is_exposed():
+    """Internal tools bind through retrieve_tools; an execute call would skip the tool yet advance the script."""
+    script = '[[tool:create_todo {"title": "x"}]] [[say:Done]]'
+    executor = frozenset({"retrieve_tools", "execute"})
 
-    Binding it would loop forever (observed live: retrieve_tools re-emitted to the recursion limit).
-    """
+    assert resolve_response([_user(script)], executor) == ToolCallResponse(
+        name="retrieve_tools", args={"query": "create_todo", "exact_tool_names": ["create_todo"]}
+    )
+
+    after_retrieval = [
+        _user(script),
+        _assistant_tool_call("retrieve_tools", {"exact_tool_names": ["create_todo"]}),
+        _tool_result("retrieve_tools"),
+    ]
+    assert resolve_response(after_retrieval, executor | {"create_todo"}) == ToolCallResponse(
+        name="create_todo", args={"title": "x"}
+    )
+
+
+def test_a_tool_retrieval_left_unbound_runs_through_execute_once():
+    """Retrieval returns an integration tool's schema instead of binding it, so execute runs it."""
     script = '[[tool:GMAIL_SEND_EMAIL {"recipient_email": "a@b.c"}]] [[say:Done]]'
     executor = frozenset({"retrieve_tools", "execute"})
 
-    first = resolve_response([_user(script)], executor)
-    assert first == ToolCallResponse(
+    assert resolve_response([_user(script)], executor) == ToolCallResponse(
+        name="retrieve_tools",
+        args={"query": "GMAIL_SEND_EMAIL", "exact_tool_names": ["GMAIL_SEND_EMAIL"]},
+    )
+
+    after_retrieval = [
+        _user(script),
+        _assistant_tool_call("retrieve_tools", {"exact_tool_names": ["GMAIL_SEND_EMAIL"]}),
+        _tool_result("retrieve_tools"),
+    ]
+    execute_call = resolve_response(after_retrieval, executor)
+    assert execute_call == ToolCallResponse(
         name="execute",
         args={
             "task_description": "Run GMAIL_SEND_EMAIL",
@@ -570,13 +596,18 @@ def test_unbound_tool_routes_through_execute_when_proxy_present():
         },
     )
 
-    # The emitted execute turn advances the script — the run terminates.
-    after_execute = [
-        _user(script),
-        _assistant_tool_call("execute", first.args),
+    after_execute = after_retrieval + [
+        _assistant_tool_call("execute", execute_call.args),
         _tool_result("execute"),
     ]
     assert resolve_response(after_execute, executor) == SayResponse(text="Done")
+
+
+def test_an_unbound_tool_runs_through_execute_when_nothing_can_bind_it():
+    script = '[[tool:GMAIL_SEND_EMAIL {"recipient_email": "a@b.c"}]] [[say:Done]]'
+    first = resolve_response([_user(script)], frozenset({"execute"}))
+    assert isinstance(first, ToolCallResponse)
+    assert first.name == "execute"
 
 
 def test_a_quoted_copy_of_a_directive_in_the_same_message_is_plain_text():
