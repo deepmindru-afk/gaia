@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 import re
 
 import httpx
+from pydantic import BaseModel
 
 from app.config.settings import settings
 from app.constants.hil import (
@@ -25,6 +26,7 @@ from app.constants.hil import (
     HIL_JEV_REJECT_FLOOR,
     HIL_JEV_TIMEOUT_SECONDS,
     HIL_JEV_URL,
+    JevChoice,
 )
 from app.constants.log_tags import LogTag
 from app.services.hil.intent import (
@@ -47,13 +49,56 @@ from app.services.hil.utils import PriorCall
 from shared.py.wide_events import log
 
 
+class _JevUsage(BaseModel):
+    """Token counts a Decisions API response reports."""
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
+class _JevChoiceAnswer(BaseModel):
+    """One question's answer; only type "choice" carries a verdict."""
+
+    type: str | None = None
+    choice: str
+    confidence: float | None = None
+
+
+class _JevDecisionAnswer(_JevChoiceAnswer):
+    """The main question's answer, which also carries per-choice probabilities."""
+
+    probabilities: dict[str, float] | None = None
+
+
+class _JevForbidAnswers(BaseModel):
+    forbid: _JevChoiceAnswer
+
+
+class _JevDecisionAnswers(BaseModel):
+    decision: _JevDecisionAnswer
+
+
+class _JevForbidResponse(BaseModel):
+    """A Decisions API body for the focused forbid question, validated where received."""
+
+    answers: _JevForbidAnswers
+    usage: _JevUsage | None = None
+
+
+class _JevDecisionResponse(BaseModel):
+    """A Decisions API body for the main decision question, validated where received."""
+
+    answers: _JevDecisionAnswers
+    usage: _JevUsage | None = None
+
+
 def map_jev_choice(
     choice: str, confidence: float, *, accept_line: float, reject_floor: float
 ) -> AutoOutcome:
     """JEV verdict to gate outcome. Pure — the offline sweep reuses this."""
-    if choice == "authorized" and confidence >= accept_line:
+    if choice == JevChoice.AUTHORIZED and confidence >= accept_line:
         return "accept"
-    if choice == "forbidden" and confidence >= reject_floor:
+    if choice == JevChoice.FORBIDDEN and confidence >= reject_floor:
         return "reject"
     return "ask"
 
@@ -117,13 +162,13 @@ def decisive_forbidden(
 
     One-sided margin: a 0.40 lead over the runner-up rejects; accept keeps its line.
     """
-    if choice != "forbidden":
+    if choice != JevChoice.FORBIDDEN:
         return False
     runner_up = max(
-        (prob for label, prob in probabilities.items() if label != "forbidden"),
+        (prob for label, prob in probabilities.items() if label != JevChoice.FORBIDDEN),
         default=0.0,
     )
-    return probabilities.get("forbidden", 0.0) - runner_up >= margin
+    return probabilities.get(JevChoice.FORBIDDEN, 0.0) - runner_up >= margin
 
 
 async def ask_jev_forbid(
@@ -157,19 +202,19 @@ async def ask_jev_forbid(
             headers={"Authorization": f"Bearer {key}"},
         )
         resp.raise_for_status()
-        body = resp.json()
-    answer = body["answers"]["forbid"]
-    if not isinstance(answer, dict) or answer.get("type") != "choice":
+        body = _JevForbidResponse.model_validate(resp.json())
+    answer = body.answers.forbid
+    if answer.type != "choice":
         raise ValueError(f"non-choice JEV forbid answer: {answer!r}"[:300])
-    choice = str(answer["choice"])
-    if choice not in ("forbidden", "permitted"):
+    choice = answer.choice
+    if choice not in (JevChoice.FORBIDDEN, JevChoice.PERMITTED):
         raise ValueError(f"unknown JEV forbid choice: {choice!r}")
-    usage = body.get("usage") or {}
+    usage = body.usage or _JevUsage()
     return (
         choice,
-        float(answer.get("confidence") or 0.0),
-        int(usage.get("input_tokens") or 0),
-        int(usage.get("output_tokens") or 0),
+        float(answer.confidence or 0.0),
+        int(usage.input_tokens or 0),
+        int(usage.output_tokens or 0),
     )
 
 
@@ -235,20 +280,20 @@ async def ask_jev(
             headers={"Authorization": f"Bearer {key}"},
         )
         resp.raise_for_status()
-        body = resp.json()
-    answer = body["answers"]["decision"]
-    if not isinstance(answer, dict) or answer.get("type") != "choice":
+        body = _JevDecisionResponse.model_validate(resp.json())
+    answer = body.answers.decision
+    if answer.type != "choice":
         raise ValueError(f"non-choice JEV answer: {answer!r}"[:300])
-    choice = str(answer["choice"])
-    if choice not in ("authorized", "forbidden", "unclear"):
+    choice = answer.choice
+    if choice not in (JevChoice.AUTHORIZED, JevChoice.FORBIDDEN, JevChoice.UNCLEAR):
         raise ValueError(f"unknown JEV choice: {choice!r}")
-    usage = body.get("usage") or {}
+    usage = body.usage or _JevUsage()
     return (
         choice,
-        float(answer.get("confidence") or 0.0),
-        {str(k): float(v) for k, v in (answer.get("probabilities") or {}).items()},
-        int(usage.get("input_tokens") or 0),
-        int(usage.get("output_tokens") or 0),
+        float(answer.confidence or 0.0),
+        dict(answer.probabilities or {}),
+        int(usage.input_tokens or 0),
+        int(usage.output_tokens or 0),
     )
 
 
@@ -350,9 +395,9 @@ class JevIntentJudge:
             tool_name=call.tool_name,
             hil={"choice": forbid_choice, "confidence": round(forbid_conf, 3)},
         )
-        if forbid_choice == "forbidden" and forbid_conf >= HIL_JEV_REJECT_FLOOR:
-            return "forbidden"
-        return "permitted"
+        if forbid_choice == JevChoice.FORBIDDEN and forbid_conf >= HIL_JEV_REJECT_FLOOR:
+            return JevChoice.FORBIDDEN
+        return JevChoice.PERMITTED
 
 
 @dataclass(frozen=True)
@@ -405,7 +450,7 @@ def decide_from_verdict(
     )
     if outcome == "ask" and decisive_forbidden(choice, verdict.probabilities or {}):
         outcome = "reject"
-    if outcome == "accept" and forbid == "forbidden":
+    if outcome == "accept" and forbid == JevChoice.FORBIDDEN:
         return IntentDecision(
             "reject",
             "Auto mode held this off: an earlier message forbids this "

@@ -17,7 +17,7 @@ over later calls, so no lock is warranted.
 
 import json
 import re
-from typing import cast
+from typing import TypedDict, cast
 
 from genson import SchemaBuilder
 
@@ -41,6 +41,15 @@ _ID_LIKE_KEY = re.compile(r"\d{6,}|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}|^[0-9a-fA-F]{3
 # values become an array under this key so genson unions their shapes, later
 # rewritten to additionalProperties. Collision-free: * fails the allowlist.
 _MAP_KEY_SENTINEL = "*"
+
+
+class _SchemaNode(TypedDict, total=False):
+    """The JSON Schema keywords the sentinel rewrite reads; each value is checked before use."""
+
+    properties: object
+    items: object
+    required: object
+    additionalProperties: object
 
 
 def _is_field_name(key: str) -> bool:
@@ -103,12 +112,17 @@ def _sentinel_to_additional(node: object) -> object:
         return [_sentinel_to_additional(item) for item in node]
     if not isinstance(node, dict):
         return node
-    out = {key: _sentinel_to_additional(value) for key, value in node.items()}
+    out: _SchemaNode = cast(
+        _SchemaNode, {key: _sentinel_to_additional(value) for key, value in node.items()}
+    )
     properties = out.get("properties")
     if isinstance(properties, dict) and _MAP_KEY_SENTINEL in properties:
         sentinel = properties.pop(_MAP_KEY_SENTINEL)
+        sentinel_schema: _SchemaNode | None = (
+            cast(_SchemaNode, sentinel) if isinstance(sentinel, dict) else None
+        )
         out["additionalProperties"] = (
-            sentinel.get("items", {}) if isinstance(sentinel, dict) else {}
+            sentinel_schema.get("items", {}) if sentinel_schema is not None else {}
         )
         if not properties:
             del out["properties"]
@@ -126,7 +140,9 @@ def _additional_to_sentinel(node: object) -> object:
         return [_additional_to_sentinel(item) for item in node]
     if not isinstance(node, dict):
         return node
-    out = {key: _additional_to_sentinel(value) for key, value in node.items()}
+    out: _SchemaNode = cast(
+        _SchemaNode, {key: _additional_to_sentinel(value) for key, value in node.items()}
+    )
     additional = out.get("additionalProperties")
     if isinstance(additional, dict):
         del out["additionalProperties"]

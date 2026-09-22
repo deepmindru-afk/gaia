@@ -2,10 +2,9 @@
 
 import hashlib
 import json
-from typing import Any
 
 
-def approval_fingerprint(tool_name: str, args: dict[str, Any] | None) -> str:
+def approval_fingerprint(tool_name: str, args: dict[str, object] | None) -> str:
     """Stable id for one exact call: same bytes in, same id out.
 
     Key order, nesting, and JSON round-trips do not move it; any byte of

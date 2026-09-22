@@ -20,7 +20,7 @@ from datetime import datetime
 from enum import StrEnum
 import json
 import re
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -77,9 +77,9 @@ class JudgedCall:
 
     tool_name: str
     description: str
-    args: dict[str, Any]
+    args: dict[str, object]
     summary: str
-    tool_schema: dict[str, Any] | None = None
+    tool_schema: dict[str, object] | None = None
 
 
 # What auto mode decided about one call: accept runs it, reject refuses it with
@@ -400,7 +400,7 @@ def _is_id_like(target: str) -> bool:
 
 
 def ungrounded_targets(
-    args: dict[str, Any],
+    args: dict[str, object],
     user_text: str,
     prior_calls: list[PriorCall],
     known: frozenset[str] | None = None,

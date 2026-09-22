@@ -13,9 +13,10 @@ authorize (see intent.py).
 from dataclasses import dataclass
 import json
 import secrets
-from typing import Any, cast
+from typing import TypedDict, cast
 
 from langchain.agents.middleware.types import ToolCallRequest
+from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool
 
 from app.agents.tools.execute.unwrap import unwrap_execute_call
@@ -40,7 +41,7 @@ class GatedCall:
 
     name: str
     id: str
-    args: dict[str, Any]
+    args: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -53,8 +54,23 @@ class PriorCall:
     """
 
     name: str
-    args: dict[str, Any]
+    args: dict[str, object]
     output: str = ""
+
+
+class _DictMessage(TypedDict, total=False):
+    """A graph-state message given as a plain dict; values are unchecked, so read as object."""
+
+    type: object
+    role: object
+    content: object
+    tool_call_id: object
+
+
+class _TextBlock(TypedDict, total=False):
+    """One dict block of a list-shaped message content."""
+
+    text: str
 
 
 # --- reading the request ---------------------------------------------------------------
@@ -66,15 +82,17 @@ def unpack_tool_call(request: ToolCallRequest) -> GatedCall:
     Execute-proxied calls are unwrapped to their real tool; id stays the proxy
     call's id, since that is the tool_call a refusal must answer.
     """
+    tool_call: ToolCall = request.tool_call
     # tool_call is typed ToolCall (a dict), but dataclass fields aren't runtime-
     # validated and some call paths hand over an object with .name/.id/.args.
     # Widen to object so that branch stays a reachable fallback, not dead code.
-    call = cast(object, request.tool_call)
-    if isinstance(call, dict):
-        name, args = unwrap_execute_call(call.get("name", ""), call.get("args", {}) or {})
-        return GatedCall(name=name, id=call.get("id", ""), args=args)
-    name, args = unwrap_execute_call(getattr(call, "name", ""), getattr(call, "args", None) or {})
-    return GatedCall(name=name, id=getattr(call, "id", ""), args=args)
+    if isinstance(cast(object, tool_call), dict):
+        name, args = unwrap_execute_call(tool_call.get("name", ""), tool_call.get("args", {}) or {})
+        return GatedCall(name=name, id=tool_call.get("id", ""), args=args)
+    name, args = unwrap_execute_call(
+        getattr(tool_call, "name", ""), getattr(tool_call, "args", None) or {}
+    )
+    return GatedCall(name=name, id=getattr(tool_call, "id", ""), args=args)
 
 
 def tool_of(request: ToolCallRequest) -> BaseTool | None:
@@ -93,7 +111,7 @@ def configurable_of(request: ToolCallRequest) -> AgentConfigurable:
 # --- reading the graph state -----------------------------------------------------------
 
 
-def current_tool_calls(state: object) -> list[dict[str, Any]]:
+def current_tool_calls(state: object) -> list[ToolCall]:
     """Return the tool calls of the AI message this node is executing (its last one).
 
     These are the pending call's *siblings* — what else the model asked for in the same
@@ -115,14 +133,18 @@ def prior_tool_calls(state: object, exclude_id: str) -> list[PriorCall]:
     Outputs are matched by tool_call_id and clipped: minted ids, not authority.
     """
     outputs = _tool_outputs_by_call_id(state)
+    made: list[ToolCall] = [
+        call
+        for message in _messages_of(state)
+        for call in getattr(message, "tool_calls", None) or []
+    ]
     calls = [
         PriorCall(
             name=call.get("name", ""),
             args=call.get("args", {}) or {},
             output=outputs.get(call.get("id", ""), ""),
         )
-        for message in _messages_of(state)
-        for call in getattr(message, "tool_calls", None) or []
+        for call in made
         if call.get("name") and call.get("id") != exclude_id
     ]
     return calls[-HIL_JUDGE_MAX_PRIOR_CALLS:]
@@ -137,8 +159,9 @@ def _tool_outputs_by_call_id(state: object) -> dict[str, str]:
     outputs: dict[str, str] = {}
     for message in _messages_of(state):
         if isinstance(message, dict):
-            call_id = message.get("tool_call_id")
-            content = message.get("content")
+            as_dict: _DictMessage = cast(_DictMessage, message)
+            call_id = as_dict.get("tool_call_id")
+            content = as_dict.get("content")
         else:
             call_id = getattr(message, "tool_call_id", None)
             content = getattr(message, "content", None)
@@ -173,7 +196,8 @@ def _is_ai_message(message: object) -> bool:
     user_messages is waste, a tool result at this budget is laundering.
     """
     if isinstance(message, dict):
-        kind = str(message.get("type") or message.get("role") or "").lower()
+        as_dict: _DictMessage = cast(_DictMessage, message)
+        kind = str(as_dict.get("type") or as_dict.get("role") or "").lower()
         return kind in ("ai", "assistant")
     kind = str(getattr(message, "type", "") or "").lower()
     if kind:
@@ -184,9 +208,10 @@ def _is_ai_message(message: object) -> bool:
 def _message_text(message: object) -> str:
     """Best-effort text of one state message (AI messages only carry content here)."""
     if isinstance(message, dict):
-        if message.get("tool_call_id"):
+        as_dict: _DictMessage = cast(_DictMessage, message)
+        if as_dict.get("tool_call_id"):
             return ""
-        content = message.get("content")
+        content = as_dict.get("content")
         return content if isinstance(content, str) else ""
     if getattr(message, "tool_call_id", None):
         return ""
@@ -194,11 +219,14 @@ def _message_text(message: object) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return " ".join(part.get("text", "") for part in content if isinstance(part, dict))
+        blocks: list[_TextBlock] = [
+            cast(_TextBlock, part) for part in content if isinstance(part, dict)
+        ]
+        return " ".join(block.get("text", "") for block in blocks)
     return ""
 
 
-def _messages_of(state: object) -> list[Any]:
+def _messages_of(state: object) -> list[object]:
     messages = _state_get(state, "messages")
     return messages if isinstance(messages, list) else []
 
@@ -214,7 +242,7 @@ def _state_get(state: object, key: str) -> object:
 # --- rendering untrusted content for the judge -----------------------------------------
 
 
-def args_preview(args: dict[str, Any]) -> str:
+def args_preview(args: dict[str, object]) -> str:
     """JSON-encode the pending call's arguments.
 
     JSON-encoding means a quote or newline inside a value cannot break out of the
@@ -241,7 +269,7 @@ def render_assistant_turns(turns: list[str]) -> str:
     return "\n".join(lines) or "(none)"
 
 
-def tool_schema(tool: BaseTool | None) -> dict[str, Any] | None:
+def tool_schema(tool: BaseTool | None) -> dict[str, object] | None:
     """Read the pending tool's argument contract, or None when it cannot be read.
 
     An opaque id stops being opaque once the judge sees what it is for (draft_id:
@@ -253,10 +281,10 @@ def tool_schema(tool: BaseTool | None) -> dict[str, Any] | None:
     schema = getattr(tool, "args", None)
     if not isinstance(schema, dict) or not schema:
         return None
-    return cast(dict[str, Any], schema)
+    return cast(dict[str, object], schema)
 
 
-def render_tool_schema(schema: dict[str, Any] | None) -> str:
+def render_tool_schema(schema: dict[str, object] | None) -> str:
     """Clip the arg contract for a prompt — schemas bloat, and JEV is cheap but not free."""
     if not schema:
         return "(no schema)"
