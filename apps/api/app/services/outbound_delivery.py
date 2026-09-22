@@ -17,6 +17,7 @@ from app.constants.outbound import (
 )
 from app.db.rabbitmq import RabbitMQPublisher, get_rabbitmq_publisher
 from app.models.chat_models import ConversationSource
+from app.models.platform_models import PlatformLinkEntry
 from app.schemas.outbound import OutboundAttachment, OutboundMessageEnvelope, OutboundReaction
 from app.services.platform_link_service import PlatformLinkService
 from app.utils.message_breaks import split_message_bubbles
@@ -40,7 +41,7 @@ class OutboundResult(StrEnum):
 async def _resolve_destination(platform: ConversationSource, user_id: str) -> str | None:
     """Resolve a GAIA user_id to its platform-native destination id, or None."""
     linked = await PlatformLinkService.get_linked_platforms(user_id)
-    info = linked.get(platform.value)
+    info: PlatformLinkEntry | None = linked.get(platform.value)
     return info["platformUserId"] if info else None
 
 

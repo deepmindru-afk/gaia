@@ -12,9 +12,10 @@ has_pausing_sibling — see its docstring for the double-execution it prevents.
 """
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Literal
 
 from langchain.agents.middleware.types import ToolCallRequest
+from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool
 
 from app.agents.tools.core.registry import ToolRegistry, get_tool_registry
@@ -68,7 +69,7 @@ async def _is_always_gated(tool_name: str) -> bool:
     return meta is not None and meta.always_gate
 
 
-def _argument_gate_hit(tool_name: str, args: Mapping[str, Any] | None) -> bool:
+def _argument_gate_hit(tool_name: str, args: Mapping[str, object] | None) -> bool:
     required = ARGUMENT_GATED_TOOLS.get(tool_name)
     if not required or not args:
         return False
@@ -85,7 +86,7 @@ async def gated_tool_object(
     resolver. Registry-only resolution missed MCP tools and un-materialized
     catalog slugs, letting the classifier guess from a bare name and un-gate it.
     """
-    raw_call = request.tool_call
+    raw_call: ToolCall = request.tool_call
     raw_name = (
         raw_call.get("name", "") if isinstance(raw_call, dict) else getattr(raw_call, "name", "")
     )
@@ -137,7 +138,7 @@ async def is_gated(
     prefs: HILPreferences,
     tool_name: str,
     tool: BaseTool | None,
-    args: Mapping[str, Any] | None = None,
+    args: Mapping[str, object] | None = None,
 ) -> bool:
     """Whether this tool needs approval — the set both gating modes act on.
 
@@ -171,9 +172,10 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
     # Execute-proxied siblings are unwrapped to their real (name, args) here for
     # the same reason unpack_tool_call unwraps the pending call: the guard must
     # detect the DESTRUCTIVE sibling, not the harmless proxy wrapping it.
+    sibling_calls: list[ToolCall] = current_tool_calls(request.state)
     siblings = [
         unwrap_execute_call(str(call["name"]), call.get("args") or {})
-        for call in current_tool_calls(request.state)
+        for call in sibling_calls
         if call.get("name") and call.get("id") != tool_call_id
     ]
     if not siblings:

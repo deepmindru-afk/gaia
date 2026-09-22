@@ -9,7 +9,6 @@ against the literal it replaced.
 
 from collections.abc import Mapping
 import json
-from typing import Any
 
 # The single generic keepalive the transport (not the agent) emits: an SSE
 # comment line, which every client ignores while still resetting proxy and
@@ -17,7 +16,7 @@ from typing import Any
 _COMMENT_KEEPALIVE = ": keepalive\n\n"
 
 
-def sse_frame(data: Mapping[str, Any]) -> str:
+def sse_frame(data: Mapping[str, object]) -> str:
     """Serialize one payload as an SSE data: frame.
 
     Note: the bot protocol never names an event: — every frame is a bare
@@ -52,7 +51,7 @@ def notice_frame(notice_text: str) -> str:
     return sse_frame({"notice": {"text": notice_text}})
 
 
-def approval_frame(approval_payload: Mapping[str, Any]) -> str:
+def approval_frame(approval_payload: Mapping[str, object]) -> str:
     """Return a HIL approval card, rendered by the bot client as an out-of-band prompt."""
     return sse_frame({"approval": approval_payload})
 

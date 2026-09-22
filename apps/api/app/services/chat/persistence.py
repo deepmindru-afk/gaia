@@ -14,14 +14,14 @@ message renders correctly even when the user's browser is holding a stale
 frontend chunk.
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 import json
 import re
-from typing import Any
 
 from app.constants.chat import ARTIFACT_REF_RE, WORKSPACE_ARTIFACT_RE
 from app.models.chat_models import MessageKind, MessageModel, UpdateMessagesRequest
-from app.models.message_models import MessageRequestWithHistory
+from app.models.message_models import MessageDict, MessageRequestWithHistory
 from app.models.stream_events import ConversationInitializedFrame
 from app.models.user_models import AuthenticatedUser
 from app.services.conversation_service import update_messages
@@ -36,7 +36,7 @@ def user_message_content_from(body: MessageRequestWithHistory) -> str:
     last history entry is the current turn only when its role is user —
     otherwise it is the previous assistant reply and must not be used.
     """
-    last = body.messages[-1] if body.messages else None
+    last: MessageDict | None = body.messages[-1] if body.messages else None
     if last and last.get("role") == "user":
         return last.get("content") or body.message
     return body.message
@@ -104,8 +104,8 @@ async def save_conversation_async(
     user: AuthenticatedUser,
     conversation_id: str,
     complete_message: str,
-    tool_data: dict[str, Any],
-    metadata: dict[str, Any],
+    tool_data: Mapping[str, object],
+    metadata: dict[str, object],
     user_message_id: str,
     bot_message_id: str,
     bot_timestamp: datetime | None = None,
