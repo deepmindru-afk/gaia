@@ -15,7 +15,6 @@ the chain.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -25,12 +24,11 @@ from uuid import uuid4
 
 import fakeredis.aioredis
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
-from langchain_core.messages import AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langgraph.store.memory import InMemoryStore
 import pytest
 
-from app.agents.core.background.redis_writer import STREAM_PUBLISH_TASK_NAME
 from app.agents.core.graph_builder import build_graph as build_graph_module
 from app.agents.core.graph_manager import GraphManager
 from app.agents.core.nodes.follow_up_actions_node import FollowUpActions
@@ -46,7 +44,7 @@ from app.models.memory_models import MemoryEntry
 from app.models.message_models import MessageRequestWithHistory
 from app.models.user_models import AuthenticatedUser
 from app.services.chat import stream as chat_stream
-from app.utils import background_tasks
+from tests.e2e._harness.background import drain_background_runs
 from tests.e2e._harness.graph_run import RecordingFakeModel, call, scripted_model
 from tests.e2e._harness.transcript import UNKNOWN, Transcript
 
@@ -137,6 +135,8 @@ class ChainRun:
     attached: list[dict[str, Any]] = field(default_factory=list)
     #: ``(text, result_type)`` per executor delivery.
     delivered: list[tuple[str, str]] = field(default_factory=list)
+    #: The executor tier's scripted model — every prompt each of its runs was shown.
+    executor_model: StreamingScriptedModel | None = None
 
     def attached_entries(self) -> list[dict[str, Any]]:
         return [entry for call_ in self.attached for entry in call_["entries"]]
@@ -155,28 +155,6 @@ class ChainRun:
     def index_of_kind(self, kind: str) -> int:
         """Position of the first frame with this top-level key."""
         return self.transcript.kinds().index(kind)
-
-
-def _tasks_named(*names: str) -> list[asyncio.Task[object]]:
-    """Live background tasks carrying any of names.
-
-    Filtering by name rather than draining the whole keep-alive set: that set
-    also holds work which outlives a single turn, so awaiting all of it would
-    hang here forever instead of failing a test.
-    """
-    wanted = set(names)
-    return [t for t in background_tasks._background_tasks if t.get_name() in wanted]
-
-
-async def _drain_publishes() -> None:
-    """Wait out the fire-and-forget XADDs the background writer scheduled.
-
-    make_redis_stream_writer is sync — it schedules each publish via
-    spawn_background_task and returns, so a test reading the log after the turn
-    must wait for them (by name, see _tasks_named) or read a truncated stream.
-    """
-    while pending := _tasks_named(STREAM_PUBLISH_TASK_NAME):
-        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def run_chain(
@@ -236,13 +214,11 @@ async def run_chain(
     if subagent is not None:
         register_subagent_providers([SUBAGENT_ID])
 
-    async def _resolve_registered_graph(subagent_id: str, user_id: str | None):
+    async def _resolve_registered_graph(
+        subagent_id: str, user_id: str | None
+    ) -> tuple[Any, str, str, bool]:
         """Bypass the MCP-only resolve guard: this scenario proves the 3-tier streaming plumbing, not resolution policy (pinned in unit tests)."""
-        """Bypass the MCP-only resolve guard: this scenario proves the 3-tier
-        streaming plumbing, not resolution policy (pinned in unit tests)."""
-        from app.core.lazy_loader import providers as _providers
-
-        graph = await _providers.aget(SUBAGENT_AGENT)
+        graph = await providers.aget(SUBAGENT_AGENT)
         return graph, SUBAGENT_AGENT, SUBAGENT_ID, False
 
     patches = [
@@ -305,9 +281,10 @@ async def run_chain(
                     chat_llm=streaming_model(comms), in_memory_checkpointer=True
                 )
             )
+            run.executor_model = streaming_model(executor)
             executor_graph = await stack.enter_async_context(
                 build_graph_module.build_executor_graph(
-                    chat_llm=streaming_model(executor), in_memory_checkpointer=True
+                    chat_llm=run.executor_model, in_memory_checkpointer=True
                 )
             )
             graphs = {"comms_agent": comms_graph, "executor_agent": executor_graph}
@@ -334,7 +311,9 @@ async def run_chain(
                 user=USER,
                 conversation_id=conversation_id,
             )
-            await _drain_publishes()
+            # Inside the patches: a background subagent's landing wakes a collection
+            # executor run that must still see the doubles, not the real services.
+            await drain_background_runs()
     finally:
         # A leaked busy lock survives 30 minutes and does not error — it queues
         # the NEXT test's executor onto its own stream id.
@@ -533,12 +512,16 @@ def comms_delegating_script(task: str = "explain the executor") -> list[Any]:
     return [call("call_executor", {"task": task}, call_id="tc_exec"), "Looking that up."]
 
 
+SUBAGENT_ANSWER = "GAIA's executor runs delegated work in the background."
+
+
 def executor_handoff_script() -> list[Any]:
-    # Three entries, not two: the completion guard spends one nudge before
-    # letting the plain-text stop through, and without repeating it the
-    # cycling script would replay the handoff and run the subagent twice.
+    # Two runs: the live turn hands off and answers; the landing wakes a collection
+    # run that answers twice (once more after the completion guard's nudge). A
+    # missing entry cycles the script back to the handoff.
     return [
         call("handoff", HANDOFF_ARGS, call_id="tc_handoff"),
+        "Handed it to the knowledge guide.",
         "The executor runs delegated work.",
         "The executor runs delegated work.",
     ]
@@ -547,7 +530,7 @@ def executor_handoff_script() -> list[Any]:
 def subagent_fetch_script() -> list[Any]:
     return [
         call("fetch_webpages", {"urls": [PAGE_URL]}, call_id="tc_fetch"),
-        "GAIA's executor runs delegated work in the background.",
+        SUBAGENT_ANSWER,
     ]
 
 
@@ -612,13 +595,16 @@ class TestExecutorToSubagent:
 
         kinds = run.transcript.kinds()
         start = kinds.index("subagent_start")
+        assert "subagent_end" in kinds, (
+            f"the subagent's end frame never reached the stream: {kinds}"
+        )
         end = kinds.index("subagent_end")
         fetch = run.transcript.tool_call("fetch_webpages").index
         handoff = run.transcript.tool_call("handoff").index
         assert handoff < start < fetch < end
 
-    async def test_the_subagents_answer_is_what_the_handoff_returns(self) -> None:
-        """A subagent that ran a tool returns its own text, not the "re-issue the handoff" narration-only signal."""
+    async def test_a_chat_turn_handoff_returns_the_background_spawn_acknowledgement(self) -> None:
+        """A turn with a stream_id always backgrounds the handoff, so the executor can steer it instead of blocking."""
         run = await run_chain(
             "explain the executor",
             comms=comms_delegating_script(),
@@ -627,10 +613,33 @@ class TestExecutorToSubagent:
             fetch_webpage=fetched_page(),
         )
 
-        assert (
-            run.transcript.result_for("handoff")
-            == "GAIA's executor runs delegated work in the background."
+        assert run.transcript.result_for("handoff") == (
+            f"Subagent {SUBAGENT_AGENT} started in background. "
+            "Steer it with message_subagent/cancel_subagent; its result arrives automatically."
         )
+
+    async def test_the_subagents_answer_lands_in_a_collection_run_that_delivers_it(self) -> None:
+        """The subagent's own text now reaches the executor through its inbox; nothing else carries it back."""
+        run = await run_chain(
+            "explain the executor",
+            comms=comms_delegating_script(),
+            executor=executor_handoff_script(),
+            subagent=subagent_fetch_script(),
+            fetch_webpage=fetched_page(),
+        )
+
+        assert run.executor_model is not None
+        shown = [
+            str(message.content)
+            for prompt in run.executor_model.prompts
+            for message in prompt
+            if isinstance(message, HumanMessage)
+        ]
+        assert any(f"{SUBAGENT_AGENT}: {SUBAGENT_ANSWER}" in text for text in shown), (
+            "the subagent's answer never reached the executor"
+        )
+        assert [result_type for _text, result_type in run.delivered] == ["final", "final"]
+        assert run.delivered[0][0] == "Handed it to the knowledge guide."
 
     async def test_the_subagent_group_is_persisted_on_the_comms_message(self) -> None:
         """A reload has to show the subagent's work nested, not flattened next to the executor's own cards."""
@@ -653,7 +662,9 @@ class TestExecutorToSubagent:
         assert nested["fetch_webpages"]["tool_call_id"] == "tc_fetch"
         # The group carries the joined result, not just the call — a reload has
         # to render the card populated, not spinning.
-        assert "The executor is GAIA's worker tier." in nested["fetch_webpages"]["output"]
+        output = nested["fetch_webpages"].get("output")
+        assert output is not None, f"the persisted group has the call but not its result: {group}"
+        assert "The executor is GAIA's worker tier." in output
 
 
 # ---------------------------------------------------------------------------

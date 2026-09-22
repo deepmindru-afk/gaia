@@ -30,7 +30,11 @@ from app.agents.core.background.session import (
     has_bg_integration,
     release_bg_integration,
 )
-from app.agents.core.background.subagent_runner import BackgroundHandoff, run_subagent_background
+from app.agents.core.background.subagent_runner import (
+    BACKGROUND_SUBAGENT_TASK_NAME,
+    BackgroundHandoff,
+    run_subagent_background,
+)
 from app.agents.core.graph_manager import CompiledAgentGraph
 from app.agents.core.subagents.call_record import append_call_record
 from app.agents.core.subagents.provider_subagents import (
@@ -829,7 +833,8 @@ async def _dispatch_background_handoff(
                 integration_id=integration_id,
                 record_calls=dispatch.record_calls,
             ),
-        )
+        ),
+        name=BACKGROUND_SUBAGENT_TASK_NAME,
     )
     log.info(
         f"{LogTag.AGENT} Subagent dispatched to background",

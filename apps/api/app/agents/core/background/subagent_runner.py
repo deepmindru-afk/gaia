@@ -41,6 +41,10 @@ from app.utils.agent_utils import (
 )
 from shared.py.wide_events import get_trace_id, log, wide_task
 
+#: Task name for a background handoff run. Tests drain by this name to wait out
+#: exactly the subagents a turn dispatched, not every background task in the process.
+BACKGROUND_SUBAGENT_TASK_NAME = "background-subagent-run"
+
 
 @dataclass(frozen=True)
 class BackgroundHandoff:
