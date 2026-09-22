@@ -440,10 +440,11 @@ def _local_part(target: str) -> str:
     never grounds "bobby@evil.com". A string with a second "@" is no address,
     so it has no local part to ground.
     """
-    local, at, domain = target.partition("@")
-    if not at or "@" in domain:
+    if target.count("@") != 1:
         return ""  # pragma: no mutate — user_tokens are non-empty lowercase words, so no literal here can ever be one
-    return local
+    return target.partition("@")[
+        0
+    ]  # pragma: no mutate — exactly one "@", so rpartition splits identically
 
 
 def _target_values(args: object) -> list[str]:

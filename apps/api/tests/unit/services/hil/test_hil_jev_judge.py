@@ -657,9 +657,10 @@ class TestTheDecisionsWire:
 
 class TestTheForbidWire:
     async def test_the_focused_question_sees_earlier_and_latest_turns_apart(self) -> None:
+        turns = ["never email bob", "hold on", "email bob the deck"]
         client = _sequence_client(_forbid_answer("forbidden", 0.8, {"input_tokens": 9}))
         with _jev(client) as factory:
-            result = await ask_jev_forbid(user_messages=FORBID_TURNS, call=_call())
+            result = await ask_jev_forbid(user_messages=turns, call=_call())
 
         assert result == ("forbidden", 0.8, 9, 0)
         factory.assert_called_once_with(timeout=HIL_JEV_TIMEOUT_SECONDS)
@@ -669,8 +670,8 @@ class TestTheForbidWire:
         assert post.kwargs["json"] == {
             "model": HIL_JEV_MODEL_NAME,
             "state": {
-                "earlier_turns": [FORBID_TURNS[0]],
-                "latest_turns": [FORBID_TURNS[1]],
+                "earlier_turns": ["never email bob", "hold on"],
+                "latest_turns": ["email bob the deck"],
                 "pending_action": {"tool": "send_email", "args": _call().args},
             },
             "questions": {"forbid": JEV_FORBID_QUESTION},
