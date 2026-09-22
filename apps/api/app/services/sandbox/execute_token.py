@@ -47,6 +47,11 @@ def _secret() -> bytes:
     return secret.encode()
 
 
+def _epoch_now() -> int:
+    # Unmutated: a naive now() reads as local time, so .timestamp() is the same epoch second.
+    return int(datetime.now(UTC).timestamp())  # pragma: no mutate
+
+
 def _sign(payload: bytes) -> str:
     return hmac.new(_secret(), payload, hashlib.sha256).hexdigest()
 
@@ -66,8 +71,7 @@ def mint_execute_token(
         stream_id=stream_id,
         sandbox_id=sandbox_id,
         scoped_tool_names=scoped_tool_names,
-        # Unmutated: a naive now() reads as local time, so .timestamp() is the same epoch second.
-        exp=int(datetime.now(UTC).timestamp()) + ttl_seconds,  # pragma: no mutate
+        exp=_epoch_now() + ttl_seconds,
     )
     payload = base64.urlsafe_b64encode(claims.model_dump_json().encode()).decode()
     return f"{payload}.{_sign(payload.encode())}"
@@ -81,8 +85,10 @@ def verify_execute_token(token: str) -> SandboxExecuteClaims:
         fix="Re-run the bash command; each run mints a fresh short-lived token",
         status_code=401,
     )
-    payload, _, signature = token.partition(".")
-    if not payload or not signature:
+    # Unmutated: minted payloads are urlsafe base64 (no "."), and an empty half
+    # fails the HMAC below anyway, so rpartition and "and" reject the same tokens.
+    payload, _, signature = token.partition(".")  # pragma: no mutate
+    if not payload or not signature:  # pragma: no mutate
         raise invalid
     if not hmac.compare_digest(_sign(payload.encode()), signature):
         raise invalid
@@ -90,6 +96,6 @@ def verify_execute_token(token: str) -> SandboxExecuteClaims:
         claims = SandboxExecuteClaims.model_validate_json(base64.urlsafe_b64decode(payload))
     except (ValidationError, ValueError):
         raise invalid from None
-    if claims.exp < int(datetime.now(UTC).timestamp()):
+    if claims.exp < _epoch_now():
         raise invalid
     return claims

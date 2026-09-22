@@ -152,5 +152,9 @@ def _additional_to_sentinel(node: object) -> object:
         del out["additionalProperties"]
         properties = out.setdefault("properties", {})
         if isinstance(properties, dict):
-            properties[_MAP_KEY_SENTINEL] = {"type": "array", "items": additional}
+            properties[_MAP_KEY_SENTINEL] = {
+                # Unmutated: genson already reads "items" alone as an array schema.
+                "type": "array",  # pragma: no mutate
+                "items": additional,
+            }
     return out

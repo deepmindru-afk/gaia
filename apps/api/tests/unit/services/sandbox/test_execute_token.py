@@ -60,6 +60,18 @@ class TestExecuteToken:
             verify_execute_token(token)
         assert err.value.status_code == 401
 
+    def test_a_token_is_valid_through_its_expiry_second_and_not_after(self) -> None:
+        with patch.object(execute_token, "_epoch_now", return_value=1_000):
+            token = mint_execute_token("u1", "run-9", scoped_tool_names=None, ttl_seconds=60)
+        with patch.object(execute_token, "_epoch_now", return_value=1_060):
+            assert verify_execute_token(token).exp == 1_060
+        with (
+            patch.object(execute_token, "_epoch_now", return_value=1_061),
+            pytest.raises(AppError) as err,
+        ):
+            verify_execute_token(token)
+        assert err.value.status_code == 401
+
     def test_garbage_is_rejected(self) -> None:
         with pytest.raises(AppError):
             verify_execute_token("not-a-token")
