@@ -3,14 +3,12 @@ import { useChatStore } from "@/stores/chatStore";
 import { useStreamStore } from "@/stores/streamStore";
 
 /**
- * Swap "waiting on you" for a resuming state the moment the user decides, since
- * the resolved frame can take seconds to arrive on the stream.
+ * Clear a conversation's "waiting on you" gate the moment the user decides,
+ * before the resolved stream frame arrives.
  *
- * Takes the owning conversation when the caller knows it (the card's message
- * context — a sheet or a background conversation's card can outlive the active
- * one), falling back to the live `activeConversationId` and then the pending
- * new-chat key, the same resolution the stream store uses — the route param is
- * stale for a replaceState'd new chat, so keying off it left the flag stuck.
+ * Prefers the caller's conversation (a sheet or background card outlives the
+ * active one), then `activeConversationId`, then the pending new-chat key —
+ * the route param is stale for a replaceState'd new chat.
  */
 export function useMarkApprovalDecided(): (conversationId?: string) => void {
   const clearAwaitingApproval = useStreamStore(

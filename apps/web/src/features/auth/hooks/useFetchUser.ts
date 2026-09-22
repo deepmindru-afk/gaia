@@ -74,12 +74,9 @@ const useFetchUser = () => {
   const accessToken = searchParams.get("access_token");
   const refreshToken = searchParams.get("refresh_token");
 
-  // OAuth redirect routing — isolated from store syncing so route changes
-  // don't overwrite user state with stale query data. Resolved during render
-  // (not in an effect) so the callback page never paints before redirecting;
-  // `redirect` performs the same client-side navigation router.push did.
-  // Login analytics live server-side (track_login on OAuth callback) — the
-  // client must not emit user:logged_in or it double-counts every login.
+  // OAuth redirect resolved during render (not an effect) so the callback page
+  // never paints before redirecting. Login analytics are server-side only
+  // (track_login on the OAuth callback); emitting here would double-count.
   if (
     data &&
     accessToken &&

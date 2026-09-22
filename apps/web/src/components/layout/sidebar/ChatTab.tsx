@@ -41,10 +41,9 @@ export const ChatTab: FC<ChatTabProps> = ({
   // Per-conversation: multiple conversations can stream concurrently.
   const isStreaming = useIsConversationStreaming(id);
   const isAwaitingApproval = useIsConversationAwaitingApproval(id);
-  // A turn paused on an approval has already left the streaming phase (its SSE
-  // closed), so the dot must key off both — otherwise it would vanish for exactly
-  // the wait it exists to advertise. hasPendingApproval covers the same wait
-  // across reloads and background runs, where no stream state exists.
+  // A turn paused on an approval has left the streaming phase (SSE closed), so
+  // the dot keys off both; hasPendingApproval covers reloads and background
+  // runs where no stream state exists.
   const showApprovalDot = isAwaitingApproval || hasPendingApproval;
   const isBusy = isStreaming || showApprovalDot;
 

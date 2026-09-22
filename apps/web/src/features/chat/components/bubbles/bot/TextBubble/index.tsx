@@ -390,11 +390,9 @@ export default function TextBubble({
     return parseThinkingFromText(text?.toString() || "");
   }, [text]);
 
-  // The conversation owning this message — the card's context for clearing
-  // stream state. Resolved once per message via a store lookup (not a
-  // subscription, so idle bubbles don't re-render on every streaming token);
-  // a message not yet persisted (live stream) falls back to the active
-  // conversation inside useMarkApprovalDecided.
+  // The conversation owning this message, via a one-off store lookup (not a
+  // subscription, so idle bubbles don't re-render per token); an unpersisted
+  // message falls back to the active conversation in useMarkApprovalDecided.
   const owningConversationId = React.useMemo(() => {
     if (!message_id) return undefined;
     const all = useChatStore.getState().messagesByConversation;
@@ -435,10 +433,8 @@ export default function TextBubble({
     return ids;
   }, [tool_data]);
 
-  // Settled decisions, keyed the same way — the tool's own row in the thread
-  // carries the outcome as a chip instead of a separate receipts block.
-  // Feedback travels with the status so the row shows the receipt (execution
-  // outcome, denial reason), not just "Approved".
+  // Settled decisions, keyed the same way — the tool's row carries the outcome
+  // as a chip, with feedback so it shows the receipt, not just "Approved".
   const { approvalOutcomeByToolCallId } = React.useMemo(() => {
     const outcomes = new Map<string, ApprovalOutcome>();
     tool_data?.forEach((entry) => {

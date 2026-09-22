@@ -85,11 +85,9 @@ export default function ApprovalRequestGroup({
       const status: ApprovalStatus =
         decision === "approve" ? "approved" : "denied";
       for (const outcome of response.outcomes) {
-        // Settle to the server's reported state, not the tapped button: a
-        // not_found outcome means the row was already decided elsewhere
-        // (lost CAS race, other tab, revoke), and painting the tap would
-        // overwrite the real verdict. Falls back to the tap when the server
-        // sent no state (old path).
+        // Settle to the server's state, not the tapped button: not_found means
+        // the row was decided elsewhere. Falls back to the tap when the server
+        // sent no state.
         if (outcome.resolved) {
           settle(outcome.approval_id, status, null);
         } else if (outcome.reason === "not_found") {

@@ -68,10 +68,8 @@ test.describe("steer", () => {
     await composer.fill(LONG_TASK);
     await composer.press("Enter");
 
-    // Wait until turn 1 truly streams mid-run: the bind navigates to the
-    // conversation route (init frame processed), and a mid-list tool card
-    // proves the tool loop is underway — not just the echoed user bubble
-    // (which contains the directive text and matches instantly).
+    // Wait until turn 1 truly streams mid-run: the route bind plus a mid-list
+    // tool card prove the tool loop is underway, not just the echoed bubble.
     await expect(page).toHaveURL(/\/c\/[0-9a-f-]{36}/, { timeout: 60_000 });
     await expect(page.getByText("pantry-6").first()).toBeVisible({
       timeout: 60_000,

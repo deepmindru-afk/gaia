@@ -11,17 +11,11 @@ import {
 } from "../utils/approval-status";
 
 /**
- * Subscribe to `hil_approval_decided` and settle the matching open card.
+ * Subscribe to `hil_approval_decided` and settle the matching open card,
+ * mirroring web so a card decided elsewhere flips in place with no reload.
  *
- * Mirrors web's `useApprovalDecisionWebSocket`: a card decided anywhere but
- * this screen — another device, a notification action, an agent-side revoke —
- * flips in place with no reload. Unknown statuses and unknown ids are
- * ignored; the ledger row stays truth.
- *
- * Mobile state lives in two places, so both are updated: the Zustand
- * streaming map (`messagesByConversation`) and the React Query messages
- * cache (seeded from AsyncStorage). The result is persisted to AsyncStorage
- * so the settled card survives restarts.
+ * Updates both mobile stores (the Zustand streaming map and the React Query
+ * cache) and persists to AsyncStorage so the settled card survives restarts.
  */
 export function useApprovalDecisionWebSocket(): void {
   const queryClient = useQueryClient();

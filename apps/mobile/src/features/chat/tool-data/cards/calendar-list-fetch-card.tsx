@@ -19,10 +19,8 @@ interface CalendarListFetchCardProps {
   data: CalendarListFetchItem[];
 }
 
-// -- Readonly calendar list ----------------------------------------------------
-// Restored-history only: old conversations still carry this key, and a null
-// renderer left them blank. Read-only list, no draft or add flows (those
-// moved to HIL approvals by design).
+// Restored-history only: old conversations still carry this key. Read-only,
+// no draft or add flows (those moved to HIL approvals by design).
 
 export function CalendarListFetchCard({ data }: CalendarListFetchCardProps) {
   const items = (Array.isArray(data) ? data : [data]).filter(

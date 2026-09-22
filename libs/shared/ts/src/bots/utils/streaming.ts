@@ -367,10 +367,8 @@ async function _handleStream(
       (chunk) => {
         pending += chunk;
         if (streamDone || !streaming) return;
-        // A held-back REACT directive never reaches here through the real
-        // streamer (chat-stream.ts withholds it), but a chunk that is itself
-        // directive-shaped must not open a bubble — an empty preview is
-        // skipped by previewBubble, a directive one is not.
+        // A directive-shaped chunk must not open a bubble — previewBubble skips
+        // an empty preview but not a directive one.
         if (isReactDirectiveOrPrefix(pending)) return;
 
         const now = Date.now();

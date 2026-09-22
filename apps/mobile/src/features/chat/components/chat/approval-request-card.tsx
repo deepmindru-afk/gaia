@@ -132,11 +132,8 @@ export function ApprovalRequestCard({ data }: ApprovalRequestCardProps) {
           : (data.ledger_version ?? undefined),
       });
       if (!outcome.success) {
-        // The row moved under this card. If it already carries a verdict, leave
-        // the card disabled and let the resolved frame replace it; otherwise
-        // re-enable, drop v, and ask the user to tap again. Pending (stale-v
-        // conflict, the row is still live) and unknown (may or may not have
-        // run) keep the retry path.
+        // A resolved verdict leaves the card disabled for the resolved frame;
+        // pending (stale-v conflict) and unknown keep the re-enable/retry path.
         const status = outcome.status ?? null;
         if (
           status !== null &&

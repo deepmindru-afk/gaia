@@ -97,14 +97,10 @@ class TurnManager {
 
   /** Start a turn, or steer the live one when this conversation is mid-turn.
    *
-   *  A send landing while the turn is open used to wait client-side for the
-   *  turn to end — by which time the executor was idle and the message started
-   *  a whole separate run. The backend folds same-conversation work into the
-   *  live run's next reasoning step, so the send starts immediately as a
-   *  steering session instead: same POST, same bubbles, no shared-slot
-   *  ownership (see TurnSession's `steering` flag). Only sends against a
-   *  not-yet-created conversation still queue — with no conversation id the
-   *  backend has nothing to fold into.
+   *  A mid-turn send starts immediately as a steering session (same POST, same
+   *  bubbles, no shared-slot ownership — see TurnSession's `steering` flag);
+   *  the backend folds it into the live run's next reasoning step. Only a
+   *  not-yet-created conversation still queues — no id, nothing to fold into.
    */
   send(args: SendArgs): void {
     const key = this.resolveKey(args.options.conversationId);

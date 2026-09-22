@@ -21,6 +21,7 @@
  * @module
  */
 
+import { BOT_EVENTS } from "@gaia/shared/analytics";
 import {
   BaseBotAdapter,
   type BotCommand,
@@ -50,7 +51,6 @@ import {
   withWideEvent,
 } from "@gaia/shared/bots";
 import type { Message, ReactionType } from "@grammyjs/types";
-import { BOT_EVENTS } from "@gaia/shared/analytics";
 import { Bot, type Context, GrammyError, InputFile } from "grammy";
 
 /** Telegram's sendPhoto byte cap; larger images are sent as documents. */
@@ -470,11 +470,8 @@ export class TelegramAdapter extends BaseBotAdapter {
     reaction: OutboundReaction,
     _isChannel: boolean,
   ): Promise<void> {
-    // Same polymorphic chat_id as deliverOutbound: a DM user id and a group
-    // id both address the chat holding the target message. The cast is
-    // load-bearing honesty, not a dodge: Telegram accepts a fixed emoji set
-    // and 400s anything else, so an off-list emoji falls into the catch below
-    // and goes out as a text bubble instead of being lost.
+    // Telegram accepts only a fixed emoji set and 400s anything else; an
+    // off-list emoji falls into the catch below and goes out as a text bubble.
     const emoji = reaction.emoji as Extract<
       ReactionType,
       { type: "emoji" }
@@ -501,7 +498,7 @@ export class TelegramAdapter extends BaseBotAdapter {
         { success: true, delivery: "fallback_text", reason: "attach_failed" },
       );
     }
-  };
+  }
 
   /**
    * Delivers an agent-generated file artifact to a Telegram user. Fetches the

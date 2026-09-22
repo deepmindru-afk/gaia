@@ -137,10 +137,9 @@ const extractError = (payload: JsonObject): ChatStreamEvent[] =>
     ? [{ type: "error", error: payload.error }]
     : [];
 
-// The interactive path emits `{"emoji_ack": {"emoji": "...", "reacts_to_message_id":
-// "..."}}` when comms' whole reply was a `REACT: <emoji>` control line — the
-// client must take the streamed directive text back and badge the emoji onto
-// the user's message instead of leaving a bubble.
+// `emoji_ack` arrives when comms' whole reply was a `REACT: <emoji>` line: the
+// client drops the streamed directive and badges the emoji onto the user's
+// message instead of leaving a bubble.
 const extractEmojiAck = (payload: JsonObject): ChatStreamEvent[] => {
   const ack = payload.emoji_ack;
   if (!isObject(ack)) return [];

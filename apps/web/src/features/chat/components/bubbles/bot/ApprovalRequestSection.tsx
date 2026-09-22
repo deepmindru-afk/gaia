@@ -33,11 +33,8 @@ interface ApprovalRequestSectionProps {
   conversationId?: string;
 }
 
-// A stale tap means the row moved under this card. Settle locally when the
-// server names the row's new home — any decided state paints the real verdict
-// instead of the tap. `pending` (stale-v conflict, the row is still live) and
-// `unknown` (the action may or may not have run) keep the card with a retry
-// toast; `executing` is a ledger transient, never a card state.
+// Statuses a stale tap settles to locally (the real verdict, not the tap);
+// `pending`/`unknown` keep the retry toast, `executing` is a ledger transient.
 const STALE_SETTLED_STATUSES: ReadonlySet<string> = new Set<string>([
   "approved",
   "denied",
@@ -122,10 +119,8 @@ export default function ApprovalRequestSection({
           : (data.ledger_version ?? undefined),
       });
       if (!outcome.success) {
-        // Stale tap: the row moved under this card. Settle locally when the
-        // server names the row's new home (approved elsewhere, revoked by the
-        // agent, executed, expired...); otherwise keep the card and drop the
-        // version so the next tap goes through the CAS directly.
+        // Stale tap: settle locally when the server names a settled state,
+        // otherwise drop the version so the next tap hits the CAS directly.
         if (outcome.status && STALE_SETTLED_STATUSES.has(outcome.status)) {
           markApprovalDecided(conversationId);
           onDecided(outcome.status as ApprovalStatus, attachedFeedback);

@@ -136,13 +136,9 @@ interface SseFrame {
  * Whether streamed text is a comms `REACT: <emoji>` control line — or a
  * prefix of one while the directive is still split across frames.
  *
- * The server streams the raw directive as ordinary text, then follows with an
- * `emoji_ack` frame carrying the bare emoji. Forwarding the directive to
- * `onChunk` would paint `REACT: 😎` in every per-chunk adapter (Slack,
- * Telegram), so directive-shaped text is held back until the ack replaces it.
- * Matching is case-insensitive with leading whitespace allowed, mirroring the
- * backend parser (`interpret_comms_output`); anything multi-line is an
- * ordinary reply, never a directive.
+ * Held back so per-chunk adapters never paint the directive before the
+ * `emoji_ack` replaces it. Case-insensitive, leading whitespace allowed
+ * (mirrors `interpret_comms_output`); multi-line is always an ordinary reply.
  */
 export function isReactDirectiveOrPrefix(text: string): boolean {
   const candidate = text.replace(/^\s+/, "");
@@ -300,10 +296,8 @@ async function streamChatOnce(
           // `emoji_ack` below replaces the buffers with the bare emoji.
         }
         if (frame.emoji_ack) {
-          // comms answered the turn with a `REACT: <emoji>` ack — the streamed
-          // text was the raw directive; the delivered message is the bare emoji
-          // (platforms with native reactions attach it, everyone else sends it
-          // as text). Replace both buffers so onDone reports the emoji.
+          // The `REACT: <emoji>` ack: the delivered message is the bare emoji,
+          // not the raw directive. Replace both buffers so onDone reports it.
           pendingText = "";
           forwardedLength = 0;
           fullText = frame.emoji_ack.emoji;

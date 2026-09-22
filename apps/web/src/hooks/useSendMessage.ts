@@ -191,10 +191,8 @@ export const useSendMessage = () => {
         replyToMessage: ctx.replyToMessage ?? undefined,
       };
 
-      // A send landing while this conversation's turn is open steers the live
-      // run instead of waiting: its optimistic bubble sends immediately. Only
-      // a not-yet-created conversation still queues — with no id the backend
-      // has nothing to fold into.
+      // A mid-turn send steers the live run (its bubble sends immediately);
+      // only a not-yet-created conversation still queues.
       const canSteer =
         ctx.conversationId != null &&
         ctx.conversationId !== "new" &&

@@ -99,10 +99,8 @@ export const createExecutorStreamHandler =
       detail: { stream_id, task_id },
     });
 
-    // A detached run has no turn session driving the loading indicator (the
-    // chat SSE is long closed) — track it separately so the thin "working"
-    // row below the bubble reflects this stream's tool activity. Scoped to
-    // this conversation; cleared on close, error, or timeout below.
+    // A detached run has no turn session driving the loading indicator, so
+    // track it separately for the "working" row; cleared on close/error/timeout.
     useStreamStore.getState().setBackgroundLoading(conversation_id, "");
     const backgroundTimeout = setTimeout(() => {
       useStreamStore.getState().clearBackgroundLoading(conversation_id);
