@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 import json
-from typing import Annotated, Any
+from typing import Annotated
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
@@ -36,7 +36,7 @@ def build_execute_tool(scoped_tools: Mapping[str, BaseTool] | None = None) -> Ba
             "Exact tool name to run, verbatim from retrieve_tools (e.g. 'GMAIL_SEND_EMAIL').",
         ],
         data: Annotated[
-            dict[str, Any],
+            dict[str, object],
             "Arguments for tool_name, matching the args schema retrieve_tools showed. "
             "Pass {} when the tool takes no arguments.",
         ],

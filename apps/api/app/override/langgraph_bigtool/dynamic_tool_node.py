@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from langchain_core.messages import AnyMessage, ToolMessage
+from langchain_core.messages import AnyMessage, ToolCall, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langgraph.errors import GraphBubbleUp
@@ -395,7 +395,7 @@ class DynamicToolNode(ToolNode):
             )
 
         return await middleware_executor.wrap_tool_invocation(
-            tool_call=dict(cast(Mapping[str, Any], tool_call)),
+            tool_call=cast(ToolCall, dict(tool_call)),
             tool=tool,
             state=state,
             config=config,
