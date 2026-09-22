@@ -390,22 +390,6 @@ export default function TextBubble({
     return parseThinkingFromText(text?.toString() || "");
   }, [text]);
 
-  // The conversation owning this message, via a one-off store lookup (not a
-  // subscription, so idle bubbles don't re-render per token); an unpersisted
-  // message falls back to the active conversation in useMarkApprovalDecided.
-  const owningConversationId = React.useMemo(() => {
-    if (!message_id) return undefined;
-    const all = useChatStore.getState().messagesByConversation;
-    for (const [convId, msgs] of Object.entries(all)) {
-      if (msgs.some((m) => m.id === message_id)) return convId;
-    }
-    return undefined;
-  }, [message_id]);
-  const toolRenderContext = React.useMemo<ToolRenderContext>(
-    () => ({ conversationId: owningConversationId }),
-    [owningConversationId],
-  );
-
   // Single ordered timeline of tool calls + subagent groups (emission order)
   // and the remaining tool_data entries that render via TOOL_RENDERERS.
   const { timeline, processedTools } = useSubagentSynthesis(tool_data);
@@ -484,7 +468,7 @@ export default function TextBubble({
 
         return (
           <React.Fragment key={`${baseId}-tool-${entryKey}`}>
-            {renderTool(toolName, typedData, index, toolRenderContext)}
+            {renderTool(toolName, typedData, index)}
           </React.Fragment>
         );
       })}
