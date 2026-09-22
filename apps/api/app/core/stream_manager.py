@@ -459,9 +459,7 @@ class StreamManager:
             existing: ProgressToolData = cast(ProgressToolData, progress_data.get("tool_data", {}))
             # Merge tool_data arrays
             if "tool_data" in incoming and "tool_data" in existing:
-                existing["tool_data"] = existing.get("tool_data", []) + incoming.get(
-                    "tool_data", []
-                )
+                existing["tool_data"] = existing["tool_data"] + incoming["tool_data"]
             else:
                 existing.update(incoming)
             progress_data["tool_data"] = existing
