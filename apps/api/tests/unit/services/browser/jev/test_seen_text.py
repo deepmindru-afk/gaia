@@ -61,3 +61,13 @@ def test_the_memory_stops_growing_at_the_cap(monkeypatch) -> None:
     memory.record("https://books.test/travel", "b" * 15)
 
     assert memory.text == "a" * 15
+
+
+def test_a_page_counts_as_read_to_the_end_only_once_its_bottom_was_on_screen() -> None:
+    memory = SeenText()
+
+    memory.record("https://news.test/", "1. First story", "News")
+    assert memory.pages == [{"url": "https://news.test/", "title": "News", "read": "top part only"}]
+
+    memory.record("https://news.test/", "30. Last story", at_bottom=True)
+    assert memory.pages[0]["read"] == "to the end"

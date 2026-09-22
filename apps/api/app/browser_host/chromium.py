@@ -35,7 +35,7 @@ import psutil
 from app.browser_host.cdp_mux import CdpMux, CdpTransport
 from app.browser_host.memory import memory_usage_mb
 from app.browser_host.metrics import ProcessSampler, SessionMetrics
-from app.browser_host.obscura_launch import obscura_serve_argv
+from app.browser_host.obscura_launch import obscura_serve_argv, obscura_serve_env
 from app.config.settings import settings
 from app.constants.browser import (
     BROWSER_VIEWPORT_HEIGHT,
@@ -674,11 +674,11 @@ class ChromiumHost:
 
     async def _launch(self) -> None:
         if settings.BROWSER_ENGINE is BrowserEngine.OBSCURA:
-            args = self._obscura_command()
+            args, env = self._obscura_command(), obscura_serve_env()
         else:
-            args = self._chromium_command()
+            args, env = self._chromium_command(), None
         self._proc = await asyncio.create_subprocess_exec(
-            *args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            *args, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         self._sampler = ProcessSampler.for_pid(self._proc.pid)
         self._root_ws_url = await self._await_cdp_ready()

@@ -70,8 +70,10 @@ it, or why it could not be finished. Report that and stop; never re-run the
 browser on the strength of it.
 
 Returns immediately when no browser task is running in this conversation. If the
-run outlasts the wait, it says so: the result is then delivered to the user as a
-follow-up message, so do not claim an outcome and do not start the task again.
+run outlasts the wait, or is paused waiting for the user to act in the live
+browser, it says so: the result is then delivered to the user as a follow-up
+message, so do not wait again, do not claim an outcome and do not start the task
+again.
 
 It can also come back saying the browser is STUCK and asking you for one
 instruction, with the page it is on. That is not a result: answer it with

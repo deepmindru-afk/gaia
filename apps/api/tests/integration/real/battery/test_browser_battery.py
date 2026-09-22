@@ -16,7 +16,7 @@ harness emulates one Telegram user.
 
 from __future__ import annotations
 
-import json
+from collections.abc import Iterator
 import re
 import time
 
@@ -37,7 +37,7 @@ pytestmark = [
         not battery_enabled() or not stack_answers(),
         reason="requires GAIA_BROWSER_BATTERY=1 and the native stack (API :8480, host :8930)",
     ),
-    pytest.mark.timeout(1500),
+    pytest.mark.timeout(2400),
 ]
 
 _FORM = "https://www.selenium.dev/selenium/web/web-form.html"
@@ -45,8 +45,19 @@ _INTERNET = "https://the-internet.herokuapp.com"
 
 
 @pytest.fixture(scope="module")
-def battery(tmp_path_factory: pytest.TempPathFactory) -> Battery:
-    return Battery(tmp_path_factory.mktemp("battery"))
+def battery(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Battery]:
+    stack = Battery(tmp_path_factory.mktemp("battery"))
+    yield stack
+    stack.close()
+
+
+#: Lines the run itself sends while it works, none of them its outcome: step
+#: captions, stall notes, and the three lines of a handoff prompt.
+_PROGRESS_LINE = re.compile(
+    r"^(Step \d+ ·|Still (on step|waiting)|Open the live browser:|Reply \"done\")"
+)
+#: One reply delivered as several messages arrives within this many seconds.
+_ONE_REPLY_SECONDS = 2.0
 
 
 def _one_final_message(outcome: RunOutcome) -> str:
@@ -54,24 +65,45 @@ def _one_final_message(outcome: RunOutcome) -> str:
 
     With the executor joined on the run, the comms agent voices the outcome in
     its own words; unjoined, the worker sends the run's own result line. Either
-    way it is the one text after the last step photo, stall notes aside.
+    way it is the one reply after the run's own progress lines: the streamed
+    acknowledgement before the run starts and the step captions, stall notes and
+    handoff prompt during it are not outcomes. A reply the bot delivers as two
+    messages within a breath is one reply.
     """
     events = outcome.transcript.events
-    last_photo = max(
-        (i for i, e in enumerate(events) if e.get("type") in ("rich", "outbound-attachment")),
-        default=-1,
+    started = next(
+        (
+            i
+            for i, e in enumerate(events)
+            if e.get("type") in ("outbound-delivery", "rich", "outbound-attachment")
+        ),
+        len(events),
     )
-    finals = [
-        str(e.get("text", ""))
-        for e in events[last_photo + 1 :]
-        if e.get("type") in ("send", "outbound-delivery", "edit")
-        and e.get("text")
-        and not re.search(r"^Still (on step|waiting)", str(e.get("text")))
+    texts = [
+        e
+        for e in events[started:]
+        if e.get("type") in ("send", "outbound-delivery", "edit") and e.get("text")
     ]
-    assert len(finals) == 1, (
-        f"expected one outcome message after the last photo, got {len(finals)}: {finals}"
+    handoff_prompt = {
+        i - 1 for i, e in enumerate(texts) if str(e["text"]).startswith("Open the live browser:")
+    }
+    finals = [
+        e
+        for i, e in enumerate(texts)
+        if i not in handoff_prompt and not _PROGRESS_LINE.search(str(e["text"]))
+    ]
+    replies: list[list[dict]] = []
+    for e in finals:
+        at = float(e.get("t") or 0.0) / 1000
+        if replies and at - float(replies[-1][-1].get("t") or 0.0) / 1000 <= _ONE_REPLY_SECONDS:
+            replies[-1].append(e)
+        else:
+            replies.append([e])
+    assert len(replies) == 1, (
+        f"expected one outcome reply, got {len(replies)}: "
+        f"{[[str(e['text'])[:80] for e in r] for r in replies]}"
     )
-    return finals[0]
+    return "\n".join(str(e["text"]) for e in replies[0])
 
 
 def _no_contradiction(outcome: RunOutcome) -> None:
@@ -93,7 +125,6 @@ def test_a_form_is_filled_and_submitted_with_every_field(battery: Battery) -> No
         'dropdown select, tick "Checkbox 2", choose "Radio 2", set the date to 09/22/2026, then click '
         "Submit and tell me exactly what message the page shows after submitting, and the full URL "
         "of the page you land on.",
-        settle_ms=90_000,
     )
 
     assert outcome.success is True, outcome.summary
@@ -125,7 +156,6 @@ def test_a_two_site_research_task_reports_every_part(battery: Battery) -> None:
         'one-line summary of the linked article. Then go to en.wikipedia.org, search for "Transformer '
         '(deep learning architecture)" and tell me who introduced it and in what year. Report '
         "everything back to me at the end.",
-        settle_ms=120_000,
     )
 
     assert outcome.success is True, outcome.summary
@@ -146,7 +176,6 @@ def test_a_whole_list_is_counted_by_scrolling_to_its_end(battery: Battery) -> No
     outcome = battery.run(
         "Use the browser. Go to https://news.ycombinator.com and tell me exactly how many stories are "
         "listed on the front page (scroll to the bottom and count every numbered story).",
-        settle_ms=90_000,
     )
 
     assert outcome.success is True, outcome.summary
@@ -162,7 +191,6 @@ def test_a_fact_from_a_specific_list_position_is_read_not_guessed(battery: Batte
     outcome = battery.run(
         "Use the browser. Go to https://news.ycombinator.com and tell me the exact title of the 3rd "
         "story on the front page, copied character for character.",
-        settle_ms=60_000,
     )
     after = hn_front_page_titles()
 
@@ -180,7 +208,6 @@ def test_content_that_appears_after_a_wait_is_read(battery: Battery) -> None:
     outcome = battery.run(
         f"Use the browser. Go to {_INTERNET}/dynamic_loading/2, click Start, wait for the loading to "
         "finish, and tell me exactly the text that appears.",
-        settle_ms=60_000,
     )
 
     assert outcome.success is True, outcome.summary
@@ -192,7 +219,6 @@ def test_a_link_that_opens_a_new_window_is_followed(battery: Battery) -> None:
     outcome = battery.run(
         f'Use the browser. Go to {_INTERNET}/windows, click the "Click Here" link, and tell me '
         "exactly the heading text on the page that opens.",
-        settle_ms=60_000,
     )
 
     assert outcome.success is True, outcome.summary
@@ -204,7 +230,6 @@ def test_a_search_box_is_typed_into_and_the_first_result_reported(battery: Batte
     outcome = battery.run(
         'Use the browser. Go to https://duckduckgo.com, search for "Attention Is All You Need paper", '
         "and tell me the title and URL of the first result.",
-        settle_ms=90_000,
     )
 
     assert outcome.success is True, outcome.summary
@@ -226,23 +251,14 @@ _LOGIN_JS = """(async () => {
 })()"""
 
 
-def test_a_login_is_handed_to_the_user_and_the_run_resumes_after_it(battery: Battery) -> None:
+def test_a_login_is_handed_to_the_user_then_reused_without_a_second_handoff(
+    battery: Battery,
+) -> None:
+    """One scenario, two runs: the second depends on what the first saved, so it is not a test of its own."""
     battery.forget_logins()
 
     def act(job_id: str, state: dict, b: Battery) -> list[dict]:
-        handoff_id, record = None, None
-        deadline = time.monotonic() + 300
-        while time.monotonic() < deadline and handoff_id is None:
-            for key in b.redis.scan_iter("browser:handoff:*"):
-                if key.endswith(":settled"):
-                    continue
-                raw = b.redis.get(key)
-                rec = json.loads(raw) if raw and raw.startswith("{") else None
-                if rec and rec.get("status") == "pending" and rec.get("kind", "user") == "user":
-                    handoff_id, record = key.split(":")[-1], rec
-                    break
-            time.sleep(2)
-        assert handoff_id, "the run never handed the login to the user"
+        handoff_id, record = b.wait_for_handoff(b.conversation_id())
         assert re.search(r"password|sign in|log in", record.get("reason", ""), re.I), record
         landed = run_async(b.type_into_live_session(state["session_id"], _LOGIN_JS))
         assert "/secure" in str(landed), f"the live login did not land on the secure area: {landed}"
@@ -252,7 +268,6 @@ def test_a_login_is_handed_to_the_user_and_the_run_resumes_after_it(battery: Bat
     outcome = battery.run(
         f"Use the browser. Go to {_INTERNET}/login, log in as tomsmith with password "
         "SuperSecretPassword!, and tell me the exact flash message shown after logging in.",
-        settle_ms=120_000,
         on_running=act,
     )
 
@@ -267,55 +282,40 @@ def test_a_login_is_handed_to_the_user_and_the_run_resumes_after_it(battery: Bat
     )
     _one_final_message(outcome)
 
-
-def test_a_saved_login_is_reused_without_a_second_handoff(battery: Battery) -> None:
-    assert any(d.endswith("the-internet.herokuapp.com") for d in battery.saved_login_domains()), (
-        "run the login test first; this one reuses its saved session"
-    )
     seen_handoff = {"raised": False}
 
     def watch(job_id: str, state: dict, b: Battery) -> list[dict]:
         deadline = time.monotonic() + 240
         while time.monotonic() < deadline and b.job_state(job_id).get("status") != "done":
-            for key in b.redis.scan_iter("browser:handoff:*"):
-                raw = b.redis.get(key)
-                if raw and raw.startswith("{") and '"pending"' in raw:
-                    seen_handoff["raised"] = True
-                    b.decide_handoff(key.split(":")[-1], "cancel")
+            found = b.pending_handoff(b.conversation_id())
+            if found:
+                seen_handoff["raised"] = True
+                b.decide_handoff(found[0], "cancel")
             time.sleep(3)
         return []
 
-    outcome = battery.run(
+    reuse = battery.run(
         f"Use the browser. Go to {_INTERNET}/secure and tell me the exact heading and the flash message on the page.",
-        settle_ms=90_000,
         on_running=watch,
     )
 
     assert not seen_handoff["raised"], (
         "the saved login was not reused: the run asked the user to log in again"
     )
-    assert outcome.success is True, outcome.summary
-    assert "Secure Area" in outcome.summary, outcome.summary
-    _one_final_message(outcome)
+    assert reuse.success is True, reuse.summary
+    assert "Secure Area" in reuse.summary, reuse.summary
+    _one_final_message(reuse)
 
 
 def test_a_captcha_is_handed_over_and_a_cancel_ends_the_run_cleanly(battery: Battery) -> None:
     def act(job_id: str, state: dict, b: Battery) -> list[dict]:
-        deadline = time.monotonic() + 300
-        while time.monotonic() < deadline:
-            for key in b.redis.scan_iter("browser:handoff:*"):
-                raw = b.redis.get(key)
-                if raw and raw.startswith("{") and '"pending"' in raw:
-                    rec = json.loads(raw)
-                    assert b.decide_handoff(key.split(":")[-1], "cancel") == "cancelled"
-                    return [rec]
-            time.sleep(2)
-        raise AssertionError("the CAPTCHA was never handed to the user")
+        handoff_id, record = b.wait_for_handoff(b.conversation_id())
+        assert b.decide_handoff(handoff_id, "cancel") == "cancelled"
+        return [record]
 
     outcome = battery.run(
         "Use the browser. Go to https://www.google.com/recaptcha/api2/demo, complete the reCAPTCHA "
         "and submit the form, then tell me what the page says.",
-        settle_ms=90_000,
         on_running=act,
     )
 
@@ -335,7 +335,6 @@ def test_a_captcha_is_handed_over_and_a_cancel_ends_the_run_cleanly(battery: Bat
 def test_an_action_the_page_cannot_offer_is_reported_not_faked(battery: Battery) -> None:
     outcome = battery.run(
         'Use the browser. Go to https://example.com, click the "Buy now" button and tell me the order number it shows.',
-        settle_ms=90_000,
     )
 
     assert outcome.success is not True, outcome.summary
@@ -350,7 +349,6 @@ def test_an_action_the_page_cannot_offer_is_reported_not_faked(battery: Battery)
 def test_a_site_that_does_not_exist_fails_once_and_plainly(battery: Battery) -> None:
     outcome = battery.run(
         "Use the browser. Go to https://this-site-truly-does-not-exist-gaia-battery.invalid and tell me its page title.",
-        settle_ms=60_000,
     )
 
     assert outcome.success is not True
@@ -368,7 +366,6 @@ def test_content_the_engine_cannot_see_is_reported_as_unseen(battery: Battery) -
     truth = "Your content goes here."
     outcome = battery.run(
         f"Use the browser. Go to {_INTERNET}/iframe and tell me the exact text inside the editor frame.",
-        settle_ms=60_000,
     )
 
     honest = truth in outcome.summary or re.search(
@@ -382,13 +379,15 @@ def test_a_stop_from_the_user_ends_the_run_with_one_message(battery: Battery) ->
     def stop(job_id: str, state: dict, b: Battery) -> list[dict]:
         time.sleep(20)
         proc = b.send("stop", settle_ms=30_000, channel=b.last_channel)
-        proc.wait(timeout=120)
+        try:
+            proc.wait(timeout=240)
+        finally:
+            b.stop_sender(proc)
         return []
 
     outcome = battery.run(
         "Use the browser for this whole task. Go to news.ycombinator.com, open the top 10 stories one "
         "by one and summarise each in one line.",
-        settle_ms=90_000,
         on_running=stop,
     )
 
@@ -403,7 +402,6 @@ def test_one_message_never_starts_two_browser_runs(battery: Battery) -> None:
     before = set(battery.job_ids())
     outcome = battery.run(
         "Use the browser. Go to https://example.com and tell me its main heading.",
-        settle_ms=60_000,
     )
     started = set(battery.job_ids()) - before
 

@@ -323,6 +323,12 @@ JEV_MAX_ELEMENTS = 100
 JEV_GATEWAY_TIMEOUT_SECONDS = 8.0
 # One writer call (a typed value, a URL, a part judgement, the closing answer).
 JEV_TEXT_TIMEOUT_SECONDS = 60.0
+# The closing answer carries every page read and every action of the run, and
+# the run's whole value rides on it: a 13-minute research task once ended as
+# "could not write the closing answer" when this call timed out at 60 s on a
+# slow link. It gets a longer budget and a second attempt.
+JEV_CLOSING_ANSWER_TIMEOUT_SECONDS = 150.0
+JEV_CLOSING_ANSWER_ATTEMPTS = 2
 JEV_GATEWAY_MAX_ATTEMPTS = 3
 
 # Observation budget: visible page text sent as Jev state, and how much of the
@@ -354,6 +360,11 @@ JEV_MIN_DONE_CONFIDENCE = 0.6
 # How many sub-floor DONEs one run may re-ask, in total rather than in a row:
 # a single re-ask let the very next DONE (p=0.52) through and it shipped.
 JEV_DONE_REASK_BUDGET = 2
+# How long each WAIT in a row on one page actually waits. Browser-Use's wait
+# action sleeps one second less than asked (it budgets that for the model
+# call), so a wait of 1 slept nothing and three of them let a run declare a
+# page done four seconds after the click that started its five-second loader.
+JEV_WAIT_SECONDS = (3, 6, 10)
 
 
 # ---------------------------------------------------------------------------

@@ -20,13 +20,16 @@ class SeenText:
         self._lines: dict[str, list[str]] = {}
         self._titles: dict[str, str] = {}
         self._seen: dict[str, set[str]] = {}
+        self._to_the_end: set[str] = set()
         self._length = 0
 
-    def record(self, url: str, text: str, title: str = "") -> None:
+    def record(self, url: str, text: str, title: str = "", *, at_bottom: bool = False) -> None:
         """Add this screen's lines to its page's memory; a page returned to keeps what it had."""
         self._page = url.split("#", 1)[0]
         if title:
             self._titles[self._page] = title
+        if at_bottom:
+            self._to_the_end.add(self._page)
         lines = self._lines.setdefault(self._page, [])
         seen = self._seen.setdefault(self._page, set())
         for line in text.splitlines():
@@ -46,8 +49,20 @@ class SeenText:
 
     @property
     def pages(self) -> list[dict[str, str]]:
-        """The pages read, oldest first, each as its url and title."""
-        return [{"url": page, "title": self._titles.get(page, "")} for page in self._lines]
+        """The pages read, oldest first, each as its url, title and how far down it was read.
+
+        A page counts as read to the end once a screen of it showed its bottom;
+        until then only its top part has been read, which a judgement of "every
+        item counted" or "the whole list seen" has to know.
+        """
+        return [
+            {
+                "url": page,
+                "title": self._titles.get(page, ""),
+                "read": "to the end" if page in self._to_the_end else "top part only",
+            }
+            for page in self._lines
+        ]
 
     @property
     def all_text(self) -> str:

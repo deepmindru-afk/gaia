@@ -105,10 +105,28 @@ export async function linkDevUser(
  * turn's stream closes, so deliveries published afterward land in that turn's
  * events. A handoff turn closes SSE on the preamble while the real answer
  * publishes later; shutting down early strands it in the queue instead of losing it.
+ * SIGTERM ends the window early (see below).
  */
-function settle(settleMs: number): Promise<void> {
+function settle(settleMs: number, cutShort: Promise<void>): Promise<void> {
   if (settleMs <= 0) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, settleMs));
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, settleMs);
+    void cutShort.then(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+/**
+ * Resolves on the first SIGTERM. A driver that can see the run finish (its job
+ * state, its final delivery) sends it to end the send early with the transcript
+ * still written, whether the turn is still streaming or already settling.
+ */
+function terminationRequested(): Promise<void> {
+  return new Promise((resolve) => {
+    process.once("SIGTERM", () => resolve());
+  });
 }
 
 /** Boots a HarnessAdapter emulating `platform`, targeting `apiUrl`. */
@@ -150,9 +168,13 @@ export async function sendOneShot(params: {
   const user = await linkDevUser(apiUrl, email, emulate);
   const transcript = new TranscriptRecorder(emulate);
   const adapter = await bootAdapter(emulate, apiUrl, transcript);
+  const cutShort = terminationRequested();
   try {
-    await adapter.simulateMessage(user.platformUserId, message, { channelId });
-    await settle(settleMs);
+    await Promise.race([
+      adapter.simulateMessage(user.platformUserId, message, { channelId }),
+      cutShort,
+    ]);
+    await settle(settleMs, cutShort);
   } finally {
     await adapter.shutdown("harness").catch(() => undefined);
   }
@@ -186,6 +208,7 @@ export async function runScenario(
   const user = await linkDevUser(apiUrl, scenario.user, platform);
   const transcript = new TranscriptRecorder(platform);
   const adapter = await bootAdapter(platform, apiUrl, transcript);
+  const cutShort = terminationRequested();
   const failures: string[] = [];
 
   try {
@@ -196,7 +219,10 @@ export async function runScenario(
       });
       // Settle BEFORE slicing: a late outbound delivery belongs to the turn
       // that caused it, and its assertions must be able to see it.
-      await settle(turn.settleMs ?? settleMsOverride ?? scenario.settleMs ?? 0);
+      await settle(
+        turn.settleMs ?? settleMsOverride ?? scenario.settleMs ?? 0,
+        cutShort,
+      );
       const turnEvents = transcript.getEvents().slice(before);
       for (const assertion of turn.expect ?? []) {
         for (const failure of evaluateAssertion(turnEvents, assertion)) {

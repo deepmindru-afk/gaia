@@ -14,7 +14,11 @@ import contextlib
 from dataclasses import dataclass
 import subprocess
 
-from app.browser_host.obscura_launch import obscura_serve_argv, poll_obscura_endpoint
+from app.browser_host.obscura_launch import (
+    obscura_serve_argv,
+    obscura_serve_env,
+    poll_obscura_endpoint,
+)
 from app.config.settings import settings
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
@@ -62,7 +66,10 @@ async def ensure_crawl_obscura() -> str:
         last_error: Exception | None = None
         for port in range(base, base + _PORT_ATTEMPTS):
             proc = await asyncio.create_subprocess_exec(
-                *obscura_serve_argv(port), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                *obscura_serve_argv(port),
+                env=obscura_serve_env(),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             await asyncio.sleep(_BIND_SETTLE_SECONDS)
             if proc.returncode is not None:  # exited immediately — port taken, try the next

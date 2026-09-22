@@ -62,6 +62,7 @@ def _install(
     states: list[BrowserJobState | None],
     real_sleep: bool = False,
     guidance: PendingAgentGuidance | None = None,
+    user_handoff: str | None = None,
 ) -> Joiner:
     """Script the slot and the state one answer per poll; the last answer repeats forever."""
     j = Joiner()
@@ -91,7 +92,11 @@ def _install(
     async def _guidance(job_id: str) -> PendingAgentGuidance | None:
         return guidance
 
+    async def _handoff(conversation_id: str) -> str | None:
+        return user_handoff
+
     monkeypatch.setattr(tool_mod, "get_guidance_request", _guidance)
+    monkeypatch.setattr(tool_mod, "get_conversation_pending_handoff", _handoff)
     monkeypatch.setattr(tool_mod, "get_conversation_slot", _slot)
     monkeypatch.setattr(tool_mod, "get_job_state", _state)
     monkeypatch.setattr(tool_mod, "take_joiner_lease", _take)
@@ -125,6 +130,20 @@ async def test_the_finished_runs_own_guidance_is_returned_verbatim(
 
     assert out == DONE.agent_message
     assert j.taken == [("job-1", "s1")]
+
+
+async def test_a_run_waiting_on_the_user_ends_the_wait_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Polling through a user handoff once held the executor, and every later message from the user, for the whole handoff window."""
+    j = _install(monkeypatch, slots=["job-1"], states=[RUNNING], user_handoff="h-1")
+
+    out = await wait_for_browser_task.ainvoke({"timeout": 600}, config=UI_CONFIG)
+
+    assert out == tool_mod._PAUSED_FOR_USER_RESULT
+    assert j.polls == 1
+    assert j.slept == 0.0
+    assert j.dropped == ["job-1"]
 
 
 async def test_collecting_the_result_hands_nothing_back_to_the_worker(

@@ -32,6 +32,8 @@ from app.constants.browser import (
     BROWSER_GUIDANCE_RECENT_ACTIONS,
     BROWSER_RUN_BLOCKED_SUMMARY,
     JEV_CLOSING_ANSWER_ACTIONS,
+    JEV_CLOSING_ANSWER_ATTEMPTS,
+    JEV_CLOSING_ANSWER_TIMEOUT_SECONDS,
     JEV_DONE_REASK_BUDGET,
     JEV_MIN_DONE_CONFIDENCE,
     JEV_PLAN_MAX_STEPS,
@@ -39,6 +41,7 @@ from app.constants.browser import (
     JEV_TEXT_HELPER_RECENT_ACTIONS,
     JEV_TEXT_TIMEOUT_SECONDS,
     JEV_TEXT_VALUE_MAX_CHARS,
+    JEV_WAIT_SECONDS,
     BrowserHandoffAction,
     JevNoteSource,
     JevOperation,
@@ -153,20 +156,31 @@ class StructuredCall(Protocol):
     """One structured one-shot to the writer: a schema and a prompt in, the filled schema out."""
 
     async def __call__(
-        self, schema: type[T], prompt: list[LangChainMessage], *, label: str
+        self,
+        schema: type[T],
+        prompt: list[LangChainMessage],
+        *,
+        label: str,
+        timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
     ) -> T: ...
 
 
 def canonical_structured_call(user_id: str | None) -> StructuredCall:
     """Return the app's one structured one-shot, metered to the user the run works for."""
 
-    async def call(schema: type[T], prompt: list[LangChainMessage], *, label: str) -> T:
+    async def call(
+        schema: type[T],
+        prompt: list[LangChainMessage],
+        *,
+        label: str,
+        timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
+    ) -> T:
         return await ainvoke_structured(
             schema,
             prompt,
             label=label,
             config=silent_metered_config(user_id) if user_id else None,
-            options=StructuredCallOptions(timeout=JEV_TEXT_TIMEOUT_SECONDS),
+            options=StructuredCallOptions(timeout=timeout),
         )
 
     return call
@@ -226,8 +240,9 @@ class JevChatModel:
         #: sees only the current one, so a compound task cannot loop on its first part.
         self._plan: list[_PlanStep] | None = None
         self._plan_index = 0
-        #: How many pages had been read when the writer last judged the current part.
-        self._pages_judged = 0
+        #: The (part, pages read) the writer last judged, so each part is judged
+        #: on every page count once.
+        self._judged: tuple[int, int] | None = None
         #: What each finished part produced, in the writer's words: the list a
         #: later part works through, the fact the closing answer reports.
         self._findings: list[str] = []
@@ -249,6 +264,8 @@ class JevChatModel:
         self._shot = None
         #: One-shot: guidance just arrived, so this next step may not give up on it.
         self._blocked_suppressed = False
+        #: History length when a stalled page was last acted on, so one stall is one BLOCKED.
+        self._stall_handled_at = 0
 
     def viewport_points(self) -> dict[int, tuple[float, float]]:
         """Return the last observation's on-screen centres by Browser-Use index, for the UI pulse."""
@@ -347,19 +364,27 @@ class JevChatModel:
             elements=len(observation.elements),
         )
         self._observation = observation
-        self._seen_text.record(observation.url, observation.text, observation.title)
+        self._seen_text.record(
+            observation.url,
+            observation.text,
+            observation.title,
+            at_bottom=observation.at_bottom is True,
+        )
         self._settle_previous_step(observation)
         await self._ensure_plan(observation)
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
         offered = _offered_operations(registered)
         self._steps += 1
-        part_over = await self._part_is_done(observation, goal)
-        if part_over and not self._advance_plan():
-            # The writer judged the last part complete: finish with the summary,
-            # without waiting for Jev to reach the same conclusion by chance.
-            return await self._finish(observation, goal, registered, output_format)
-        if part_over:
+        while await self._part_is_done(observation, goal):
+            if not self._advance_plan():
+                # The writer judged the last part complete: finish with the summary,
+                # without waiting for Jev to reach the same conclusion by chance.
+                return await self._finish(observation, goal, registered, output_format)
+            # The next part is judged on the same pages at once: the page that
+            # finished one part often already answers the next (a research task's
+            # article opened while collecting its list), and waiting for another
+            # page to be read once spent 24 steps clicking around that article.
             goal = self._effective_goal(messages)
         opening = self._part_opening(observation)
         if opening is not None:
@@ -399,6 +424,25 @@ class JevChatModel:
             # and the run decides from there; twenty of them once spent a whole run.
             offered -= {JevOperation.GO_BACK}
         offered -= _stalled_operations(self._history)
+        if self._page_stalled():
+            # Nothing this page offers has changed it for a whole run of steps
+            # (a search form the engine cannot submit once took 38 of them);
+            # the run is blocked here, whatever Jev would pick next.
+            self._stall_handled_at = len(self._history)
+            log.info(
+                f"{LogTag.BROWSER} Jev page stalled ({_STALLED_STEPS} actions changed nothing "
+                f"on {observation.url[:80]})",
+                step=self._steps,
+            )
+            decision = JevDecision(operation=JevOperation.BLOCKED, confidence=1.0)
+            action, text = await self._action_for(decision, observation, goal, registered)
+            self._remember(decision.label, "blocked", text, url=observation.url)
+            return ChatInvokeCompletion(
+                completion=_output(
+                    output_format, action, decision.label, f"Step {self._steps}: BLOCKED"
+                ),
+                usage=None,
+            )
 
         try:
             decision = await self._choose(observation, goal, offered)
@@ -538,15 +582,29 @@ class JevChatModel:
     ) -> tuple[dict[str, dict[str, object]], str | None]:
         if decision.operation is JevOperation.BLOCKED:
             return await self._blocked_action(goal, observation, registered)
-        answer = await self._structured(
-            _ClosingAnswer,
-            DONE_SUMMARY,
-            self._effective_goal([], whole_task=True) if self._task else goal,
-            observation,
-            None,
-            seen_text=self._seen_text.all_text,
-            whole_history=True,
-        )
+        summary = await self._closing_answer(observation, goal)
+        if not summary:
+            # The pages were read but the answer could not be written; saying
+            # "completed" here would report a success the user never receives.
+            return {"done": {"text": _NO_SUMMARY, "success": False}}, _NO_SUMMARY
+        return {"done": {"text": summary, "success": True}}, summary
+
+    async def _closing_answer(self, observation: JevObservation, goal: str) -> str | None:
+        """Write the final message against the whole task, or None when it could not be written."""
+        answer = None
+        for _ in range(JEV_CLOSING_ANSWER_ATTEMPTS):
+            answer = await self._structured(
+                _ClosingAnswer,
+                DONE_SUMMARY,
+                self._effective_goal([], whole_task=True) if self._task else goal,
+                observation,
+                None,
+                seen_text=self._seen_text.all_text,
+                whole_history=True,
+                timeout=JEV_CLOSING_ANSWER_TIMEOUT_SECONDS,
+            )
+            if answer is not None:
+                break
         summary = answer.text.strip() if answer else None
         if summary and len(summary) > JEV_SUMMARY_MAX_CHARS:
             log.warning(
@@ -555,12 +613,8 @@ class JevChatModel:
                 step=self._steps,
                 chars=len(summary),
             )
-            summary = None
-        if not summary:
-            # The pages were read but the answer could not be written; saying
-            # "completed" here would report a success the user never receives.
-            return {"done": {"text": _NO_SUMMARY, "success": False}}, _NO_SUMMARY
-        return {"done": {"text": summary, "success": True}}, summary
+            return None
+        return summary or None
 
     async def _blocked_action(
         self, goal: str, observation: JevObservation, registered: set[str]
@@ -568,6 +622,12 @@ class JevChatModel:
         """Ask the agent that started the run how to proceed, or end the run failed when nobody can answer."""
         action = BrowserHandoffAction.REQUEST_AGENT_GUIDANCE
         if action not in registered or not await self._may_ask_for_guidance():
+            if self._findings:
+                # Parts already done produced findings; a blocked run reports them
+                # and says what it could not finish, rather than nothing at all.
+                summary = await self._closing_answer(observation, goal)
+                if summary:
+                    return {"done": {"text": summary, "success": False}}, summary
             return {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}, None
         reason = await self._field_text(GUIDANCE_REASON, goal, observation, None)
         text = reason or _DEFAULT_GUIDANCE_REASON
@@ -627,7 +687,14 @@ class JevChatModel:
             case JevOperation.SCROLL_DOWN:
                 return {"scroll": {"down": True, "pages": 1.0}}, None
             case JevOperation.WAIT:
-                return {"wait": {"seconds": 1}}, None
+                waited = 0
+                for entry in reversed(self._history):
+                    if entry.kind != "wait" or page_key(entry.url) != page_key(observation.url):
+                        break
+                    waited += 1
+                seconds = JEV_WAIT_SECONDS[min(waited, len(JEV_WAIT_SECONDS) - 1)]
+                # +1: Browser-Use sleeps one second less than asked.
+                return {"wait": {"seconds": seconds + 1}}, None
             case JevOperation.GO_BACK:
                 return {"go_back": {}}, None
             case JevOperation.NAVIGATE:
@@ -686,6 +753,7 @@ class JevChatModel:
         seen_text: str | None = None,
         *,
         whole_history: bool = False,
+        timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
     ) -> T | None:
         """Goal, field, page and recent actions in; one small JSON value out.
 
@@ -722,6 +790,7 @@ class JevChatModel:
                 output,
                 [SystemMessage(content=instructions), HumanMessage(content=json.dumps(context))],
                 label=label,
+                timeout=timeout,
             )
         except Exception as exc:
             log.warning(
@@ -837,11 +906,11 @@ class JevChatModel:
         )
 
     async def _part_is_done(self, observation: JevObservation, goal: str) -> bool:
-        """Ask the writer whether the current part is complete, once per newly read page."""
+        """Ask the writer whether the current part is complete, once per part and newly read page."""
         pages = len(self._seen_text.pages)
-        if pages <= self._pages_judged or self._plan is None:
+        if pages == 0 or self._plan is None or self._judged == (self._plan_index, pages):
             return False
-        self._pages_judged = pages
+        self._judged = (self._plan_index, pages)
         # pages_read (titles and urls) and every action are in the context; the
         # pages' full text is not what a "was every requirement met" judgement needs.
         verdict = await self._structured(
@@ -1029,6 +1098,9 @@ class JevChatModel:
     def _latest_note(self) -> str | None:
         return next((h.note for h in reversed(self._history) if h.note), None)
 
+    def _page_stalled(self) -> bool:
+        return _page_stalled_in(self._history, self._stall_handled_at)
+
     def _remember(
         self,
         action: str,
@@ -1041,6 +1113,24 @@ class JevChatModel:
         self._history.append(
             JevHistoryEntry(action=action, kind=kind, text=text, url=url, target_label=target_label)
         )
+
+
+_STALLED_STEPS = 8
+_PRODUCTIVE_KINDS = frozenset({"type_text", "select", "done_part"})
+
+
+def _page_stalled_in(history: list[JevHistoryEntry], since: int) -> bool:
+    """Whether the last steps all left one page as it was, none of them entering anything."""
+    recent = history[since:][-_STALLED_STEPS:]
+    if len(recent) < _STALLED_STEPS:
+        return False
+    first = page_key(recent[0].url)
+    return all(
+        entry.page_changed is False
+        and entry.kind not in _PRODUCTIVE_KINDS
+        and page_key(entry.url) == first
+        for entry in recent
+    )
 
 
 def _stalled_operations(history: list[JevHistoryEntry]) -> frozenset[JevOperation]:

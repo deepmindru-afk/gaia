@@ -158,7 +158,7 @@ class FakeTextModel:
             return ChatInvokeCompletion(completion="plain", usage=None)
         return ChatInvokeCompletion(completion=output_format.model_validate(reply), usage=None)
 
-    async def structured(self, schema, prompt, *, label):
+    async def structured(self, schema, prompt, *, label, timeout=None):
         """Answer the loop's structured one-shots from the scripted queue (the writer seam)."""
         instructions = prompt[0].content
         # The loop's own housekeeping (a single-part plan, a part not yet done)
@@ -326,7 +326,7 @@ async def test_select_becomes_select_dropdown_by_option_text(flights_state) -> N
     [
         ("SCROLL_DOWN", {"scroll": {"down": True, "pages": 1.0}}),
         ("SCROLL_UP", {"scroll": {"down": False, "pages": 1.0}}),
-        ("WAIT", {"wait": {"seconds": 1}}),
+        ("WAIT", {"wait": {"seconds": 4}}),
         ("GO_BACK", {"go_back": {}}),
         (
             "BLOCKED",
@@ -1200,3 +1200,51 @@ async def test_a_failed_step_photo_costs_the_step_nothing(flights_state) -> None
 
     assert _action(result.completion) == {"click": {"index": 40}}
     assert await model.take_step_screenshot() is None
+
+
+def _stalled_history(
+    kinds: list[str], *, changed_at: int | None = None, url: str = "https://a.test/"
+) -> list:
+    from app.services.browser.jev.policy import JevHistoryEntry
+
+    return [
+        JevHistoryEntry(action=kind.upper(), kind=kind, page_changed=(i == changed_at), url=url)
+        for i, kind in enumerate(kinds)
+    ]
+
+
+def test_a_page_that_a_run_of_actions_never_changed_is_stalled() -> None:
+    from app.services.browser.jev.chat_model import _STALLED_STEPS, _page_stalled_in
+
+    kinds = ["click", "scroll_down", "scroll_up", "wait"] * (_STALLED_STEPS // 4)
+    assert _page_stalled_in(_stalled_history(kinds), 0) is True
+    assert _page_stalled_in(_stalled_history(kinds[:-1]), 0) is False
+
+
+def test_typing_or_a_page_change_in_the_run_means_it_is_not_stalled() -> None:
+    from app.services.browser.jev.chat_model import _STALLED_STEPS, _page_stalled_in
+
+    typed = ["click"] * (_STALLED_STEPS - 1) + ["type_text"]
+    assert _page_stalled_in(_stalled_history(typed), 0) is False
+    moved = ["click"] * _STALLED_STEPS
+    assert _page_stalled_in(_stalled_history(moved, changed_at=3), 0) is False
+
+
+def test_a_stall_already_acted_on_needs_a_whole_new_run_of_steps() -> None:
+    from app.services.browser.jev.chat_model import _STALLED_STEPS, _page_stalled_in
+
+    history = _stalled_history(["click"] * (_STALLED_STEPS + 2))
+    assert _page_stalled_in(history, _STALLED_STEPS) is False
+    assert _page_stalled_in(history, 0) is True
+
+
+async def test_waits_in_a_row_on_one_page_grow_longer(flights_state) -> None:
+    """Browser-Use sleeps a second less than asked, so each figure is the wait wanted plus one."""
+    model, _, _, _ = _model(flights_state, [("WAIT", None)] * 4)
+
+    seconds = [
+        _action((await model.ainvoke([], _agent_output())).completion)["wait"]["seconds"]
+        for _ in range(4)
+    ]
+
+    assert seconds == [4, 7, 11, 11]

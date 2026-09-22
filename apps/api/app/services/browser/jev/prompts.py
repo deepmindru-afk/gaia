@@ -70,15 +70,20 @@ together complete the goal. Each part is an object with two keys: goal, a short 
 naming the site or page it happens on and what it must obtain or do there, and url, the absolute
 https address where that part starts (the site or page the goal names) or null when it continues on
 the page the previous part ends on. Split only where the goal moves to a different site or a clearly
-separate part; a goal with one part is one step; a closing "report back" is not a part. At most 6
-steps. No commentary."""
+separate part; a goal with one part is one step; a closing "report back" is not a part. Only what
+the goal asks for: never add a part that opens, reads or checks something the goal does not name
+(a discussion thread when the goal names the article, every item when it names the top three).
+At most 6 steps. No commentary."""
 
 PART_DONE = """Return a JSON object with exactly three keys. The goal names a CURRENT PART, which may
 list several requirements (fields to fill, boxes to tick, options to choose, buttons to click, pages
 to open, facts to find). evidence: one entry per requirement, each copied exactly from this context:
 the "action" string of the recent_actions entry that did it, or the url from pages_read of the page
 that holds it. Never write an entry from memory or from the goal's own words: an entry that is not
-an exact copy of an action or a page here is not evidence. done: true only when every requirement
+an exact copy of an action or a page here is not evidence. Each pages_read entry says whether the
+page was read "to the end" or "top part only": a requirement about everything on a page (a count,
+a whole list, the bottom of the page, the last item) has evidence only in a page read to the end,
+and a page read top part only leaves it not done. done: true only when every requirement
 of the part has an entry, false otherwise (a requirement with no action and no page is not done).
 findings: one short line with the facts this part has produced so far, each named exactly as read
 (titles, numbers, names, dates, URLs), so the parts after it know what was chosen and found; an

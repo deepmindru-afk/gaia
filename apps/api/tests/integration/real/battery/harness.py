@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import time
 from typing import Any
@@ -33,17 +34,32 @@ from app.constants.browser import (
     BROWSER_HANDOFF_KEY_PREFIX,
     BROWSER_JOB_STATE_PREFIX,
 )
+from app.constants.cache import RATE_LIMIT_KEY_PREFIX
 
 API_URL = os.environ.get("GAIA_BATTERY_API_URL", "http://localhost:8480")
 HOST_URL = os.environ.get("BROWSER_HOST_URL", "http://localhost:8930")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 BATTERY_USER = os.environ.get("GAIA_BATTERY_USER", "aryan@heygaia.io")
+RABBITMQ_MANAGEMENT_URL = os.environ.get("RABBITMQ_MANAGEMENT_URL", "http://localhost:15672")
+RABBITMQ_MANAGEMENT_AUTH = ("guest", "guest")
+#: The queue the emulated Telegram bot consumes; any other consumer on it takes
+#: a share of the replies, and the transcript then misses them at random.
+OUTBOUND_QUEUE = "outbound.telegram"
 REPO_ROOT = Path(__file__).resolve().parents[6]
 HARNESS_DIR = REPO_ROOT / "apps" / "bots" / "harness"
 
 #: How long one scenario may take end to end before it is a failure in itself.
-RUN_TIMEOUT_SECONDS = 720.0
+#: Sized for a research task on a slow link (measured 2026-09-22 at ~70 KB/s: a
+#: page load ran 30-90 s and a two-site task 13 min); the outcome reports the
+#: duration, so a slow pass is still visible.
+RUN_TIMEOUT_SECONDS = 1200.0
+#: The sender's outbound consumer must outlive the run: its transcript is
+#: written only when it exits, and the comms agent voices the outcome some
+#: seconds after the job ends. The window is cut short with SIGTERM once the
+#: outcome has had this long to arrive.
+SENDER_WINDOW_SECONDS = RUN_TIMEOUT_SECONDS + 120.0
+OUTCOME_GRACE_SECONDS = 120.0
 _POLL_SECONDS = 2.0
 
 
@@ -58,6 +74,19 @@ def stack_answers() -> bool:
         )
     except Exception:
         return False
+
+
+def outbound_consumers() -> int:
+    """How many consumers already hold the bot's outbound queue (a real bot, an orphaned sender)."""
+    response = httpx.get(
+        f"{RABBITMQ_MANAGEMENT_URL}/api/queues/%2F/{OUTBOUND_QUEUE}",
+        auth=RABBITMQ_MANAGEMENT_AUTH,
+        timeout=5,
+    )
+    if response.status_code == 404:
+        return 0
+    response.raise_for_status()
+    return int(response.json().get("consumers") or 0)
 
 
 @dataclass
@@ -91,6 +120,8 @@ class RunOutcome:
     task_record: dict[str, Any] | None
     transcript: Transcript
     handoffs: list[dict[str, Any]] = field(default_factory=list)
+    #: Message sent to job done, so a slow pass is visible next to a failure.
+    seconds: float = 0.0
 
     @property
     def summary(self) -> str:
@@ -116,7 +147,15 @@ class Battery:
     def __init__(self, out_dir: Path) -> None:
         self.out_dir = out_dir
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        consumers = outbound_consumers()
+        assert consumers == 0, (
+            f"{consumers} consumer(s) already hold {OUTBOUND_QUEUE}: stop the Telegram bot "
+            "and any leftover harness sender before the battery, or replies go to them "
+            "instead of the transcript"
+        )
         self.redis = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        #: Every sender started, so none outlives the battery holding the queue.
+        self.senders: list[subprocess.Popen[str]] = []
         self.mongo = pymongo.MongoClient(MONGO_URL)["GAIA"]
         self.api = httpx.Client(base_url=f"{API_URL}/api/v1", timeout=30)
         self.last_channel: str | None = None
@@ -133,7 +172,8 @@ class Battery:
         instead of driving the browser again, which is right for a user and
         wrong for a test. Pass the same channel to continue a conversation.
         """
-        out = self.out_dir / f"{uuid.uuid4().hex[:8]}.jsonl"
+        run_id = uuid.uuid4().hex[:8]
+        out = self.out_dir / f"{run_id}.jsonl"
         self.last_channel = channel or f"battery-{uuid.uuid4().hex[:10]}"
         cmd = [
             "infisical",
@@ -158,11 +198,40 @@ class Battery:
             str(out),
             message,
         ]
+        # Its console goes to a file, never a pipe nobody reads: a long run's
+        # logging filled the pipe and the sender hung before it posted anything.
+        # Its own session, so a timed-out sender is killed with its children, which
+        # otherwise outlive the test and keep consuming the outbound queue.
+        console = (self.out_dir / f"{run_id}.log").open("w")
         proc = subprocess.Popen(
-            cmd, cwd=HARNESS_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            cmd,
+            cwd=HARNESS_DIR,
+            stdout=console,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
         )
         proc.transcript_path = out  # type: ignore[attr-defined]
+        self.senders.append(proc)
         return proc
+
+    def close(self) -> None:
+        """Kill any sender still running; a leftover keeps consuming the bot's queue."""
+        for proc in self.senders:
+            self.stop_sender(proc)
+
+    @staticmethod
+    def stop_sender(proc: subprocess.Popen[str]) -> None:
+        """End a sender and every process it started, transcript or not."""
+        if proc.poll() is None:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.wait(timeout=10)
+
+    @staticmethod
+    def finish_sender(proc: subprocess.Popen[str]) -> None:
+        """Tell a settling sender to write its transcript and exit now."""
+        if proc.poll() is None:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
     def transcript_of(self, proc: subprocess.Popen[str]) -> Transcript:
         path: Path = proc.transcript_path  # type: ignore[attr-defined]
@@ -172,6 +241,15 @@ class Battery:
                 if line.strip():
                     events.append(json.loads(line))
         return Transcript(events)
+
+    # -- the account's quota --------------------------------------------------
+
+    def reset_browser_quota(self) -> None:
+        """Clear the battery account's browser-task usage: a day of scenarios is more than any plan allows."""
+        user = self.mongo["users"].find_one({"email": BATTERY_USER}, {"_id": 1})
+        assert user, f"no user for {BATTERY_USER}; a scenario has not seeded it yet"
+        for key in self.redis.scan_iter(f"{RATE_LIMIT_KEY_PREFIX}:{user['_id']}:browser_task:*"):
+            self.redis.delete(key)
 
     # -- reading the run ----------------------------------------------------
 
@@ -217,6 +295,15 @@ class Battery:
         return self.mongo["browser_tasks"].find_one({"session_id": session_id})
 
     # -- handoffs ----------------------------------------------------------
+
+    def conversation_id(self) -> str:
+        """Return the GAIA conversation the last sent channel maps to, from the bot session record."""
+        user = self.mongo["users"].find_one({"email": BATTERY_USER}, {"_id": 1})
+        assert user and self.last_channel, "send a message first"
+        key = f"telegram:dev-telegram-{user['_id']}:{self.last_channel}"
+        session = self.mongo["bot_sessions"].find_one({"session_key": key}, {"conversation_id": 1})
+        assert session, f"no bot session for {key}"
+        return str(session["conversation_id"])
 
     def pending_handoff(self, conversation_id: str) -> tuple[str, dict[str, Any]] | None:
         handoff_id = self.redis.get(f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}{conversation_id}")
@@ -276,14 +363,16 @@ class Battery:
 
     # -- one whole scenario -------------------------------------------------
 
-    def run(self, message: str, *, settle_ms: int = 60_000, on_running=None) -> RunOutcome:
+    def run(self, message: str, *, on_running=None) -> RunOutcome:
         """Send a message, follow its run to the end, and return everything it produced.
 
         on_running(job_id, state, battery) is called once the run is RUNNING, for
         scenarios that act mid-run (a handoff to answer, a stop to send).
         """
         known = set(self.job_ids())
-        proc = self.send(message, settle_ms=settle_ms)
+        self.reset_browser_quota()
+        started = time.monotonic()
+        proc = self.send(message, settle_ms=int(SENDER_WINDOW_SECONDS * 1000))
         try:
             job_id = self.wait_for_job(known, proc=proc)
             state = self.wait_for_status(job_id, {"running", "done"}, timeout=240.0)
@@ -293,11 +382,15 @@ class Battery:
             if on_running is not None and state.get("status") == "running":
                 handoffs = on_running(job_id, state, self) or []
             state = self.wait_for_status(job_id, {"done"}, timeout=RUN_TIMEOUT_SECONDS)
+            seconds = time.monotonic() - started
+            print(f"run {job_id} done in {seconds:.0f}s")
+            time.sleep(OUTCOME_GRACE_SECONDS)
         finally:
+            self.finish_sender(proc)
             try:
-                proc.wait(timeout=settle_ms / 1000 + 60)
+                proc.wait(timeout=60)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                self.stop_sender(proc)
         # The history row is written at the end of the run; give it a moment.
         record = None
         for _ in range(15):
@@ -305,7 +398,7 @@ class Battery:
             if record:
                 break
             time.sleep(1)
-        return RunOutcome(job_id, state, record, self.transcript_of(proc), handoffs)
+        return RunOutcome(job_id, state, record, self.transcript_of(proc), handoffs, seconds)
 
 
 def fetch_text(url: str) -> str:

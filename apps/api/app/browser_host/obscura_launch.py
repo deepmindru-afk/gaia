@@ -9,6 +9,7 @@ here so the spawn stays identical across both callers.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 import httpx
@@ -32,6 +33,15 @@ def obscura_serve_argv(port: int) -> list[str]:
         raise RuntimeError("Obscura requires OBSCURA_BIN to be set")
     argv = [obscura_bin, "serve", "--port", str(port), "--stealth"]
     return argv
+
+
+def obscura_serve_env() -> dict[str, str]:
+    """Return the environment an Obscura process runs with: ours plus its load deadlines."""
+    return {
+        **os.environ,
+        "OBSCURA_NAV_TIMEOUT_MS": str(settings.OBSCURA_NAV_TIMEOUT_SECONDS * 1000),
+        "OBSCURA_SCRIPT_DEADLINE_MS": str(settings.OBSCURA_SCRIPT_DEADLINE_SECONDS * 1000),
+    }
 
 
 class _DevToolsVersion(BaseModel):
