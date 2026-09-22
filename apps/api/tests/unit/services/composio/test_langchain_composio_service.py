@@ -3,7 +3,9 @@
 from typing import Any
 from unittest.mock import patch
 
-from app.services.composio.langchain_composio_service import LangchainProvider
+from pydantic import BaseModel
+
+from app.services.composio.langchain_composio_service import LangchainProvider, StructuredTool
 
 MODULE = "app.services.composio.langchain_composio_service"
 
@@ -60,3 +62,30 @@ class TestObservabilityFailureDoesNotBreakTheToolCall:
 
         assert result == {"successful": True, "data": {"id": "msg-1"}}
         mock_log.debug.assert_not_called()
+
+
+class _SendArgs(BaseModel):
+    recipient: str
+    count: int
+
+
+def _send(recipient: str, count: int) -> str:
+    return f"sent {count} to {recipient}"
+
+
+class TestInvalidArgumentsReturnAFailure:
+    def _tool(self) -> StructuredTool:
+        return StructuredTool.from_function(
+            func=_send, name="send", description="Send.", args_schema=_SendArgs
+        )
+
+    def test_invalid_arguments_come_back_as_a_failure_result(self) -> None:
+        result = self._tool().run({"recipient": "a@b.c", "count": "not-a-number"})
+
+        assert isinstance(result, dict)
+        assert result["successful"] is False
+        assert result["data"] is None
+        assert "count" in result["error"]
+
+    def test_valid_arguments_still_run_the_tool(self) -> None:
+        assert self._tool().run({"recipient": "a@b.c", "count": 2}) == "sent 2 to a@b.c"

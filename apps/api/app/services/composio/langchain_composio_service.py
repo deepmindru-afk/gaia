@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from inspect import Parameter, Signature
 import types
 import typing as t
-import uuid
 
 from composio.core.models.tools import ToolExecutionResponse
 from composio.core.provider import AgenticProvider, AgenticProviderExecuteFn
@@ -17,7 +16,6 @@ from composio.utils.shared import (
     json_schema_to_model,
 )
 import composio_client
-from langchain_core.callbacks import Callbacks
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import StructuredTool as BaseStructuredTool
 import pydantic
@@ -192,43 +190,36 @@ def _reinstate_reserved_python_keywords(
     return request
 
 
+_P = t.ParamSpec("_P")
+_R = t.TypeVar("_R")
+
+
+class ValidationFailure(t.TypedDict):
+    """The failure result a tool call with invalid arguments returns instead of raising."""
+
+    successful: bool
+    error: str
+    data: None
+
+
+def _validation_failure_as_result(
+    run: t.Callable[_P, _R],
+) -> t.Callable[_P, _R | ValidationFailure]:
+    """Wrap a tool's run so invalid arguments come back as a failure result, not a raise."""
+
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R | ValidationFailure:
+        try:
+            return run(*args, **kwargs)
+        except pydantic.ValidationError as e:
+            return {"successful": False, "error": parse_pydantic_error(e), "data": None}
+
+    return wrapper
+
+
 class StructuredTool(BaseStructuredTool):
     """StructuredTool that returns a structured failure instead of raising on invalid args."""
 
-    def run(
-        self,
-        tool_input: str | dict[str, object],
-        verbose: bool | None = None,
-        start_color: str | None = "green",
-        color: str | None = "green",
-        callbacks: Callbacks = None,
-        *,
-        tags: list[str] | None = None,
-        metadata: dict[str, object] | None = None,
-        run_name: str | None = None,
-        run_id: uuid.UUID | None = None,
-        config: RunnableConfig | None = None,
-        tool_call_id: str | None = None,
-        **kwargs: object,
-    ) -> object:
-        """Run the tool, converting argument validation errors into a failure result."""
-        try:
-            return super().run(
-                tool_input,
-                verbose,
-                start_color,
-                color,
-                callbacks,
-                tags=tags,
-                metadata=metadata,
-                run_name=run_name,
-                run_id=run_id,
-                config=config,
-                tool_call_id=tool_call_id,
-                **kwargs,
-            )
-        except pydantic.ValidationError as e:
-            return {"successful": False, "error": parse_pydantic_error(e), "data": None}
+    run = _validation_failure_as_result(BaseStructuredTool.run)
 
 
 class LangchainProvider(
