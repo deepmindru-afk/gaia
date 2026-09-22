@@ -422,9 +422,7 @@ class TestSummary:
 
 class TestCardShownEvent:
     async def test_register_emits_card_shown_with_user_id(self, bridge: dict) -> None:
-        """The funnel's first event must attribute to the row's user — the
-        bridge carries no request context, so an inferred id is unavailable
-        and an anonymous capture would strand it."""
+        """The funnel's first event must attribute to the row's user — the bridge carries no request context, so an inferred id is unavailable and an anonymous capture would strand it."""
         with patch(f"{MODULE}.capture_event") as capture:
             await publish_ledger_request(
                 approval_id="ap_1",
@@ -551,12 +549,7 @@ class TestBackgroundFlagSync:
         refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=False)
 
     async def test_approved_ticket_keeps_no_sidebar_row(self) -> None:
-        """Decided means nothing left to tap: the sidebar flag is PENDING-only.
-
-        Ledger liveness still tracks APPROVED (dedup, owner lists), but the
-        flag tracks "needs the user" — an approved ticket executing in the
-        background must vanish on next reload, not linger with a dead dot.
-        """
+        """Decided means nothing left to tap: the sidebar flag is PENDING-only."""
         from app.models.hil_models import LedgerState
         from app.services.hil.bridge import sync_conversation_approval_flag
 

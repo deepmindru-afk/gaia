@@ -145,8 +145,7 @@ class TestFollowUpActions:
 
 
 class TestPlatformMessageId:
-    """A bot turn's platform-native message id must survive the save, or a
-    later background reaction has nothing to anchor to."""
+    """A bot turn's platform-native message id must survive the save, or a later background reaction has nothing to anchor to."""
 
     async def _persist_user(self, body: MessageRequestWithHistory) -> MessageModel:
         state = _StreamState()

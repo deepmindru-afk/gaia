@@ -1,9 +1,7 @@
-"""``resolve_turn_emoji_ack`` — classifying an interactive turn's final comms
-reply into the message stamp the saved turn should carry.
+"""resolve_turn_emoji_ack — classifying an interactive turn's final comms reply into the message stamp the saved turn should carry.
 
-A comms ``REACT: <emoji>`` control line resolves the turn to a one-emoji
-acknowledgment of the user's message; anything else passes through as a plain
-text turn.
+A comms REACT: <emoji> control line resolves the turn to a one-emoji acknowledgment of the user's
+message; anything else passes through as a plain text turn.
 """
 
 import pytest

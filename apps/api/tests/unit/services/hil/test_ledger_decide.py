@@ -170,8 +170,7 @@ class TestDecideLedger:
 @pytest.mark.unit
 class TestDecisionSubmittedEvent:
     async def test_approve_emits_event_with_user_id(self) -> None:
-        """Same attribution rule as revoke: the decide path resolves its user
-        from the row, so the event must carry that id explicitly."""
+        """Same attribution rule as revoke: the decide path resolves its user from the row, so the event must carry that id explicitly."""
         from app.services.analytics_service import AnalyticsEvents
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import decide_ledger
@@ -213,8 +212,7 @@ class TestDecisionSubmittedEvent:
         assert capture.call_args.args[2]["decision"] == "denied"
 
     async def test_uncommitted_decisions_emit_nothing(self) -> None:
-        """Stale-v and lost-CAS returns decided nothing — an event would count
-        attempts as successes."""
+        """Stale-v and lost-CAS returns decided nothing — an event would count attempts as successes."""
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import decide_ledger
 
@@ -281,8 +279,7 @@ class TestConversationFlagSync:
         sync.assert_awaited_once_with("conv-1", "u1")
 
     async def test_refused_revoke_syncs_nothing(self) -> None:
-        """A revoke that changed nothing must not touch the flag — the row's
-        state (and any flag it implies) is exactly as it was."""
+        """A revoke that changed nothing must not touch the flag — the row's state (and any flag it implies) is exactly as it was."""
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import revoke_ticket
         from app.services.hil.resolution import ApprovalRequestForbiddenError
@@ -321,9 +318,7 @@ class TestDecideHardening:
         repo.transition.assert_not_awaited()
 
     async def test_deny_delivers_verdict_to_start_idle_run(self) -> None:
-        """A deny must reach the agent even when the conversation is idle: the
-        inbox wake alone is only read by a running run. Delivery steers or
-        starts one so the agent wraps up instead of going silent."""
+        """A deny must reach the agent even when the conversation is idle: the inbox wake alone is only read by a running run."""
         from app.services.hil.ledger_decide import decide_ledger
 
         row = _row()
@@ -374,8 +369,7 @@ class TestDecideHardening:
         wake.assert_awaited_once_with(row, "QUEUED", "waiting on ap_dep")
 
     async def test_reconcile_heals_stalled_only(self) -> None:
-        """Orphaned APPROVED rows are left alone: the ticket lives in model
-        context and only a redeem runs the envelope — never re-nudge."""
+        """Orphaned APPROVED rows are left alone: the ticket lives in model context and only a redeem runs the envelope — never re-nudge."""
         from app.models.hil_models import LedgerState as LS
         from app.services.hil.ledger_decide import reconcile_conversation_ledger
 
@@ -461,11 +455,7 @@ class TestRedeemExecution:
         assert "never auto-retried" in result.detail
 
     async def test_redeem_terminal_syncs_the_sidebar_flag(self) -> None:
-        """A settled ticket must not leave its sidebar row behind.
-
-        The flag follows the ledger: once the envelope ran (or failed), the
-        conversation holds nothing actionable, so the next reload hides it.
-        """
+        """A settled ticket must not leave its sidebar row behind."""
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import redeem_approved
 
@@ -507,15 +497,7 @@ class TestRedeemExecution:
 @pytest.mark.unit
 class TestRedeemIdentity:
     async def test_redeem_dispatches_with_user_identity_in_config(self) -> None:
-        """The approved envelope must run AS the row's user.
-
-        Tools are user-agnostic at resolve time; Composio/MCP wrappers resolve
-        per-user auth from config at invocation (configurable AND metadata —
-        different wrappers read different keys; the sandbox route already sets
-        both). Without metadata the invoke runs as Composio's "default" user,
-        finds no connected accounts, and lands UNKNOWN. Pinned from the
-        2026-09-18 production trace (ap_5ede5be5eb11).
-        """
+        """The approved envelope must run AS the row's user."""
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import redeem_approved
 
@@ -602,8 +584,7 @@ class TestRedeemTerminalStates:
         assert "bad date" in result.detail
 
     async def test_raised_execution_returns_unknown_with_cause(self) -> None:
-        """An infra raise must still tell the caller what happened: UNKNOWN
-        with the cause, never a silent row flip."""
+        """An infra raise must still tell the caller what happened: UNKNOWN with the cause, never a silent row flip."""
         from app.models.hil_models import LedgerState as LS
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import redeem_approved
@@ -658,8 +639,7 @@ class TestRevokeTicket:
         assert "Revoked 'ap_abc'" in text
 
     async def test_revoke_emits_event_with_user_id(self) -> None:
-        """The revoke event must attribute to the row's user — an anonymous
-        capture would strand it outside the user's funnel, silently."""
+        """The revoke event must attribute to the row's user — an anonymous capture would strand it outside the user's funnel, silently."""
         from app.services.analytics_service import AnalyticsEvents
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import revoke_ticket
@@ -765,8 +745,7 @@ ANY_TEXT = "provider timed out; may or may not have run — never auto-retried"
 @pytest.mark.unit
 class TestApproveDeliversToExecutor:
     async def test_approve_wakes_executor_with_redeem_task(self) -> None:
-        """Approval is permission, not execution: commit wakes the model with
-        the ticket instead of scheduling a backend run."""
+        """Approval is permission, not execution: commit wakes the model with the ticket instead of scheduling a backend run."""
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import decide_ledger
 
@@ -787,8 +766,7 @@ class TestApproveDeliversToExecutor:
 @pytest.mark.unit
 class TestApproveResumesBackgroundOwner:
     async def test_approve_with_todo_owner_resumes(self) -> None:
-        """A background todo parked on this approval re-enqueues; the tap
-        never waits on it and never fails for it."""
+        """A background todo parked on this approval re-enqueues; the tap never waits on it and never fails for it."""
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import decide_ledger
 
@@ -841,8 +819,7 @@ class TestApproveResumesBackgroundOwner:
         record.assert_awaited_once()
 
     async def test_redeem_runs_stored_envelope_and_returns_output(self) -> None:
-        """The model supplies no args: the ticket IS the approval_id and the
-        envelope runs verbatim."""
+        """The model supplies no args: the ticket IS the approval_id and the envelope runs verbatim."""
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import redeem_approved
 
@@ -995,8 +972,7 @@ class TestConditionalApproveBecomesDeny:
 @pytest.mark.unit
 class TestTicketCarriesAge:
     async def test_old_approve_commits_and_task_names_age(self) -> None:
-        """No server refuse: a 3-day-old approve commits like any other, and
-        the ticket wake carries the age so the model judges freshness."""
+        """No server refuse: a 3-day-old approve commits like any other, and the ticket wake carries the age so the model judges freshness."""
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import _ticket_task, decide_ledger
 
@@ -1148,9 +1124,8 @@ class TestRevokeSettlesSessionFrame:
 class TestRedeemSettlesTerminalFrame:
     async def test_executed_settles_card_as_executed(self) -> None:
         # Production ap_38b3/d74bc/1454/a16e: ledger UNKNOWN while cards stayed
-        # approved — redeem settled nothing. Terminal states must settle the
-        # frame (persist + broadcast + session) so the card collapses to the
-        # outcome chip instead of lingering as approved forever.
+        # approved — redeem settled nothing. Terminal states must settle the frame
+        # (persist + broadcast + session) so the card collapses to the outcome chip.
         from app.services.hil import ledger_decide
         from app.services.hil.ledger_decide import redeem_approved
 

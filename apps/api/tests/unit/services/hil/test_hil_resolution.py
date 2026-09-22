@@ -176,9 +176,7 @@ class TestTheResumeSlotIsExclusive:
 
 class TestResumeSeizesTheConversation:
     async def test_a_resume_takes_the_lock_its_paused_run_still_holds(self, resume: Any) -> None:
-        """The paused run holds this conversation's lock ON PURPOSE while it
-        waits on the user, so a resume must seize it. Acquiring — correct for
-        every other detached run — would make every approval a no-op."""
+        """The paused run holds this conversation's lock ON PURPOSE while it waits on the user, so a resume must seize it."""
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=make_record())),
             patch(f"{MODULE}.mark_decided", new=AsyncMock()),
@@ -213,10 +211,8 @@ class TestUnresumableRecords:
         self, resume: Any
     ) -> None:
         # The user answers a parked subagent's card BEFORE any resume context
-        # exists. With a live executor (busy lock held) the decision still lands
-        # durably — and must NOT dispatch or stamp a resume. Resuming the parked
-        # thread belongs to the HIL rework; until then the record waits out its
-        # TTL and the sweep expires it.
+        # exists. With a live executor the decision still lands durably and must NOT
+        # dispatch or stamp a resume — resuming the parked thread is the HIL rework.
         record = make_record(resume_item=None, subagent_thread_id="gmail_executor_conv-1")
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
@@ -670,9 +666,7 @@ class TestCancelledRunApprovals:
 
 
 class TestSubagentParksHaveNoResumeDriver:
-    """Until the HIL rework supplies one, subagent-parked approvals must neither
-    dispatch doomed resume runs nor retry forever — they wait out their TTL
-    while the expiry pass still closes them."""
+    """Until the HIL rework supplies one, subagent-parked approvals must neither dispatch doomed resume runs nor retry forever — they wait out their TTL while the expiry pass still closes them."""
 
     async def test_sweep_defers_subagent_thread_records_without_dispatch(self) -> None:
         record = make_record(

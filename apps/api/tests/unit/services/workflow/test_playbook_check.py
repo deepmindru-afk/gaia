@@ -445,11 +445,7 @@ def test_the_check_teaches_the_inline_ask_slot_and_no_ask_section():
 
 
 def test_the_check_shows_a_literal_example_of_the_shape_it_asks_for():
-    """Prose about the shape is what the schema already says; the example is
-    what shows flat activate+execute calls, a slot sitting inside an argument,
-    and the result_brief at the end. If it goes missing the model is back to
-    inferring the layout from a sentence, which is how the 63% rejection rate
-    happened."""
+    """Prose about the shape is what the schema already says; the example is what shows flat activate+execute calls, a slot sitting inside an argument, and the result_brief at the end."""
     assert "result_brief:" in PLAYBOOK_CHECK_BRIEF
     assert "GMAIL_FETCH_MESSAGES" in PLAYBOOK_CHECK_BRIEF
     assert "activate_integration" in PLAYBOOK_CHECK_BRIEF

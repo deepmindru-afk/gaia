@@ -1,5 +1,4 @@
-"""wrap_tool carries the provider's output schema into tool.metadata — the only
-feed for the Returns section of execute schema docs (schema_docs.py)."""
+"""wrap_tool carries the provider's output schema into tool.metadata — the only feed for the Returns section of execute schema docs (schema_docs.py)."""
 
 from typing import Any
 

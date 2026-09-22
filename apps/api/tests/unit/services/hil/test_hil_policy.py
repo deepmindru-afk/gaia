@@ -287,9 +287,8 @@ class TestHasPausingSibling:
 
     async def test_an_mcp_sibling_absent_from_the_registry_still_carries_its_hint(self) -> None:
         # The registry-only resolution this replaced could not see an MCP tool at
-        # all (they never enter the global registry), so the sibling classified
-        # from a bare name with an empty description — the exact double-run the
-        # test above guards against, reached by a path it could not cover.
+        # all (they never enter the global registry), so the sibling classified from
+        # a bare name with empty description — the double-run the test above guards.
         sibling = make_tool(
             name="notion_mcp_delete_page",
             description="Remove a page.",

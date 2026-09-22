@@ -70,8 +70,7 @@ class TestLedgerBranch:
         assert result.additional_kwargs[HIL_STATUS_KWARG] == "pending"
 
     async def test_background_pending_points_at_the_approvals_tab(self) -> None:
-        """A background run has no watcher: the card lives in the Approvals
-        tab, so the guidance must say so instead of "when this run ends"."""
+        """A background run has no watcher: the card lives in the Approvals tab, so the guidance must say so instead of "when this run ends"."""
         from app.services.hil import gate
 
         ledger = _ledger()
@@ -92,8 +91,7 @@ class TestLedgerBranch:
         assert "when this run ends" not in str(result.content)
 
     async def test_background_workflow_run_tags_the_ledger_owner(self) -> None:
-        """The resume driver needs to know WHAT parked: a background workflow
-        run stamps its owner on the row; nothing else does."""
+        """The resume driver needs to know WHAT parked: a background workflow run stamps its owner on the row; nothing else does."""
         from app.services.hil import gate
 
         ledger = _ledger()
@@ -112,8 +110,7 @@ class TestLedgerBranch:
         assert ledger.register.await_args.kwargs["owner_id"] == "wf-1"
 
     async def test_background_run_threads_the_owner_to_publish(self) -> None:
-        """Publish is what raises the sidebar flag — it must receive the same
-        owner the row carries, or background cards never surface."""
+        """Publish is what raises the sidebar flag — it must receive the same owner the row carries, or background cards never surface."""
         from app.services.hil import gate
 
         ledger = _ledger()
@@ -132,8 +129,7 @@ class TestLedgerBranch:
         assert pub.await_args.kwargs["owner_id"] == "todo-9"
 
     async def test_live_run_publishes_with_no_owner(self) -> None:
-        """Live runs resume through the inbox — an owner here would wrongly
-        surface (and re-enqueue) them."""
+        """Live runs resume through the inbox — an owner here would wrongly surface (and re-enqueue) them."""
         from app.services.hil import gate
 
         ledger = _ledger()
@@ -169,8 +165,7 @@ class TestLedgerBranch:
         assert ledger.register.await_args.kwargs["owner_id"] == "todo-9"
 
     async def test_live_run_with_ids_tags_no_owner(self) -> None:
-        """Owner tagging is resume-scoped: a live run resumes through the
-        executor inbox and must never re-enqueue, even carrying the keys."""
+        """Owner tagging is resume-scoped: a live run resumes through the executor inbox and must never re-enqueue, even carrying the keys."""
         from app.services.hil import gate
 
         ledger = _ledger()
@@ -310,9 +305,7 @@ class TestLedgerBranch:
 @pytest.mark.unit
 class TestLedgerAutoParity:
     async def test_auto_aligned_call_runs_without_card_or_row(self) -> None:
-        """Auto mode keeps its intent judge on the ledger path: an aligned
-        call clears to run with no card and no ledger row, exactly like the
-        barrier path. The flag flip must never change what gets asked."""
+        """Auto mode keeps its intent judge on the ledger path: an aligned call clears to run with no card and no ledger row, exactly like the barrier path."""
         from app.services.hil import gate
         from app.services.hil.intent import IntentDecision
 
@@ -379,9 +372,7 @@ def _strict_tool() -> StructuredTool:
 @pytest.mark.unit
 class TestLedgerBranchValidatesArgs:
     async def test_invalid_args_fail_before_any_card_exists(self) -> None:
-        """No card for malformed args: the user must never approve a call the
-        model will have to retry. Invalid args fail fast with the schema
-        error; nothing registers, nothing publishes, nothing interrupts."""
+        """No card for malformed args: the user must never approve a call the model will have to retry."""
         from app.services.hil import gate
 
         ledger = _ledger()
@@ -405,8 +396,7 @@ class TestLedgerBranchValidatesArgs:
         assert "no approval was requested" in str(result.content)
 
     async def test_unresolvable_tool_skips_validation(self) -> None:
-        """Resolution failure must not gate: execution validates
-        authoritatively, the gate only pre-filters what it can read."""
+        """Resolution failure must not gate: execution validates authoritatively, the gate only pre-filters what it can read."""
         from app.services.hil import gate
 
         ledger = _ledger()

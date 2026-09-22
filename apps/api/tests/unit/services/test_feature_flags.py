@@ -52,8 +52,7 @@ class TestLiveEvaluation:
     async def test_true_evaluates_every_call(
         self, mock_client: MagicMock, evaluated: MagicMock
     ) -> None:
-        """No cache: consecutive evaluations each hit PostHog so a dashboard
-        flip applies on the very next turn."""
+        """No cache: consecutive evaluations each hit PostHog so a dashboard flip applies on the very next turn."""
         mock_client.get_feature_flag.return_value = True
         assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
         assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
@@ -83,8 +82,7 @@ class TestEvaluationEvent:
     async def test_successful_evaluation_emits_nothing(
         self, mock_client: MagicMock, evaluated: MagicMock
     ) -> None:
-        """The SDK auto-emits $feature_flag_called on success; our event
-        covers only the paths it cannot see, so this must stay silent."""
+        """The SDK auto-emits $feature_flag_called on success; our event covers only the paths it cannot see, so this must stay silent."""
         mock_client.get_feature_flag.return_value = True
         assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
         evaluated.assert_not_called()
@@ -173,8 +171,7 @@ class TestFlags:
 
 
 class TestExplicitDefaultIsFallbackOnly:
-    """`default=` applies when PostHog cannot decide — it never overrides a
-    live evaluation."""
+    """default= applies when PostHog cannot decide — it never overrides a live evaluation."""
 
     async def test_live_true_beats_explicit_false(
         self, mock_client: MagicMock, evaluated: MagicMock
@@ -342,9 +339,7 @@ class TestTrackingIdentity:
 
 
 class TestLogContract:
-    """Log lines are the wide event's diagnostics: pin the exact call so a
-    dropped context field fails loudly instead of silently degrading the
-    telemetry the on-call reads."""
+    """Log lines are the wide event's diagnostics: pin the exact call so a dropped context field fails loudly instead of silently degrading the telemetry the on-call reads."""
 
     def test_unavailable_client_logs_debug(self) -> None:
         with (

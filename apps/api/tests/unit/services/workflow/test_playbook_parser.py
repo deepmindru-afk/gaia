@@ -82,7 +82,7 @@ def _registry() -> _FakeRegistry:
 class _SchemaTool(BaseTool):
     """A tool whose args are a raw JSON schema, the shape MCP tools arrive in.
 
-    Unions and empty arg sets cannot be expressed with ``@tool`` decorators, and
+    Unions and empty arg sets cannot be expressed with @tool decorators, and
     they are exactly the schemas a real integration hands the validator.
     """
 

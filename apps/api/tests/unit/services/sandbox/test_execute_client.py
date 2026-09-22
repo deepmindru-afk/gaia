@@ -95,9 +95,11 @@ class TestExecuteClient:
 
 
 def _load_client(tmp_path, ttl: int = 900):
-    """The real client, rendered by production's own substitution, with an
-    isolated tool-docs dir. Rendering it here instead would silently stop
-    testing the shipped client the next time a placeholder is added."""
+    """Render the real client through production's own substitution, with an isolated tool-docs dir.
+
+    Rendering it here instead would silently stop testing the shipped client the next time a
+    placeholder is added.
+    """
     source = execute_client.render_sandbox_client_source(
         tool_docs_dir=str(tmp_path), schema_cache_ttl_seconds=ttl
     )
@@ -141,19 +143,12 @@ class TestSandboxSchemaLookup:
 @pytest.mark.unit
 class TestClientTimeoutOutlivesTheHost:
     def test_the_client_waits_longer_than_the_host_bound(self, tmp_path) -> None:
-        """The host must always be the one that gives up.
-
-        The client used to wait 60s against a 120s host bound, so a slow
-        GMAIL_SEND_EMAIL raised socket.timeout inside the script AFTER the host
-        had already sent it — and the docs tell the model to fix `data` and
-        rerun, so the send happened twice. There is no idempotency key here.
-        """
+        """The host must always be the one that gives up."""
         gaia = _load_client(tmp_path)
         assert gaia._REQUEST_TIMEOUT_SECONDS > TOOL_EXECUTION_TIMEOUT_SECONDS
 
     def test_the_shipped_client_carries_the_same_bound(self) -> None:
-        """The seeded source is what actually runs in the sandbox — an
-        unsubstituted placeholder there is a NameError on the first tool call."""
+        """The seeded source is what actually runs in the sandbox — an unsubstituted placeholder there is a NameError on the first tool call."""
         expected = TOOL_EXECUTION_TIMEOUT_SECONDS + SANDBOX_EXECUTE_CLIENT_TIMEOUT_BUFFER_SECONDS
         assert f"_REQUEST_TIMEOUT_SECONDS = {expected}" in GAIA_SANDBOX_CLIENT_SOURCE
         assert re.search(r"__[A-Z_]+__", GAIA_SANDBOX_CLIENT_SOURCE) is None

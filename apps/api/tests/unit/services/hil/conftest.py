@@ -35,12 +35,12 @@ def make_tool(
 
 
 def resolver_returning(*tools: BaseTool) -> AsyncMock:
-    """The resolver ``policy._real_tool`` reads a call's real tool through.
+    """Read a call's real tool through the resolver policy._real_tool.
 
-    Stands in for ``execute.resolver.resolve_tool``, which reaches the registry,
+    Stands in for execute.resolver.resolve_tool, which reaches the registry,
     the user's MCP client AND the Composio catalog. Tests must stub THIS, not
     just the registry: an MCP tool is never in the registry, and resolving it
-    from there alone is what dropped its ``destructiveHint`` at the gate.
+    from there alone is what dropped its destructiveHint at the gate.
     """
 
     async def _resolve(_user_id: str, name: str) -> ResolvedTool | None:

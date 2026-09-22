@@ -133,10 +133,7 @@ class TestFinishedSubagentIsNotDrivenTwice:
 
 
 class TestExemptToolsAreNeverGated:
-    """The join tool is gone, but the regression coverage stays: HIL_EXEMPT_TOOLS
-    must keep covering every bound orchestration tool, or the gate sends one to
-    the LLM destructive classifier, which fails CLOSED.
-    """
+    """The join tool is gone, but the regression coverage stays: HIL_EXEMPT_TOOLS must keep covering every bound orchestration tool, or the gate sends one to the LLM destructive classifier, which fails CLOSED."""
 
     def test_the_join_tool_is_exempt(self) -> None:
         assert {"handoff", "spawn_subagent"} <= HIL_EXEMPT_TOOLS
@@ -163,9 +160,10 @@ class TestExemptToolsAreNeverGated:
 
 
 class TestExemptSiblingsThatPauseSuppressAutoApproval:
-    """Bug: the sibling guard skipped every exempt tool, but ``handoff`` is
-    exempt AND can pause. A gated tool sharing a message with
-    one of them auto-ran, then ran a SECOND time when the pause re-ran the whole node.
+    """Bug: the sibling guard skipped every exempt tool, but handoff is exempt AND can pause.
+
+    A gated tool sharing a message with one of them auto-ran, then ran a SECOND time when the pause
+    re-ran the whole node.
     """
 
     @pytest.fixture(autouse=True)

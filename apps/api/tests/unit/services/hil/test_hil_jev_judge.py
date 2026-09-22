@@ -431,8 +431,7 @@ class TestWire:
         assert posted["questions"]["decision"]["type"] == "choice"
 
     async def test_enrichment_rides_only_when_it_exists(self) -> None:
-        """Empty evidence reads as missing evidence and costs confidence, so an
-        old-shape call posts the old-shape state — and a rich call carries it all."""
+        """Empty evidence reads as missing evidence and costs confidence, so an old-shape call posts the old-shape state — and a rich call carries it all."""
         from app.services.hil.utils import PriorCall
 
         client = _client(_answer("unclear", 0.5))

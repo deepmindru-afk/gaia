@@ -82,8 +82,10 @@ class TestLedgerPublish:
 
 @pytest.mark.unit
 class TestLedgerPublishHold:
-    """Live runs hold PENDING cards until the run ends; a mid-run revoke is
-    never shown. Background runs publish immediately — nobody is watching."""
+    """Live runs hold PENDING cards until the run ends; a mid-run revoke is never shown.
+
+    Background runs publish immediately — nobody is watching.
+    """
 
     def _session(self, stream_id: str):
         from app.agents.core.background.session import RunKind, create_session
@@ -130,8 +132,7 @@ class TestLedgerPublishHold:
             self._teardown(stream_id)
 
     async def test_live_run_without_session_publishes_immediately(self) -> None:
-        """No session means no drain will ever persist the frame — holding
-        would hide the card until a drain that never comes."""
+        """No session means no drain will ever persist the frame — holding would hide the card until a drain that never comes."""
         from app.services.hil.bridge import publish_ledger_request
         from app.services.hil.utils import GatedCall
 
@@ -155,8 +156,7 @@ class TestLedgerPublishHold:
         notify.assert_called_once()
 
     async def test_queued_session_publishes_immediately(self) -> None:
-        """Detached queued runs have a session but no watcher — holding would
-        park the card on an unwatched stream."""
+        """Detached queued runs have a session but no watcher — holding would park the card on an unwatched stream."""
         from app.agents.core.background.session import RunKind, create_session
         from app.services.hil.bridge import publish_ledger_request
         from app.services.hil.utils import GatedCall
@@ -215,8 +215,7 @@ class TestLedgerPublishHold:
             self._teardown(stream_id)
 
     async def test_revoke_drops_held_frame_instead_of_tombstoning(self) -> None:
-        """A revoke before the run ends removes the unshown frame: the drain
-        persists nothing and the user never knows the card existed."""
+        """A revoke before the run ends removes the unshown frame: the drain persists nothing and the user never knows the card existed."""
         from app.services.hil import ledger_decide
         from app.services.hil.bridge import publish_ledger_request
         from app.services.hil.utils import GatedCall
@@ -257,8 +256,7 @@ class TestLedgerPublishHold:
 
 @pytest.mark.unit
 class TestFlushHeldCards:
-    """Run end pushes held PENDING cards live — without this the open client
-    never renders them until a full refresh re-fetches messages."""
+    """Run end pushes held PENDING cards live — without this the open client never renders them until a full refresh re-fetches messages."""
 
     def _held_frame(self, approval_id: str = "ap_hold") -> dict[str, object]:
         return {

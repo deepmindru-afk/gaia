@@ -497,8 +497,7 @@ class TestSaveConversationAsync:
         assert request_arg.conversation_id == "specific_conv_id"
 
     async def test_react_ack_is_stamped_emoji_ack_with_target(self, test_user, basic_body) -> None:
-        """A comms REACT turn saves the bare emoji with kind + target so every
-        surface (reload, sync, second device) renders it as a reaction badge."""
+        """A comms REACT turn saves the bare emoji with kind + target so every surface (reload, sync, second device) renders it as a reaction badge."""
         mock_update = AsyncMock()
         with (
             patch("app.services.chat.persistence.update_messages", new=mock_update),

@@ -130,14 +130,7 @@ class TestPolicyUnwrapsExecute:
         assert description_arg == "Deletes an email permanently."
 
     async def test_mcp_destructive_hint_survives_the_proxy(self) -> None:
-        """An MCP tool run through execute keeps the hint its own gate would use.
-
-        MCP tools never enter the global registry, so resolving the unwrapped
-        name from the registry alone returned nothing: the gate classified from
-        a bare name with an empty description, and the LLM's guess is persisted
-        AND written to the registry's destructive flag — one wrong "safe" verdict
-        un-gates the tool for good.
-        """
+        """An MCP tool run through execute keeps the hint its own gate would use."""
         request = execute_request("mcp_delete_workspace", {"id": "w1"})
         mcp_tool = make_tool(
             name="mcp_delete_workspace",

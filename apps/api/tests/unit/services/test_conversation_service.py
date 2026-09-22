@@ -473,8 +473,7 @@ class TestBatchSyncConversations:
         assert "user_id" not in serialized and "_id" not in serialized
 
     async def test_flagged_row_reaches_the_client(self, mock_repo, test_user):
-        """The sidebar dot reads batch-sync rows: a dropped flag here is a
-        missing dot no frontend mapping can recover."""
+        """The sidebar dot reads batch-sync rows: a dropped flag here is a missing dot no frontend mapping can recover."""
         mock_repo.find_updated_since = AsyncMock(return_value=[_document(has_live_approval=True)])
         with patch.object(
             conversation_service.stream_manager,

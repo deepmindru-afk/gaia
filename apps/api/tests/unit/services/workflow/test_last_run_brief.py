@@ -83,9 +83,7 @@ class TestLastRunBriefFailsOpen:
 
 @pytest.mark.unit
 class TestTheFireSignalsSayExactlyWhatHappened:
-    """The fire exceptions ARE user- and log-facing copy: the timed-out text is
-    delivered to the user as the run summary, and the overlapped string is what
-    the worker logs as the reason a fire never ran."""
+    """The fire exceptions ARE user- and log-facing copy: the timed-out text is delivered to the user as the run summary, and the overlapped string is what the worker logs as the reason a fire never ran."""
 
     def test_an_overlapped_fire_names_its_holder(self) -> None:
         overlapped = WorkflowFireOverlapped(user_id="u1", conversation_id="c1", holder="run_3")

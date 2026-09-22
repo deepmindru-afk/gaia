@@ -96,11 +96,9 @@ class TestRecordObservedShape:
             "4155551234567",
             "a3f1c2d4-9b8e-4f01-aaaa-bbbbccccdddd",
             "x" * 70,
-            # A user-authored label. The denylist this replaced matched only
-            # emails, digit runs, UUIDs and overlong strings, so a Notion
-            # property or a Sheets tab name became a schema property in the
-            # tool's GLOBAL record — rendered back to every other user of that
-            # tool through get_tool_schema.
+            # A user-authored label. The denylist this replaced matched only emails,
+            # digit runs, UUIDs and overlong strings, so a Notion property or Sheets
+            # tab name became a GLOBAL schema property rendered back to every user.
             "Sarah Chen - comp review",
             "Q3 spend / EMEA",
             "客戶名單",
@@ -120,10 +118,7 @@ class TestRecordObservedShape:
         assert per_user["additionalProperties"]["properties"]["n"] == {"type": "integer"}
 
     async def test_a_record_whose_fields_share_a_shape_keeps_its_field_names(self) -> None:
-        """Value homogeneity is NOT a map signal: {sender, recipient} and
-        {billing_address, shipping_address} are records whose fields share a
-        shape, and collapsing them would discard real field names permanently.
-        A small dict of identifier-shaped keys is read as a record."""
+        """Value homogeneity is NOT a map signal: {sender, recipient} and {billing_address, shipping_address} are records whose fields share a shape, and collapsing them would discard real field names permanently."""
         repo = _repo()
         response = {
             "sender": {"name": "a", "email": "a@x.com"},
@@ -136,8 +131,7 @@ class TestRecordObservedShape:
         assert "additionalProperties" not in schema
 
     async def test_map_values_across_entries_union_optional_fields(self) -> None:
-        """A map's value shape is sampled across entries, not read off the first:
-        an optional field or a differing type in a later entry must survive."""
+        """A map's value shape is sampled across entries, not read off the first: an optional field or a differing type in a later entry must survive."""
         repo = _repo()
         per_user = {
             "alice@example.com": {"name": "A"},
@@ -152,9 +146,7 @@ class TestRecordObservedShape:
         assert value_shape.get("required", []) == ["name"]
 
     async def test_a_stored_map_shape_round_trips_through_the_next_merge(self) -> None:
-        """AdditionalProperties must survive re-merging: the stored form re-enters
-        genson's dialect, unions with the new observation's value shape, and
-        comes back out as additionalProperties — never as literal properties."""
+        """AdditionalProperties must survive re-merging: the stored form re-enters genson's dialect, unions with the new observation's value shape, and comes back out as additionalProperties — never as literal properties."""
         stored = {
             "type": "object",
             "properties": {
@@ -186,8 +178,7 @@ class TestRecordObservedShape:
     async def test_a_real_provider_field_name_still_becomes_a_property(
         self, field_name: str
     ) -> None:
-        """The allowlist must not collapse the shapes the feature exists to learn:
-        provider field names are identifier-shaped in every casing convention."""
+        """The allowlist must not collapse the shapes the feature exists to learn: provider field names are identifier-shaped in every casing convention."""
         repo = _repo()
         with patch(REPO, repo):
             await record_observed_shape("T", {"record": {field_name: "v"}}, scope=SCOPE)
