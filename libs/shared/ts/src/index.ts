@@ -381,8 +381,10 @@ export {
 } from "./types";
 export type {
   ApprovalSettlement,
+  ArgsPreviewRow,
   ContentSegment,
   DueChipTone,
+  FlattenedArgs,
   IntegrationConnectionState,
   JwtPayload,
   OpenUIActionEventLike,
@@ -405,6 +407,7 @@ export {
   DEFAULT_SIMILARITY_CONFIG,
   dispatchOpenUIAction,
   extractUrls,
+  flattenArgsPreview,
   foldReactionAcks,
   formatCompactNumber,
   formatCurrency,

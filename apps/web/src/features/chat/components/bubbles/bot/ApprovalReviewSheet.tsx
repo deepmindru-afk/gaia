@@ -17,10 +17,10 @@ import type {
   BatchDecisionOutcome,
 } from "@shared/chat";
 import { formatApprovalAge } from "@shared/chat";
+import { flattenArgsPreview } from "@shared/utils";
 import { useState } from "react";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
-import { flattenArgsPreview } from "@/features/chat/utils/argsPreview";
 import {
   BATCH_OUTCOME_REASON,
   resolveBatchOutcomeStatus,

@@ -6,6 +6,8 @@ export {
   statusAfterDecision,
   TERMINAL_APPROVAL_STATUSES,
 } from "./approvalSettle";
+export type { ArgsPreviewRow, FlattenedArgs } from "./argsPreview";
+export { flattenArgsPreview } from "./argsPreview";
 export type { JwtPayload, TokenStorage } from "./auth";
 export { isTokenExpired, parseJwt, shouldRefreshToken } from "./auth";
 export type { DueChipTone } from "./dateUtils";

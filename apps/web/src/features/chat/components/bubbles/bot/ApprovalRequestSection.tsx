@@ -14,12 +14,11 @@ import type {
   ApprovalStatus,
 } from "@shared/chat";
 import { formatApprovalAge, RECONFIRM_AGE_SECONDS } from "@shared/chat";
-import { statusAfterDecision } from "@shared/utils";
+import { flattenArgsPreview, statusAfterDecision } from "@shared/utils";
 import { useMemo, useRef, useState } from "react";
 import { ShieldAlertIcon } from "@/components/shared/icons";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
-import { flattenArgsPreview } from "@/features/chat/utils/argsPreview";
 import { formatToolName } from "@/features/chat/utils/chatUtils";
 import { toast } from "@/lib/toast";
 
