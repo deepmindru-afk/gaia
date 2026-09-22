@@ -3,20 +3,16 @@
 Bash-driven scripting has no approval gate by design, so the token's security
 is layered instead of gated:
 
-- **Per-invocation mint, per-process delivery.** Every bash command gets its
-  own token via ``commands.run(envs=...)`` — envd sets env on that process
-  only, and the hardened template (non-dumpable daemons, hidepid /proc) keeps
-  other processes from reading it. Nothing is written to disk or the sandbox's
-  global env.
-- **TTL bound to the command's own timeout** (plus a small buffer), so a
-  leaked token is dead within minutes.
-- **Server-side blast radius** — per-token call budget + per-minute rate limit
-  and an audit entry per call, enforced on the callback route.
-- **Kill switch** — unsetting SANDBOX_EXECUTE_TOKEN_SECRET invalidates every
-  outstanding token instantly.
+- Per-invocation mint, per-process delivery: each command gets its own token via
+  commands.run(envs=...), set on that process only; nothing hits disk.
+- TTL bound to the command's own timeout (plus a buffer), so a leaked token is
+  dead within minutes.
+- Server-side blast radius: per-token call budget, per-minute rate limit, and an
+  audit entry per call, enforced on the callback route.
+- Kill switch: unsetting SANDBOX_EXECUTE_TOKEN_SECRET invalidates every token.
 
-The residual, accepted risk: for the token's lifetime, code running in the
-user's sandbox can call the user's tools without a per-action approval.
+Residual accepted risk: for the token's lifetime, code in the user's sandbox can
+call the user's tools without a per-action approval.
 """
 
 from langchain_core.runnables import RunnableConfig
@@ -98,12 +94,11 @@ def schema(tool_name: str) -> dict:
 
 
 def render_sandbox_client_source(*, tool_docs_dir: str, schema_cache_ttl_seconds: int) -> str:
-    """The client source with its host-side constants substituted in.
+    """Render the client source with its host-side constants substituted in.
 
     The ONE place the placeholders are filled. A second copy of this list (the
-    test's, which built its own source to point the cache at a tmp dir) went
-    stale the moment a placeholder was added, and the client it exercised was
-    no longer the one shipped.
+    test's) went stale the moment a placeholder was added, so the client it
+    exercised was no longer the one shipped.
     """
     return (
         _CLIENT_TEMPLATE.replace("__TOOL_DOCS_DIR__", tool_docs_dir)
@@ -139,15 +134,12 @@ def mint_execute_env(
     command_timeout_seconds: int,
     scoped_tool_names: list[str] | None,
 ) -> dict[str, str]:
-    """The env one bash command runs with so its scripts can call GAIA tools.
+    """Build the env one bash command runs with so its scripts can call GAIA tools.
 
-    ``run_id`` is the bash run's own id — the route's budget and audit trail
-    correlate to the exact command that made the calls.
-
-    ``scoped_tool_names`` is the calling agent's tool space (``None`` for the
-    executor, whose space is the registry). It rides in the token because the
-    route is the only other place a proxied tool runs, and a subagent's
-    confinement has to hold there too.
+    run_id is the bash run's own id, correlating the route's budget and audit
+    trail to the exact command. scoped_tool_names is the calling agent's tool
+    space (None for the executor); it rides in the token so a subagent's
+    confinement holds on the route, the only other place a proxied tool runs.
     """
     token = mint_execute_token(
         user_id,

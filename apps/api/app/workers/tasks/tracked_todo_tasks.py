@@ -578,7 +578,6 @@ async def resume_tracked_todo(
         user_data, _ = await _load_user_with_tz(user_id)
         await enforce_daily_cost_budget(user_id, feature_key=TRIGGER_TODO_FEATURE_KEY)
 
-        short_conv = conversation_id[:8]
         start_iso = datetime.now(UTC).isoformat()
         await tracked_todo_service.append_activity_entry(
             todo_id=todo_id,

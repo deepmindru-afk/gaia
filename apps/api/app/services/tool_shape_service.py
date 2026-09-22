@@ -1,30 +1,18 @@
 """Learn tool output shapes from real dispatch results.
 
-Every proxied tool response funnels through ``dispatch_tool``, so the observed
-shape converges on ground truth with use — including for MCP and Composio tools
-whose providers document no output schema at all. Only structure is learned:
-keys, types, array-ness. Values never leave this module; arrays are sampled.
+Every proxied tool response funnels through dispatch_tool, so the observed shape
+converges on ground truth with use — including MCP and Composio tools that
+document no output schema. Only structure is learned (keys, types, array-ness);
+values never leave this module and arrays are sampled.
 
-The one classification that matters is record vs map. A record's keys ARE its
-schema; a map's keys are data, and modeling them as properties is a wrong
-schema — worse at the shared scopes, where one user's data keys would merge
-into the record every other user reads. A dict is read as a map when it is wide
-(more keys than a record plausibly has) or when a key is not identifier-shaped
-(spaces, punctuation, non-ASCII, an id/UUID). Map values are sampled and stored
-as ``additionalProperties`` — the keys themselves are never stored.
-
-What is NOT a map signal is value homogeneity: ``{sender, recipient}`` and
-``{billing_address, shipping_address}`` are records whose fields share a shape,
-and collapsing them would discard real field names permanently. So a small dict
-of identifier-shaped keys is read as a record even when its values repeat —
-the irreducible ambiguity resolved toward the reading that never destroys a
-genuine record.
-
-Records are scoped (``ResolvedTool.shape_scope``): "global" for catalog tools,
-per-integration for MCP, so a private server's shapes stay with its users.
-
-Concurrent read-merge-write can drop one observation to a race; the schema
-converges over subsequent calls, so no lock is warranted.
+The classification that matters is record vs map: a record's keys ARE its schema,
+a map's keys are data. A dict is a map when it is wide or a key is not identifier-
+shaped; its values store as additionalProperties, its keys never store. Value
+homogeneity is NOT a map signal — a small dict of identifier-shaped keys stays a
+record even when values repeat, so a genuine record is never destroyed. Records
+are scoped (ResolvedTool.shape_scope): global for catalog, per-integration for
+MCP. Concurrent read-merge-write may drop one observation; the schema converges
+over later calls, so no lock is warranted.
 """
 
 import json
@@ -42,19 +30,16 @@ from app.constants.log_tags import LogTag
 from app.db.repositories.tool_shapes import tool_shapes_repository
 from shared.py.wide_events import log
 
-# What may become a schema property name: an ALLOWLIST, because the denylist it
-# replaced passed everything it had not thought of. Provider field names are
-# identifier-shaped (snake/camel/kebab/dotted); user-authored labels carry
-# spaces, punctuation or non-ASCII and are not.
+# What may become a schema property name: an ALLOWLIST (the denylist it replaced
+# passed everything unthought-of). Provider field names are identifier-shaped;
+# user-authored labels carry spaces, punctuation or non-ASCII and are not.
 _FIELD_NAME_KEY = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$.\-]{0,63}$")
 # Identifier-shaped but still data: message/phone ids, hex UUIDs.
 _ID_LIKE_KEY = re.compile(r"\d{6,}|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}|^[0-9a-fA-F]{32}$")
 
-# How a map rides through genson, which only speaks ``properties``: its sampled
-# values become an array under this one key so genson unions their shapes
-# (optional fields and mixed types included), and the stored/rendered form
-# rewrites that to ``additionalProperties``. Collision-free by construction —
-# ``*`` fails the field-name allowlist, so no observed key can become it.
+# How a map rides through genson (which only speaks properties): its sampled
+# values become an array under this key so genson unions their shapes, later
+# rewritten to additionalProperties. Collision-free: * fails the allowlist.
 _MAP_KEY_SENTINEL = "*"
 
 
@@ -85,7 +70,7 @@ async def record_observed_shape(tool_name: str, output: object, *, scope: str) -
 
 
 def _sample(node: object) -> object:
-    """A structure-preserving skeleton of ``node`` for schema inference."""
+    """Return a structure-preserving skeleton of node for schema inference."""
     if isinstance(node, list):
         return [_sample(item) for item in node[:TOOL_SHAPE_ARRAY_SAMPLE]]
     if isinstance(node, dict):
@@ -108,12 +93,11 @@ def _sample_dict(node: dict[object, object]) -> dict[str, object]:
 
 
 def _sentinel_to_additional(node: object) -> object:
-    """The stored/rendered form: the sentinel property becomes ``additionalProperties``.
+    """Rewrite the sentinel property into additionalProperties for storage.
 
-    The sentinel is encoded as an array of sampled values (see ``_sample_dict``),
-    so its ``items`` schema is the map's value shape. Named properties learned
-    from other observations of the same node survive beside it — valid JSON
-    Schema, and the honest reading of mixed evidence.
+    The sentinel is an array of sampled values (see _sample_dict), so its items
+    schema is the map's value shape. Named properties learned from other
+    observations survive beside it — valid JSON Schema, the honest reading.
     """
     if isinstance(node, list):
         return [_sentinel_to_additional(item) for item in node]
@@ -137,8 +121,7 @@ def _sentinel_to_additional(node: object) -> object:
 
 
 def _additional_to_sentinel(node: object) -> object:
-    """The inverse rewrite, so a stored schema re-enters genson's dialect as the
-    array-of-values the sentinel encodes."""
+    """Rewrite additionalProperties back to the sentinel array-of-values genson expects."""
     if isinstance(node, list):
         return [_additional_to_sentinel(item) for item in node]
     if not isinstance(node, dict):

@@ -47,9 +47,9 @@ class GatedCall:
 class PriorCall:
     """A tool call this run already made — an action, never a narration.
 
-    ``output`` is the call's truncated result: ids minted mid-run (a draft id,
-    a created event id) live in outputs, never in args, so without it an id
-    that the run itself created reads as "from nowhere".
+    output is the call's truncated result: ids minted mid-run (a draft id, a
+    created event id) live in outputs, never in args, so without it an id the run
+    itself created reads as "from nowhere".
     """
 
     name: str
@@ -61,15 +61,14 @@ class PriorCall:
 
 
 def unpack_tool_call(request: ToolCallRequest) -> GatedCall:
-    """The pending call, whether the framework handed it over as a dict or an object.
+    """Read the pending call, whether the framework handed it over as a dict or object.
 
-    Execute-proxied calls are unwrapped to their real tool; ``id`` stays the
-    proxy call's id, since that is the tool_call a refusal must answer.
+    Execute-proxied calls are unwrapped to their real tool; id stays the proxy
+    call's id, since that is the tool_call a refusal must answer.
     """
-    # ToolCallRequest.tool_call is typed ToolCall (a dict), but dataclass fields
-    # aren't runtime-validated — some framework versions/call paths have handed
-    # this over as an object with .name/.id/.args instead. Widen to object so
-    # that branch stays a real, reachable fallback rather than dead code.
+    # tool_call is typed ToolCall (a dict), but dataclass fields aren't runtime-
+    # validated and some call paths hand over an object with .name/.id/.args.
+    # Widen to object so that branch stays a reachable fallback, not dead code.
     call = cast(object, request.tool_call)
     if isinstance(call, dict):
         name, args = unwrap_execute_call(call.get("name", ""), call.get("args", {}) or {})
@@ -110,11 +109,10 @@ def current_tool_calls(state: object) -> list[dict[str, Any]]:
 def prior_tool_calls(state: object, exclude_id: str) -> list[PriorCall]:
     """Return the tool calls this run already made, oldest first — names, args, outputs.
 
-    AIMessage.content (the assistant's prose) is deliberately never read, since it is
-    the one channel through which the agent could argue with its own gate. exclude_id
-    drops the pending call itself; matched on id, not name, since an earlier call of
-    the *same* tool is real prior context. Outputs are matched by tool_call_id and
-    clipped small: they carry minted ids, not authority.
+    AIMessage.content (assistant prose) is never read: it is the one channel the
+    agent could use to argue with its own gate. exclude_id drops the pending call,
+    matched on id not name since an earlier call of the same tool is real context.
+    Outputs are matched by tool_call_id and clipped: minted ids, not authority.
     """
     outputs = _tool_outputs_by_call_id(state)
     calls = [
@@ -151,7 +149,7 @@ def _tool_outputs_by_call_id(state: object) -> dict[str, str]:
 
 
 def recent_assistant_turns(state: object) -> list[str]:
-    """The run's latest assistant messages, oldest first — provenance, never authority.
+    """Return the run's latest assistant messages, oldest first; provenance, not authority.
 
     What the agent already told the user ("your draft to X is ready") is the
     context a bare user shorthand ("send it") refers to. Bounded and clipped;
@@ -167,12 +165,12 @@ def recent_assistant_turns(state: object) -> list[str]:
     return turns[-HIL_JUDGE_MAX_ASSISTANT_TURNS:]
 
 
-def _is_ai_message(message: Any) -> bool:
+def _is_ai_message(message: object) -> bool:
     """Whether a state message is the assistant's own (not human, tool, or system).
 
-    LangChain shapes vary (objects with ``type``, dicts with ``type``/``role``),
-    so accept the assistant spellings and reject everything else — a human turn
-    duplicating user_messages is waste, a tool result at this budget is laundering.
+    LangChain shapes vary (objects with type, dicts with type/role), so accept the
+    assistant spellings and reject everything else — a human turn duplicating
+    user_messages is waste, a tool result at this budget is laundering.
     """
     if isinstance(message, dict):
         kind = str(message.get("type") or message.get("role") or "").lower()
@@ -183,7 +181,7 @@ def _is_ai_message(message: Any) -> bool:
     return type(message).__name__ in ("AIMessage",)
 
 
-def _message_text(message: Any) -> str:
+def _message_text(message: object) -> str:
     """Best-effort text of one state message (AI messages only carry content here)."""
     if isinstance(message, dict):
         if message.get("tool_call_id"):
@@ -244,11 +242,11 @@ def render_assistant_turns(turns: list[str]) -> str:
 
 
 def tool_schema(tool: BaseTool | None) -> dict[str, Any] | None:
-    """The pending tool's argument contract, or None when it cannot be read.
+    """Read the pending tool's argument contract, or None when it cannot be read.
 
-    An opaque id stops being opaque once the judge sees what it is *for*
-    (``draft_id``: "ID of a previously created draft"). Best-effort like every
-    other read here: a missing schema degrades to today's description-only view.
+    An opaque id stops being opaque once the judge sees what it is for (draft_id:
+    "ID of a previously created draft"). Best-effort: a missing schema degrades to
+    today's description-only view.
     """
     if tool is None:
         return None
