@@ -622,6 +622,12 @@ class JevChatModel:
         """Ask the agent that started the run how to proceed, or end the run failed when nobody can answer."""
         action = BrowserHandoffAction.REQUEST_AGENT_GUIDANCE
         if action not in registered or not await self._may_ask_for_guidance():
+            unopened = self._page_that_never_opened(observation)
+            if unopened:
+                # A site that never loaded is what blocked the run; "no way
+                # forward on this page" would describe a blank tab instead.
+                text = f"I couldn't open {unopened}: the page never loaded."
+                return {"done": {"text": text, "success": False}}, text
             if self._findings:
                 # Parts already done produced findings; a blocked run reports them
                 # and says what it could not finish, rather than nothing at all.
@@ -1097,6 +1103,19 @@ class JevChatModel:
 
     def _latest_note(self) -> str | None:
         return next((h.note for h in reversed(self._history) if h.note), None)
+
+    def _page_that_never_opened(self, observation: JevObservation) -> str | None:
+        """Return the URL of the last navigate that left the run on a blank tab, if it is still there."""
+        if not observation.url.startswith("about:"):
+            return None
+        return next(
+            (
+                h.text
+                for h in reversed(self._history)
+                if h.kind == "navigate" and h.page_changed is False
+            ),
+            None,
+        )
 
     def _page_stalled(self) -> bool:
         return _page_stalled_in(self._history, self._stall_handled_at)

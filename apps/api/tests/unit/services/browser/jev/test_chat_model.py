@@ -1248,3 +1248,19 @@ async def test_waits_in_a_row_on_one_page_grow_longer(flights_state) -> None:
     ]
 
     assert seconds == [4, 7, 11, 11]
+
+
+async def test_a_site_that_never_loaded_is_named_when_the_run_is_blocked(flights_state) -> None:
+    flights_state.url = "about:blank"
+    model, _, _, _ = _model(
+        flights_state,
+        [("NAVIGATE", None), ("BLOCKED", None)],
+        [{"text": "https://nowhere.invalid/"}],
+    )
+    await model.ainvoke([], _agent_output())
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion)["done"]["text"] == (
+        "I couldn't open https://nowhere.invalid/: the page never loaded."
+    )
