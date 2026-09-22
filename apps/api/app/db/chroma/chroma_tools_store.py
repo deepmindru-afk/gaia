@@ -280,7 +280,8 @@ def _compute_tool_diff(
 
 def _tool_name_from_key(composite_key: str) -> str:
     """Return the tool name half of a "namespace::tool_name" composite key."""
-    return composite_key.split("::", 1)[-1] if "::" in composite_key else composite_key
+    _, separator, tool_name = composite_key.partition("::")
+    return tool_name if separator else composite_key
 
 
 def _put_value(tool_data: IndexedToolEntry) -> dict[str, str]:

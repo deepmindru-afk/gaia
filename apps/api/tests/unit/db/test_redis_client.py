@@ -9,6 +9,7 @@ Covers:
 - Edge cases: Redis unavailable, exceptions, TTL handling
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pydantic import BaseModel, ValidationError
@@ -75,6 +76,16 @@ class TestSerializeAny:
         assert isinstance(result, str)
         assert "Jane" in result
         assert "jane@test.com" in result
+
+    def test_serializing_against_a_model_writes_only_that_models_fields(self) -> None:
+        class SampleAdmin(SampleUser):
+            permissions: list[str]
+
+        admin = SampleAdmin(name="Jane", email="jane@test.com", age=25, permissions=["all"])
+
+        result = serialize_any(admin, model=SampleUser)
+
+        assert json.loads(result) == {"name": "Jane", "email": "jane@test.com", "age": 25}
 
     def test_serialize_string(self) -> None:
         """Should serialize a plain string."""
@@ -371,6 +382,15 @@ class TestRedisCacheSet:
         cache.redis.setex.assert_awaited_once()
         stored_json = cache.redis.setex.call_args[0][2]
         assert "Jane" in stored_json
+
+    async def test_a_value_set_without_a_ttl_lives_an_hour(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.default_ttl = 60
+
+        await cache.set("key", "value")
+
+        assert cache.redis.setex.call_args[0][1] == 3600
 
     async def test_set_uses_default_ttl_when_zero(self) -> None:
         """When ttl is 0 (falsy), should use default_ttl."""

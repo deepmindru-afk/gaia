@@ -160,6 +160,28 @@ class TestGetSubagentTools:
         assert entry["name"] == "Notes"
         assert entry["integration_id"] == "notes"
 
+    async def test_a_provider_integration_does_not_stop_later_mcp_ones_indexing(self):
+        cfg = SubAgentConfig(
+            has_subagent=True,
+            agent_name="agent",
+            tool_space="space",
+            domain="d",
+            use_cases="u",
+            capabilities="c",
+            system_prompt="p",
+        )
+        provider = Subagent(
+            id="gmail", name="Gmail", provider="gmail", managed_by="composio", config=cfg
+        )
+        mcp = Subagent(id="notes", name="Notes", provider="notes", managed_by="mcp", config=cfg)
+        with patch(
+            "app.db.chroma.chroma_tools_store.all_subagents",
+            return_value=(provider, mcp),
+        ):
+            result = _get_subagent_tools()
+
+        assert list(result) == ["subagents::subagent:notes"]
+
     async def test_skips_when_registry_empty(self):
         # Registry never surfaces entries without a config; an empty registry
         # produces an empty result.
@@ -272,6 +294,13 @@ class TestGetExistingToolsFromChroma:
         }
         result = await _get_existing_tools_from_chroma(collection, None)
         assert "ns::tool" in result
+
+    async def test_an_entry_without_a_stored_hash_reads_as_an_empty_hash(self):
+        """An empty hash never matches a current one, so the tool is re-indexed rather than kept."""
+        collection = AsyncMock()
+        collection.get.return_value = {"ids": ["ns::tool"], "metadatas": [{"namespace": "ns"}]}
+        result = await _get_existing_tools_from_chroma(collection)
+        assert result == {"ns::tool": {"hash": "", "namespace": "ns"}}
 
     async def test_skips_ids_without_double_colon(self):
         collection = AsyncMock()
@@ -412,10 +441,14 @@ class TestBuildPutOperations:
         tool = SimpleNamespace(description="desc")
         to_upsert = [("ns::my_tool", {"hash": "h", "namespace": "ns", "tool": tool})]
         ops = _build_put_operations(to_upsert, [])
-        assert len(ops) == 1
-        assert ops[0].namespace == ("ns",)
-        assert ops[0].key == "my_tool"
-        assert ops[0].value["description"] == "desc"
+        assert ops == [
+            PutOp(
+                namespace=("ns",),
+                key="my_tool",
+                value={"description": "desc", "tool_hash": "h"},
+                index=["description"],
+            )
+        ]
 
     def test_upsert_subagent_tool(self):
         to_upsert = [
@@ -425,7 +458,8 @@ class TestBuildPutOperations:
             )
         ]
         ops = _build_put_operations(to_upsert, [])
-        assert ops[0].value["description"] == "sub desc"
+        assert ops[0].value == {"description": "sub desc", "tool_hash": "h"}
+        assert ops[0].index == ["description"]
 
     def test_upsert_subagent_tool_persists_pointer_fields(self):
         """Source/name/integration_id must reach the PutOp value: retrieval tells static ("mcp") from custom ("custom") pointers by them."""
@@ -456,9 +490,12 @@ class TestBuildPutOperations:
     def test_delete_operation_has_none_value(self):
         to_delete = [("ns::old_tool", "ns")]
         ops = _build_put_operations([], to_delete)
-        assert len(ops) == 1
-        assert ops[0].value is None
-        assert ops[0].key == "old_tool"
+        assert ops == [PutOp(namespace=("ns",), key="old_tool", value=None)]
+
+    def test_only_the_first_separator_splits_the_composite_key(self):
+        to_delete = [("ns::tool::v2", "ns")]
+        ops = _build_put_operations([], to_delete)
+        assert ops[0].key == "tool::v2"
 
     def test_composite_key_without_separator(self):
         to_upsert = [("bare_key", {"hash": "h", "namespace": "x", "description": "d"})]
@@ -790,6 +827,8 @@ class TestDeleteToolsByNamespace:
             count = await delete_tools_by_namespace("ns")
 
         assert count == 2
+        # Only this namespace's ids are fetched — the filter is what scopes the delete.
+        mock_collection.get.assert_awaited_once_with(where={"namespace": {"$eq": "ns"}}, include=[])
         mock_collection.delete.assert_awaited_once_with(ids=["ns::a", "ns::b"])
         mock_del.assert_awaited_once_with("chroma:indexed:ns")
 
