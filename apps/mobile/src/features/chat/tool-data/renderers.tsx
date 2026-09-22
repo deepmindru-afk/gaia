@@ -30,6 +30,8 @@ import {
   type CalendarEditOption,
   CalendarFetchCard,
   type CalendarFetchItem,
+  CalendarListFetchCard,
+  type CalendarListFetchItem,
   type CalendarOption,
   CalendarOptionsCard,
   CodeExecutionCard,
@@ -184,8 +186,15 @@ const TOOL_RENDERERS: Record<
     );
   },
 
-  // calendar_list_fetch_data: intentionally hidden — no card, not "unsupported".
-  calendar_list_fetch_data: () => null,
+  // Restored-history only: old conversations still carry this key, and a null
+  // renderer left them blank. Read-only list, no draft or add flows (those
+  // moved to HIL approvals by design).
+  calendar_list_fetch_data: (data, baseKey) => {
+    const lists = (
+      Array.isArray(data) ? data : [data]
+    ) as CalendarListFetchItem[];
+    return <CalendarListFetchCard key={baseKey} data={lists} />;
+  },
 
   weather_data: (data, baseKey) => (
     <WeatherCard key={baseKey} data={data as WeatherData} />

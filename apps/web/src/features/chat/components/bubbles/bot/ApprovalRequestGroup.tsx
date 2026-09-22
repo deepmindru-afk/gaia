@@ -36,6 +36,9 @@ function RevokedTombstone({ item }: { item: ApprovalRequestData }) {
 
 interface ApprovalRequestGroupProps {
   items: ApprovalRequestData[];
+  /** The conversation owning these cards — clears that stream's gate instead
+   * of the active one. */
+  conversationId?: string;
 }
 
 /**
@@ -49,6 +52,7 @@ interface ApprovalRequestGroupProps {
  */
 export default function ApprovalRequestGroup({
   items,
+  conversationId,
 }: ApprovalRequestGroupProps) {
   const resolveApproval = useApprovalResolver();
   const [batchSubmitting, setBatchSubmitting] =
@@ -77,7 +81,7 @@ export default function ApprovalRequestGroup({
           decision,
         })),
       });
-      markApprovalDecided();
+      markApprovalDecided(conversationId);
       const status: ApprovalStatus =
         decision === "approve" ? "approved" : "denied";
       for (const outcome of response.outcomes) {
@@ -155,6 +159,7 @@ export default function ApprovalRequestGroup({
               key={item.approval_id}
               data={item}
               disabled={batchSubmitting !== null}
+              conversationId={conversationId}
               onDecided={(status, feedback) =>
                 settle(item.approval_id, status, feedback)
               }
@@ -168,6 +173,7 @@ export default function ApprovalRequestGroup({
       <ApprovalReviewSheet
         items={pending}
         open={sheetOpen}
+        conversationId={conversationId}
         onClose={() => setSheetOpen(false)}
         onSettled={settle}
       />

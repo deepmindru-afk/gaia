@@ -801,15 +801,29 @@ async def prepare_executor_execution(
     enhanced_task = task
     tool_category = configurable.get("tool_category")
     selected_tool = configurable.get("selected_tool")
-    if tool_category and get_subagent_by_id(tool_category):
+    resolved_category = get_subagent_by_id(tool_category) if tool_category else None
+    if tool_category and resolved_category:
         tool_hint = f"the '{selected_tool}' tool" if selected_tool else "the user's request"
-        enhanced_task = (
-            f"{task}\n\n"
-            f"DIRECT EXECUTION HINT: This request should be handled by "
-            f"'{tool_category}'. Skip retrieve_tools discovery and directly "
-            f'call activate_integration(integration_id="{tool_category}"), then '
-            f"act on {tool_hint} yourself with its tools."
-        )
+        if (
+            resolved_category.managed_by == "mcp"
+            and resolved_category.mcp_config
+            and resolved_category.mcp_config.requires_auth
+        ):
+            enhanced_task = (
+                f"{task}\n\n"
+                f"DIRECT EXECUTION HINT: This request should be handled by "
+                f"'{tool_category}'. Skip retrieve_tools discovery and directly "
+                f'handoff(subagent_id="{tool_category}", task="...") with the full request, then '
+                f"use its result for {tool_hint}."
+            )
+        else:
+            enhanced_task = (
+                f"{task}\n\n"
+                f"DIRECT EXECUTION HINT: This request should be handled by "
+                f"'{tool_category}'. Skip retrieve_tools discovery and directly "
+                f'call activate_integration(integration_id="{tool_category}"), then '
+                f"act on {tool_hint} yourself with its tools."
+            )
         log.set(
             executor_prep={
                 "direct_hint_applied": True,

@@ -28,7 +28,26 @@ interface ApprovalRequestSectionProps {
   /** A batch decision ("Approve all"/"Decline all") is in flight — lock this card
    * so a per-card click can't send a second, conflicting decision for the same id. */
   disabled?: boolean;
+  /** The conversation owning this card — clears that stream's gate instead of
+   * the active one (a sheet or background card can outlive the active chat). */
+  conversationId?: string;
 }
+
+// A stale tap means the row moved under this card. Settle locally when the
+// server names the row's new home — any decided state paints the real verdict
+// instead of the tap. `pending` (stale-v conflict, the row is still live) and
+// `unknown` (the action may or may not have run) keep the card with a retry
+// toast; `executing` is a ledger transient, never a card state.
+const STALE_SETTLED_STATUSES: ReadonlySet<string> = new Set<string>([
+  "approved",
+  "denied",
+  "auto_approved",
+  "timeout",
+  "abandoned",
+  "revoked",
+  "executed",
+  "failed",
+]);
 
 function ArgsPreview({ args }: { args: Record<string, unknown> }) {
   const { rows, omitted } = useMemo(() => flattenArgsPreview(args), [args]);
@@ -68,6 +87,7 @@ export default function ApprovalRequestSection({
   data,
   onDecided,
   disabled = false,
+  conversationId,
 }: ApprovalRequestSectionProps) {
   const [submitting, setSubmitting] = useState<ApprovalDecision | null>(null);
   const [feedback, setFeedback] = useState("");
@@ -103,14 +123,12 @@ export default function ApprovalRequestSection({
       });
       if (!outcome.success) {
         // Stale tap: the row moved under this card. Settle locally when the
-        // row is already decided; otherwise keep the card and drop the
+        // server names the row's new home (approved elsewhere, revoked by the
+        // agent, executed, expired...); otherwise keep the card and drop the
         // version so the next tap goes through the CAS directly.
-        if (outcome.status === "approved" || outcome.status === "denied") {
-          markApprovalDecided();
-          onDecided(
-            outcome.status === "approved" ? "approved" : "denied",
-            attachedFeedback,
-          );
+        if (outcome.status && STALE_SETTLED_STATUSES.has(outcome.status)) {
+          markApprovalDecided(conversationId);
+          onDecided(outcome.status as ApprovalStatus, attachedFeedback);
         } else {
           versionConflict.current = true;
           setSubmitting(null);
@@ -122,7 +140,7 @@ export default function ApprovalRequestSection({
       // Settle locally: the resolved frame (websocket broadcast or reload) flips
       // the card to the real outcome — executed, failed, unknown. A 410 refreshes
       // via not_found above; reaching the catch means the submit genuinely failed.
-      markApprovalDecided();
+      markApprovalDecided(conversationId);
       onDecided(
         decision === "approve" ? "approved" : "denied",
         attachedFeedback,

@@ -60,6 +60,8 @@ EXECUTOR_INITIAL_TOOL_IDS = [
     "plan_tasks",
     "update_tasks",
     "read",
+    "write",
+    "edit",
     "bash",
     "deep_research",
     "list_running_subagents",

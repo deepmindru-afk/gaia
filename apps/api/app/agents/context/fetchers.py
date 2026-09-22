@@ -549,14 +549,15 @@ async def build_open_pendings_block(ctx: SectionContext) -> str:
 
 
 def _pending_age(created_at: object) -> str:
-    """Compact age for a pending row; unknown when the timestamp is absent."""
+    """Coarse age bucket for a pending row; unknown when the timestamp is absent.
+
+    Bucketed to the day so the open-pendings block stays byte-stable inside
+    the cache-stable context slot (per-minute ages would bust the prompt-cache
+    prefix every minute while a pending sits open).
+    """
     if not isinstance(created_at, datetime):
         return "?"
     delta = datetime.now(UTC) - created_at
     if delta.days > 0:
         return f"{delta.days}d"
-    hours = delta.seconds // 3600
-    if hours > 0:
-        return f"{hours}h"
-    minutes = delta.seconds // 60
-    return f"{minutes}m" if minutes > 0 else "now"
+    return "today"

@@ -390,6 +390,24 @@ export default function TextBubble({
     return parseThinkingFromText(text?.toString() || "");
   }, [text]);
 
+  // The conversation owning this message — the card's context for clearing
+  // stream state. Resolved once per message via a store lookup (not a
+  // subscription, so idle bubbles don't re-render on every streaming token);
+  // a message not yet persisted (live stream) falls back to the active
+  // conversation inside useMarkApprovalDecided.
+  const owningConversationId = React.useMemo(() => {
+    if (!message_id) return undefined;
+    const all = useChatStore.getState().messagesByConversation;
+    for (const [convId, msgs] of Object.entries(all)) {
+      if (msgs.some((m) => m.id === message_id)) return convId;
+    }
+    return undefined;
+  }, [message_id]);
+  const toolRenderContext = React.useMemo<ToolRenderContext>(
+    () => ({ conversationId: owningConversationId }),
+    [owningConversationId],
+  );
+
   // Single ordered timeline of tool calls + subagent groups (emission order)
   // and the remaining tool_data entries that render via TOOL_RENDERERS.
   const { timeline, processedTools } = useSubagentSynthesis(tool_data);
@@ -470,7 +488,7 @@ export default function TextBubble({
 
         return (
           <React.Fragment key={`${baseId}-tool-${entryKey}`}>
-            {renderTool(toolName, typedData, index)}
+            {renderTool(toolName, typedData, index, toolRenderContext)}
           </React.Fragment>
         );
       })}

@@ -94,16 +94,37 @@ def _third_party_name_matchers() -> tuple[tuple[Subagent, re.Pattern[str]], ...]
     return tuple(matchers)
 
 
+#: Provider ids that are also ordinary English words: "slack" (verb/noun),
+#: "linear" (adjective), "notion" (noun). A lowercase occurrence ("cut some
+#: slack", "linear progress", "the notion that") is far more likely prose than
+#: a product mention, while a capitalized one ("unlike Notion", "post it to
+#: Slack") reads as the product — so for these ids foreign_provider_named_in
+#: only flags when the matched text carries an uppercase letter. Chose this
+#: over requiring tool-style (ALLCAPS/underscore) mentions because comparative
+#: tasks name products in normal Title case ("migrate Trello cards, unlike
+#: Notion"), which a tool-style rule would miss. Every other provider flags on
+#: any whole-word match.
+_COMMON_WORD_PROVIDER_IDS: frozenset[str] = frozenset({"slack", "linear", "notion"})
+
+
 def foreign_provider_named_in(text: str, target_id: str) -> Subagent | None:
     """The third-party provider ``text`` names that is not ``target_id``, if any.
 
     A task routed to one subagent while naming another produces a result that
     credits the named product with work it never did — the reason eight GAIA
     todos reached the user as "8 tasks created (Todoist)".
+
+    Ids in _COMMON_WORD_PROVIDER_IDS only flag on a capitalized mention.
     """
     for sa, pattern in _third_party_name_matchers():
-        if sa.id != target_id and pattern.search(text):
-            return sa
+        if sa.id == target_id:
+            continue
+        match = pattern.search(text)
+        if match is None:
+            continue
+        if sa.id in _COMMON_WORD_PROVIDER_IDS and match.group(0).islower():
+            continue
+        return sa
     return None
 
 

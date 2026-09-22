@@ -39,4 +39,40 @@ describe("useMarkApprovalDecided", () => {
       false,
     );
   });
+
+  it("clears the card's conversation when explicitly passed, not the active one", () => {
+    resetStores();
+    const cardConvo = "conv-card";
+    const store = useStreamStore.getState();
+    store.startSession(CONVO);
+    store.updateSession(CONVO, { awaitingApproval: true });
+    store.startSession(cardConvo);
+    store.updateSession(cardConvo, { awaitingApproval: true });
+    useChatStore.setState({ activeConversationId: CONVO });
+
+    const { result } = renderHook(() => useMarkApprovalDecided());
+    result.current(cardConvo);
+
+    expect(useStreamStore.getState().sessions[cardConvo]?.awaitingApproval).toBe(
+      false,
+    );
+    expect(useStreamStore.getState().sessions[CONVO]?.awaitingApproval).toBe(
+      true,
+    );
+  });
+
+  it("falls back to the pending new-chat key when nothing is active", () => {
+    resetStores();
+    const store = useStreamStore.getState();
+    store.startSession("pending-abc");
+    store.updateSession("pending-abc", { awaitingApproval: true });
+    useChatStore.setState({ activeConversationId: null });
+
+    const { result } = renderHook(() => useMarkApprovalDecided());
+    result.current();
+
+    expect(
+      useStreamStore.getState().sessions["pending-abc"]?.awaitingApproval,
+    ).toBe(false);
+  });
 });

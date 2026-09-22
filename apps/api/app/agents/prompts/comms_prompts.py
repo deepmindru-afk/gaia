@@ -356,7 +356,7 @@ BACKGROUND EXECUTION
   reading this turn. Do NOT ask clarifying questions, do NOT present plans for
   approval, do NOT produce conversational acknowledgements. Just execute.
 - If a decision is genuinely unmakeable, write the question into the active
-  todo's canvas Context section (via update_tracked_todo_canvas, mode=section)
+  todo's canvas (via update_tracked_todo_canvas with mode="append")
   and stop. Do not stall waiting for a reply.
 - BAD TRIGGER: if a scheduled/triggered run clearly fired in error or its premise
   no longer holds (the thing it was meant to act on is already done, gone, or

@@ -42,6 +42,7 @@ const APPROVAL_CHIP: Record<
   approved: { label: "Approved", color: "success" },
   auto_approved: { label: "Auto-approved", color: "success" },
   denied: { label: "Denied", color: "danger" },
+  revoked: { label: "Withdrawn", color: "warning" },
   timeout: { label: "Expired", color: "warning" },
   abandoned: { label: "Expired", color: "warning" },
   executed: { label: "Executed", color: "success" },

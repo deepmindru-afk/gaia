@@ -20,6 +20,7 @@ import { chatApi } from "@/features/chat/api/chat-api";
 import {
   APPROVAL_RESOLVED_META,
   approvalOutcomeText,
+  isKnownApprovalStatus,
 } from "@/features/chat/utils/approval-status";
 import { flattenArgsPreview } from "@/features/chat/utils/args-preview";
 
@@ -133,8 +134,16 @@ export function ApprovalRequestCard({ data }: ApprovalRequestCardProps) {
       if (!outcome.success) {
         // The row moved under this card. If it already carries a verdict, leave
         // the card disabled and let the resolved frame replace it; otherwise
-        // re-enable, drop v, and ask the user to tap again.
-        if (outcome.status === "approved" || outcome.status === "denied") {
+        // re-enable, drop v, and ask the user to tap again. Pending (stale-v
+        // conflict, the row is still live) and unknown (may or may not have
+        // run) keep the retry path.
+        const status = outcome.status ?? null;
+        if (
+          status !== null &&
+          status !== "pending" &&
+          status !== "unknown" &&
+          isKnownApprovalStatus(status)
+        ) {
           return;
         }
         versionConflict.current = true;

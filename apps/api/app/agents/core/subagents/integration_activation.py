@@ -75,6 +75,13 @@ async def _activate_tools(
     # A name the registry does not hold cannot be bound, and passing it on would
     # only be silently dropped later — drop it here so the reported set is honest.
     known = [name for name in dict.fromkeys(wanted) if tool_registry.get_tool_meta(name)]
+    dropped = [name for name in dict.fromkeys(wanted) if not tool_registry.get_tool_meta(name)]
+    if dropped:
+        log.warning(
+            f"{LogTag.AGENT} Activation dropped unregistered startup tools",
+            integration=subagent.id,
+            dropped_tools=dropped,
+        )
     bind, preload = await split_startup_tools(user_id, known)
     docs = await render_preload_block(user_id, preload)
     if preload and not docs:

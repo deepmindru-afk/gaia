@@ -156,6 +156,9 @@ class TestGetSubagentTools:
         entry = result["subagents::subagent:notes"]
         assert entry["namespace"] == "subagents"
         assert "Notes" in entry["description"]
+        assert entry["source"] == "mcp"
+        assert entry["name"] == "Notes"
+        assert entry["integration_id"] == "notes"
 
     async def test_skips_when_registry_empty(self):
         # Registry never surfaces entries without a config; an empty registry
@@ -423,6 +426,33 @@ class TestBuildPutOperations:
         ]
         ops = _build_put_operations(to_upsert, [])
         assert ops[0].value["description"] == "sub desc"
+
+    def test_upsert_subagent_tool_persists_pointer_fields(self):
+        """source/name/integration_id must reach the PutOp value: retrieval
+        tells static ("mcp") from custom ("custom") pointers by them."""
+        to_upsert = [
+            (
+                "subagents::subagent:notes",
+                {
+                    "hash": "h",
+                    "namespace": "subagents",
+                    "description": "sub desc",
+                    "source": "mcp",
+                    "name": "Notes",
+                    "integration_id": "notes",
+                },
+            )
+        ]
+        ops = _build_put_operations(to_upsert, [])
+        assert ops[0].value["source"] == "mcp"
+        assert ops[0].value["name"] == "Notes"
+        assert ops[0].value["integration_id"] == "notes"
+
+    def test_upsert_regular_tool_carries_no_pointer_fields(self):
+        tool = SimpleNamespace(description="desc")
+        to_upsert = [("ns::my_tool", {"hash": "h", "namespace": "ns", "tool": tool})]
+        ops = _build_put_operations(to_upsert, [])
+        assert "source" not in ops[0].value
 
     def test_delete_operation_has_none_value(self):
         to_delete = [("ns::old_tool", "ns")]

@@ -559,18 +559,23 @@ def _process_chroma_search_result(
     for item in result:
         tool_key = str(item.key)
 
-        # Subagents-namespace pointers exist only for custom MCP integrations
-        # (the sole writer of that namespace): they are the one subagent
-        # surface discovery keeps, because a custom MCP's tools live in a
-        # per-user namespace this search never enters — without the pointer
-        # the model could never learn its id to hand off to. Anything else
-        # found here is a stale doc from before provider entries stopped
-        # being indexed under this namespace; drop it, never surface it.
+        # Subagents-namespace pointers exist for MCP integrations (the writers
+        # of that namespace): static registry MCP pointers (source "mcp") and
+        # custom MCP pointers indexed at connect time (source "custom"). Both
+        # are the one subagent surface discovery keeps, because an MCP's tools
+        # live in a per-user namespace this search never enters — without the
+        # pointer the model could never learn its id to hand off to. Docs with
+        # no source predate the field and are treated as "mcp" for back-compat.
+        # Anything else found here is a stale doc from before provider entries
+        # stopped being indexed under this namespace; drop it, never surface it.
         if hasattr(item, "namespace") and item.namespace == ("subagents",):
             if not include_subagents:
                 continue
             value = getattr(item, "value", None)
-            if not isinstance(value, dict) or value.get("source") != "custom":
+            if not isinstance(value, dict):
+                continue
+            source = value.get("source", "mcp")
+            if source not in ("custom", "mcp"):
                 continue
             name = value.get("name")
             subagent_key = f"subagent:{tool_key} ({name})" if name else f"subagent:{tool_key}"

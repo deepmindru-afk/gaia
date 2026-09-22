@@ -929,17 +929,44 @@ class TestActivatedNamespaceTools:
         assert [r["id"] for r in result] == ["subagent:my-mcp (My MCP)"]
 
     def test_stale_provider_doc_in_subagents_namespace_dropped(self):
-        """Docs without source=='custom' (pre-removal provider entries) never
-        surface, even though the namespace is searched."""
+        """Docs with an unknown source (pre-removal provider entries that were
+        re-tagged, never "custom" or "mcp") never surface, even though the
+        namespace is searched."""
         from app.agents.tools.core.retrieval import _process_chroma_search_result
 
         item = self._delegated_hit("github", namespace=("subagents",))
-        item.value = {"name": "GitHub"}
+        item.value = {"name": "GitHub", "source": "provider"}
         registry = MagicMock()
         result = _process_chroma_search_result(
             [item], {"github"}, registry, include_subagents=True
         )
         assert result == []
+
+    def test_static_mcp_pointer_in_subagents_namespace_survives(self):
+        """Static registry MCP pointers (source=='mcp', written by the seed)
+        render as subagent: entries instead of being dropped as stale."""
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        item = self._delegated_hit("subagent:notes", namespace=("subagents",))
+        item.value = {"name": "Notes", "source": "mcp", "integration_id": "notes"}
+        registry = MagicMock()
+        result = _process_chroma_search_result(
+            [item], set(), registry, include_subagents=True
+        )
+        assert [r["id"] for r in result] == ["subagent:subagent:notes (Notes)"]
+
+    def test_legacy_pointer_without_source_is_treated_as_mcp(self):
+        """Docs written before the source field existed carry no source; they
+        are the static pointers the seed used to write, so they surface."""
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        item = self._delegated_hit("subagent:notes", namespace=("subagents",))
+        item.value = {"name": "Notes"}
+        registry = MagicMock()
+        result = _process_chroma_search_result(
+            [item], set(), registry, include_subagents=True
+        )
+        assert [r["id"] for r in result] == ["subagent:subagent:notes (Notes)"]
 
     @pytest.mark.asyncio
     async def test_public_hits_render_as_integration_entries(self):

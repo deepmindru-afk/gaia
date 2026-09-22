@@ -10,6 +10,7 @@ model, invisible until someone reads a transcript, so it is pinned here instead.
 import pytest
 
 from app.agents.core.graph_builder.build_graph import EXECUTOR_INITIAL_TOOL_IDS
+from app.agents.prompts import executor_activation_prompt
 from app.agents.prompts.comms_prompts import EXECUTOR_AGENT_PROMPT
 from app.agents.prompts.executor_activation_prompt import (
     _PHRASE_REWRITES,
@@ -86,6 +87,39 @@ class TestAnchorsStayValid:
     def test_a_missing_anchor_raises_rather_than_shipping(self) -> None:
         with pytest.raises(ActivationPromptAnchorError):
             _replace_section("nothing to match here", "DELEGATION MODEL", "END", "x")
+
+
+class TestDegradesGracefully:
+    """build_activation_executor_prompt runs at import time (agent_template
+    builds _EXECUTOR_BASE on import), so one edited sentence in the source
+    prompt must skip just that rewrite with a warning — never prevent startup."""
+
+    def test_stale_phrase_anchor_is_skipped_not_raised(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        anchor, _ = _PHRASE_REWRITES[0]
+        assert anchor in EXECUTOR_AGENT_PROMPT
+        monkeypatch.setattr(
+            executor_activation_prompt,
+            "EXECUTOR_AGENT_PROMPT",
+            EXECUTOR_AGENT_PROMPT.replace(anchor, ""),
+        )
+        prompt = executor_activation_prompt.build_activation_executor_prompt()
+        assert "RESEARCH EFFORT LADDER" in prompt
+        assert "activate_integration" in prompt
+
+    def test_stale_section_anchor_is_skipped_not_raised(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        start, _, _ = _SECTION_REWRITES[0]
+        assert start in EXECUTOR_AGENT_PROMPT
+        monkeypatch.setattr(
+            executor_activation_prompt,
+            "EXECUTOR_AGENT_PROMPT",
+            EXECUTOR_AGENT_PROMPT.replace(start, ""),
+        )
+        prompt = executor_activation_prompt.build_activation_executor_prompt()
+        assert "YOUR OUTPUT (INTERNAL" in prompt
 
 
 def test_prompt_is_rewritten_not_merely_copied(activation_prompt) -> None:

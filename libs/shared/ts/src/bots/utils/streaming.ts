@@ -23,7 +23,7 @@ import { BOT_EVENTS } from "../../analytics/events/bots";
 import type { ApprovalRequestData } from "../../chat";
 import { formatApprovalAge } from "../../chat";
 import type { GaiaClient } from "../api";
-import { BOT_STREAM_ERROR } from "../api/chat-stream";
+import { BOT_STREAM_ERROR, isReactDirectiveOrPrefix } from "../api/chat-stream";
 import type { ChatRequest, PlatformName } from "../types";
 import { segmentIntoBubbles } from "./bubbles";
 import { isMessageGoneError, retryAfterMs } from "./delivery-errors";
@@ -367,6 +367,11 @@ async function _handleStream(
       (chunk) => {
         pending += chunk;
         if (streamDone || !streaming) return;
+        // A held-back REACT directive never reaches here through the real
+        // streamer (chat-stream.ts withholds it), but a chunk that is itself
+        // directive-shaped must not open a bubble — an empty preview is
+        // skipped by previewBubble, a directive one is not.
+        if (isReactDirectiveOrPrefix(pending)) return;
 
         const now = Date.now();
         if (now - lastEditTime >= editIntervalMs) {

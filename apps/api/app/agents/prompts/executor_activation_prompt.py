@@ -9,11 +9,14 @@ so the executor under the experiment would quietly fall behind on every prompt
 fix that lands.
 
 Every rewrite is anchored to text in EXECUTOR_AGENT_PROMPT. If an anchor stops
-matching because that prompt was edited, building the variant raises rather than
-shipping an executor that is told to call a tool it does not have.
+matching because that prompt was edited, that one rewrite is skipped with a
+warning and the rest still apply: this builder runs at import time, so raising
+would keep the whole API from starting over one edited sentence. The anchor
+tests pin every rewrite, so a skipped one still fails loudly in CI.
 """
 
 from app.agents.prompts.comms_prompts import EXECUTOR_AGENT_PROMPT
+from shared.py.wide_events import log
 
 _DELEGATION_MODEL = """DELEGATION MODEL
 
@@ -191,12 +194,24 @@ def _replace_section(prompt: str, start: str, end: str, replacement: str) -> str
 
 
 def build_activation_executor_prompt() -> str:
-    """EXECUTOR_AGENT_PROMPT rewritten to teach activation instead of handoff."""
+    """EXECUTOR_AGENT_PROMPT rewritten to teach activation instead of handoff.
+
+    A stale anchor degrades instead of raising: the one rewrite is skipped
+    with a warning and the rest still apply. Raising here would run at import
+    time (agent_template builds _EXECUTOR_BASE on import), so one edited
+    sentence in the source prompt would keep the whole API from starting. A
+    skipped rewrite leaves a single handoff-era passage behind, which the
+    anchor tests flag in CI — a missing prompt nuance, never an outage.
+    """
     prompt = EXECUTOR_AGENT_PROMPT
     for start, end, replacement in _SECTION_REWRITES:
-        prompt = _replace_section(prompt, start, end, replacement)
+        try:
+            prompt = _replace_section(prompt, start, end, replacement)
+        except ActivationPromptAnchorError as e:
+            log.warning("activation_prompt.stale_section_anchor_skipped", error=str(e))
     for anchor, replacement in _PHRASE_REWRITES:
         if anchor not in prompt:
-            raise ActivationPromptAnchorError(f"phrase anchor not found: {anchor!r}")
+            log.warning("activation_prompt.stale_phrase_anchor_skipped", anchor=anchor[:80])
+            continue
         prompt = prompt.replace(anchor, replacement)
     return prompt

@@ -967,7 +967,10 @@ async def handoff(
         "If True, run the subagent in the background and return immediately. "
         "Use for parallel subagent dispatch. Steer mid-run with "
         "message_subagent/cancel_subagent; results arrive automatically. "
-        "Default False (blocking).",
+        "Runs that carry a stream_id always go to the background even when "
+        "this is False, so the executor stays alive to steer them; without a "
+        "stream_id results cannot be routed back, so that case stays blocking. "
+        "Default False (blocking unless a stream_id is present).",
     ] = False,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> str:
@@ -989,7 +992,8 @@ async def handoff(
     Args:
         subagent_id: ID of the per-user MCP integration (NOT a provider id)
         task: Complete task description with all necessary context
-        background: If True, run non-blocking and return immediately
+        background: If True, run non-blocking and return immediately. Runs
+            that carry a stream_id run non-blocking regardless.
     """
     try:
         configurable: AgentConfigurable = agent_configurable(config)

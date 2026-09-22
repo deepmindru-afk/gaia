@@ -33,6 +33,9 @@ interface ApprovalReviewSheetProps {
   items: ApprovalRequestData[];
   open: boolean;
   onClose: () => void;
+  /** The conversation owning these cards — clears that stream's gate instead
+   * of the active one. */
+  conversationId?: string;
   onSettled: (
     approvalId: string,
     status: ApprovalStatus,
@@ -84,6 +87,7 @@ export default function ApprovalReviewSheet({
   items,
   open,
   onClose,
+  conversationId,
   onSettled,
 }: ApprovalReviewSheetProps) {
   const [decisions, setDecisions] = useState<Record<string, SheetDecision>>({});
@@ -126,7 +130,7 @@ export default function ApprovalReviewSheet({
           feedback: decisions[approval_id].feedback.trim() || undefined,
         })),
       });
-      markApprovalDecided();
+      markApprovalDecided(conversationId);
       const removeDecision = (approvalId: string) => {
         setDecisions((prev) => {
           const next = { ...prev };

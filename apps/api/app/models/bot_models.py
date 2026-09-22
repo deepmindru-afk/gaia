@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from app.db.repositories.base import MongoDocument
 from app.models.message_models import FileData
+from app.models.stream_events import EmojiAckPayload
 from app.schemas.common import ResponseModel
 from app.services.platform_link_service import Platform
 
@@ -320,6 +321,7 @@ class BotWebStreamPayload(BaseModel):
     message_boundary: JsonValue = None
     response: str | None = None
     error: str | None = None
+    emoji_ack: EmojiAckPayload | None = None
     conversation_description: JsonValue = None
     user_message_id: JsonValue = None
     bot_message_id: JsonValue = None
