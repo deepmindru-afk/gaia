@@ -1243,10 +1243,9 @@ class TestCreateEvent:
         assert body["end"] == {"dateTime": "2026-01-15T10:30:00+05:30"}
 
     def test_naive_start_without_a_configured_timezone_is_rejected(self, tools, writer) -> None:
-        # BUG (production ap_8ded): Deliberate reversal of the old
-        # always-send-naive behavior: Google 400s a naked wall time, so
-        # posting it can only fail after approval. Reject with a clear
-        # error; the model adds an explicit offset.
+        # BUG (production ap_8ded): deliberate reversal of the old always-send-naive
+        # behavior — Google 400s a naked wall time, so posting it can only fail after
+        # approval. Reject with a clear error; the model adds an explicit offset.
         with (
             patch(f"{MODULE}.get_config", return_value={"configurable": {}}),
             patch(
@@ -1680,12 +1679,9 @@ class TestCreateEvent:
     # -- outside a graph run -------------------------------------------------
 
     def test_returns_result_without_stream_runtime(self, tools) -> None:
-        # BUG: ticket redeem invokes the tool via dispatch outside any graph
-        # run (bare runnable config, no Pregel runtime). The unconditional
-        # get_stream_writer() raised KeyError AFTER the Google POST, so the
-        # event was created, the redeem marked UNKNOWN, and every retry
-        # duplicated it. Deliberately no `writer` fixture: this test runs
-        # with the real writer lookup and a dispatch-shaped config.
+        # BUG: ticket redeem invokes the tool outside any graph run (bare config, no
+        # Pregel runtime), so the unconditional get_stream_writer() raised KeyError
+        # AFTER the Google POST and every retry duplicated the event. No writer fixture.
         from langchain_core.runnables.config import var_child_runnable_config
 
         token = var_child_runnable_config.set(

@@ -676,9 +676,7 @@ class TestActivatedNamespaceDiscovery:
 
     @pytest.mark.asyncio
     async def test_active_integration_namespace_is_searched(self):
-        """An activated integration's tools must be discoverable from the
-        activating run: discovery searches its namespace, so the "use
-        retrieve_tools for the rest" the activation reply promises works."""
+        """An activated integration's tools must be discoverable from the activating run: discovery searches its namespace, so the "use retrieve_tools for the rest" the activation reply promises works."""
         from app.agents.tools.core import retrieval
 
         seen: list = []
@@ -788,9 +786,7 @@ class TestActivatedNamespaceDiscovery:
 
 
 class TestActivatedNamespaceTools:
-    """An activated integration's tools must reach the model as tools (run via
-    execute), never as subagent pointers — and only that namespace is exempt:
-    every other delegated tool stays hidden."""
+    """An activated integration's tools must reach the model as tools (run via execute), never as subagent pointers — and only that namespace is exempt: every other delegated tool stays hidden."""
 
     def _delegated_hit(self, key="GITHUB_LIST_PULL_REQUESTS", namespace=("github",)):
         item = MagicMock()
@@ -845,9 +841,7 @@ class TestActivatedNamespaceTools:
 
     @pytest.mark.asyncio
     async def test_discovery_end_to_end_no_provider_subagent_surface(self):
-        """The reported bug: a github-namespace Chroma hit reached the model as
-        nothing (delegated filter) next to a subagent:github pointer. Now the
-        real tool is in the response and no provider subagent surface exists."""
+        """The reported bug: a github-namespace Chroma hit reached the model as nothing (delegated filter) next to a subagent:github pointer."""
         import json
 
         from app.agents.tools.core import retrieval
@@ -912,8 +906,7 @@ class TestActivatedNamespaceTools:
         assert "handoff" not in result["response_text"]
 
     def test_mcp_pointer_in_subagents_namespace_survives(self):
-        """Custom MCP pointers are the one subagent surface: source=='custom'
-        entries render as subagent: entries for handoff."""
+        """Custom MCP pointers are the one subagent surface: source=='custom' entries render as subagent: entries for handoff."""
         from app.agents.tools.core.retrieval import _process_chroma_search_result
 
         item = self._delegated_hit("my-mcp", namespace=("subagents",))
@@ -923,9 +916,7 @@ class TestActivatedNamespaceTools:
         assert [r["id"] for r in result] == ["subagent:my-mcp (My MCP)"]
 
     def test_stale_provider_doc_in_subagents_namespace_dropped(self):
-        """Docs with an unknown source (pre-removal provider entries that were
-        re-tagged, never "custom" or "mcp") never surface, even though the
-        namespace is searched."""
+        """Docs with an unknown source (pre-removal provider entries that were re-tagged, never "custom" or "mcp") never surface, even though the namespace is searched."""
         from app.agents.tools.core.retrieval import _process_chroma_search_result
 
         item = self._delegated_hit("github", namespace=("subagents",))
@@ -935,8 +926,7 @@ class TestActivatedNamespaceTools:
         assert result == []
 
     def test_static_mcp_pointer_in_subagents_namespace_survives(self):
-        """Static registry MCP pointers (source=='mcp', written by the seed)
-        render as subagent: entries instead of being dropped as stale."""
+        """Static registry MCP pointers (source=='mcp', written by the seed) render as subagent: entries instead of being dropped as stale."""
         from app.agents.tools.core.retrieval import _process_chroma_search_result
 
         item = self._delegated_hit("subagent:notes", namespace=("subagents",))
@@ -946,8 +936,7 @@ class TestActivatedNamespaceTools:
         assert [r["id"] for r in result] == ["subagent:subagent:notes (Notes)"]
 
     def test_legacy_pointer_without_source_is_treated_as_mcp(self):
-        """Docs written before the source field existed carry no source; they
-        are the static pointers the seed used to write, so they surface."""
+        """Docs written before the source field existed carry no source; they are the static pointers the seed used to write, so they surface."""
         from app.agents.tools.core.retrieval import _process_chroma_search_result
 
         item = self._delegated_hit("subagent:notes", namespace=("subagents",))
@@ -958,8 +947,7 @@ class TestActivatedNamespaceTools:
 
     @pytest.mark.asyncio
     async def test_public_hits_render_as_integration_entries(self):
-        """Marketplace hits render as integration: entries — activatable, never
-        handed off."""
+        """Marketplace hits render as integration: entries — activatable, never handed off."""
         from app.agents.tools.core.retrieval import _process_search_results
 
         registry = MagicMock()

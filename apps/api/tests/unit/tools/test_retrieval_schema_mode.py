@@ -76,15 +76,13 @@ class TestSchemaModeCutover:
         assert "execute(" in text
         assert "NOT bound" in text
         # The proxied name must not ALSO come back as a bare line. It used to:
-        # bind_lines echoed every `response` entry that was not a bound tool,
-        # so the block ending in "do NOT call them by name" was followed by a
-        # second, unlabelled list that reads exactly like a bound-tool list.
+        # bind_lines echoed every response entry that was not a bound tool, so the
+        # "do NOT call them by name" block was followed by a second bound-tool-like list.
         assert "\nGMAIL_SEND_EMAIL" not in text
         assert text.rstrip().splitlines()[-1] != "GMAIL_SEND_EMAIL"
 
     async def test_out_of_scope_guidance_still_reaches_the_model(self) -> None:
-        """The filter the line above removed was also what carried the subagent
-        and out-of-scope sentences into the rendered text."""
+        """The filter the line above removed was also what carried the subagent and out-of-scope sentences into the rendered text."""
         fn = get_retrieve_tools_function(bindable_tool_names={"read"})
         with (
             patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=_registry())),
@@ -131,10 +129,7 @@ class TestSchemaModeCutover:
 @pytest.mark.unit
 class TestResolverOutageDegradation:
     async def test_resolver_infra_failure_degrades_to_unknown_not_crash(self) -> None:
-        """Observed live: with Composio unreachable, the rescue path let the
-        resolver's exception escape into select_tools, which retry-looped the
-        graph to its recursion limit. An unreachable catalog must degrade the
-        name to unknown, never wedge the whole retrieval turn."""
+        """Observed live: with Composio unreachable, the rescue path let the resolver's exception escape into select_tools, which retry-looped the graph to its recursion limit."""
         fn = get_retrieve_tools_function()
         with (
             patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=_registry())),

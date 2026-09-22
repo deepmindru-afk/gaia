@@ -1,8 +1,8 @@
-"""Unit tests for the comms → executor handoff (`app/agents/tools/executor_tool.py`).
+"""Unit tests for the comms → executor handoff (app/agents/tools/executor_tool.py).
 
 Redis is real (fakeredis) so the busy-lock and inbox mechanics under test run for
 real; the only mocked boundaries are the executor graph itself
-(``run_executor_background``) and the WebSocket fan-out.
+(run_executor_background) and the WebSocket fan-out.
 """
 
 import asyncio
@@ -40,10 +40,10 @@ from app.utils import background_tasks
 
 
 def tool_function(tool_obj: BaseTool) -> Callable[..., Awaitable[str]]:
-    """The undecorated coroutine behind a ``@tool``.
+    """Call the undecorated coroutine behind a @tool.
 
-    Called directly instead of ``ainvoke`` so a test never opens a LangSmith
-    trace: ``langsmith.utils.get_env_var`` is ``lru_cache``d, so a fixture that
+    Called directly instead of ainvoke so a test never opens a LangSmith
+    trace: langsmith.utils.get_env_var is lru_cached, so a fixture that
     disabled tracing would poison every later test in the same worker.
     """
     coroutine = cast(StructuredTool, tool_obj).coroutine
@@ -83,12 +83,12 @@ INBOX_KEY = f"{EXECUTOR_INBOX_PREFIX}{CONVERSATION_ID}"
 
 
 def inbox() -> ExecutorInbox:
-    """The conversation's inbox, read through the same class the tool writes with."""
+    """Read the conversation's inbox through the same class the tool writes with."""
     return ExecutorInbox(CONVERSATION_ID)
 
 
 def config_for(stream_id: str | None = "stream-1", **overrides: Any) -> RunnableConfig:
-    """A comms-agent RunnableConfig, shaped like the one build_agent_config produces."""
+    """Build a comms-agent RunnableConfig shaped like the one build_agent_config produces."""
     configurable: dict[str, Any] = {
         "thread_id": CONVERSATION_ID,
         "user_id": "user-1",
@@ -158,13 +158,12 @@ def release_lock_on_attempt(
     monkeypatch: pytest.MonkeyPatch,
     fake_redis: fakeredis.aioredis.FakeRedis,
 ) -> Callable[[int], None]:
-    """Free the busy lock on the N-th ``try_acquire_lock`` call.
+    """Free the busy lock on the N-th try_acquire_lock call.
 
-    Replaces real-time releaser tasks racing the DETECT/WAIT windows: the
-    redirect poll loop calls ``try_acquire_lock`` exactly once per POLL
-    iteration, so a release tied to the attempt count lands at a fixed
-    ``waited`` value (overall attempt K with the pre-redirect attempt at
-    #1 ⇒ redirect wait (K-2)*POLL) — deterministic by construction.
+    The redirect poll loop calls try_acquire_lock once per POLL iteration, so a
+    release tied to the attempt count lands at a fixed waited value (attempt K
+    with the pre-redirect attempt at #1 gives redirect wait (K-2)*POLL) —
+    deterministic by construction, replacing real-time releaser tasks.
     """
 
     real_acquire = executor_tool.try_acquire_lock
@@ -186,7 +185,7 @@ def release_lock_on_attempt(
 
 @pytest.fixture(autouse=True)
 def closed_approvals(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
-    """The HIL boundary (Mongo-backed): which conversations had their approvals closed."""
+    """List which conversations had their approvals closed (the Mongo-backed HIL boundary)."""
     mock = AsyncMock(return_value=[])
     monkeypatch.setattr(executor_tool, "cancel_conversation_approvals", mock)
     monkeypatch.setattr(executor_tool, "cancel_ledger_approvals", AsyncMock(return_value=[]))
@@ -224,9 +223,7 @@ class TestCallExecutorDispatch:
     async def test_a_dispatch_with_no_stream_carries_an_empty_stream_id(
         self, fake_redis: fakeredis.aioredis.FakeRedis, spawned_runs: list[dict[str, Any]]
     ) -> None:
-        """A run with no live client still gets a run identity. The absent stream is
-        the empty string — a placeholder would be treated as a real stream by every
-        session lookup downstream."""
+        """A run with no live client still gets a run identity."""
         await call_executor_with(config=config_for(stream_id=None), task="check my calendar")
         await drain_background_tasks()
 
@@ -326,12 +323,7 @@ class TestCallExecutorLockContention:
         spawned_runs: list[dict[str, Any]],
         fast_redirect: None,
     ) -> None:
-        """Work asked for mid-run becomes a message inside that run, not a second run.
-
-        The entry carries the composed brief — what the executor will actually
-        read — keyed by the dispatch's own task_id, which is the same id the
-        prose hands the model and the only handle a later cancel has on it.
-        """
+        """Work asked for mid-run becomes a message inside that run, not a second run."""
         await call_executor_with(config=config_for("stream-1"), task="first")
 
         response = await call_executor_with(
@@ -369,12 +361,7 @@ class TestCallExecutorLockContention:
         spawned_runs: list[dict[str, Any]],
         fast_redirect: None,
     ) -> None:
-        """Comms speaks this string to the user.
-
-        There is no "right after" any more — the work joins the answer already
-        being written. Prose promising a second run makes the user wait for a
-        message that will never arrive on its own.
-        """
+        """Comms speaks this string to the user."""
         await call_executor_with(config=config_for("stream-1"), task="first")
 
         response = await call_executor_with(config=config_for("stream-2"), task="second")
@@ -430,8 +417,7 @@ class TestRedirectAcquire:
         fast_redirect: None,
         release_lock_on_attempt: Callable[[int], None],
     ) -> None:
-        """cancel_executor drops the busy key without cancel_stream for blank stream
-        ids, so is_cancelled may never flip — acquisition must not be gated on it."""
+        """Cancel_executor drops the busy key without cancel_stream for blank stream ids, so is_cancelled may never flip — acquisition must not be gated on it."""
         await fake_redis.set(LOCK_KEY, "old-stream:old-task", ex=EXECUTOR_BUSY_TTL)
 
         # Release on the 3rd acquire attempt (2nd redirect poll, waited=0.01 —
@@ -856,11 +842,7 @@ class TestCancelAnnouncesTheInterruption:
     async def test_cancelling_pending_work_alone_announces_nothing(
         self, fake_redis: fakeredis.aioredis.FakeRedis, broadcast: AsyncMock
     ) -> None:
-        """No run was stopped, so there is no interruption to report.
-
-        Telling a future run it was force-stopped when it never started makes it
-        refuse work the user never cancelled.
-        """
+        """No run was stopped, so there is no interruption to report."""
         await inbox().append("q1", "drop this")
 
         response = await run_cancel_executor(config=config_for(), task_ids=["q1"])
@@ -875,7 +857,7 @@ class TestCancelAnnouncesTheInterruption:
 class TestMalformedInboxEntries:
     """One unreadable entry must not wedge the channel for the conversation.
 
-    Nothing can be recovered from a value that will not parse, so ``_decode``
+    Nothing can be recovered from a value that will not parse, so _decode
     skips it — but skipping has to leave every readable entry beside it working,
     both for a drain and for the cancel that reaches pending work by id.
     """
@@ -886,9 +868,7 @@ class TestMalformedInboxEntries:
         broadcast: AsyncMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`json.loads("5")` is an int; subscripting it raises a TypeError, which
-        outside the decode guard aborted the cancel and destroyed the running
-        task's lock."""
+        """Json.loads("5") is an int; subscripting it raises a TypeError, which outside the decode guard aborted the cancel and destroyed the running task's lock."""
         monkeypatch.setattr(StreamManager, "cancel_stream", AsyncMock())
         await fake_redis.set(LOCK_KEY, "stream-1:running-task", ex=EXECUTOR_BUSY_TTL)
         await fake_redis.rpush(INBOX_KEY, "5")
@@ -983,7 +963,7 @@ def test_both_executor_tools_are_exported_for_the_comms_agent() -> None:
 class TestDispatchThreadsTheTurnsIdentity:
     """What the comms turn hands the executor about *which* turn it is.
 
-    ``bot_message_id`` is the original live turn's message: a HIL pause resumes
+    bot_message_id is the original live turn's message: a HIL pause resumes
     onto it rather than minting a rival placeholder, so losing it here splits the
     turn in front of the user — the client renders a second bubble with its own
     tool accordion and the first one never finishes.
@@ -1002,8 +982,7 @@ class TestDispatchThreadsTheTurnsIdentity:
     async def test_a_turn_without_one_dispatches_with_none(
         self, fake_redis: fakeredis.aioredis.FakeRedis, spawned_runs: list[dict[str, Any]]
     ) -> None:
-        """Only a HIL pause sets it; a plain live turn must dispatch cleanly
-        rather than carrying a stale id from the configurable."""
+        """Only a HIL pause sets it; a plain live turn must dispatch cleanly rather than carrying a stale id from the configurable."""
         await call_executor_with(config=config_for(), task="check my calendar")
         await drain_background_tasks()
 
@@ -1012,13 +991,7 @@ class TestDispatchThreadsTheTurnsIdentity:
     async def test_the_users_own_wording_reaches_the_executor(
         self, fake_redis: fakeredis.aioredis.FakeRedis, spawned_runs: list[dict[str, Any]]
     ) -> None:
-        """The executor's brief carries the verbatim request alongside comms'
-        paraphrase, so a detail comms dropped is still recoverable downstream.
-
-        Sourced from the configurable, so it rides along whatever the comms model
-        did or did not emit — the tool call below passes no verbatim argument
-        because the schema no longer has one.
-        """
+        """The executor's brief carries the verbatim request alongside comms' paraphrase, so a detail comms dropped is still recoverable downstream."""
         await call_executor_with(
             config=config_for(user_request="pls archive the junk mail and flag the offer thing"),
             task="triage the inbox",
@@ -1034,10 +1007,7 @@ class TestDispatchThreadsTheTurnsIdentity:
     async def test_identifiers_survive_a_paraphrase_that_mangles_them(
         self, fake_redis: fakeredis.aioredis.FakeRedis, spawned_runs: list[dict[str, Any]]
     ) -> None:
-        """Regression: a pasted billing table went to the executor with 3 of its 4
-        recipient addresses corrupted by the comms model's rewrite, and no verbatim
-        copy to check against. The brief must still carry the exact bytes even when
-        the model's `task` gets the identifiers wrong."""
+        """Regression: a pasted billing table went to the executor with 3 of its 4 recipient addresses corrupted by the comms model's rewrite, and no verbatim copy to check against."""
         pasted = (
             "writetokhair@gmail.com\tFailed\t$30.00\tsub_0Ni7oWIA6kMF0ogWiKC3x\n"
             "tmunson750@gmail.com\tCancelled\t$30.00\tsub_0NfdUP7ekmLIw59KBtWwa"
@@ -1132,13 +1102,12 @@ class TestStoppedReplayRecordReachesTheExecutor:
 
 @pytest.mark.unit
 class TestDispatchAcknowledgement:
-    """Comms writes its user-facing reply from this string, before the executor
-    has run a single tool. It is the one place where the wording *is* the
-    behaviour: it must not read as completion, and it has to name the approval
-    gate the user may be about to see. Asserted verbatim rather than by
-    substring — a reworded clause that quietly drops "Nothing has run yet" or
-    the approval sentence is exactly the regression that would ship a bot
-    announcing work it has not done.
+    """Comms writes its user-facing reply from this string, before the executor has run a single tool.
+
+    It is the one place where the wording *is* the behaviour: it must not read as completion, and
+    it has to name the approval gate the user may be about to see. Asserted verbatim rather than by
+    substring — a reworded clause that quietly drops "Nothing has run yet" or the approval sentence
+    is exactly the regression that would ship a bot announcing work it has not done.
     """
 
     async def test_the_acknowledgement_is_exact(
@@ -1161,12 +1130,11 @@ class TestDispatchAcknowledgement:
 
 
 class TestSparedRunHearsNoInterruption:
-    """A selective cancel that deliberately SPARES the running task must not
-    tell the executor it was stopped.
+    """A selective cancel that deliberately SPARES the running task must not tell the executor it was stopped.
 
-    The stop notice is drained by the running executor on its very next model
-    call, so announcing one here makes it abandon work the user never
-    cancelled — the exact opposite of what a targeted cancel means.
+    The stop notice is drained by the running executor on its very next model call, so announcing
+    one here makes it abandon work the user never cancelled — the exact opposite of what a targeted
+    cancel means.
     """
 
     async def test_sparing_the_running_task_announces_no_interruption(
@@ -1199,13 +1167,11 @@ class TestSparedRunHearsNoInterruption:
 
 
 class TestAWorkflowFiresReservationIsAdopted:
-    """A workflow fire claims its conversation before the comms turn that
-    dispatches the executor, so no second fire can slip into that window.
+    """A workflow fire claims its conversation before the comms turn that dispatches the executor, so no second fire can slip into that window.
 
-    The executor this turn spawns is the run that claim was made FOR. Reading
-    the held lock as somebody else's would send the fire's own task into the
-    inbox of a live run that does not exist: nothing would ever run it, and the
-    fire would still complete as a success.
+    The executor this turn spawns is the run that claim was made FOR. Reading the held lock as
+    somebody else's would send the fire's own task into the inbox of a live run that does not
+    exist: nothing would ever run it, and the fire would still complete as a success.
     """
 
     async def test_the_executor_takes_over_its_own_fires_claim(
@@ -1227,8 +1193,7 @@ class TestAWorkflowFiresReservationIsAdopted:
     async def test_a_stale_reservation_still_queues_behind_a_real_run(
         self, fake_redis: fakeredis.aioredis.FakeRedis, spawned_runs: list[dict[str, Any]]
     ) -> None:
-        """The claim can lapse on TTL and be taken by a genuinely different run.
-        Adopting then would put two executors on one conversation."""
+        """The claim can lapse on TTL and be taken by a genuinely different run."""
         await fake_redis.set(LOCK_KEY, "other-stream:task-9", ex=EXECUTOR_BUSY_TTL)
 
         await call_executor_with(
@@ -1244,8 +1209,7 @@ class TestAWorkflowFiresReservationIsAdopted:
     async def test_a_chat_turn_carries_no_reservation_and_still_queues(
         self, fake_redis: fakeredis.aioredis.FakeRedis, spawned_runs: list[dict[str, Any]]
     ) -> None:
-        """Only a workflow fire reserves. An ordinary turn finding the lock held
-        must behave exactly as before."""
+        """Only a workflow fire reserves."""
         await fake_redis.set(LOCK_KEY, "other-stream:task-9", ex=EXECUTOR_BUSY_TTL)
 
         await call_executor_with(config_for(), "Send the digest")

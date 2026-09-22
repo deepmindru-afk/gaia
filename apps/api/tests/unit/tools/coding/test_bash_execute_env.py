@@ -62,9 +62,7 @@ class TestBashExecuteEnv:
         assert mint_kwargs["command_timeout_seconds"] == 45
 
     async def test_a_subagents_bash_carries_its_tool_space_into_the_token(self) -> None:
-        """Code mode is the proxy's other door. Without the space in the token the
-        route dispatched every call unconfined, so a subagent refused a tool by
-        `execute` reached it with one line of python instead."""
+        """Code mode is the proxy's other door."""
         sbx = _sbx()
         scoped = build_bash_tool({"GMAIL_SEND_EMAIL": MagicMock(), "bash": MagicMock()})
         with (
@@ -78,8 +76,7 @@ class TestBashExecuteEnv:
         assert mint.call_args.kwargs["scoped_tool_names"] == ["GMAIL_SEND_EMAIL", "bash"]
 
     async def test_the_executors_bash_is_unscoped(self) -> None:
-        """The executor's space IS the registry — confining it would refuse tools
-        it is entitled to run."""
+        """The executor's space IS the registry — confining it would refuse tools it is entitled to run."""
         sbx = _sbx()
         with (
             patch(f"{MODULE}.acquire_sandbox", new=_acquire(sbx)),
@@ -103,8 +100,7 @@ class TestBashExecuteEnv:
         assert sbx.commands.run.await_args.kwargs["envs"] == {}
 
     async def test_flag_off_mints_nothing_despite_env_config(self) -> None:
-        """The per-user flag is the rollout gate: env-configured but unflagged
-        runs bash with no execute env, same as unconfigured."""
+        """The per-user flag is the rollout gate: env-configured but unflagged runs bash with no execute env, same as unconfigured."""
         sbx = _sbx()
         with (
             patch(f"{MODULE}.acquire_sandbox", new=_acquire(sbx)),

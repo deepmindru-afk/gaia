@@ -1544,9 +1544,7 @@ class TestResumeTrackedTodo:
         return [c.kwargs["entry"] for c in timeline.call_args_list]
 
     async def test_continues_the_parked_conversation_not_a_fresh_one(self):
-        """The parked run's thread holds its reasoning and partial results —
-        a fresh uuid would orphan all of it. The resume inherits the thread
-        the way a user follow-up continues a chat."""
+        """The parked run's thread holds its reasoning and partial results — a fresh uuid would orphan all of it."""
         agent = AsyncMock(return_value=SilentRunResult(message="Briefing sent.", tool_data=[]))
         patches, _repo, timeline = self._patches(agent=agent)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:

@@ -607,10 +607,9 @@ class TestToolsAreReachable:
 
     def test_they_are_bound_to_the_executor_up_front(self) -> None:
         source = Path(build_graph.__file__).read_text()
-        # Anchor on the executor's initial set directly: the builder passes it
-        # as the `initial_tools` variable (["activate_integration",
-        # *EXECUTOR_INITIAL_TOOL_IDS]), so parse that variable plus the
-        # module-level list it spreads.
+        # Anchor on the executor's initial set directly: the builder passes it as the
+        # initial_tools variable (["activate_integration", *EXECUTOR_INITIAL_TOOL_IDS]),
+        # so parse that variable plus the module-level list it spreads.
         executor_fn = source.split("def build_executor_graph", 1)[1]
         initial_tools = executor_fn.split("initial_tools = [", 1)[1].split("]", 1)[0]
         module_ids = source.split("EXECUTOR_INITIAL_TOOL_IDS = [", 1)[1].split("]", 1)[0]
