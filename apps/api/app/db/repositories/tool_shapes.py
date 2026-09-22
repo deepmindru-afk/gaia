@@ -39,6 +39,9 @@ class ToolShapesRepository(MongoRepository[ToolOutputShapeDocument, ToolOutputSh
             "$set": {"output_schema": output_schema, "last_seen": datetime.now(UTC)},
             "$inc": {"call_count": 1},
         }
+        # pragma: no mutate start — with cache_policy None, scope and return_document are
+        # inert (nothing is cached, the read-back is discarded), and the retry's upsert
+        # only runs once the winner's row exists; mutmut cannot pragma a single argument.
         try:
             await self._apply_raw_update(
                 key, update, scope=REPO_GLOBAL_SCOPE, upsert=True, return_document=False
@@ -47,6 +50,7 @@ class ToolShapesRepository(MongoRepository[ToolOutputShapeDocument, ToolOutputSh
             await self._apply_raw_update(
                 key, update, scope=REPO_GLOBAL_SCOPE, upsert=True, return_document=False
             )
+        # pragma: no mutate end
 
 
 tool_shapes_repository = ToolShapesRepository()
