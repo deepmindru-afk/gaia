@@ -73,7 +73,7 @@ async def _dev_base_configurable(
         # ran a different model than real chat.
         lane=AgentLane(
             role=AgentRole.EXECUTOR,
-            dev_option=dev_option_for(model, use_defaults=True),
+            dev_option=dev_option_for(model, use_defaults=model is None),
         ),
         turn=AgentTurn(
             user_preferences=user_preferences,

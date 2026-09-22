@@ -1558,6 +1558,74 @@ class TestRunChatStreamBackground:
         assert state.ttft_ms == 2000.0
         assert state.e2e_ack_ms == 2000.0
 
+    async def _run_turn(
+        self, user: AuthenticatedUser, reply: str
+    ) -> tuple[list[tuple[str, dict[str, Any]]], AsyncMock, MagicMock]:
+        """Run one turn whose comms reply is reply; return the JSON frames published, the save and the capture."""
+        body = MessageRequestWithHistory(
+            message="Booked it",
+            messages=[{"role": "user", "content": "Booked it"}],
+            conversation_id="conv_existing_123",
+            turn_id="umsg_1",
+        )
+        sm = _make_stream_manager_mock()
+        save = AsyncMock()
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_text_then_nostream(reply, reply)),
+            ),
+            patch("app.services.chat.stream.save_conversation_async", new=save),
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+            patch("app.services.chat.stream.capture_event") as capture,
+        ):
+            await run_chat_stream_background(
+                stream_id="stream_turn",
+                body=body,
+                user=user,
+                conversation_id="conv_existing_123",
+            )
+        frames = [
+            (call.args[0], json.loads(call.args[1][len("data: ") :]))
+            for call in sm.publish_chunk.call_args_list
+            if call.args[1].startswith("data: {")
+        ]
+        return frames, save, capture
+
+    async def test_a_react_turn_tells_the_client_to_fold_the_reply_into_a_reaction(
+        self, test_user: AuthenticatedUser
+    ) -> None:
+        frames, _, _ = await self._run_turn(test_user, "REACT: 😎")
+
+        acks = [(sid, frame) for sid, frame in frames if "emoji_ack" in frame]
+        assert acks == [
+            ("stream_turn", {"emoji_ack": {"emoji": "😎", "reacts_to_message_id": "umsg_1"}})
+        ]
+        # Sent before the completion frame, so the client never closes a raw directive bubble.
+        order = [next(iter(frame)) for _, frame in frames]
+        assert order.index("emoji_ack") < order.index("main_response_complete")
+
+    async def test_a_react_turn_is_saved_and_counted_as_a_reaction_to_the_users_message(
+        self, test_user: AuthenticatedUser
+    ) -> None:
+        _, save, capture = await self._run_turn(test_user, "REACT: 😎")
+
+        saved = save.await_args.kwargs
+        assert saved["complete_message"] == "😎"
+        assert saved["kind"] is MessageKind.EMOJI_ACK
+        assert saved["reacts_to_message_id"] == "umsg_1"
+        capture.assert_any_call("user_abc", AnalyticsEvents.CHAT_TURN_REACTED, {"emoji": "😎"})
+
+    async def test_a_plain_reply_is_neither_folded_nor_counted_as_a_reaction(
+        self, test_user: AuthenticatedUser
+    ) -> None:
+        frames, save, capture = await self._run_turn(test_user, "Booked your 9am flight.")
+
+        assert not [frame for _, frame in frames if "emoji_ack" in frame]
+        assert save.await_args.kwargs["kind"] is MessageKind.TEXT
+        assert AnalyticsEvents.CHAT_TURN_REACTED not in [c.args[1] for c in capture.call_args_list]
+
 
 def _hist_count(name: str, labels: dict[str, str]) -> float:
     return REGISTRY.get_sample_value(f"{name}_count", labels) or 0.0

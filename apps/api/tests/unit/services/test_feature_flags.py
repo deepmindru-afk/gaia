@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.config.settings import settings as app_settings
 from app.services.analytics_service import AnalyticsEvents
 from app.services.feature_flags import (
     FEATURE_FLAG_DESCRIPTIONS,
@@ -294,6 +295,35 @@ class TestCodeModeDefaultFollowsSettings:
 
         monkeypatch.setattr(settings, "ENABLE_CODE_MODE", True)
         assert await is_code_mode_enabled("u1") is True
+
+
+FLAG_KILL_SWITCHES = {
+    FeatureFlag.COMMS_OPENUI: "ENABLE_COMMS_OPENUI",
+    FeatureFlag.CODE_MODE: "ENABLE_CODE_MODE",
+    FeatureFlag.HIL_LEDGER: "ENABLE_HIL_LEDGER",
+    FeatureFlag.HIL_JEV_JUDGE: "ENABLE_HIL_JEV_JUDGE",
+}
+
+
+class TestEveryFlagFailsOpenToItsOwnSetting:
+    def test_every_flag_has_a_kill_switch(self) -> None:
+        assert set(FLAG_KILL_SWITCHES) == set(FeatureFlag)
+
+    @pytest.mark.parametrize("flag", list(FeatureFlag), ids=lambda flag: flag.value)
+    @pytest.mark.parametrize("env_value", [True, False])
+    async def test_an_unevaluated_flag_serves_its_env_default(
+        self,
+        flag: FeatureFlag,
+        env_value: bool,
+        monkeypatch: pytest.MonkeyPatch,
+        no_client: None,
+        evaluated: MagicMock,
+    ) -> None:
+        for other in FLAG_KILL_SWITCHES.values():
+            monkeypatch.setattr(app_settings, other, not env_value)
+        monkeypatch.setattr(app_settings, FLAG_KILL_SWITCHES[flag], env_value)
+
+        assert await is_enabled(flag, "u1") is env_value
 
 
 class TestCoerceEmptyString:

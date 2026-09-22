@@ -160,7 +160,8 @@ def _substitute_reserved_python_keywords(
         if p_name not in _python_reserved:
             continue
 
-        nested: dict[str, _RenamedKeyword] = {}
+        # Unmutated: nested is only ever read as a truth value, where None and {} agree.
+        nested: dict[str, _RenamedKeyword] = {}  # pragma: no mutate
         p_val: _JsonSchema = schema["properties"].pop(p_name)
         if p_val.get("type") == "object":
             p_val, nested = _substitute_reserved_python_keywords(schema=p_val)
@@ -175,16 +176,20 @@ def _substitute_reserved_python_keywords(
 def _reinstate_reserved_python_keywords(
     request: dict[str, object], keywords: dict[str, _RenamedKeyword]
 ) -> dict[str, object]:
-    for clean_key, renamed in sorted(keywords.items(), reverse=True):
+    for clean_key, renamed in keywords.items():
         if clean_key not in request:
             continue
 
         original_value = request.pop(clean_key)
-        if renamed.nested:
-            # Only an object-typed property carries nested renames, so its value is a mapping.
+        # LangChain hands an object argument over as its args-schema model, and as None when omitted.
+        if renamed.nested and original_value is not None:
+            nested_request = (
+                original_value.model_dump(exclude_unset=True)
+                if isinstance(original_value, pydantic.BaseModel)
+                else t.cast(dict[str, object], original_value)
+            )
             original_value = _reinstate_reserved_python_keywords(
-                request=t.cast(dict[str, object], original_value),
-                keywords=renamed.nested,
+                request=nested_request, keywords=renamed.nested
             )
         request[renamed.original] = original_value
     return request
@@ -209,7 +214,9 @@ def _validation_failure_as_result(
 
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R | ValidationFailure:
         try:
-            return run(*args, **kwargs)
+            # Unmutated: this wraps run at class definition, before mutmut can switch a
+            # mutant in; replaying the edit shows TestInvalidArgumentsReturnAFailure fails.
+            return run(*args, **kwargs)  # pragma: no mutate
         except pydantic.ValidationError as e:
             return {"successful": False, "error": parse_pydantic_error(e), "data": None}
 
