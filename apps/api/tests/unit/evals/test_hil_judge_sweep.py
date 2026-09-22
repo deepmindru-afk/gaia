@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
+from scripts.evals import sweep_hil_judge
 from scripts.evals.core.cost import EvalCostTracker
 from scripts.evals.core.types import Case, CaseRun
 from scripts.evals.suites import hil_judge
@@ -67,6 +70,15 @@ def _journal(tmp_path: Path, *runs: CaseRun) -> Path:
     return run_dir
 
 
+def _run_dir(runs: Path, run_id: str, suite: str, mtime: float) -> None:
+    run_dir = runs / run_id
+    run_dir.mkdir(parents=True)
+    meta = {"run_id": run_id, "suite": suite, "started_at": "2026-09-23T00:00:00+00:00"}
+    (run_dir / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+    (run_dir / "journal.jsonl").write_text("", encoding="utf-8")
+    os.utime(run_dir, (mtime, mtime))
+
+
 async def test_an_llm_judge_run_journals_no_jev_verdict_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -98,3 +110,24 @@ async def test_the_sweep_regrades_a_jev_journal(
 ) -> None:
     report = sweep_journal(_journal(tmp_path, await _jev_run(monkeypatch)))
     assert "graded score (with code vetoes): 1/1" in report
+
+
+def test_the_default_sweep_target_is_the_newest_hil_judge_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run_dir(tmp_path, "hil-run", "hil-judge", 1_000)
+    _run_dir(tmp_path, "later-other-suite", "chat-quality", 2_000)
+    monkeypatch.setattr(sweep_hil_judge, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["sweep_hil_judge"])
+    sweep_hil_judge.main()
+    assert "sweeping run hil-run" in capsys.readouterr().out
+
+
+def test_the_default_sweep_fails_when_no_hil_judge_run_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _run_dir(tmp_path, "other-suite", "chat-quality", 1_000)
+    monkeypatch.setattr(sweep_hil_judge, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["sweep_hil_judge"])
+    with pytest.raises(SystemExit, match="hil-judge"):
+        sweep_hil_judge.main()

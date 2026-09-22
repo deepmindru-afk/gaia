@@ -6,19 +6,28 @@ Without run-id, sweeps the newest hil-judge run under scripts/evals/runs/.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import sys
 
 from scripts.evals.core.paths import RUNS_DIR
-from scripts.evals.suites.hil_judge import sweep_journal
+from scripts.evals.suites.hil_judge import HilJudgeSuite, sweep_journal
+
+
+def _is_hil_judge_run(run_dir: Path) -> bool:
+    meta_path = run_dir / "run.json"
+    if not (meta_path.exists() and (run_dir / "journal.jsonl").exists()):
+        return False
+    return str(json.loads(meta_path.read_text()).get("suite")) == HilJudgeSuite.name
 
 
 def _latest_hil_judge_run() -> str:
     candidates = sorted(
-        (p for p in RUNS_DIR.iterdir() if p.is_dir() and (p / "journal.jsonl").exists()),
+        (p for p in RUNS_DIR.iterdir() if p.is_dir() and _is_hil_judge_run(p)),
         key=lambda p: p.stat().st_mtime,
     )
     if not candidates:
-        raise SystemExit("no runs found under scripts/evals/runs/")
+        raise SystemExit(f"no {HilJudgeSuite.name} runs found under {RUNS_DIR}")
     return candidates[-1].name
 
 
