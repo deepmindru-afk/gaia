@@ -1,32 +1,17 @@
 """Decide ledger approvals: CAS commit, ticket wake, agent redeem.
 
-The single entry point for every ledger decision source — the web/mobile
-decide endpoints, and later the bot classifier. Each supplies approve/deny;
-everything else is identical.
-
-Approval is permission, not execution: the backend never runs an approved
-tool. Committing wakes the model with the ticket (the approval id); the model
-redeems it with execute(tool_name="approve", data={"id": ...}), which runs
-the stored envelope and returns the result in-context so dependent work can
-chain on it. Steering a live run vs starting an idle one is
-``deliver_to_executor``'s contract.
-
-Guarantees (mirror ``resolution.py`` for the old path):
-
-* **Exactly once.** The ``PENDING -> decided`` transition is a conditional
-  Mongo update. A double tap, a racing second device, and a stale client all
-  lose the race and resolve nothing — they get the current row back.
-* **Stale clients refresh, never overwrite.** Every render carries the row
-  version ``v``; a decide call with a mismatched ``v`` returns the current
-  row with ``committed=False``.
-* **Stale approvals carry their age.** No server refuse: the ticket wake names
-  how old the approval is, and the model judges freshness at redeem — an
-  approval is permission, and only a redeem runs the envelope.
-* **Single-use tickets.** Redeem claims ``APPROVED -> EXECUTING``; the loser
-  is refused, never re-run.
-* **No daemon.** Crash recovery (stalled EXECUTING, orphaned APPROVED) runs
-  lazily inside the decide path via :func:`reconcile_conversation_ledger` —
-  every decide heals its own conversation as a side effect.
+The single entry point for every ledger decision source (web/mobile decide
+endpoints, later the bot classifier). Approval is permission, not execution:
+the backend never runs an approved tool. Committing wakes the model with the
+ticket (the approval id); the model redeems it with
+execute(tool_name="approve", data={"id": ...}), which runs the stored
+envelope and returns the result so dependent work can chain on it.
+Guarantees (mirror resolution.py): the PENDING -> decided transition is a
+conditional Mongo update, so double taps and stale clients lose the race and
+refresh instead of overwriting; a mismatched row version v returns the current
+row with committed=False; stale approvals carry their age for the model to
+judge at redeem; redeem's APPROVED -> EXECUTING claim is single-use; and crash
+recovery runs lazily via reconcile_conversation_ledger, with no daemon.
 """
 
 from dataclasses import dataclass
@@ -140,11 +125,9 @@ async def decide_ledger(
             stale=True,
         )
 
-    # An approval with feedback is a conditional approval, and envelopes carry
-    # no conditions: the stored args would run unmodified while the card
-    # shows "approved with a note". Match the chat classifier (approve with
-    # feedback routes to deny): record it as denied with the note attached,
-    # so nothing executes beyond the granted permission.
+    # Approve+feedback is a conditional approval, but envelopes carry no
+    # conditions: route it to deny (as the chat classifier does) so nothing
+    # runs beyond the granted permission; the note is attached to the denial.
     if kind == "approve" and feedback is not None and feedback.strip() != "":
         kind = "deny"
 
@@ -182,12 +165,9 @@ async def decide_ledger(
     )
     queued = bool(target is LedgerState.APPROVED and row.blocked_by)
     if target is LedgerState.APPROVED and not queued:
-        # Permission granted — hand the ticket to the model, which redeems it
-        # with the approve ticket and chains on the result. deliver_to_executor
-        # steers a live run or starts an idle conversation, so this covers
-        # both without the decider knowing which. Failures fall back to the
-        # inbox wake: the decision already committed and published, so delivery
-        # must never fail the tap.
+        # Permission granted: hand the ticket to the model. deliver_to_executor
+        # steers a live run or starts an idle one; on failure fall back to the
+        # inbox wake, since the decision already committed and must not fail the tap.
         try:
             await _deliver_ticket(row)
         except Exception as e:
@@ -204,10 +184,9 @@ async def decide_ledger(
     await publish_ledger_decision(row, target, feedback=feedback)
     await sync_conversation_approval_flag(row.conversation_id, row.user_id)
     if target is LedgerState.DENIED:
-        # Denials schedule nothing, but the agent still needs the verdict: it
-        # exited on the PENDING message and list_open will never show this row
-        # again. A wake alone only reaches a running run — deliver, so an idle
-        # conversation starts one that wraps up and reports what was skipped.
+        # Denials schedule nothing, but the agent still needs the verdict and a
+        # wake alone only reaches a running run — deliver, so an idle
+        # conversation starts one that reports what was skipped.
         await _deliver_verdict(row, "DENIED", feedback)
         # A background todo has no other surface: leave the skip in its log.
         await record_owner_deny(row, feedback)
@@ -223,18 +202,14 @@ async def decide_ledger(
     )
 
 
-# A busy-lock holder with no live session older than this is provably dead,
-# not parked: parked runs keep their session, and live runs always have one
-# in-process. Below the cutoff a quiet run may simply be reasoning — never
-# break it. Breaking only ever frees delivery to start a run; the ticket-claim
-# CAS still guarantees a single execution, so even a mistaken break costs one
-# redundant run, never a duplicate tool call.
+# A busy-lock holder older than this with no live session is provably dead,
+# not parked (parked/live runs keep a session). A mistaken break only costs a
+# redundant run, never a duplicate: the ticket-claim CAS still bounds execution.
 STALE_HOLDER_MIN_AGE_SECONDS = 300
 
 
 def _ticket_task(row: ApprovalLedgerDocument) -> str:
-    """The wake that turns an approval into a redeem: ticket id, what it is,
-    how old it is, and the one call that honors it — via execute, no new tool."""
+    """Build the wake that turns an approval into a redeem: id, age, and the execute call that honors it."""
     age = "unknown age"
     if row.created_at is not None:
         seconds = (datetime.now(UTC) - row.created_at).total_seconds()
@@ -250,14 +225,10 @@ def _ticket_task(row: ApprovalLedgerDocument) -> str:
 async def _reclaim_dead_holder(conversation_id: str) -> bool:
     """Release a busy lock whose holder is provably gone; True when free.
 
-    A dead holder bricks delivery: ``deliver_to_executor`` sees busy and only
-    appends to an inbox no live run will ever drain, stranding approvals until
-    the 30-minute TTL. Reclaim when ALL hold: a lock is present, its stream
-    has no live session, the lock is older than ``STALE_HOLDER_MIN_AGE``,
-    and no paused/parked barrier approval claims the conversation. The delete
-    itself is compare-and-delete, so a run that re-acquired mid-check wins.
-    Never raises: on any doubt or error the lock stands and delivery degrades
-    to the inbox append as before.
+    A dead holder bricks delivery (deliver_to_executor appends to an inbox no
+    live run drains). Reclaim only when all hold: lock present, stream has no
+    live session, older than STALE_HOLDER_MIN_AGE, no parked barrier approval.
+    Compare-and-delete; never raises — on any doubt the lock stands.
     """
     try:
         holder = await get_lock_holder(conversation_id)
@@ -289,11 +260,10 @@ async def _reclaim_dead_holder(conversation_id: str) -> bool:
 async def _deliver_ticket(row: ApprovalLedgerDocument) -> None:
     """Hand an approved ticket to the model — steer or start, never execute.
 
-    Reclaims a provably-dead lock holder first: without it a crashed run's
-    lock bricks delivery into an inbox no live run drains. Deferred import:
-    executor_runner reaches services.hil (approvals_store, resume_slot), so
-    a top-level import risks closing a cycle the way revoke_tool's deferred
-    publish_ledger_revocation documents.
+    Reclaims a provably-dead lock holder first, else a crashed run's lock
+    bricks delivery into an inbox no live run drains. Deferred import:
+    executor_runner reaches services.hil, so a top-level import risks closing
+    a cycle (same guard as revoke_tool).
     """
     from app.agents.core.background.executor_runner import (  # noqa: PLC0415 -- same cycle guard as revoke_tool
         deliver_to_executor,
@@ -354,8 +324,8 @@ async def redeem_approved(
 
     The model supplies no args — the ticket IS the approval id and the row
     holds the envelope, so nothing the model says can drift the call. The
-    ``APPROVED -> EXECUTING`` claim is the single-use CAS: exactly one
-    redeemer wins, every loser is refused with the row's actual state.
+    APPROVED -> EXECUTING claim is the single-use CAS: exactly one redeemer
+    wins, every loser is refused with the row's actual state.
     """
 
     row = await approval_ledger_repository.get_by_approval_id(approval_id)
@@ -459,11 +429,9 @@ async def redeem_approved(
 async def _settle_terminal(row: ApprovalLedgerDocument, state: LedgerState) -> None:
     """Settle the card to the redeem outcome (executed/failed/unknown).
 
-    Without this the card lingers as approved forever while the ledger has
-    moved on — the user never sees what their approval did. Same triple as
-    every other settle here (persisted frame, broadcast, in-memory session
-    flip); feedback stays None by design, so the card collapses to the
-    outcome chip instead of growing a receipt block.
+    Without this the card lingers as approved while the ledger moved on. Same
+    triple as every other settle here (persisted frame, broadcast, session
+    flip); feedback stays None so the card collapses to the outcome chip.
     """
     if row.proposing_run_id:
         settle_session_approval_frame(row.proposing_run_id, row.approval_id, state.value)
@@ -476,9 +444,9 @@ async def revoke_ticket(
 ) -> str:
     """Withdraw your own pending approval.
 
-    The revoke half of the ticket convention (mirrors ``redeem_approved``):
-    the row tombstones as REVOKED; decided rows are untouchable, so report
-    those instead. Unknown ids and foreign conversations read identically —
+    The revoke half of the ticket convention (mirrors redeem_approved): the
+    row tombstones as REVOKED; decided rows are untouchable, so report those
+    instead. Unknown ids and foreign conversations read identically —
     existence must not leak across conversations.
     """
 
@@ -523,11 +491,10 @@ async def revoke_ticket(
 async def cancel_ledger_approvals(conversation_id: str, user_id: str) -> list[str]:
     """Withdraw a cancelled run's pending ledger approvals so nothing revives them.
 
-    Ledger twin of ``resolution.cancel_conversation_approvals``: without this a
-    later Approve — from a stale card, another tab, or a bot "yes" — redeems a
-    ticket for work the user stopped. Only user-owned PENDING rows; APPROVED
-    tickets stay (the user explicitly permitted them, and only a redeem runs
-    them). Each revocation tombstones through the full triple.
+    Ledger twin of resolution.cancel_conversation_approvals: without it a later
+    Approve (stale card, another tab, a bot "yes") redeems a ticket for stopped
+    work. Only user-owned PENDING rows; APPROVED tickets stay. Each revocation
+    tombstones through the full triple.
     """
     cancelled: list[str] = []
     for row in await approval_ledger_repository.list_open(conversation_id):
@@ -563,12 +530,10 @@ async def cancel_ledger_approvals(conversation_id: str, user_id: str) -> list[st
 async def reconcile_conversation_ledger(conversation_id: str) -> None:
     """Heal one conversation's ledger as a decide-path side effect.
 
-    No daemon exists by design, so every decide also repairs: stalled
-    EXECUTING rows go UNKNOWN (with a wake, so the agent learns). Orphaned
-    APPROVED rows need nothing: the ticket lives in model context (OPEN
-    PENDINGS + inbox) and only a redeem runs the envelope — never re-nudge,
-    never re-execute. Every step is CAS-guarded, so concurrent deciders
-    racing here converge instead of duplicating.
+    No daemon exists by design, so every decide repairs: stalled EXECUTING
+    rows go UNKNOWN (with a wake). Orphaned APPROVED rows need nothing — the
+    ticket lives in model context and only a redeem runs the envelope. Every
+    step is CAS-guarded, so concurrent deciders converge instead of duplicating.
     """
     cutoff = datetime.now(UTC) - timedelta(minutes=STALLED_EXECUTING_MINUTES)
     for stalled in await approval_ledger_repository.list_stalled_executing(cutoff, conversation_id):
@@ -643,10 +608,9 @@ async def publish_ledger_revocation(row: ApprovalLedgerDocument) -> None:
     other delivery here: the row is the truth, frames are hints.
     """
     if row.proposing_run_id:
-        # A revoke before the run ends drops the unshown frame instead of
-        # tombstoning it: a held card never went live, so the user saw
-        # nothing and there is nothing to explain. A frame that already went
-        # live (background run) still flips to the tombstone as before.
+        # A revoke before the run ends drops the unshown frame (a held card
+        # never went live, so there is nothing to explain); a frame already
+        # live still flips to the tombstone.
         settle_session_approval_frame(
             row.proposing_run_id, row.approval_id, "revoked", drop_if_unpublished=True
         )
@@ -657,8 +621,8 @@ async def publish_ledger_revocation(row: ApprovalLedgerDocument) -> None:
 async def _persist_decision_status(row: ApprovalLedgerDocument, status: str) -> None:
     """Settle the persisted card frame so reload renders the terminal state.
 
-    Isolated on purpose (mirrors ``bridge.publish_decision``): a write error
-    here must never fail the decision or revocation it reports on.
+    Isolated on purpose (mirrors bridge.publish_decision): a write error here
+    must never fail the decision or revocation it reports on.
     """
     try:
         await conversation_repository.set_message_approval_status(
@@ -706,7 +670,7 @@ async def _wake_agent(row: ApprovalLedgerDocument, outcome: str, result: object)
 
     Inbox is transport, ledger is truth: a lost wake re-surfaces via the next
     OPEN PENDINGS injection, never via re-execution. A missing Redis client is
-    a loud error, never a silent drop — ``append`` no-ops without one, so this
+    a loud error, never a silent drop — append no-ops without one, so this
     checks first instead of reporting a delivery that never happened.
     """
     if redis_cache.client is None:

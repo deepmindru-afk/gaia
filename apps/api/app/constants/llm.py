@@ -76,11 +76,9 @@ MESSAGES_SNAPSHOT_FREQUENCY = 50
 # risk keeps p95 cost predictable. Legitimate tasks that need more steps
 # should split work across spawns rather than chew through recursion budget.
 AGENT_RECURSION_LIMIT = 40  # Comms + workers (routing / focused work)
-# The executor legitimately runs long multi-step tool loops (retrieve_tools ->
-# activate -> execute tool calls, frequently across several integrations), so 40 is too tight
-# and truncates real work with GraphRecursionError. Both the graph's runtime
-# recursion_limit and the accounting middleware's high-water-mark denominator read
-# this, so enforcement and analytics stay in sync.
+# The executor runs long multi-step tool loops across several integrations, so 40
+# truncates real work with GraphRecursionError. Both the graph runtime limit and
+# the accounting middleware's denominator read this, so they stay in sync.
 EXECUTOR_RECURSION_LIMIT = 100
 SUBAGENT_RECURSION_LIMIT = 15  # Spawned subagents (spawn_subagent tool loop)
 # The workflow authoring subagent only discovers integrations/triggers then emits
@@ -149,23 +147,15 @@ TOOL_TIMEOUT_EXEMPT_TOOLS = frozenset(
         "spawn_subagent",
         "handoff",
         "deep_research",
-        # bash carries its own deadline all the way down: the e2b server-side
-        # command timeout (its `timeout` arg, capped at BASH_MAX_TIMEOUT_SECONDS)
-        # kills the REMOTE command, and every phase around it — lock acquire,
-        # connect, health probe — is separately bounded. Bounding it here as well
-        # capped every command at 120s while the tool advertised 300, and in code
-        # mode it killed the bash call before the host could answer an in-flight
-        # execute() with its structured "may or may not have completed" error.
+        # bash carries its own deadline down (the e2b server-side command timeout,
+        # capped at BASH_MAX_TIMEOUT_SECONDS); bounding it here capped every command
+        # at 120s while the tool advertised 300 and killed code-mode execute() calls.
         "bash",
     }
 )
-# How much longer the tool node waits than the bound applied closer to the tool.
-# For an execute-proxied call, dispatch_tool bounds the real tool at
-# TOOL_EXECUTION_TIMEOUT_SECONDS and answers with a structured, actionable error;
-# the node stays the backstop for the rest of that call (resolution reaches
-# Composio/MCP over the network) and must therefore expire strictly after it —
-# two equal deadlines meant the outer one always won and the model only ever saw
-# the node's generic timeout text.
+# How much longer the tool node waits than the bound closer to the tool: it must
+# expire strictly after dispatch_tool's inner bound, else the outer deadline wins
+# and the model only ever sees the node's generic timeout text.
 TOOL_TIMEOUT_BACKSTOP_BUFFER_SECONDS = 15
 
 # Run-metadata key carrying each call's label so TTFT callbacks can attribute a
@@ -177,11 +167,9 @@ LLM_LABEL_METADATA_KEY: Final = "llm_label"
 # to the default model (see with_llm_retry in app/agents/llm/client.py).
 LLM_RETRY_MAX_ATTEMPTS = 3
 
-# Sticky routing (the ``session_id`` hint that pins a chain to one upstream) is
-# OpenRouter-wire behaviour. Gemini has no sticky routing, so the key is an
-# unsupported argument there and must never be sent. CUSTOM is excluded too: the
-# custom lane runs ChatOpenAI (the OpenRouter SDK rejects Zen's envelope), where
-# session_id as a top-level kwarg is unsupported on AsyncCompletions.create.
+# Sticky routing (the session_id hint pinning a chain to one upstream) is
+# OpenRouter-only wire behaviour: Gemini rejects the key, and CUSTOM runs
+# ChatOpenAI where session_id is unsupported on AsyncCompletions.create.
 STICKY_ROUTING_PROVIDERS = frozenset({LLMProviderName.OPENROUTER})
 # Auxiliary one-shots route on their own sticky session: sharing the
 # conversation's key re-pinned its provider from a background call (measured).
@@ -201,13 +189,12 @@ DEFAULT_LLM_TEMPERATURE = 0.1
 # fractional triggers denominated in THIS window even under a different model.
 DEFAULT_MAX_TOKENS = 1_000_000
 # Changing the default model is high blast radius: update DEFAULT_MAX_TOKENS
-# (else fractional-token middleware fails to build) and add a MODEL_PRICING
-# entry. Text-only default for every tier: tool results with images are captioned rather than shown.
+# (else fractional-token middleware fails to build) and add a MODEL_PRICING entry.
+# Text-only default for every tier: image tool results are captioned, not shown.
 DEFAULT_MODEL_NAME = "deepseek/deepseek-v4-flash-0731"
-# The HIL intent judge runs here, not on AUX_MODEL_NAME: the gate's accuracy
-# and tail latency matter more than sharing the graph lane's cache chain, and
-# the eval (50 labeled scenarios, real LLMs) put this id at 42/50 in 1.9s p95
-# against the default's 40/50 in 20s p95. Changing it re-runs that eval.
+# The HIL intent judge runs here, not AUX_MODEL_NAME: accuracy and tail latency
+# beat sharing the graph lane's cache. The eval (50 scenarios, real LLMs) put
+# this at 42/50 in 1.9s p95 vs the default's 40/50 in 20s p95. Changing re-runs it.
 HIL_JUDGE_MODEL_NAME = "google/gemini-3.5-flash-lite"
 # OpenRouter `models`-array fallback for the judge only: tried in order on
 # rate limits, downtime, and moderation refusals — never on verdicts. The

@@ -116,10 +116,9 @@ class CommonSettings(BaseAppSettings):
     DUMMY_IP: str = "8.8.8.8"
     WORKER_TYPE: str = "unknown"
     ENABLE_LAZY_LOADING: bool = True
-    # Experiment: include the OpenUI component reference (~27k chars) in the
-    # comms prompt on renderable channels (web/mobile/desktop). Off swaps it for
-    # a short markdown-only output note so the persona/voice rules are not
-    # crowded out by the component language. Text-only channels are unaffected.
+    # Experiment: include the OpenUI component reference (~27k chars) in the comms
+    # prompt on renderable channels (web/mobile/desktop). Off swaps a markdown-only
+    # note so voice rules are not crowded out; text-only channels are unaffected.
     ENABLE_COMMS_OPENUI: bool = True
     # Experiment: code mode — bash-injected `gaia.execute` client letting
     # sandbox scripts call GAIA tools back server-side. Off mints no token
@@ -129,11 +128,9 @@ class CommonSettings(BaseAppSettings):
     # return instead of parking the run on an interrupt. Off keeps the
     # interrupt-and-resume barrier.
     ENABLE_HIL_LEDGER: bool = False
-    # JEV choice judge for auto mode — a structured decision call classifies
-    # first (49/50 on the hil-judge calibration set, zero dangerous accepts);
-    # the LLM intent judge stays as the transport-failure fallback. On unless
-    # explicitly disabled: a JEV outage degrades to today's LLM behavior,
-    # never to an open gate.
+    # JEV choice judge for auto mode — a structured decision call classifies first
+    # (49/50 on the calibration set, zero dangerous accepts), LLM intent judge as
+    # the transport-failure fallback. On by default; a JEV outage never opens the gate.
     ENABLE_HIL_JEV_JUDGE: bool = True
 
     @field_validator("HOST", "FRONTEND_URL", mode="after")
@@ -281,9 +278,8 @@ class CommonSettings(BaseAppSettings):
     @classmethod
     def _reject_weak_sandbox_execute_secret(cls, v: str | None) -> str | None:
         # A blank value is how a templated deploy (compose, Infisical, k8s) spells
-        # "unset" — code mode then ships dark, exactly as with no key at all. Only
-        # a SHORT but present secret is the misconfiguration worth refusing to boot
-        # for; failing on "" took the whole API down on one unfilled env line.
+        # "unset" — code mode then ships dark. Only a SHORT but present secret is
+        # worth refusing to boot for; failing on "" took the whole API down once.
         if not v:
             return None
         if len(v) < SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS:

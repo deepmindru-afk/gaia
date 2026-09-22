@@ -70,11 +70,9 @@ PLAYBOOK_FALLBACK_CONTEXT_KEY = "playbook_fallback"
 #: ("did not run in this run").
 PLAYBOOK_REPLAYED_CALLS_KEY = "playbook_replayed_calls"
 
-# The trigger-context key carrying the busy-lock value a workflow fire reserved
-# its conversation with. Written by the workflow worker, read by ``call_executor``
-# so the executor the fire dispatches takes that reservation over instead of
-# queueing behind it — a drift between those two sites would send every workflow
-# run into the inbox of a lock nobody is holding.
+# The trigger-context key carrying the busy-lock value a workflow fire reserved.
+# Written by the workflow worker, read by call_executor so the dispatched
+# executor takes the reservation over instead of queueing behind a stale lock.
 WORKFLOW_LOCK_CONTEXT_KEY = "executor_lock_reservation"
 
 # After this many consecutive suspect replays the worker disables the playbook.

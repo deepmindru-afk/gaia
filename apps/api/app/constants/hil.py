@@ -20,19 +20,17 @@ from app.constants.general import FINISH_TASK_NAME
 HIL_JUDGE_MAX_USER_TURNS = 6
 HIL_JUDGE_MAX_TURN_CHARS = 800
 
-# The pending call's arguments, and the run's earlier tool calls (the provenance for
-# arguments the agent derived rather than the user dictating). Prior outputs ride
-# too, clipped small: an id minted by an earlier call (a draft id, a created event
-# id) is only traceable through the output that minted it.
+# The pending call's arguments, and the run's earlier tool calls (provenance for
+# args the agent derived, not the user). Prior outputs ride too, clipped small:
+# an id minted by an earlier call is only traceable through that output.
 HIL_JUDGE_MAX_ARGS_CHARS = 1500
 HIL_JUDGE_MAX_PRIOR_CALLS = 8
 HIL_JUDGE_MAX_PRIOR_ARGS_CHARS = 200
 HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS = 300
 
-# The pending tool's own arg schema, and the run's recent assistant messages.
-# Both are provenance for JEV, never authorization: the schema says what each
-# argument means (an opaque id stops being opaque), the assistant's words say
-# what it already told the user. Bounded — JEV is cheap, but prompts are not free.
+# The pending tool's arg schema and the run's recent assistant messages: both
+# provenance for JEV, never authorization (the schema explains an opaque id, the
+# assistant's words say what it told the user). Bounded — prompts are not free.
 HIL_JUDGE_MAX_SCHEMA_CHARS = 2000
 HIL_JUDGE_MAX_ASSISTANT_TURNS = 3
 HIL_JUDGE_MAX_ASSISTANT_CHARS = 500
@@ -51,10 +49,9 @@ HIL_JUDGE_MIN_QUOTE_WORDS = 3
 # tool-execution timeout does not cover. Unbounded, a hung provider holds the executor's busy lock forever.
 HIL_LLM_TIMEOUT_SECONDS = 30
 
-# JEV choice judge (auto mode v2): model, endpoint, and decision lines. Lines
-# come from the offline sweep over the hil-judge calibration journal (see
-# scripts/evals/sweep_hil_judge.py) — the 0.50 plateau scored 49/50 with zero
-# dangerous accepts. Retune via the eval, never by hand here.
+# JEV choice judge (auto mode v2): model, endpoint, decision lines. Lines come
+# from the offline sweep (scripts/evals/sweep_hil_judge.py) — the 0.50 plateau
+# scored 49/50 with zero dangerous accepts. Retune via the eval, never by hand.
 HIL_JEV_MODEL_NAME = "typesafe/jev-1.13"
 HIL_JEV_URL = "https://openrouter.ai/api/alpha/decisions"
 HIL_JEV_TIMEOUT_SECONDS = 15
@@ -131,10 +128,8 @@ HIL_RESUME_ACTIVE_KEY_PREFIX = "hil:resume_active:"
 HIL_RESUME_ACTIVE_TTL_SECONDS = 1800
 
 # Orchestration/plumbing tools that must never be gated (they don't touch the
-# outside world themselves; their inner tool calls are gated in the child graph).
-# These are the only names hardcoded here — everything else is registry-driven.
-# Ticket operations (approve/revoke) are execute-proxied inner names, exempt
-# for the same reason: the approval IS the gate, re-gating would re-ask.
+# outside world; their inner calls are gated in the child graph). Ticket ops
+# (approve/revoke) are exempt too: the approval IS the gate, re-gating re-asks.
 HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
     {
         "retrieve_tools",
@@ -152,10 +147,9 @@ HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# The exempt tools that can nonetheless PAUSE the run: ``handoff`` and
-# ``spawn_subagent`` bubble up their child graph's gate interrupt. A gated sibling of
-# one of these must never auto-run: the pause re-runs the whole tool node, so anything
-# that already executed would execute a second time (see ``policy.has_pausing_sibling``).
+# The exempt tools that can nonetheless PAUSE the run: handoff and spawn_subagent
+# bubble up their child graph's gate interrupt. A gated sibling of one must never
+# auto-run — the pause re-runs the whole node, so it would execute twice.
 HIL_PAUSING_TOOLS: frozenset[str] = frozenset({"handoff", "spawn_subagent"})
 
 # tool_data entry name for the approval card (mirrored in @gaia/shared/chat).

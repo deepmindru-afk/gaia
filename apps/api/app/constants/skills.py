@@ -18,9 +18,8 @@ SKILL_SOURCE_FILENAME = "SKILL.md"
 SKILL_BODY_FILENAME = "skill.md"
 
 # Bucket id for general builtin skills not owned by an integration
-# (create-artifacts, task-management, …). It is NOT a registered subagent: it
-# maps to itself and its skills materialize under /workspace/skills/ rather than
-# /workspace/integrations/<id>/.
+# (create-artifacts, task-management, …). NOT a registered subagent: it maps to
+# itself and materializes under /workspace/skills/, not /workspace/integrations/.
 EXECUTOR_SUBAGENT_ID = "executor"
 
 # User-facing label for the executor target in the skills UI. The executor is

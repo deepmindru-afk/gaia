@@ -205,12 +205,9 @@ EXECUTOR_INBOX_TTL = ONE_HOUR_TTL  # Unread work expires after an hour
 # that subagent's own pre-model hook — never a broadcast, never read by peers.
 SUBAGENT_INBOX_PREFIX = "subagent:inbox:"
 SUBAGENT_INBOX_TTL = ONE_HOUR_TTL
-# Integrations one conversation activated in-context (see active_integrations).
-# retrieve_tools discovery searches these namespaces too, so tools beyond the
-# preloaded subset are actually discoverable from the activating run. Stamped
-# only after a successful activation (which gates on the connection check),
-# so membership implies entitlement. Refreshed on every stamp; a lost key
-# merely degrades discovery to the pre-activation scope.
+# Integrations one conversation activated in-context (see active_integrations);
+# retrieve_tools discovery searches these namespaces too. Stamped only after a
+# successful activation, so membership implies entitlement; a lost key degrades.
 ACTIVATION_ACTIVE_PREFIX = "activation:active:"
 ACTIVATION_ACTIVE_TTL = ONE_DAY_TTL
 # Targeted cancel flag for one running subagent, keyed by its thread_id, checked

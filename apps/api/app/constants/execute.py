@@ -7,11 +7,9 @@ drift (root CLAUDE.md, Type Safety item 18).
 
 EXECUTE_TOOL_NAME = "execute"
 
-# Ticket operations ride the execute proxy under reserved inner names — no
-# bound tool, no schema in context; the model learns the convention from the
-# PENDING guidance (revoke) and the APPROVAL_READY wake (approve). Reserved
-# here so no provider tool can ever squat on them: dispatch routes these
-# before resolution, and resolution refuses them outright.
+# Ticket operations ride the execute proxy under reserved inner names (no
+# bound tool, no schema); reserved here so no provider tool can squat on them —
+# dispatch routes them before resolution, which refuses them outright.
 TICKET_APPROVE_NAME = "approve"
 TICKET_REVOKE_NAME = "revoke"
 TICKET_NAMES = frozenset({TICKET_APPROVE_NAME, TICKET_REVOKE_NAME})
@@ -22,40 +20,31 @@ TICKET_NAMES = frozenset({TICKET_APPROVE_NAME, TICKET_REVOKE_NAME})
 SCHEMA_DOC_MAX_CHARS = 6000
 
 # The args schema has its own budget inside the doc cap: an oversized schema
-# degrades to shallower levels (nested detail collapses to a "..." marker)
-# instead of eating the whole doc or being clipped mid-JSON. Args must render
-# inline — the model constructs calls from it.
+# degrades to shallower levels (nested detail collapses to "...") rather than
+# eating the doc or clipping mid-JSON. Args must render inline for the model.
 ARGS_SCHEMA_MAX_CHARS = 3000
 # The get_tool_schema tool's per-section output bound: full depth for almost
 # every tool, degrading by depth for the rare monster schema.
 TOOL_SCHEMA_RETURNS_MAX_CHARS = 4000
 
 # Keys under which a tool's metadata may carry a provider-supplied response
-# schema. Rendered only when present — most tools do not document their output
-# shape, and the doc must not pretend otherwise.
+# schema. Rendered only when present — most tools do not document their output.
 RESPONSE_SCHEMA_METADATA_KEYS = ("output_parameters", "response_schema", "outputSchema")
 
-# Code mode (bash-driven): where the stdlib gaia client is seeded inside the
-# sandbox, and the layered limits that stand in for an approval gate. The token
-# TTL is the bash command's own timeout plus this buffer, so a call started
-# near the deadline still completes but the token never outlives the run by
-# more than a minute.
-# Inside GAIA's own dot-dir in the sandbox workspace (alongside .gaia/runs,
-# .gaia/gaia-tasks): persistent when JuiceFS is mounted, ephemeral otherwise.
+# Code mode (bash-driven): where the stdlib gaia client is seeded and the
+# layered limits that stand in for an approval gate.
+# GAIA's dot-dir in the sandbox workspace: persistent under JuiceFS, else ephemeral.
 SANDBOX_CLIENT_DIR = "/workspace/.gaia"
+# Token TTL is the bash command's timeout plus this buffer, so the token never
+# outlives the run by more than a minute.
 SANDBOX_EXECUTE_TOKEN_TTL_BUFFER_SECONDS = 60
-# How far the in-sandbox client's HTTP timeout sits ABOVE the host's own bound
-# (TOOL_EXECUTION_TIMEOUT_SECONDS). The host must always be the one that gives
-# up: it answers a timed-out call with a structured "may or may not have
-# completed" error, whereas a client that gives up first abandons a mutation
-# the host is still applying — and the script's retry then duplicates it. This
-# is also why `bash` is in TOOL_TIMEOUT_EXEMPT_TOOLS: the enclosing bash call
-# being cut at the generic bound would kill the script mid-answer.
+# How far the in-sandbox client's HTTP timeout sits ABOVE the host's bound: the
+# host must give up first (structured "may or may not have completed" error),
+# else a client that quits first has its retry duplicate a mutation still applying.
 SANDBOX_EXECUTE_CLIENT_TIMEOUT_BUFFER_SECONDS = 30
 # A forged token names whose tools the host runs, so the signing secret's
 # length is the whole strength of that claim. Enforced at startup by the
-# settings validator, never at mint time — a misconfigured deploy must not
-# start.
+# settings validator, never at mint time.
 SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS = 32
 # Server-side blast-radius bounds per token (enforced on the callback route):
 # a runaway or injected script hits a hard wall instead of unlimited calls.
@@ -65,36 +54,29 @@ SANDBOX_EXECUTE_MAX_CALLS_PER_MINUTE = 60
 # under this, so a counter can never expire while its token is still valid.
 SANDBOX_EXECUTE_BUDGET_WINDOW_SECONDS = 3600
 
-# The resolver's on-demand catalog lookup is on the tool-call critical path:
-# the HIL gate resolves a name before the call is even allowed to run — twice
-# per gated call, plus once per sibling in the same AI message. So the round
-# trip is bounded (a degraded Composio fails one call instead of stalling the
-# whole turn) and a miss is remembered: a hallucinated ALLCAPS name otherwise
-# costs a fresh round trip on every gate check and every replay of the
-# approvals node. The miss cache is cleared wholesale at its cap — those names
-# are model typos, not a working set worth evicting one at a time.
+# The resolver's catalog lookup is on the tool-call critical path (the HIL gate
+# resolves a name before the call runs), so the round trip is bounded — a
+# degraded Composio fails one call instead of stalling the turn.
 COMPOSIO_CATALOG_LOOKUP_TIMEOUT_SECONDS = 15
+# A miss is remembered so a hallucinated ALLCAPS name does not re-fetch on every
+# gate check and replay; cleared wholesale at the cap (typos, not a working set).
 UNKNOWN_CATALOG_SLUG_CACHE_MAX = 512
 
-# Shape-store scopes: catalog tools are user-agnostic so their observed shapes
-# are shared; MCP tools are scoped by integration so a private server's shapes
-# never cross users (a published MCP shares one integration doc, so its
-# subscribers share the scope naturally).
+# Shape-store scopes: catalog tools are user-agnostic so shapes are shared; MCP
+# tools are scoped by integration so a private server's shapes never cross users
+# (a published MCP shares one integration doc, so subscribers share the scope).
 GLOBAL_SHAPE_SCOPE = "global"
 MCP_SHAPE_SCOPE_PREFIX = "mcp:"
 
 # Observed-shape learning (services/tool_shape_service.py): structure inferred
-# from real dispatch outputs. Arrays are sampled, and a dict wider than the key
-# threshold — or one whose keys are not identifier-shaped — is treated as a map
-# so value-derived keys (emails, labels, ids) do not become schema property
-# names. The char cap bounds one tool's stored record.
+# from real dispatch outputs. Arrays are sampled; a dict too wide or with
+# non-identifier keys becomes a map, so values (emails, ids) never become keys.
 TOOL_SHAPE_ARRAY_SAMPLE = 5
 TOOL_SHAPE_MAX_KEYS_PER_OBJECT = 25
 TOOL_SHAPE_MAX_CHARS = 20000
 
-# On-demand tool docs inside the sandbox: gaia.schema() caches fetched docs as
-# one file per tool. Files are disposable TTL caches of the host-side store;
-# when the E2B<->JuiceFS mount is reliable, global-scope docs move to the
-# shared _system overlay and this dir symlinks the common set.
+# On-demand tool docs inside the sandbox: gaia.schema() caches fetched docs one
+# file per tool. Files are disposable TTL caches of the host-side store; global
+# docs move to a shared _system overlay once the E2B/JuiceFS mount is reliable.
 SANDBOX_TOOL_DOCS_DIR = f"{SANDBOX_CLIENT_DIR}/tools"
 SANDBOX_SCHEMA_CACHE_TTL_SECONDS = 900

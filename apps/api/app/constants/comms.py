@@ -1,8 +1,8 @@
-"""Comms directive protocol: the control keywords comms emits when a background
-executor update is not worth a full message, and the outcomes they map to.
+"""Comms directive protocol: control keywords and the outcomes they map to.
 
-Shared by the narration prompt note (which instructs comms) and the parser (which
-interprets comms' output) so the two can never drift apart.
+The keywords comms emits when a background executor update is not worth a full
+message. Shared by the narration prompt note (which instructs comms) and the
+parser (which interprets comms' output) so the two can never drift apart.
 """
 
 from enum import StrEnum
