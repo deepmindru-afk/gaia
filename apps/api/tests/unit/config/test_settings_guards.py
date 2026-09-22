@@ -194,7 +194,9 @@ def test_development_allows_http_dodo_base_url(monkeypatch):
 
 def test_short_sandbox_execute_secret_refuses_to_boot():
     """A sandbox execute token names whose tools the host runs, and nothing else binds that claim — a guessable signing secret means running any user's tools."""
-    with pytest.raises(ValidationError, match="at least 32 characters"):
+    with pytest.raises(
+        ValidationError, match="SANDBOX_EXECUTE_TOKEN_SECRET must be at least 32 characters"
+    ):
         _prod_settings(SANDBOX_EXECUTE_TOKEN_SECRET="dev")
 
 

@@ -354,6 +354,27 @@ class TestExcludedShareDownloads:
         assert authenticate.called is False
 
 
+class TestExcludedSandboxCallbacks:
+    @pytest.mark.parametrize("path", ["/api/v1/sandbox/execute", "/api/v1/sandbox/tool-schema"])
+    def test_sandbox_callbacks_never_reach_session_authentication(self, path: str) -> None:
+        # The E2B script has no session; its HMAC run token is the credential.
+        app = _build_test_app()
+
+        @app.post(path)
+        async def callback() -> dict[str, bool]:
+            return {"ok": True}
+
+        with patch.object(
+            WorkOSAuthMiddleware, "_authenticate_wos_session", new_callable=AsyncMock
+        ) as authenticate:
+            client = TestClient(app)
+            client.cookies.set("wos_session", "tok")
+            resp = client.post(path)
+
+        assert resp.status_code == 200
+        assert authenticate.called is False
+
+
 class TestAuthenticateWosSessionDirectly:
     async def test_the_session_from_the_request_is_what_gets_verified(self) -> None:
         request = _bare_request()

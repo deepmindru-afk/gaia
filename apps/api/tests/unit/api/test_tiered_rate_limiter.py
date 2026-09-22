@@ -2,7 +2,7 @@
 
 from collections.abc import Coroutine
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 import redis.asyncio as aioredis
@@ -464,6 +464,10 @@ class TestCheckAndIncrement:
         # Losing the race still owes the caller the truth about which window
         # they hit and when it reopens — the reset has to come from THIS period.
         pipe_mock.unwatch.assert_awaited_once()
+        # The in-transaction re-read must be of the very key WATCH guards.
+        day_key = f"rate_limit:user1:chat_messages:{RateLimitPeriod.DAY}:20260320"
+        pipe_mock.watch.assert_awaited_once_with(day_key)
+        assert self.limiter.redis.get.await_args_list == [call(day_key, int), call(day_key, int)]
         mock_reset.assert_called_with(RateLimitPeriod.DAY)
         detail = exc_info.value.detail
         assert detail["reset_time"] == datetime(2026, 4, 1, tzinfo=UTC).isoformat()
