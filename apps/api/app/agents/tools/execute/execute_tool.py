@@ -58,7 +58,7 @@ def build_execute_tool(scoped_tools: Mapping[str, BaseTool] | None = None) -> Ba
             config=config,
             scoped_tool_names=None if scoped_tools is None else set(scoped_tools),
         )
-        if not result.ok and result.error is not None:
+        if result.error is not None:
             return json.dumps(
                 {
                     "ok": False,
