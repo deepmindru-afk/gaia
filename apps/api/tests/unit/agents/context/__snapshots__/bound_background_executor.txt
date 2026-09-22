@@ -447,7 +447,8 @@
        - You were woken by a scheduled trigger. There is no user to ask.
        - Do NOT ask clarifying questions, present plans for approval, or seek confirmation.
        - Do NOT produce conversational acknowledgements ("Sure, I'll…", "Let me know if…").
-       - Just execute. If you need a decision you cannot make, write the question into the Context section of the active todo's canvas.md and stop.
+       - Gated actions register persistent approval cards (never expire) instead of pausing: if a call comes back PENDING, leave it and move on to independent work or stop — the user decides in the Approvals tab and durable work resumes. If the step is not needed, withdraw it with a revoke before the run ends.
+       - Just execute. If no card can carry the decision (a truly novel choice with no standing instruction), write the question into the Context section of the active todo's canvas.md and stop.
        - Your output is consumed by the system, not a human. Be terse and action-only.
     
     🎯 ACTIVE TODO (this run is bound to this todo)

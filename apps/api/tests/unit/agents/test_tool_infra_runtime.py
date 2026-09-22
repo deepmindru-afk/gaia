@@ -625,7 +625,7 @@ async def test_retrieval_query_mode_hides_non_mcp_subagents_and_filters_non_acti
                     key="gmail",
                     score=1.0,
                     namespace=("subagents",),
-                    value={"name": "Gmail"},
+                    value={"name": "Gmail", "source": "provider"},
                 )
             ],
         }
@@ -657,7 +657,7 @@ async def test_retrieval_query_mode_hides_non_mcp_subagents_and_filters_non_acti
     assert "delegated_tool" not in result["response"]
     assert "normal_tool" in result["response"]
     # the subagents namespace IS searched (MCP pointers live there), but this
-    # stale provider doc has no source=='custom' marker, so nothing surfaces
+    # provider doc's source is neither "custom" nor "mcp", so nothing surfaces
     searched_namespaces = {ns for ns, _q, _l in store.calls}
     assert ("subagents",) in searched_namespaces
     assert all(not item.startswith("subagent:") for item in result["response"])
