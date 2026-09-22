@@ -18,9 +18,7 @@
       "services": "false",
       "workers": "7",
       "serial": "false",
-      "after": [
-        "shared-suite"
-      ]
+      "after": ["shared-suite"]
     },
     {
       "name": "integration",
@@ -30,9 +28,7 @@
       "services": "true",
       "workers": "4",
       "serial": "false",
-      "after": [
-        "contract-fuzz"
-      ]
+      "after": ["contract-fuzz"]
     },
     {
       "name": "bridge",

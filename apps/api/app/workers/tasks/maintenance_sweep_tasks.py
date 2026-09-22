@@ -627,9 +627,6 @@ async def _call_health_check_agent(todo_id: str, user_id: str, prompt: str) -> s
     request = MessageRequestWithHistory(
         message=prompt,
         messages=[],
-        fileIds=[],
-        fileData=[],
-        selectedTool=None,
     )
 
     try:

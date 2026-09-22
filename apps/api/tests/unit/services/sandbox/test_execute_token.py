@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.constants.execute import SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS
 from app.services.sandbox import execute_token
 from app.services.sandbox.execute_token import mint_execute_token, verify_execute_token
 from app.utils.errors import AppError
@@ -39,6 +40,12 @@ class TestExecuteToken:
         with pytest.raises(AppError) as err:
             verify_execute_token(f"{payload}.{flipped}")
         assert err.value.status_code == 401
+        # The sandbox client relays this envelope to the agent as the reason and the remedy.
+        assert (err.value.message, err.value.why, err.value.fix) == (
+            "Invalid sandbox execute token",
+            "signature mismatch, malformed payload, or expired",
+            "Re-run the bash command; each run mints a fresh short-lived token",
+        )
 
     def test_tampered_payload_is_rejected(self) -> None:
         token = mint_execute_token("u1", "run-9", scoped_tool_names=None, ttl_seconds=60)
@@ -53,6 +60,18 @@ class TestExecuteToken:
             verify_execute_token(token)
         assert err.value.status_code == 401
 
+    def test_a_token_is_valid_through_its_expiry_second_and_not_after(self) -> None:
+        with patch.object(execute_token, "_epoch_now", return_value=1_000):
+            token = mint_execute_token("u1", "run-9", scoped_tool_names=None, ttl_seconds=60)
+        with patch.object(execute_token, "_epoch_now", return_value=1_060):
+            assert verify_execute_token(token).exp == 1_060
+        with (
+            patch.object(execute_token, "_epoch_now", return_value=1_061),
+            pytest.raises(AppError) as err,
+        ):
+            verify_execute_token(token)
+        assert err.value.status_code == 401
+
     def test_garbage_is_rejected(self) -> None:
         with pytest.raises(AppError):
             verify_execute_token("not-a-token")
@@ -64,3 +83,9 @@ class TestExecuteToken:
         ):
             mint_execute_token("u1", "run-9", scoped_tool_names=None, ttl_seconds=60)
         assert err.value.status_code == 503
+        assert (err.value.message, err.value.why, err.value.fix) == (
+            "Sandbox execute tokens are not configured",
+            "SANDBOX_EXECUTE_TOKEN_SECRET is unset",
+            f"Set SANDBOX_EXECUTE_TOKEN_SECRET (min {SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS} chars)"
+            " to enable code mode",
+        )

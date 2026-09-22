@@ -57,8 +57,8 @@ _RABBITMQ_IMAGE = (
 
 # The one definition of the test-python slices; main.yml's matrix reads it too.
 _SLICES_FILE = "scripts/ci/lib/test-slices.json"
-# Same path, and same warmup, as the GitHub-hosted lanes (setup-python-test-env).
-_MODEL_CACHE_DIR = "/tmp/fastembed_cache"
+# Mounted as a cache volume; the warmup below is the one setup-python-test-env runs.
+_MODEL_CACHE_DIR = "/root/.cache/fastembed"
 _PREFETCH_MODELS = (
     "from app.memory.embeddings import _embed_sync, _rerank_sync\n"
     "_embed_sync(['warmup'])\n"

@@ -5,7 +5,7 @@ and wrap_tool_call middleware hooks.
 """
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain.agents.middleware import AgentMiddleware, SummarizationMiddleware
@@ -23,6 +23,7 @@ import pytest
 
 from app.agents.middleware.executor import (
     MiddlewareExecutor,
+    _apply_state_update,
     _has_override,
 )
 from app.override.langgraph_bigtool.utils import State
@@ -893,6 +894,54 @@ class TestWrapToolInvocation:
 # ---------------------------------------------------------------------------
 # has_wrap_model_call / has_wrap_tool_call
 # ---------------------------------------------------------------------------
+
+
+class _RecordingWrapToolMiddleware(AgentMiddleware):
+    """Record the request each tool call hands the middleware chain."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[ToolCallRequest] = []
+
+    async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> ToolMessage:
+        self.requests.append(request)
+        return await handler(request)
+
+
+class TestTheRequestTheChainSees:
+    async def test_carries_this_calls_tool_state_and_runtime(self) -> None:
+        """Compaction and HIL read the request, not the raw arguments; a blanked field is a tool they never see."""
+        tool_call = {"name": "test_tool", "args": {"q": 1}, "id": "call_1"}
+        tool = MagicMock(name="tool")
+        runtime = MagicMock(name="runtime")
+        state = _make_state()
+        recorder = _RecordingWrapToolMiddleware()
+        invoke_fn = AsyncMock(return_value=ToolMessage(content="ok", tool_call_id="call_1"))
+
+        with patch(
+            "app.agents.middleware.executor.BigtoolToolRuntime.from_graph_context",
+            return_value=runtime,
+        ):
+            await MiddlewareExecutor([recorder]).wrap_tool_invocation(
+                tool_call, tool, state, _make_config(), None, invoke_fn
+            )
+
+        (request,) = recorder.requests
+        assert request.tool_call == tool_call
+        assert request.tool is tool
+        assert request.state is state
+        assert request.runtime is runtime
+        invoke_fn.assert_awaited_once_with(tool_call)
+
+
+class TestApplyStateUpdate:
+    def test_messages_into_a_state_without_any_start_the_channel(self) -> None:
+        state = cast(State, {})
+        message = HumanMessage(id="m1", content="hi")
+
+        _apply_state_update(state, {"messages": [message]})
+
+        assert state["messages"] == [message]
 
 
 class TestHasWrapMethods:

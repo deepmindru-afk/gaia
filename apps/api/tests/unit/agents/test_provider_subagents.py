@@ -460,6 +460,18 @@ class TestRegisterIntegrationTools:
         ):
             assert await register_integration_tools(subagent) is None
 
+    async def test_mcp_without_a_server_config_has_no_category(self):
+        from app.agents.core.subagents.provider_subagents import register_integration_tools
+
+        subagent = _make_subagent(integration_id="deepwiki", managed_by="mcp", mcp_config=None)
+
+        with patch(
+            "app.agents.core.subagents.provider_subagents.get_tool_registry",
+            new_callable=AsyncMock,
+            return_value=AsyncMock(),
+        ):
+            assert await register_integration_tools(subagent) is None
+
     async def test_auth_required_mcp_refuses_to_register(self):
         """Its tools are per-user and never enter the process-global registry; registering them there would expose one user's session to every other."""
         from app.agents.core.subagents.provider_subagents import register_integration_tools

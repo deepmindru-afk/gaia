@@ -1119,6 +1119,20 @@ class TestMemoryLaneProviderSelection:
         mock_settings.OPENROUTER_PROVIDER_ORDER = " , "
         assert _provider_order_kwargs() == {}
 
+    def test_the_default_model_is_built_with_the_routing_preference(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(client_module.settings, "OPENROUTER_API_KEY", "test-key")
+        monkeypatch.setattr(client_module.settings, "OPENROUTER_PROVIDER_ORDER", "deepseek")
+        client_module._build_default_llm.cache_clear()
+
+        try:
+            llm = client_module._build_default_llm(0.0)
+        finally:
+            client_module._build_default_llm.cache_clear()
+
+        assert llm.model_kwargs["provider"] == {"order": ["deepseek"], "allow_fallbacks": False}
+
     @patch("app.agents.llm.client.settings")
     def test_the_aux_lane_predicate_reads_the_openrouter_key(
         self, mock_settings: MagicMock
@@ -1920,6 +1934,35 @@ class TestAinvokeStructured:
 
         assert mock_invoke.call_args.args[1] is prompt
         assert mock_invoke.call_args.kwargs["options"].timeout == 12.0
+
+    async def test_a_model_override_and_its_fallbacks_reach_the_runnable(self) -> None:
+        """Dropped, the one-shot silently runs on the aux default with no fallback chain."""
+        config = RunnableConfig(configurable={"user_id": "user-3"})
+
+        with (
+            patch("app.agents.llm.client._aux_structured_runnable") as runnable,
+            patch(
+                "app.agents.llm.client.ainvoke_llm",
+                new=AsyncMock(return_value=self._Schema(answer="ok")),
+            ),
+        ):
+            await ainvoke_structured(
+                self._Schema,
+                "prompt",
+                label="judge",
+                config=config,
+                options=StructuredCallOptions(
+                    temperature=0.2,
+                    model_name="google/gemini-3.5-flash-lite",
+                    fallback_model_names=("deepseek/deepseek-v4-flash-0731",),
+                ),
+            )
+
+        assert runnable.call_args.args == (self._Schema, 0.2, config)
+        assert runnable.call_args.kwargs == {
+            "model_name": "google/gemini-3.5-flash-lite",
+            "fallback_model_names": ("deepseek/deepseek-v4-flash-0731",),
+        }
 
     async def test_the_aux_lane_runs_on_its_own_sticky_session(self) -> None:
         """The session id must be suffixed and bound after with_structured_output, since bind_tools drops the outer binding's kwargs if bound before."""

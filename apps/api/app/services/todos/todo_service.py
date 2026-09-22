@@ -259,7 +259,7 @@ class TodoService:
             workflow_categories = await _get_workflow_categories_for_todos([todo], user_id)
             return TodoResponse.from_document(
                 todo,
-                workflow_categories=workflow_categories.get(todo.id, []),
+                workflow_categories=workflow_categories.get(todo.id),
                 pending_approval=(await _get_pending_approvals_for_todos([todo])).get(todo.id),
             )
         pending = await _get_pending_approvals_for_todos([todo])
@@ -284,7 +284,7 @@ class TodoService:
         data = [
             TodoResponse.from_document(
                 todo,
-                workflow_categories=workflow_categories.get(todo.id, []),
+                workflow_categories=workflow_categories.get(todo.id),
                 pending_approval=pending_approvals.get(todo.id),
             )
             for todo in page.items

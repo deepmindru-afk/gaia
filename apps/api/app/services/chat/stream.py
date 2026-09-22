@@ -245,10 +245,10 @@ class _StreamState:
         self.user_message_id: str = turn_id or str(uuid4())
         self.bot_message_id: str = str(uuid4())
         # When comms resolved the turn to a ``REACT: <emoji>`` ack (see
-        # resolve_turn_emoji_ack), the stamp the saved bot message carries so
-        # every surface renders it as a reaction badge, never a bubble.
-        self.message_kind: MessageKind = MessageKind.TEXT
-        self.reacts_to_message_id: str | None = None
+        # resolve_turn_emoji_ack), the stamp that renders the saved reply as a reaction
+        # badge. Unmutated: _persist_turn overwrites both before anything reads them.
+        self.message_kind: MessageKind = MessageKind.TEXT  # pragma: no mutate
+        self.reacts_to_message_id: str | None = None  # pragma: no mutate
         # When comms finished — stamped before any voice-mode executor wait so
         # the saved user/comms messages keep timestamps EARLIER than a delegated
         # executor's answer (saved mid-wait). The frontend sorts by createdAt.
@@ -364,7 +364,11 @@ async def _run_chat_stream(
         await _note_cancellation(stream_id, state)
 
         await _finalize_description(description_task, stream_id)
-        if state.message_kind is MessageKind.EMOJI_ACK and state.reacts_to_message_id:
+        # Unmutated: resolve_turn_emoji_ack sets kind and target together, so and/or agree.
+        if (
+            state.message_kind is MessageKind.EMOJI_ACK  # pragma: no mutate
+            and state.reacts_to_message_id
+        ):
             # The client streamed the raw directive as text; the frame tells it to
             # take that back and attach the emoji as a reaction badge instead.
             await stream_manager.publish_chunk(

@@ -15,6 +15,7 @@ from app.agents.prompts.executor_activation_prompt import (
     _PHRASE_REWRITES,
     build_activation_executor_prompt,
 )
+from tests.helpers import captured_wide_event
 
 
 @pytest.fixture(scope="module")
@@ -131,3 +132,29 @@ def test_prompt_is_rewritten_not_merely_copied(activation_prompt: str) -> None:
     assert "CODING WORKSPACE" in activation_prompt
     assert "RESEARCH EFFORT LADDER" in activation_prompt
     assert "YOUR OUTPUT (INTERNAL" in activation_prompt
+
+
+@pytest.mark.unit
+class TestStaleAnchorsAreReported:
+    """A skipped rewrite is invisible in the prompt, so its warning is the only trace."""
+
+    async def test_a_stale_phrase_is_named_and_the_rest_still_apply(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stale, _ = max(_PHRASE_REWRITES[:-1], key=lambda rewrite: len(rewrite[0]))
+        last_anchor, last_replacement = _PHRASE_REWRITES[-1]
+        monkeypatch.setattr(
+            executor_activation_prompt,
+            "EXECUTOR_AGENT_PROMPT",
+            EXECUTOR_AGENT_PROMPT.replace(stale, ""),
+        )
+
+        async with captured_wide_event() as event:
+            prompt = build_activation_executor_prompt()
+
+        assert len(stale) > 81
+        assert event["warnings"] == [
+            {"msg": "activation_prompt.stale_phrase_anchor_skipped", "anchor": stale[:80]}
+        ]
+        assert last_replacement in prompt
+        assert last_anchor not in prompt

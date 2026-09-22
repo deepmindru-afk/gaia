@@ -361,7 +361,7 @@ async function streamChatOnce(
       // signalling the caller to resolve and stop reading.
       const processLine = async (line: string): Promise<boolean> => {
         const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data: ")) return false;
+        if (!trimmed.startsWith("data: ")) return false;
         const raw = trimmed.slice(6);
         if (raw === "[DONE]") return false;
 

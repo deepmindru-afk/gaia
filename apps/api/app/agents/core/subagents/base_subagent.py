@@ -235,8 +235,8 @@ class SubAgentFactory:
             ),
         }
 
-        valid_auto_bind: list[str] | None = None
-        preload_names: list[str] = []
+        # Any falsy start is identical: the only reader does auto_bind_tool_names or [].
+        valid_auto_bind: list[str] | None = None  # pragma: no mutate
         # Config-declared startup tools (auto_bind_tools / extra_initial_tools) bind
         # up front. Integration tools among them never bind — they preload as schema
         # docs and run via execute, so only the internal remainder binds.

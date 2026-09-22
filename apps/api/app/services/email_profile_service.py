@@ -113,7 +113,11 @@ def _pick_photo(photos: list[GooglePersonPhoto]) -> str | None:
 
 def _person_to_profile(person: GooglePerson, email: str) -> _ProfileFields | None:
     """Map a People API person to profile fields, if it matches the email."""
-    emails = {(entry.value or "").strip().lower() for entry in person.email_addresses}
+    # Unmutated: any placeholder for a missing value never equals a normalized address.
+    emails = {
+        (entry.value or "").strip().lower()  # pragma: no mutate
+        for entry in person.email_addresses
+    }
     if email not in emails:
         return None
     name = _first_value(entry.display_name for entry in person.names)
@@ -193,7 +197,8 @@ async def _fetch_profile_photo(user_id: str, person: GooglePerson) -> str | None
     people.get on the same resource also returns PROFILE-source photos — the
     person's actual Google account picture — which _pick_photo prefers.
     """
-    resource_name = person.resource_name or ""
+    # Unmutated: any placeholder for a missing name fails the people/ check the same way.
+    resource_name = person.resource_name or ""  # pragma: no mutate
     if not resource_name.startswith("people/"):
         return None
     try:
