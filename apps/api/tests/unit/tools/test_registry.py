@@ -765,10 +765,10 @@ class TestInitializedCategoryContract:
     def test_single_purpose_categories_hold_exactly_their_tools(
         self, registry: ToolRegistry
     ) -> None:
-        """These four categories are registered on one line each, so a dropped tools= argument leaves a silently empty category behind."""
+        """These categories are registered on one line each, so a dropped tools= argument leaves a silently empty category behind."""
         names = {
             name: {tool.name for tool in registry._categories[name].tools}
-            for name in ("manual", "memory", "weather", "context")
+            for name in ("manual", "memory", "weather", "context", "execute")
         }
 
         assert names == {
@@ -786,6 +786,7 @@ class TestInitializedCategoryContract:
             },
             "weather": {"get_weather"},
             "context": {"gather_context"},
+            "execute": {"execute", "get_tool_schema"},
         }
 
     def test_the_two_destructive_built_ins_are_stamped_alone(self, registry: ToolRegistry) -> None:
