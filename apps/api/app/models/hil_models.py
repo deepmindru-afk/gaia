@@ -52,6 +52,29 @@ class DeclinedCallRecord(TypedDict):
     auto: NotRequired[bool]
 
 
+class HilInterruptPayload(TypedDict, total=False):
+    """What the HIL gate passes to interrupt() (gate.decide_tool_call).
+
+    approval_ids is added when several gated calls park in one step (subagent_runner.merge_approvals).
+    """
+
+    type: str
+    approval_id: str
+    tool_name: str
+    summary: str
+    integration_name: str | None
+    approval_ids: list[str]
+
+
+class HilResumeDecision(TypedDict, total=False):
+    """The Command(resume=...) value a decided approval wakes its gate with (resolution.py)."""
+
+    status: str
+    feedback: str | None
+    scope: str
+    approval_id: str
+
+
 class HILPreferences(BaseModel):
     """Stored on the user document under ``hil_preferences``."""
 

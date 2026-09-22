@@ -47,6 +47,7 @@ from app.agents.core.subagents.subagent_helpers import (
 )
 from app.agents.core.subagents.subagent_runner import (
     SubagentExecutionContext,
+    SubagentInitialState,
     ThreadSeed,
     build_initial_messages,
     execute_subagent_stream,
@@ -656,20 +657,21 @@ async def _run_blocking_handoff(
     # Blocking runs register like background ones, or list_running_subagents shows
     # only background work. Deregistered in `finally`, so pauses (which raise) read
     # as parked, not running — the same line the background path draws.
-    blocking_conversation_id = str(ctx.configurable.get("conversation_id") or "")
-    blocking_thread_id = str(agent_configurable(ctx.config).get("thread_id", ""))
-    blocking_record = (
-        RunningSubagent(
+    configurable: AgentConfigurable = ctx.configurable
+    run_configurable: AgentConfigurable = agent_configurable(ctx.config)
+    blocking_conversation_id = str(configurable.get("conversation_id") or "")
+    blocking_thread_id = str(run_configurable.get("thread_id", ""))
+    blocking_record: RunningSubagent | None = None
+    if blocking_conversation_id and blocking_thread_id:
+        initial_state: SubagentInitialState = ctx.initial_state
+        blocking_record = RunningSubagent(
             subagent_id=sa_id,
             subagent_thread_id=blocking_thread_id,
             integration_id=integration_id,
             agent_name=agent_name,
-            task_summary=str(ctx.initial_state.get("intent", ""))[:200],
+            task_summary=str(initial_state.get("intent", ""))[:200],
             started_at=datetime.now(UTC).isoformat(),
         )
-        if blocking_conversation_id and blocking_thread_id
-        else None
-    )
     if blocking_record is not None:
         await RunningSubagents(blocking_conversation_id).register(blocking_record)
     try:
@@ -798,7 +800,8 @@ async def _dispatch_background_handoff(
     # Idempotent across node replays: when this handoff shares its node run with a
     # pause, the node re-runs on resume and must not spawn twice. tool_call_id is
     # stable (checkpointed AI message); the claim is durable in Redis.
-    conversation_id = str(ctx.configurable.get("conversation_id") or "")
+    configurable: AgentConfigurable = ctx.configurable
+    conversation_id = str(configurable.get("conversation_id") or "")
     if (
         dispatch.tool_call_id
         and conversation_id

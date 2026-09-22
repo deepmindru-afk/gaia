@@ -6,7 +6,7 @@ avoiding a cyclic dependency.
 
 from dataclasses import dataclass, field, replace
 import time
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from langchain_core.messages import (
@@ -14,6 +14,7 @@ from langchain_core.messages import (
     AnyMessage,
     BaseMessage,
     HumanMessage,
+    ReasoningContentBlock,
     SystemMessage,
     ToolMessage,
 )
@@ -52,8 +53,10 @@ from app.models.agent_models import (
     AgentConfigurable,
     AgentRunnableConfig,
     AgentUserContext,
+    StreamChunkMetadata,
     agent_configurable,
 )
+from app.models.hil_models import HilInterruptPayload, HilResumeDecision
 from app.models.stream_events import ReasoningPayload, ToolOutputPayload
 from app.services.chat.chunks import normalize_custom_event
 from app.services.files import FileService
@@ -76,6 +79,41 @@ def _capture_finish_task_content(chunk: ToolMessage, current_message: str) -> st
     return current_message
 
 
+class _ReasoningKwargs(TypedDict, total=False):
+    """The additional_kwargs key DeepSeek-style providers put reasoning under; not always a str."""
+
+    reasoning_content: object
+
+
+class _MessagesChannel(TypedDict, total=False):
+    """The messages channel of a State update or snapshot; its other channels ride along unread."""
+
+    messages: list[AnyMessage]
+
+
+class SubagentInitialState(TypedDict, total=False):
+    """The State channels a subagent run is seeded with; the graph fills in the rest."""
+
+    messages: list[AnyMessage]
+    todos: list[object]
+    intent: str | None
+    integration_usernames: dict[str, str]
+    selected_tool_ids: list[str]
+
+
+def _block_reasoning(block: object) -> str | None:
+    """Return a content block's reasoning text, or None when it is not a reasoning block."""
+    if isinstance(block, dict):
+        # only "type" is read before the block is known to be a reasoning block
+        reasoning_block: ReasoningContentBlock = cast(ReasoningContentBlock, block)
+        if reasoning_block.get("type") != "reasoning":
+            return None
+        return reasoning_block.get("reasoning")
+    if getattr(block, "type", None) != "reasoning":
+        return None
+    return getattr(block, "reasoning", "")
+
+
 def _extract_reasoning_delta(chunk: AIMessageChunk) -> str:
     """Pull this chunk's reasoning ("thinking") text, model-agnostic.
 
@@ -86,17 +124,14 @@ def _extract_reasoning_delta(chunk: AIMessageChunk) -> str:
     """
     parts: list[str] = []
     for block in getattr(chunk, "content_blocks", None) or []:
-        block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
-        if block_type == "reasoning":
-            text = (
-                block.get("reasoning")
-                if isinstance(block, dict)
-                else getattr(block, "reasoning", "")
-            )
-            if text:
-                parts.append(text)
+        text = _block_reasoning(block)
+        if text:
+            parts.append(text)
     if not parts:
-        fallback = (getattr(chunk, "additional_kwargs", None) or {}).get("reasoning_content")
+        kwargs: _ReasoningKwargs = cast(
+            _ReasoningKwargs, getattr(chunk, "additional_kwargs", None) or {}
+        )
+        fallback = kwargs.get("reasoning_content")
         if fallback:
             parts.append(fallback if isinstance(fallback, str) else str(fallback))
     return "".join(parts)
@@ -117,7 +152,7 @@ class SubagentOutcome:
     """
 
     text: str
-    interrupt: dict[str, Any] | None = None
+    interrupt: HilInterruptPayload | None = None
     run_messages: tuple[AnyMessage, ...] = ()
 
     @property
@@ -137,7 +172,7 @@ def subagent_row_id(tool_call_id: str) -> str:
     return str(uuid5(NAMESPACE_URL, f"subagent_row:{tool_call_id}"))
 
 
-def resume_for_gate(interrupt_payload: dict[str, Any]) -> object:
+def resume_for_gate(interrupt_payload: HilInterruptPayload) -> object:
     """Return the decision belonging to the subagent gate now paused.
 
     Resume values replay positionally from zero even though recover_from_checkpoint
@@ -146,12 +181,11 @@ def resume_for_gate(interrupt_payload: dict[str, Any]) -> object:
     """
     target = interrupt_payload.get("approval_id") if isinstance(interrupt_payload, dict) else None
     decision = interrupt(interrupt_payload)
-    while (
-        target is not None
-        and isinstance(decision, dict)
-        and decision.get("approval_id") is not None
-        and decision.get("approval_id") != target
-    ):
+    while target is not None and isinstance(decision, dict):
+        answered: HilResumeDecision = cast(HilResumeDecision, decision)
+        answered_id = answered.get("approval_id")
+        if answered_id is None or answered_id == target:
+            break
         decision = interrupt(interrupt_payload)
     return decision
 
@@ -168,7 +202,7 @@ class SubagentExecutionContext:
     config: AgentRunnableConfig
     configurable: AgentConfigurable
     integration_id: str
-    initial_state: dict[str, Any]
+    initial_state: SubagentInitialState
     user_id: str | None = None
     stream_id: str | None = None
 
@@ -201,9 +235,9 @@ async def build_initial_messages(
     prefix stays shared across users. seed.retrieval_query defaults to task, but
     callers pass the unenhanced task when task carries hints that would pollute search.
     """
-    tier, configurable, user_id, subagent_id, retrieval_query, integration_id = (
+    configurable: AgentConfigurable = seed.configurable
+    tier, user_id, subagent_id, retrieval_query, integration_id = (
         seed.tier,
-        seed.configurable,
         seed.user_id,
         seed.subagent_id,
         seed.retrieval_query,
@@ -248,7 +282,9 @@ def _with_current_time(resume: Command, configurable: AgentConfigurable) -> Comm
     STARTED — a HIL pause can leave it hours stale. Appending is safe mid
     tool-call: manage_system_prompts_node lifts the latest time message to the tail, untouched pairing.
     """
-    update = {**resume.update} if isinstance(resume.update, dict) else {}
+    update: _MessagesChannel = (
+        cast(_MessagesChannel, {**resume.update}) if isinstance(resume.update, dict) else {}
+    )
     update["messages"] = [
         *update.get("messages", []),
         build_current_time_message(user_timezone=configurable.get("user_timezone")),
@@ -258,8 +294,8 @@ def _with_current_time(resume: Command, configurable: AgentConfigurable) -> Comm
 
 def _process_messages_payload(
     # "messages"-mode payloads are always (message chunk, metadata); the driver
-    # above holds them as `Any` only because the shape varies per stream mode.
-    payload: tuple[BaseMessage, dict[str, Any]],
+    # above holds them as `object` only because the shape varies per stream mode.
+    payload: tuple[BaseMessage, StreamChunkMetadata],
     complete_message: str,
     stream_writer: StreamWriterCallable | None,
     subagent_id: str | None,
@@ -271,6 +307,7 @@ def _process_messages_payload(
     subagent's chunks carry the SAME run metadata as ours, so ungated it would
     double-render the result — the claim goes to whichever run announced the call.
     """
+    metadata: StreamChunkMetadata
     chunk, metadata = payload
     if metadata.get("silent"):
         return complete_message
@@ -323,11 +360,11 @@ class _StreamRun:
     complete_message: str = ""
     emitted_tool_calls: set[str] = field(default_factory=set)
     tool_ran: bool = False
-    pending_approvals: list[dict[str, Any]] = field(default_factory=list)
+    pending_approvals: list[HilInterruptPayload] = field(default_factory=list)
     run_messages: list[AnyMessage] = field(default_factory=list)
 
 
-async def _process_updates_payload(run: _StreamRun, payload: dict[str, Any]) -> None:
+async def _process_updates_payload(run: _StreamRun, payload: dict[str, object]) -> None:
     """Handle one "updates"-mode stream event: record a pause, or emit tool_data.
 
     Never break on a pause — keep draining. Under durability="exit", the run-exit
@@ -351,8 +388,9 @@ async def _process_updates_payload(run: _StreamRun, payload: dict[str, Any]) -> 
         # tool_calls (exact names + args) appear — "messages" mode only
         # streams them as partial chunks. Captured for the call record.
         if isinstance(state_update, dict):
+            agent_update: _MessagesChannel = cast(_MessagesChannel, state_update)
             run.run_messages.extend(
-                msg for msg in state_update.get("messages", []) if getattr(msg, "tool_calls", None)
+                msg for msg in agent_update.get("messages", []) if getattr(msg, "tool_calls", None)
             )
         # Use shared helper to extract and format tool entries
         entries = await extract_tool_entries_from_update(
@@ -394,12 +432,13 @@ def _finalize_run(run: _StreamRun) -> SubagentOutcome:
         )
     else:
         final_message = run.complete_message or "Task completed"
+    initial_state: SubagentInitialState = run.ctx.initial_state
     log.set(
         subagent={
             "name": run.ctx.agent_name,
             "provider": run.ctx.integration_id,
             "response_length": len(final_message),
-            "messages_count": len(run.ctx.initial_state.get("messages", [])),
+            "messages_count": len(initial_state.get("messages", [])),
         }
     )
     return SubagentOutcome(text=final_message, run_messages=tuple(run.run_messages))
@@ -447,7 +486,8 @@ async def execute_subagent_stream(
             return SubagentOutcome(text="")
 
     # The executor addresses a cancel to this subagent by its own thread_id.
-    subagent_thread_id = str(agent_configurable(ctx.config).get("thread_id", ""))
+    run_configurable: AgentConfigurable = agent_configurable(ctx.config)
+    subagent_thread_id = str(run_configurable.get("thread_id", ""))
     cancel = SubagentCancel(subagent_thread_id) if subagent_thread_id else None
 
     # One span per segment; a pause ends its segment here, so the HIL wait that
@@ -487,7 +527,7 @@ async def execute_subagent_stream(
                 continue
             # A list `stream_mode` makes astream yield (mode, payload) tuples, which
             # langgraph's own overload return type does not express.
-            stream_mode, payload = cast(tuple[str, Any], event)
+            stream_mode, payload = cast(tuple[str, object], event)
 
             # Targeted cancel from the executor, checked once per superstep (one
             # redis read per reasoning step). Returns a clean cancelled result so
@@ -540,11 +580,11 @@ async def _consume_stream_event(run: _StreamRun, stream_mode: str, payload: obje
     untyped: each branch narrows it to the shape that mode is documented to carry.
     """
     if stream_mode == "updates":
-        await _process_updates_payload(run, cast(dict[str, Any], payload))
+        await _process_updates_payload(run, cast(dict[str, object], payload))
         return
 
     if stream_mode == "messages":
-        chunk_and_metadata = cast(tuple[BaseMessage, dict[str, Any]], payload)
+        chunk_and_metadata = cast(tuple[BaseMessage, StreamChunkMetadata], payload)
         run.complete_message = _process_messages_payload(
             chunk_and_metadata,
             run.complete_message,
@@ -558,13 +598,16 @@ async def _consume_stream_event(run: _StreamRun, stream_mode: str, payload: obje
         return
 
     if stream_mode == "custom" and run.stream_writer:
-        run.stream_writer(normalize_custom_event(cast(dict[str, Any], payload)))
+        run.stream_writer(normalize_custom_event(cast(dict[str, object], payload)))
 
 
 def _snapshot_messages(snapshot: StateSnapshot) -> list[AnyMessage]:
     """Return the messages a checkpoint holds. Empty means the thread has never run."""
     values = getattr(snapshot, "values", None) or {}
-    messages = values.get("messages") if isinstance(values, dict) else None
+    if not isinstance(values, dict):
+        return []
+    state: _MessagesChannel = cast(_MessagesChannel, values)
+    messages = state.get("messages")
     return messages if isinstance(messages, list) else []
 
 
@@ -632,7 +675,10 @@ async def _address_resume(
     for item in interrupts:
         value = getattr(item, "value", None)
         interrupt_id = getattr(item, "id", None)
-        if interrupt_id and isinstance(value, dict) and value.get("approval_id") == approval_id:
+        if not (interrupt_id and isinstance(value, dict)):
+            continue
+        gate_payload: HilInterruptPayload = cast(HilInterruptPayload, value)
+        if gate_payload.get("approval_id") == approval_id:
             log.info(
                 f"{LogTag.HIL} Addressing resume to its interrupt",
                 approval_id=str(approval_id),
@@ -653,11 +699,12 @@ def _approval_id_of(resume: Command) -> str | None:
     payload = resume.resume
     if not isinstance(payload, dict):
         return None
-    approval_id = payload.get("approval_id")
+    decision: HilResumeDecision = cast(HilResumeDecision, payload)
+    approval_id = decision.get("approval_id")
     return str(approval_id) if approval_id else None
 
 
-def interrupt_payload(raw: object) -> dict[str, Any]:
+def interrupt_payload(raw: object) -> HilInterruptPayload:
     """Return the HIL payload inside LangGraph Interrupt object(s).
 
     Carries EVERY pending approval, not just the first — two destructive calls in
@@ -667,17 +714,17 @@ def interrupt_payload(raw: object) -> dict[str, Any]:
     return merge_approvals(interrupt_values(raw))
 
 
-def interrupt_values(raw: object) -> list[dict[str, Any]]:
+def interrupt_values(raw: object) -> list[HilInterruptPayload]:
     """Return the dict payloads inside one or more LangGraph Interrupt objects."""
     items = raw if isinstance(raw, (list, tuple)) else (raw,)
     return [
-        value
+        cast(HilInterruptPayload, value)
         for value in (getattr(item, "value", item) for item in items)
         if isinstance(value, dict)
     ]
 
 
-def merge_approvals(payloads: list[dict[str, Any]]) -> dict[str, Any]:
+def merge_approvals(payloads: list[HilInterruptPayload]) -> HilInterruptPayload:
     """Fold several pending approvals into one payload carrying ALL their ids.
 
     The first payload's own fields stay at the top level, so callers reading a single
@@ -689,7 +736,9 @@ def merge_approvals(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     ids = [str(payload["approval_id"]) for payload in payloads if payload.get("approval_id")]
     if len(ids) < 2:
         return payloads[0]
-    return {**payloads[0], "approval_ids": ids}
+    merged = payloads[0].copy()
+    merged["approval_ids"] = ids
+    return merged
 
 
 def compose_executor_brief(
