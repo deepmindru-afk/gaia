@@ -18,12 +18,12 @@ Promotion bar (all must hold): score >= 47/50, zero dangerous accepts
 from __future__ import annotations
 
 from collections.abc import Awaitable, Mapping
+from enum import StrEnum
 import json
 import os
 from pathlib import Path
-import re
 import time
-from typing import Any
+from typing import Any, TypedDict
 
 import httpx
 
@@ -66,6 +66,24 @@ from scripts.evals.core.types import Case, CaseRun, ProviderError
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "hil-judge"
 
 JEV_MODEL = "typesafe/jev-1.13"
+
+
+class JudgeBackend(StrEnum):
+    """Which judge a run drove — HIL_JUDGE_EVAL_BACKEND, journaled on every row."""
+
+    JEV = "jev"
+    LLM = "llm"
+
+
+class JevJournalFields(TypedDict):
+    """The JEV verdict a row was graded on — what the offline sweep regrades."""
+
+    choice: str
+    confidence: float
+    probabilities: dict[str, float]
+    forbid_choice: str | None
+    forbid_conf: float
+
 
 # Canonical question text + mapping live in app (prompts.py, jev_judge.py) —
 # see the imports above. Editing the judge means editing there; this suite
@@ -142,7 +160,7 @@ class JudgeTransport:
     """One case: build judge state from the YAML, run one backend, journal all."""
 
     def __init__(self) -> None:
-        self._backend = os.environ.get("HIL_JUDGE_EVAL_BACKEND", "jev")
+        self._backend = os.environ.get("HIL_JUDGE_EVAL_BACKEND", JudgeBackend.JEV)
 
     async def run(
         self,
@@ -154,11 +172,12 @@ class JudgeTransport:
         del cfg, tracker
         start = time.monotonic()
         setup = case.setup
-        if self._backend == "llm":
+        verdict: JevJournalFields | None = None
+        if self._backend == JudgeBackend.LLM:
             outcome, detail, usage = await self._run_llm(setup)
             model = "llm-judge"
-        elif self._backend == "jev":
-            outcome, detail, usage = await self._run_jev(setup, provider)
+        elif self._backend == JudgeBackend.JEV:
+            outcome, detail, usage, verdict = await self._run_jev(setup, provider)
             model = JEV_MODEL
         else:
             raise ProviderError(provider.name, f"unknown judge backend {self._backend!r}")
@@ -168,12 +187,14 @@ class JudgeTransport:
         print(f"[{mark}] {case.id}: want={want} got={outcome} ({duration_s:.1f}s) {detail}")
         end_state: dict[str, Any] = {
             "outcome": outcome,
-            "questions_version": JEV_QUESTIONS_VERSION if self._backend == "jev" else "llm",
+            "backend": self._backend,
+            "questions_version": JEV_QUESTIONS_VERSION if verdict is not None else "llm",
             # The full grading input: offline re-scoring replays decide_from_verdict
             # exactly (mapping + grounding + history), so threshold experiments
             # never need another model call.
             "setup": setup,
-            **detail_state(detail),
+            "detail": detail,
+            **(verdict or {}),
         }
         return CaseRun(
             case_id=case.id,
@@ -211,7 +232,7 @@ class JudgeTransport:
 
     async def _run_jev(
         self, setup: Mapping[str, Any], provider: ProviderConfig
-    ) -> tuple[str, str, tuple[int, int]]:
+    ) -> tuple[str, str, tuple[int, int], JevJournalFields]:
         key = get_settings().OPENROUTER_API_KEY
         if not key:
             raise ProviderError(provider.name, "OPENROUTER_API_KEY unset")
@@ -265,6 +286,13 @@ class JudgeTransport:
             f"probs={json.dumps(probs)} forbid={forbid}:{forbid_conf:.2f} "
             f"-> {decision.outcome} [{history_text[:80]}]"
         )
+        verdict = JevJournalFields(
+            choice=choice,
+            confidence=confidence,
+            probabilities=probs,
+            forbid_choice=forbid,
+            forbid_conf=forbid_conf,
+        )
         return (
             decision.outcome,
             detail,
@@ -272,33 +300,8 @@ class JudgeTransport:
                 tokens_in + forbid_in,
                 tokens_out + forbid_out,
             ),
+            verdict,
         )
-
-
-def detail_state(detail: str) -> dict[str, Any]:
-    """Split the journaled detail back into fields the sweep reads offline."""
-    parts: dict[str, Any] = {"detail": detail}
-    head, _, probs_raw = detail.partition(" probs=")
-    choice, _, conf = head.partition(" conf=")
-    parts["choice"] = choice.strip()
-    try:
-        parts["confidence"] = float(conf.strip())
-    except ValueError:
-        parts["confidence"] = 0.0
-    forbid_match = re.search(r"forbid=([a-z-]+):([\d.]+)", detail)
-    parts["forbid_choice"] = forbid_match.group(1) if forbid_match else None
-    try:
-        parts["forbid_conf"] = float(forbid_match.group(2)) if forbid_match else 0.0
-    except ValueError:
-        parts["forbid_conf"] = 0.0
-    try:
-        probs = json.loads(probs_raw.partition(" forbid=")[0].partition(" -> ")[0] or "{}")
-        parts["probabilities"] = (
-            {str(k): float(v) for k, v in probs.items()} if isinstance(probs, dict) else {}
-        )
-    except (ValueError, AttributeError):
-        parts["probabilities"] = {}
-    return parts
 
 
 def sweep_journal(run_dir: Path) -> str:
@@ -315,7 +318,14 @@ def sweep_journal(run_dir: Path) -> str:
             line = line.strip()
             if line:
                 rows.append(json.loads(line))
-    rows = [r for r in rows if (r.get("end_state") or {}).get("choice")]
+    unjudged = sum(1 for r in rows if not r.get("end_state"))
+    rows = [r for r in rows if r.get("end_state")]
+    foreign = sorted({str(r["end_state"].get("backend")) for r in rows} - {JudgeBackend.JEV})
+    if foreign:
+        raise SystemExit(
+            f"{run_dir} holds judge rows from backend(s) {', '.join(foreign)}: the sweep "
+            f"regrades journaled JEV verdicts only (run with HIL_JUDGE_EVAL_BACKEND=jev)"
+        )
 
     def _regrade(row: dict[str, Any], accept: float, reject: float) -> str:
         """Full pipeline outcome for one journaled case: mapping + vetoes."""
@@ -356,6 +366,7 @@ def sweep_journal(run_dir: Path) -> str:
     out = [
         f"sweep over {len(rows)} journaled cases (accept_line x reject_floor):",
         f"graded score (with code vetoes): {graded}/{len(rows)}",
+        f"unjudged rows left out (errored, no verdict): {unjudged}",
     ]
     for score, neg_dangerous, accept, reject in best[:8]:
         out.append(
