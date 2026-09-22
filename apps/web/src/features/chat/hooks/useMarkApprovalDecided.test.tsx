@@ -9,7 +9,7 @@ import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
 import { useChatStore } from "@/stores/chatStore";
-import { useStreamStore } from "@/stores/streamStore";
+import { PENDING_KEY_PREFIX, useStreamStore } from "@/stores/streamStore";
 
 const CONVO = "conv-live";
 
@@ -53,9 +53,9 @@ describe("useMarkApprovalDecided", () => {
     const { result } = renderHook(() => useMarkApprovalDecided());
     result.current(cardConvo);
 
-    expect(useStreamStore.getState().sessions[cardConvo]?.awaitingApproval).toBe(
-      false,
-    );
+    expect(
+      useStreamStore.getState().sessions[cardConvo]?.awaitingApproval,
+    ).toBe(false);
     expect(useStreamStore.getState().sessions[CONVO]?.awaitingApproval).toBe(
       true,
     );
@@ -63,16 +63,19 @@ describe("useMarkApprovalDecided", () => {
 
   it("falls back to the pending new-chat key when nothing is active", () => {
     resetStores();
+    // startSession only records pendingNewConversationKey for a "pending:" key,
+    // which is what the hook falls back to when nothing is active.
+    const pendingKey = `${PENDING_KEY_PREFIX}abc`;
     const store = useStreamStore.getState();
-    store.startSession("pending-abc");
-    store.updateSession("pending-abc", { awaitingApproval: true });
+    store.startSession(pendingKey);
+    store.updateSession(pendingKey, { awaitingApproval: true });
     useChatStore.setState({ activeConversationId: null });
 
     const { result } = renderHook(() => useMarkApprovalDecided());
     result.current();
 
     expect(
-      useStreamStore.getState().sessions["pending-abc"]?.awaitingApproval,
+      useStreamStore.getState().sessions[pendingKey]?.awaitingApproval,
     ).toBe(false);
   });
 });
