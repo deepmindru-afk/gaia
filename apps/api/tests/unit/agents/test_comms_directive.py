@@ -7,27 +7,39 @@ from app.constants.comms import CommsDirectiveKind
 
 pytestmark = pytest.mark.unit
 
+# Same table as REACT_DIRECTIVE_CASES in libs/shared/ts/src/bots/utils/react-directive.test.ts —
+# change both together, or bots and backend disagree on what gets an emoji_ack.
+REACT_DIRECTIVE_CASES: list[tuple[str, str | None]] = [
+    ("REACT: 👍", "👍"),
+    ("  react:   ✅  ", "✅"),
+    ("REACT:👍", "👍"),
+    ("REACT: 👍\n", "👍"),
+    ("REACT: 😎<NEW_MESSAGE_BREAK>", "😎"),
+    ("REACT: <NEW_MESSAGE_BREAK>", None),
+    ("REACT:", None),
+    ("REACT:   ", None),
+    ("REACT: 👍\nand more", None),
+    ("REACTION: completed", None),
+    ("hello REACT: 👍", None),
+    ("Booked your 9am flight to Tokyo.", None),
+]
+
 
 class TestInterpretCommsOutput:
-    def test_plain_text_is_a_reply(self) -> None:
-        d = interpret_comms_output("Booked your 9am flight to Tokyo.")
-        assert d.kind == CommsDirectiveKind.REPLY
-        assert d.payload == "Booked your 9am flight to Tokyo."
-
     def test_silence_directive(self) -> None:
         d = interpret_comms_output("SILENCE: background calendar refresh, nothing new")
         assert d.kind == CommsDirectiveKind.SILENCE
         assert d.payload == "background calendar refresh, nothing new"
 
-    def test_react_directive(self) -> None:
-        d = interpret_comms_output("REACT: 👍")
-        assert d.kind == CommsDirectiveKind.REACT
-        assert d.payload == "👍"
-
-    def test_directive_is_case_and_whitespace_tolerant(self) -> None:
-        d = interpret_comms_output("  react:   ✅  ")
-        assert d.kind == CommsDirectiveKind.REACT
-        assert d.payload == "✅"
+    @pytest.mark.parametrize(("text", "emoji"), REACT_DIRECTIVE_CASES)
+    def test_react_directive_table(self, text: str, emoji: str | None) -> None:
+        d = interpret_comms_output(text)
+        if emoji is None:
+            assert d.kind == CommsDirectiveKind.REPLY
+            assert d.payload == text
+        else:
+            assert d.kind == CommsDirectiveKind.REACT
+            assert d.payload == emoji
 
     def test_multiline_message_is_never_a_directive(self) -> None:
         # A real reply that merely starts with the word must not be mis-silenced —
@@ -36,17 +48,3 @@ class TestInterpretCommsOutput:
         d = interpret_comms_output(text)
         assert d.kind == CommsDirectiveKind.REPLY
         assert d.payload == text
-
-    def test_react_without_emoji_falls_back_to_reply(self) -> None:
-        d = interpret_comms_output("REACT:")
-        assert d.kind == CommsDirectiveKind.REPLY
-
-    def test_react_payload_is_freed_of_message_breaks(self) -> None:
-        # The model sometimes trails the directive with the bubble-separator token.
-        d = interpret_comms_output("REACT: 😎<NEW_MESSAGE_BREAK>")
-        assert d.kind == CommsDirectiveKind.REACT
-        assert d.payload == "😎"
-
-    def test_react_with_only_a_message_break_falls_back_to_reply(self) -> None:
-        d = interpret_comms_output("REACT: <NEW_MESSAGE_BREAK>")
-        assert d.kind == CommsDirectiveKind.REPLY

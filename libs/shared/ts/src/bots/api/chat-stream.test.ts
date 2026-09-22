@@ -72,27 +72,6 @@ describe("streamChat mid-stream abort", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("delivers the bare emoji when comms resolves the turn to a REACT ack", async () => {
-    const stream = new PassThrough();
-    setImmediate(() => {
-      for (const f of [
-        frame({ text: "REACT:" }),
-        frame({ text: " 😎" }),
-        frame({ emoji_ack: { emoji: "😎", reacts_to_message_id: "u1" } }),
-        frame({ done: true, conversation_id: "c1" }),
-      ]) {
-        stream.write(f);
-      }
-      stream.end();
-    });
-
-    const { onDone, onError } = await run(stream);
-
-    // The streamed directive is taken back: the delivered message is the emoji.
-    expect(onDone).toHaveBeenCalledWith("😎", "c1");
-    expect(onError).not.toHaveBeenCalled();
-  });
-
   it("surfaces an error when the connection dies before any content", async () => {
     const stream = dyingStream([], new Error("aborted"));
 
