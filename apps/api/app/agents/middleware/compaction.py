@@ -606,7 +606,6 @@ def _merge_into_command(
     update["messages"] = [message]
     if isinstance(bound, Command) and isinstance(bound.update, dict):
         bound_update: _ToolBindingState = cast(_ToolBindingState, bound.update)
-        update["messages"] = bound_update.get("messages", update["messages"])
         extra = bound_update.get("selected_tool_ids") or []
         existing = update.get("selected_tool_ids") or []
         update["selected_tool_ids"] = [*existing, *(t for t in extra if t not in existing)]
@@ -689,7 +688,7 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
             status=message.status,
             always_persist=tool_name in self.always_persist_tools,
             excluded=tool_name in self.excluded_tools,
-            existing_additional_kwargs=getattr(message, "additional_kwargs", {}),
+            existing_additional_kwargs=message.additional_kwargs,
             summary_llm=summary_llm,
         )
         message = compacted if compacted is not None else message
@@ -714,7 +713,7 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
         info = read_offload(result)
         if info is None:
             return result
-        state: _ToolBindingState = getattr(request, "state", None) or _ToolBindingState()
+        state: _ToolBindingState = request.state or _ToolBindingState()
         already = set(state.get("selected_tool_ids", []) or [])
         to_bind = [name for name in tools_for_offload(info) if name not in already]
         if not to_bind:
@@ -723,7 +722,7 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
 
     def _get_context_usage(self, request: ToolCallRequest) -> float:
         try:
-            state: _ToolBindingState | None = getattr(request, "state", None)
+            state: _ToolBindingState | None = request.state
             if state is None:
                 return 0.0
             return estimate_context_usage(state.get("messages", []), self.context_window)
