@@ -150,6 +150,11 @@ def _resolve_user_id(api: str, user: str, timeout: int) -> str | None:
         return None
 
 
+def _is_bench_users_run(metadata: dict[str, Any], user_id: str | None) -> bool:
+    """Whether a root trace belongs to the bench user; the project is shared across worktrees."""
+    return not user_id or metadata.get("user_id") == user_id
+
+
 def _tokens_between(start: datetime, end: datetime, user_id: str | None = None) -> int | None:
     """Sum of root-trace tokens in the window, or None when tracing is unavailable.
 
@@ -198,10 +203,8 @@ def _tokens_between(start: datetime, end: datetime, user_id: str | None = None) 
             for r in runs:
                 if not isinstance(r, dict):
                     continue
-                if user_id:
-                    md = r.get("custom_metadata") or {}
-                    if md.get("user_id") != user_id:
-                        continue
+                if not _is_bench_users_run(r.get("custom_metadata") or {}, user_id):
+                    continue
                 usage = r.get("token_usage") or {}
                 total += usage.get("total_tokens") or 0
             return total
@@ -216,7 +219,7 @@ def _tokens_between(start: datetime, end: datetime, user_id: str | None = None) 
         roots = [
             r
             for r in client.list_runs(project_name=project, start_time=start, is_root=True)
-            if r.start_time.replace(tzinfo=UTC) <= end
+            if r.start_time.replace(tzinfo=UTC) <= end and _is_bench_users_run(r.metadata, user_id)
         ]
         return sum(r.total_tokens or 0 for r in roots)
     except Exception as exc:  # a metrics backend must never fail the bench
