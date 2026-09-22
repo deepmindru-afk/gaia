@@ -57,6 +57,11 @@ factual and specific: names, counts, IDs, outcomes.
 # Tool description for spawn_subagent
 SPAWN_SUBAGENT_DESCRIPTION = """Spawn a focused subagent for parallel or isolated work.
 
+Runs in the background by default: returns at once with the subagent's id, and its
+result arrives in your inbox on its own (waking you if you have finished). Steer it
+with message_subagent or stop it with cancel_subagent by that id. Pass
+background=False to wait for the result here instead.
+
 Use when:
 - Multiple independent subtasks can run concurrently (issue multiple spawn_subagent calls in one turn)
 - A tool output was saved to a workspace file ("[Full output stored at: ...]") and you need
@@ -76,6 +81,8 @@ Args:
     context: Background data or context the subagent needs. If a skill applies to this task,
              include its workspace path here (e.g. "Skill path: /workspace/skills/gmail-find-contacts")
              so the subagent can read and activate it.
+    background: True (default) returns at once; False waits for the result. A headless
+                run (workflow, scheduled todo) always waits.
 
 Returns:
-    The subagent's result/findings"""
+    An acknowledgement naming the subagent id, or its result/findings when waited for"""

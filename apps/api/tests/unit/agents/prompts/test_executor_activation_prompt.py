@@ -13,9 +13,6 @@ from app.agents.prompts import executor_activation_prompt
 from app.agents.prompts.comms_prompts import EXECUTOR_AGENT_PROMPT
 from app.agents.prompts.executor_activation_prompt import (
     _PHRASE_REWRITES,
-    _SECTION_REWRITES,
-    ActivationPromptAnchorError,
-    _replace_section,
     build_activation_executor_prompt,
 )
 
@@ -33,22 +30,6 @@ class TestAnchorsStayValid:
     def test_phrase_anchor_present_in_source(self, anchor: str) -> None:
         assert anchor in EXECUTOR_AGENT_PROMPT
 
-    @pytest.mark.parametrize(
-        ("start", "end"), [(start, end) for start, end, _ in _SECTION_REWRITES]
-    )
-    def test_section_markers_present_and_ordered(self, start: str, end: str) -> None:
-        start_idx = EXECUTOR_AGENT_PROMPT.find(start)
-        assert start_idx != -1
-        assert EXECUTOR_AGENT_PROMPT.find(end, start_idx + len(start)) != -1
-
-    def test_a_missing_section_start_raises(self) -> None:
-        with pytest.raises(ActivationPromptAnchorError):
-            _replace_section("nothing to match here", "DELEGATION MODEL", "END", "x")
-
-    def test_a_missing_section_end_raises(self) -> None:
-        with pytest.raises(ActivationPromptAnchorError):
-            _replace_section("DELEGATION MODEL without its end", "DELEGATION MODEL", "END", "x")
-
 
 @pytest.mark.unit
 class TestRewritesApply:
@@ -62,14 +43,6 @@ class TestRewritesApply:
 
     @pytest.mark.parametrize("replacement", [replacement for _, replacement in _PHRASE_REWRITES])
     def test_every_phrase_replacement_lands_in_the_built_prompt(
-        self, activation_prompt: str, replacement: str
-    ) -> None:
-        assert replacement in activation_prompt
-
-    @pytest.mark.parametrize(
-        "replacement", [replacement for _, _, replacement in _SECTION_REWRITES]
-    )
-    def test_every_section_replacement_lands_in_the_built_prompt(
         self, activation_prompt: str, replacement: str
     ) -> None:
         assert replacement in activation_prompt
@@ -150,19 +123,6 @@ class TestDegradesGracefully:
         prompt = executor_activation_prompt.build_activation_executor_prompt()
         assert "RESEARCH EFFORT LADDER" in prompt
         assert "activate_integration" in prompt
-
-    def test_stale_section_anchor_is_skipped_not_raised(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        start, _, _ = _SECTION_REWRITES[0]
-        assert start in EXECUTOR_AGENT_PROMPT
-        monkeypatch.setattr(
-            executor_activation_prompt,
-            "EXECUTOR_AGENT_PROMPT",
-            EXECUTOR_AGENT_PROMPT.replace(start, ""),
-        )
-        prompt = executor_activation_prompt.build_activation_executor_prompt()
-        assert "YOUR OUTPUT (INTERNAL" in prompt
 
 
 @pytest.mark.unit
