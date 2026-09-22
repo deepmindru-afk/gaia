@@ -173,13 +173,6 @@ async def list_parked_subagents_for_conversation(conversation_id: str) -> list[H
     return await hil_approval_repository.list_parked_subagents_for_conversation(conversation_id)
 
 
-async def mark_subagent_collected(approval_id: str) -> None:
-    """Stamp that the join resumed this parked subagent and collected its result."""
-    await hil_approval_repository.update(
-        approval_id, HILApprovalUpdate(subagent_collected_at=datetime.now(UTC))
-    )
-
-
 async def mark_resumed(approval_id: str) -> None:
     """Stamp that the decided run was re-dispatched (sweep skips it)."""
     await hil_approval_repository.update(

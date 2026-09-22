@@ -132,10 +132,9 @@ def get_comms_static_prompt(source: str | None) -> str:
 # ``get_comms_static_prompt``.
 COMMS_PROMPT_TEMPLATE: Final[str] = COMMS_PROMPT_DEFAULT
 
-# Activation rewrite of the executor prompt plus the always-on operating core
-# (GAIA_CORE), appended (not interpolated) so it stays byte-identical for the
+# Activation rewrite plus GAIA_CORE, appended (not interpolated) for a stable
 # provider cache. A stale anchor skips just that rewrite with a warning (never
-# raises: this runs at import), and the anchor tests pin every rewrite in CI.
+# raises: runs at import); anchor tests pin every rewrite in CI.
 _EXECUTOR_BASE: Final[str] = build_activation_executor_prompt()
 
 

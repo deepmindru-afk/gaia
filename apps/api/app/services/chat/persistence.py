@@ -116,18 +116,10 @@ async def save_conversation_async(
 ) -> None:
     """Persist the finished turn to Mongo and bill token usage.
 
-    Bakes absolute artifact URLs into the saved bot message so the chat renders
-    correctly even when the user's browser holds a stale frontend chunk.
-
-    ``bot_timestamp`` lets the caller stamp the turn at comms-completion time
-    rather than now() — needed in voice mode, where finalize is deferred until a
-    delegated executor finishes, so the user/comms messages must still sort ahead
-    of the executor's answer (saved mid-wait).
-
-    ``kind``/``reacts_to_message_id`` stamp a comms ``REACT: <emoji>`` turn as a
-    one-emoji acknowledgment of the user's message (the web renders it as a
-    reaction badge rather than a bubble); the caller has already reduced
-    ``complete_message`` to the bare emoji.
+    Artifact URLs are baked absolute so a stale frontend chunk still renders.
+    bot_timestamp stamps the turn at comms-completion time, keeping user and
+    comms messages sorted ahead of a delegated executor answer in voice mode.
+    kind and reacts_to_message_id stamp a REACT turn as a one-emoji acknowledgment.
     """
     bot_timestamp = bot_timestamp or datetime.now(UTC)
     user_timestamp = bot_timestamp - timedelta(milliseconds=100)

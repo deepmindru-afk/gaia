@@ -26,7 +26,7 @@ from app.constants.execute import (
     SANDBOX_TOOL_DOCS_DIR,
 )
 from app.constants.llm import TOOL_EXECUTION_TIMEOUT_SECONDS
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import AgentConfigurable, agent_configurable
 from app.services.sandbox.execute_token import mint_execute_token
 
 # Stdlib-only client seeded into the sandbox per bash invocation (idempotent
@@ -141,10 +141,11 @@ def mint_execute_env(
     space (None for the executor); it rides in the token so a subagent's
     confinement holds on the route, the only other place a proxied tool runs.
     """
+    configurable: AgentConfigurable = agent_configurable(config)
     token = mint_execute_token(
         user_id,
         run_id,
-        stream_id=agent_configurable(config).get("stream_id"),
+        stream_id=configurable.get("stream_id"),
         sandbox_id=sandbox_id,
         scoped_tool_names=scoped_tool_names,
         ttl_seconds=command_timeout_seconds + SANDBOX_EXECUTE_TOKEN_TTL_BUFFER_SECONDS,

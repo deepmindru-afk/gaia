@@ -12,7 +12,7 @@ attributable to the exact bash run (and sandbox) whose token made it.
 """
 
 import time
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
@@ -104,7 +104,7 @@ def _claims_from_authorization(authorization: str) -> SandboxExecuteClaims:
 @router.post("/execute")
 async def sandbox_execute(
     payload: SandboxExecuteRequest,
-    authorization: str = Header(default=""),
+    authorization: Annotated[str, Header()] = "",
 ) -> SandboxExecuteResponse:
     log.set(sandbox_execute={"tool_name": payload.tool_name})
     claims = _claims_from_authorization(authorization)
@@ -145,7 +145,7 @@ class SandboxToolSchemaRequest(BaseModel):
 @router.post("/tool-schema")
 async def sandbox_tool_schema(
     payload: SandboxToolSchemaRequest,
-    authorization: str = Header(default=""),
+    authorization: Annotated[str, Header()] = "",
 ) -> ToolContract:
     """The full tool contract behind the discovery doc's pointer.
 

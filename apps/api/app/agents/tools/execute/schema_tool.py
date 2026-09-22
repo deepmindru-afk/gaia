@@ -18,7 +18,7 @@ from app.agents.tools.execute.schema_docs import (
 )
 from app.agents.tools.execute.tool_info import full_tool_info
 from app.constants.execute import ARGS_SCHEMA_MAX_CHARS, TOOL_SCHEMA_RETURNS_MAX_CHARS
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import AgentConfigurable, agent_configurable
 from app.utils.general_utils import clip_text
 
 _DESCRIPTION_MAX_CHARS = 600
@@ -38,7 +38,8 @@ async def get_tool_schema(
     BEFORE writing code that consumes the tool's output; never guess shapes.
     Read-only metadata, runs nothing.
     """
-    info = await full_tool_info(agent_configurable(config).get("user_id"), tool_name)
+    configurable: AgentConfigurable = agent_configurable(config)
+    info = await full_tool_info(configurable.get("user_id"), tool_name)
     if info is None:
         return json.dumps(
             {

@@ -116,32 +116,9 @@ def create_middleware_stack(
 ) -> AgentMiddlewareStack:
     """Create the standard middleware stack for agents.
 
-    Uses LangChain's AgentMiddleware system:
-    - SubagentMiddleware: Spawn subagents for parallel/focused work
-    - WorkspaceArchivingSummarizationMiddleware: Archives history to the user's
-      persistent workspace and summarizes at threshold
-    - WorkspaceCompactionMiddleware: Persists large tool outputs to the
-      persistent workspace and replaces them with a /workspace/... reference
-
-    Args:
-        agent_name: Name used for accounting/log attribution
-        chat_llm: The graph's own configurable LLM. Summarization and the
-            compaction digest invoke it inside the graph, so ambient request
-            config routes them to the same model the conversation uses. When
-            None, summarization is skipped and compaction keeps its
-            deterministic tiers.
-        accounting: LLMAccountingMiddleware (on by default) and the recursion
-            limit it reports against.
-        subagent: SubagentMiddleware wiring (off by default): the spawned
-            subagents' LLM, tools, registry, exclusions, tool space and runtime
-            config.
-        context: Summarization and compaction: whether each is on, the
-            summarization trigger/keep sizes and archive flag, the compaction
-            threshold and per-output cap, and the tools each must leave alone.
-        loop_guard: LoopGuardMiddleware (on by default) and whether it hard-stops.
-
-    Returns:
-        List of AgentMiddleware instances in execution order
+    agent_name carries accounting and log attribution; chat_llm is the
+    graph's own model for summarization and the compaction digest. When
+    None, summarization is skipped. Returns middleware in execution order.
     """
     middleware: AgentMiddlewareStack = []
 
@@ -246,12 +223,7 @@ def create_middleware_stack(
 def create_executor_middleware(
     *,
     chat_llm: LanguageModelLike | None = None,
-    subagent_llm: LanguageModelLike | None = None,
-    subagent_tools: list[BaseTool] | None = None,
-    subagent_registry: Mapping[str, BaseTool] | None = None,
-    subagent_excluded_tools: set[str] | None = None,
-    subagent_tool_runtime_config: ToolRuntimeConfig | None = None,
-    subagent_inherit_parent_tools: bool = False,
+    subagent: SubagentStackOptions | None = None,
 ) -> AgentMiddlewareStack:
     """Create middleware stack for the executor agent: SubagentMiddleware plus summarization/compaction.
 
@@ -262,15 +234,8 @@ def create_executor_middleware(
         agent_name="executor_agent",
         chat_llm=chat_llm,
         accounting=AccountingOptions(recursion_limit=EXECUTOR_RECURSION_LIMIT),
-        subagent=SubagentStackOptions(
-            enabled=True,
-            llm=subagent_llm,
-            tools=subagent_tools,
-            registry=subagent_registry,
-            excluded_tools=subagent_excluded_tools,
-            tool_runtime_config=subagent_tool_runtime_config,
-            inherit_parent_tools=subagent_inherit_parent_tools,
-        ),
+        # The executor is the tier that spawns, so enablement is not the caller's to choose.
+        subagent=replace(subagent or SubagentStackOptions(), enabled=True),
         context=ContextOptions(
             compaction_excluded_tools=CODING_TOOL_NAMES
             | SPAWN_SUBAGENT_TOOL
@@ -305,43 +270,21 @@ def create_subagent_middleware(
     agent_name: str = "provider_subagent",
     subagent: SubagentStackOptions = SubagentStackOptions(),
 ) -> AgentMiddlewareStack:
-    """Create middleware stack for worker subagents.
+    """Create the middleware stack for worker subagents.
 
-    Worker subagents handle focused work and should have:
-    - WorkspaceCompactionMiddleware: Persist oversized tool outputs to /workspace
-    - Summarization: compaction bounds a single tool output, not the accumulated
-      history. Without summarization a run grows unbounded up to
-      EXECUTOR_RECURSION_LIMIT steps — in production this averaged 91k input
-      tokens per call against 43k for comms/executor, peaking at a full 1M-token
-      window. Trimming is safe here because the result is read from the
-      finish_task call, never from replayed history.
-
-    Provider subagents can NEVER spawn: ``subagent.enabled`` is force-disabled
-    here so the nesting stops one tier below the executor structurally, not by
-    caller discipline (the same holds for spawned children, whose middleware is
-    built through this function too).
-
-    Args:
-        agent_name: The subagent's own name, used to attribute its ``llm_call``
-            events. Without it every worker subagent meters
-            under a single ``provider_subagent`` bucket, so per-subagent cost and
-            cache behaviour cannot be told apart.
-        subagent: The spawn wiring. ``llm`` is both the subagent's own model
-            (its summarization and compaction ride it) and the model its spawned
-            sub-subagents run on; ``tools``/``registry``/``excluded_tools``/
-            ``tool_space``/``tool_runtime_config`` shape what those sub-subagents
-            may reach. ``enabled=False`` leaves out the spawn_subagent middleware,
-            for authoring-only subagents that must not spawn or execute.
-
-    Returns:
-        List of middleware for worker subagents
+    Summarization stays on: compaction alone cannot bound accumulated
+    history, and the result is read from the finish_task call, never from
+    replayed history. Subagents can never spawn; nesting stops one tier
+    below the executor.
     """
+    # Only the executor spawns; whatever a caller passed, a subagent's stack
+    # never carries the spawn middleware (see the docstring). Annotated so the
+    # dataclasses.replace return type is explicit at the call site below.
+    child_subagent: SubagentStackOptions = replace(subagent, enabled=False)
     return create_middleware_stack(
         agent_name=agent_name,
         chat_llm=subagent.llm,
-        # Only the executor spawns; whatever a caller passed, a subagent's stack
-        # never carries the spawn middleware (see the docstring).
-        subagent=replace(subagent, enabled=False),
+        subagent=child_subagent,
         context=ContextOptions(
             # Summarization and compaction stay on (the ContextOptions defaults):
             # without summarization a subagent run grows unbounded, averaging 91k

@@ -3,8 +3,8 @@
 When comms narrates a background executor update that is not worth a full message,
 its output is a single control line instead of prose:
 
-    ``SILENCE: <reason>``  → deliver nothing (the reason is logged, not shown)
-    ``REACT: <emoji>``     → deliver a lightweight emoji acknowledgment
+    SILENCE: <reason>  → deliver nothing (the reason is logged, not shown)
+    REACT: <emoji>     → deliver a lightweight emoji acknowledgment
 
 Anything else is an ordinary reply. Parsing is strict — the whole trimmed message
 must be one control line — so prose that merely mentions the word never triggers
@@ -30,11 +30,9 @@ def interpret_comms_output(text: str) -> CommsDirective:
         keyword, payload = match.group(1).upper(), match.group(2).strip()
         if keyword == SILENCE_KEYWORD:
             return CommsDirective(CommsDirectiveKind.SILENCE, payload)
-        # A REACT with no emoji is meaningless — fall back to a normal reply so the
-        # user still gets something rather than an empty reaction. The model has
-        # been observed trailing the directive with the bubble-separator token
-        # ("REACT: 😎<NEW_MESSAGE_BREAK>"); strip it so the badge renders the clean
-        # emoji, and a break-only payload still falls through to REPLY.
+        # A REACT with no emoji is meaningless — fall back to REPLY. Strip the
+        # bubble-separator token first, so a break-only payload still falls
+        # through to REPLY instead of rendering an empty reaction.
         payload = payload.replace(NEW_MESSAGE_BREAKER, "").strip()
         if payload:
             return CommsDirective(CommsDirectiveKind.REACT, payload)

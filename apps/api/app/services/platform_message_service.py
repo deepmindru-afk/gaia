@@ -86,12 +86,11 @@ async def deliver_reaction_to_platform(
     *,
     conversation_id: str | None = None,
 ) -> bool:
-    """Attach ``emoji`` as a native reaction to an existing platform message.
+    """Attach emoji as a native reaction to an existing platform message.
 
-    Same channel-or-DM addressing as :func:`deliver_message_to_platform`. Returns
-    True if the reaction was enqueued. Non-bot sources, unlinked accounts, and
-    publish failures all return False — the caller falls back to sending the
-    emoji as a text bubble, so the acknowledgment is never lost.
+    Same channel-or-DM addressing as deliver_message_to_platform. Returns
+    True if the reaction was enqueued; otherwise False and the caller falls
+    back to a text bubble so the acknowledgment is never lost.
     """
     platform = ConversationSource.coerce(source)
     if platform is None or platform not in BOT_CONVERSATION_SOURCES:

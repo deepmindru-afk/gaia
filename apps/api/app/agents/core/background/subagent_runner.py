@@ -252,15 +252,3 @@ async def _park(
         subagent_thread_id=thread_id,
         stream_id=stream_id,
     )
-
-
-async def _append_error_result(conversation_id: str, agent_name: str, error: Exception) -> None:
-    """Best-effort error result; never let a Redis failure escape the task."""
-    try:
-        await _deliver_result(conversation_id, agent_name, f"Error from {agent_name}: {error!s}")
-    except Exception as redis_error:  # create_task coroutine must not raise
-        log.error(
-            f"{LogTag.AGENT} Could not store bg subagent error result",
-            agent_name=agent_name,
-            error=str(redis_error),
-        )

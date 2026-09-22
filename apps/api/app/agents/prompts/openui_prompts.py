@@ -83,19 +83,12 @@ OPENUI_INSTRUCTIONS: str = f"""
 {OPENUI_QUALITY_NOTES}
 """
 
-# ---------------------------------------------------------------------------
-# Comms output-format addenda. Renderable channels (web/mobile/desktop) get one
-# of these two; the per-user choice between them lives in
-# ``app.agents.templates.agent_template.get_comms_static_prompt`` and resolves
-# via ``app.services.feature_flags`` (PostHog flag, env default). Both variants
-# are precomputed there, so the prompt cache sees two buckets per channel,
-# not one per user.
-# ---------------------------------------------------------------------------
+# Comms output-format addenda: one per renderable channel, precomputed per
+# channel for the prompt cache (choice lives in get_comms_static_prompt).
 
-# Fallback used when OpenUI is disabled for the user. Renderable channels still
-# render markdown natively, so this keeps tables/links/lists without the ~27k-char
-# component vocabulary. It also resolves the output-format reference in the
-# comms prompt's Delivering Results section.
+# Fallback when OpenUI is disabled: native markdown without the ~27k-char
+# component vocabulary; resolves the output-format reference in Delivering
+# Results.
 MARKDOWN_ONLY_ADDENDUM: str = """
 ---Output Format---
 Render structured data with plain markdown, never :::openui component fences (they are disabled):

@@ -117,12 +117,6 @@ class IntentDecision:
     outcome: AutoOutcome
     reason: str
 
-    @property
-    def aligned(self) -> bool:
-        """Compat: the gate's accept check. New code reads outcome."""
-
-        return self.outcome == "accept"
-
 
 class _Verdict(BaseModel):
     """Field order is generation order.
@@ -233,15 +227,22 @@ class IntentJudge(Protocol):
     ) -> IntentDecision: ...
 
 
+@dataclass(frozen=True)
+class AutoContext:
+    """The user's auto-mode standing for one decision: who, their record, their opt-outs."""
+
+    user_id: str
+    history: AutoHistory = AutoHistory()
+    never_auto_tools: frozenset[str] = frozenset()
+
+
 async def judge_intent(
+    auto: AutoContext,
     *,
-    user_id: str,
     user_messages: list[str],
     call: JudgedCall,
     prior_calls: list[PriorCall],
-    history: AutoHistory | None = None,
     judge: IntentJudge | None = None,
-    never_auto_tools: frozenset[str] | None = None,
     assistant_turns: list[str] | None = None,
 ) -> IntentDecision:
     """Decide whether the user's own words authorize this call; fails toward asking.
@@ -259,7 +260,7 @@ async def judge_intent(
         )
         return IntentDecision("ask", _NO_REQUEST_REASON)
 
-    if never_auto_tools and call.tool_name in never_auto_tools:
+    if call.tool_name in auto.never_auto_tools:
         return IntentDecision(
             "ask",
             f"{call.tool_name} is on your never-auto list, so it always asks.",
@@ -268,11 +269,11 @@ async def judge_intent(
     active: IntentJudge = judge if judge is not None else _LLMIntentJudge()
     try:
         return await active.decide(
-            user_id=user_id,
+            user_id=auto.user_id,
             user_messages=turns,
             call=call,
             prior_calls=prior_calls,
-            history=history if history is not None else AutoHistory(),
+            history=auto.history,
             assistant_turns=assistant_turns,
         )
     except Exception as e:  # a judge failure must fall back to asking

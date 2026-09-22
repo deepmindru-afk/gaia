@@ -6,6 +6,7 @@ import asyncio
 import base64
 from collections.abc import Mapping
 import contextlib
+from dataclasses import dataclass
 import posixpath
 import time
 from typing import Annotated
@@ -196,12 +197,47 @@ def build_bash_tool(scoped_tools: Mapping[str, BaseTool] | None = None) -> BaseT
 bash = build_bash_tool()
 
 
+@dataclass(frozen=True)
+class _BashInvocation:
+    """One bash call: what to run, where, and under whose identity."""
+
+    user_id: str
+    run_id: str
+    command: str
+    cwd: str
+    timeout: int
+    background: bool
+    session_id: str | None
+    config: RunnableConfig
+    scoped_tools: Mapping[str, BaseTool] | None
+
+
+async def _build_execute_env(run: _BashInvocation, sbx: object) -> dict[str, str] | None:
+    """Seed code mode and mint the per-run execute env, or None when code mode is off."""
+    # Two gates: the env secret arms the mechanism globally, the
+    # per-user flag rolls it out (default off).
+    if not sandbox_execute_enabled() or not await is_code_mode_enabled(run.user_id):
+        return None
+    # Code mode token is per-invocation, process-scoped, TTL-bound to this
+    # command's timeout (see execute_client.py threat model): bash scripts
+    # may call GAIA tools via from gaia import execute.
+    await seed_execute_client(sbx)
+    return mint_execute_env(
+        user_id=run.user_id,
+        run_id=run.run_id,
+        config=run.config,
+        sandbox_id=getattr(sbx, "sandbox_id", None),
+        command_timeout_seconds=BASH_MAX_TIMEOUT_SECONDS if run.background else run.timeout,
+        scoped_tool_names=None if run.scoped_tools is None else sorted(run.scoped_tools),
+    )
+
+
 async def _run_bash(
     *,
     config: RunnableConfig,
     command: str,
     cwd: str,
-    timeout: int,
+    timeout: int,  # NOSONAR python:S7483 -- e2b server-side command deadline, not a local wait (see _run_foreground)
     background: bool,
     scoped_tools: Mapping[str, BaseTool] | None,
 ) -> str:
@@ -225,6 +261,18 @@ async def _run_bash(
     if cwd_error:
         return cwd_error
 
+    run = _BashInvocation(
+        user_id=user_id,
+        run_id=run_id,
+        command=command,
+        cwd=cwd,
+        timeout=timeout,
+        background=background,
+        session_id=session_id,
+        config=config,
+        scoped_tools=scoped_tools,
+    )
+
     safe_emit(
         {
             "bash_data": {
@@ -245,29 +293,10 @@ async def _run_bash(
                 # already exists.
                 with contextlib.suppress(Exception):
                     await sbx.files.make_dir(cwd)
-            # Code mode: every bash command may run scripts that call GAIA
-            # tools via `from gaia import execute`. The token is per-invocation
-            # and process-scoped (envd env, unreadable to other processes under
-            # the hardened template), TTL-bound to this command's own timeout —
-            # see app/services/sandbox/execute_client.py for the threat model.
-            execute_env: dict[str, str] | None = None
-            # Two gates: the env secret arms the mechanism globally, the
-            # per-user flag rolls it out (default off).
-            if sandbox_execute_enabled() and await is_code_mode_enabled(user_id):
-                await seed_execute_client(sbx)
-                execute_env = mint_execute_env(
-                    user_id=user_id,
-                    run_id=run_id,
-                    config=config,
-                    sandbox_id=getattr(sbx, "sandbox_id", None),
-                    command_timeout_seconds=BASH_MAX_TIMEOUT_SECONDS if background else timeout,
-                    scoped_tool_names=None if scoped_tools is None else sorted(scoped_tools),
-                )
+            execute_env = await _build_execute_env(run, sbx)
             if background:
-                return await _run_background(sbx, run_id, command, cwd, session_id, execute_env)
-            result = await _run_foreground(
-                sbx, run_id, command, cwd, timeout, session_id, execute_env
-            )
+                return await _run_background(sbx, run, execute_env)
+            result = await _run_foreground(sbx, run, execute_env)
             # A bash command can create artifacts many ways (cat, python, mv,
             # curl -o, …), not just the write tool. Enumerate the session's
             # artifacts/ from the sandbox itself (no cross-mount race) in real time.
@@ -368,13 +397,7 @@ async def _persist_run_log(sbx: object, run_id: str, stdout: str, stderr: str) -
 
 
 async def _run_foreground(
-    sbx: object,
-    run_id: str,
-    command: str,
-    cwd: str,
-    timeout: int,
-    session_id: str | None,
-    envs: dict[str, str] | None = None,
+    sbx: object, run: _BashInvocation, envs: dict[str, str] | None = None
 ) -> str:
     """Run a command synchronously and stream stdout/stderr chunks."""
 
@@ -382,38 +405,38 @@ async def _run_foreground(
         safe_emit(
             {
                 "bash_data": {
-                    "id": run_id,
+                    "id": run.run_id,
                     "status": "running",
                     "stream": "stdout",
                     "chunk": chunk,
                 }
             },
-            session_id=session_id,
+            session_id=run.session_id,
         )
 
     def _on_stderr(chunk: str) -> None:
         safe_emit(
             {
                 "bash_data": {
-                    "id": run_id,
+                    "id": run.run_id,
                     "status": "running",
                     "stream": "stderr",
                     "chunk": chunk,
                 }
             },
-            session_id=session_id,
+            session_id=run.session_id,
         )
 
     try:
-        # `timeout` is the e2b server-side deadline; a local asyncio.timeout
+        # `run.timeout` is the e2b server-side deadline; a local asyncio.timeout
         # would only cancel our coroutine, not the remote command.
         result = await sbx.commands.run(  # type: ignore[attr-defined]  # e2b SDK ships no stubs  # NOSONAR python:S7483
-            command,
-            cwd=cwd or WORKSPACE_ROOT,
+            run.command,
+            cwd=run.cwd or WORKSPACE_ROOT,
             envs=envs or {},
             on_stdout=_on_stdout,
             on_stderr=_on_stderr,
-            timeout=timeout,
+            timeout=run.timeout,
         )
         exit_code = getattr(result, "exit_code", None)
         stdout = getattr(result, "stdout", "") or ""
@@ -432,17 +455,17 @@ async def _run_foreground(
 
     _record_bash_exit_code(exit_code, timed_out=False)
 
-    await _persist_run_log(sbx, run_id, stdout, stderr)
+    await _persist_run_log(sbx, run.run_id, stdout, stderr)
 
     safe_emit(
         {
             "bash_data": {
-                "id": run_id,
+                "id": run.run_id,
                 "status": "exited",
                 "exit_code": exit_code,
             }
         },
-        session_id=session_id,
+        session_id=run.session_id,
     )
 
     parts: list[str] = [f"exit_code: {exit_code}"]
@@ -454,12 +477,7 @@ async def _run_foreground(
 
 
 async def _run_background(
-    sbx: object,
-    run_id: str,
-    command: str,
-    cwd: str,
-    session_id: str | None,
-    envs: dict[str, str] | None = None,
+    sbx: object, run: _BashInvocation, envs: dict[str, str] | None = None
 ) -> str:
     """Detach a long-running command and return its pid + log path.
 
@@ -467,14 +485,14 @@ async def _run_background(
     tools too, until the token's TTL (bounded by BASH_MAX_TIMEOUT_SECONDS)
     runs out; after that calls fail with 401 rather than living forever.
     """
-    log_path = f"{runs_log_dir()}/{run_id}.log"
+    log_path = f"{runs_log_dir()}/{run.run_id}.log"
     wrapped = (
         f"mkdir -p {sh_quote(runs_log_dir())} && "
-        f"nohup bash -c {sh_quote(command)} > {sh_quote(log_path)} 2>&1 "
+        f"nohup bash -c {sh_quote(run.command)} > {sh_quote(log_path)} 2>&1 "
         "& echo $!"
     )
     result = await sbx.commands.run(  # type: ignore[attr-defined]  # e2b sandbox SDK ships no type stubs
-        wrapped, cwd=cwd or WORKSPACE_ROOT, envs=envs or {}, timeout=10
+        wrapped, cwd=run.cwd or WORKSPACE_ROOT, envs=envs or {}, timeout=10
     )
     pid = (getattr(result, "stdout", "") or "").strip()
     if not pid:
@@ -484,13 +502,13 @@ async def _run_background(
     safe_emit(
         {
             "bash_data": {
-                "id": run_id,
+                "id": run.run_id,
                 "status": "background_started",
                 "pid": pid,
                 "log_path": log_path,
             }
         },
-        session_id=session_id,
+        session_id=run.session_id,
     )
     return (
         f"Started in background. pid={pid}, log_path={log_path}\n"

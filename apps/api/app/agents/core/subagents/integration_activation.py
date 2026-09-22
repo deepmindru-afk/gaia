@@ -176,77 +176,38 @@ def _reply(tool_call_id: str, text: str, bind: list[str] | None = None) -> Comma
     return Command(update=update)
 
 
-@tool
-async def activate_integration(
-    integration_id: Annotated[str, "The ID of the integration to activate (e.g., 'gmail')."],
-    config: RunnableConfig,
-    tool_call_id: Annotated[str, InjectedToolCallId],
-) -> Command[Any]:
-    """Load an integration's tools and expertise into this conversation.
-
-    Preloads its most-used integration tools as schema docs (run them via
-    ``execute`` — no retrieve_tools needed for those), binds its most-used
-    helper tools immediately, and returns how it works, which account you are
-    acting as, the user's standing preferences, and its skills. Act on it
-    yourself; `spawn_subagent` inherits it.
-    """
-    configurable = cast(AgentConfigurable, config.get("configurable", {}))
-    user_id = configurable.get("user_id")
-
-    # Repository-aware resolution: covers the static OAuth/builtin registry AND
-    # user-created custom MCP integrations (a dict), which the manifest lists but
-    # the registry alone does not know — same resolver handoff uses.
-    resolved = await _get_subagent_by_id(integration_id)
-    if resolved is None:
-        log.set(activation={"integration": integration_id})
-        log.warning(f"{LogTag.AGENT} Activation requested for unknown integration")
-        return _reply(tool_call_id, f"Unknown integration '{integration_id}'.")
-
-    # Custom MCP and auth-required MCP issue their tools per user, so they never
-    # enter the global registry and cannot be bound in-context; route to handoff,
-    # which builds their per-user graph, instead of dead-ending.
-    if isinstance(resolved, CustomMcpSubagent) or _requires_per_user_tokens(resolved):
-        log.set(activation={"integration": integration_id, "routed_to_handoff": True})
-        return _reply(tool_call_id, _handoff_redirect(integration_id))
-
-    subagent = resolved
-
-    # Registering an unconnected integration's tools would bind tools that fail at
-    # call time with an auth error. `handoff` gates on this too — and the check is
-    # what renders the connect card, so skipping it leaves the user with no button.
-    if subagent.managed_by not in ("mcp", "internal") and user_id:
-        connect_prompt = await check_integration_connection(integration_id, user_id)
-        if connect_prompt:
-            log.set(activation={"integration": integration_id, "connected": False})
-            return _reply(tool_call_id, connect_prompt)
-
-    tool_count, bind, preloaded, docs = await _activate_tools(subagent, user_id)
-    context = await _activation_context(integration_id, user_id)
-    log.set(
-        activation={
-            "integration": integration_id,
-            "tool_count": tool_count,
-            "bound_now": len(bind),
-            "preloaded": len(preloaded),
-            "context_length": len(context),
-        }
-    )
-
-    # Stamp the conversation while the activation is known good: later
-    # retrieve_tools discovery searches this namespace too, so the tools
+async def _stamp_activation(
+    configurable: AgentConfigurable,
+    integration_id: str,
+    bind: list[str],
+    preloaded: list[str],
+    tool_count: int,
+) -> bool:
+    """Stamp the conversation while the activation is known good; return whether the stamp landed."""
+    # Later retrieve_tools discovery searches this namespace too, so the tools
     # beyond the preloaded subset stay reachable from this run.
-    stamped = False
-    if bind or preloaded or tool_count:
-        conversation_id = configurable.get("conversation_id")
-        if conversation_id:
-            await mark_active(conversation_id, integration_id)
-            stamped = True
-        else:
-            log.warning(
-                f"{LogTag.AGENT} Activation stamp skipped: no conversation_id",
-                integration=integration_id,
-            )
+    if not (bind or preloaded or tool_count):
+        return False
+    conversation_id = configurable.get("conversation_id")
+    if not conversation_id:
+        log.warning(
+            f"{LogTag.AGENT} Activation stamp skipped: no conversation_id",
+            integration=integration_id,
+        )
+        return False
+    await mark_active(conversation_id, integration_id)
+    return True
 
+
+def _activation_header(
+    integration_id: str,
+    tool_count: int,
+    bind: list[str],
+    preloaded: list[str],
+    docs: str,
+    stamped: bool,
+) -> str:
+    """Build the activation reply's leading section; tool schemas stay last, never interleaved."""
     # Tool schemas live in exactly one place: the trailing schemas section
     # (render_preload_block, its own header) — the same last-position rule as
     # handoff seeding. Never interleaved with the context sections.
@@ -292,7 +253,68 @@ async def activate_integration(
                 "this run."
             )
     header_parts.append("Anything you spawn inherits the bound tools.")
-    header = " ".join(header_parts) + "\n\n"
+    return " ".join(header_parts) + "\n\n"
+
+
+@tool
+async def activate_integration(
+    integration_id: Annotated[str, "The ID of the integration to activate (e.g., 'gmail')."],
+    config: RunnableConfig,
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command[Any]:
+    """Load an integration's tools and expertise into this conversation.
+
+    Preloads its most-used integration tools as schema docs (run them via
+    ``execute`` — no retrieve_tools needed for those), binds its most-used
+    helper tools immediately, and returns how it works, which account you are
+    acting as, the user's standing preferences, and its skills. Act on it
+    yourself; `spawn_subagent` inherits it.
+    """
+    configurable: AgentConfigurable = cast(AgentConfigurable, config.get("configurable", {}))
+    user_id = configurable.get("user_id")
+
+    # Repository-aware resolution: covers the static OAuth/builtin registry AND
+    # user-created custom MCP integrations (a dict), which the manifest lists but
+    # the registry alone does not know — same resolver handoff uses.
+    resolved = await _get_subagent_by_id(integration_id)
+    if resolved is None:
+        log.set(activation={"integration": integration_id})
+        log.warning(f"{LogTag.AGENT} Activation requested for unknown integration")
+        return _reply(tool_call_id, f"Unknown integration '{integration_id}'.")
+
+    # Custom MCP and auth-required MCP issue their tools per user, so they never
+    # enter the global registry and cannot be bound in-context; route to handoff,
+    # which builds their per-user graph, instead of dead-ending.
+    if isinstance(resolved, CustomMcpSubagent) or _requires_per_user_tokens(resolved):
+        log.set(activation={"integration": integration_id, "routed_to_handoff": True})
+        return _reply(tool_call_id, _handoff_redirect(integration_id))
+
+    subagent = resolved
+
+    # Registering an unconnected integration's tools would bind tools that fail at
+    # call time with an auth error. `handoff` gates on this too — and the check is
+    # what renders the connect card, so skipping it leaves the user with no button.
+    if subagent.managed_by not in ("mcp", "internal") and user_id:
+        connect_prompt = await check_integration_connection(integration_id, user_id)
+        if connect_prompt:
+            log.set(activation={"integration": integration_id, "connected": False})
+            return _reply(tool_call_id, connect_prompt)
+
+    tool_count, bind, preloaded, docs = await _activate_tools(subagent, user_id)
+    context = await _activation_context(integration_id, user_id)
+    log.set(
+        activation={
+            "integration": integration_id,
+            "tool_count": tool_count,
+            "bound_now": len(bind),
+            "preloaded": len(preloaded),
+            "context_length": len(context),
+        }
+    )
+
+    stamped = await _stamp_activation(configurable, integration_id, bind, preloaded, tool_count)
+
+    header = _activation_header(integration_id, tool_count, bind, preloaded, docs, stamped)
     body = header + (context or "(no additional context available)")
     if docs:
         body += "\n\n" + docs

@@ -821,24 +821,3 @@ class CreatedEventSummary(BaseModel):
     link: str | None
     start: GoogleCalendarEventDateTime
     end: GoogleCalendarEventDateTime
-
-
-class CalendarOptionDraft(BaseModel):
-    """An event drafted for the user's confirmation card, not yet sent to Google.
-
-    ``location`` / ``attendees`` / ``create_meeting_room`` are ``None`` when the
-    draft has none, and ``exclude_none`` keeps them out of the tool output.
-    """
-
-    index: int
-    summary: str
-    description: str
-    is_all_day: bool
-    start: GoogleCalendarEventDateTime
-    end: GoogleCalendarEventDateTime
-    calendar_id: str
-    color: str
-    calendar_name: str
-    location: str | None = None
-    attendees: list[str] | None = None
-    create_meeting_room: bool | None = None

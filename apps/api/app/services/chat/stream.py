@@ -55,7 +55,11 @@ from app.models.stream_events import (
     MainResponseCompleteFrame,
 )
 from app.models.user_models import AuthenticatedUser
-from app.services.analytics_service import AnalyticsEvents, capture_event
+from app.services.analytics_service import (
+    AnalyticsEvents,
+    AnalyticsProperties,
+    capture_event,
+)
 from app.services.chat.artifact_forwarder import forward_artifact_events
 from app.services.chat.chunks import ChunkAccumulators, extract_response_text, process_data_chunk
 from app.services.chat.persistence import (
@@ -361,10 +365,8 @@ async def _run_chat_stream(
 
         await _finalize_description(description_task, stream_id)
         if state.message_kind is MessageKind.EMOJI_ACK and state.reacts_to_message_id:
-            # The client streamed the raw directive as text; the frame tells it
-            # to take that back and attach the emoji to the user's message as a
-            # reaction badge (mirrors the WebSocket notification the background
-            # path sends for the same outcome).
+            # The client streamed the raw directive as text; the frame tells it to
+            # take that back and attach the emoji as a reaction badge instead.
             await stream_manager.publish_chunk(
                 stream_id,
                 format_sse_data(
@@ -398,21 +400,6 @@ async def _run_chat_stream(
             status="cancelled" if state.is_cancelled else "success",
         )
         if user_id:
-            event_props: dict[str, Any] = {
-                "conversation_id": conversation_id,
-                "voice_mode": body.voice_mode,
-                "is_new_conversation": is_new_conversation,
-                "delegated": state.delegated,
-                "queued": state.queued,
-            }
-            if state.ttft_ms is not None:
-                event_props["ttft_ms"] = state.ttft_ms
-            if state.e2e_ack_ms is not None:
-                event_props["e2e_ack_ms"] = state.e2e_ack_ms
-            if state.e2e_full_ms is not None:
-                event_props["e2e_full_ms"] = state.e2e_full_ms
-            if source:
-                event_props["source"] = source
             capture_event(
                 user_id,
                 (
@@ -420,7 +407,9 @@ async def _run_chat_stream(
                     if state.is_cancelled
                     else AnalyticsEvents.CHAT_MESSAGE_COMPLETED
                 ),
-                event_props,
+                _turn_completion_props(
+                    body, state, conversation_id, source, is_new_conversation=is_new_conversation
+                ),
                 dedupe_key=stream_id,
             )
 
@@ -435,6 +424,33 @@ async def _run_chat_stream(
         )
     finally:
         await _finalize_stream(stream_id, body, user, conversation_id, state, artifact_task)
+
+
+def _turn_completion_props(
+    body: MessageRequestWithHistory,
+    state: _StreamState,
+    conversation_id: str,
+    source: str | None,
+    *,
+    is_new_conversation: bool,
+) -> AnalyticsProperties:
+    """Properties for the turn's terminal analytics event; timings only once measured."""
+    props: dict[str, object] = {
+        "conversation_id": conversation_id,
+        "voice_mode": body.voice_mode,
+        "is_new_conversation": is_new_conversation,
+        "delegated": state.delegated,
+        "queued": state.queued,
+    }
+    if state.ttft_ms is not None:
+        props["ttft_ms"] = state.ttft_ms
+    if state.e2e_ack_ms is not None:
+        props["e2e_ack_ms"] = state.e2e_ack_ms
+    if state.e2e_full_ms is not None:
+        props["e2e_full_ms"] = state.e2e_full_ms
+    if source:
+        props["source"] = source
+    return props
 
 
 def _recent_history(messages: list[MessageDict]) -> list[MessageDict]:
@@ -759,7 +775,7 @@ def _executor_delegation(stream_id: str) -> tuple[bool, bool]:
     """Return (delegated, queued) for a turn from its executor session.
 
     Dispatch has no queue: work that arrives while an executor is busy goes to
-    the live run's inbox, never a queue, so a delegation is never ``queued``.
+    the live run's inbox, never a queue, so a delegation is never queued.
     """
     session = get_session(stream_id)
     if session is None:
@@ -886,16 +902,10 @@ def resolve_turn_emoji_ack(
 ) -> tuple[str, MessageKind, str | None]:
     """Reduce comms' final message to the stamp the saved turn should carry.
 
-    When comms' entire reply is a ``REACT: <emoji>`` control line, the turn is a
-    one-emoji acknowledgment of the user's message: the bubble text becomes the
-    bare emoji (already stripped of ``<NEW_MESSAGE_BREAK>`` tokens by the
-    parser) and the bot message is stamped ``emoji_ack`` with the target, so
-    every surface renders it as a reaction badge instead of a "REACT: 😎" bubble.
-
-    ``SILENCE`` is deliberately NOT applied here: a live conversational turn
-    must never silently vanish, and the standing prompt only authorizes the
-    control line for background narration (``SILENCE_NOTE``), which routes
-    through ``deliver_result``. Anything else passes through unchanged.
+    A whole-reply REACT control line becomes a one-emoji acknowledgment
+    stamped emoji_ack with the user message as target. SILENCE is never
+    applied here: a live turn must not vanish; anything else passes through
+    unchanged.
     """
     directive = interpret_comms_output(complete_message)
     if directive.kind is CommsDirectiveKind.REACT:

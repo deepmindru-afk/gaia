@@ -171,8 +171,22 @@ async def _resolve_batch(
             await abandon_conversation_approvals(conversation_id, user_id, UNRELATED_FEEDBACK)
         return "unrelated"
 
+    approved, denied = await _apply_decisions(pending, user_id, result.decisions)
+    if approved:
+        return "approve"
+    if denied:
+        return "deny"
+    return None
+
+
+async def _apply_decisions(
+    pending: list[HILApprovalRecord] | list[ApprovalLedgerDocument],
+    user_id: str,
+    decisions: list[BatchItemDecision],
+) -> tuple[int, int]:
+    """Dispatch every in-range decision onto its pending item; returns (approved, denied)."""
     approved = denied = 0
-    for decision in result.decisions:
+    for decision in decisions:
         if decision.action == "leave" or not 1 <= decision.index <= len(pending):
             continue
         record = pending[decision.index - 1]
@@ -185,12 +199,7 @@ async def _resolve_batch(
             approved += 1
         else:
             denied += 1
-
-    if approved:
-        return "approve"
-    if denied:
-        return "deny"
-    return None
+    return approved, denied
 
 
 async def interpret_batch_decision_message(

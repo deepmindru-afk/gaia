@@ -90,11 +90,10 @@ async def publish_outbound_reaction(
 ) -> OutboundResult:
     """Enqueue a native emoji reaction to an existing platform message.
 
-    Same destination resolution as :func:`publish_outbound_message` — the
-    reaction is addressed to the user's DM, or back into the group channel it
-    came from when ``destination_override``/``is_channel`` name one. The bot
-    consumer attaches the emoji to the target message, falling back to a
-    one-emoji text bubble when the platform cannot attach it.
+    Same destination resolution as publish_outbound_message: the reaction
+    goes to the user DM, or back into the group channel named by
+    destination_override and is_channel. Falls back to a one-emoji text
+    bubble when the platform cannot attach it.
     """
     prep = await _prepare(platform, user_id, "publish_outbound_reaction", destination_override)
     if isinstance(prep, OutboundResult):

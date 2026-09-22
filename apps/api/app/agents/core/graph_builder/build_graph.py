@@ -22,7 +22,11 @@ from app.agents.core.subagents.integration_activation import activate_integratio
 from app.agents.core.subagents.provider_subagents import register_subagent_providers
 from app.agents.core.subagents.spawn_agent import get_spawn_graph
 from app.agents.llm.client import init_llm
-from app.agents.middleware import create_comms_middleware, create_executor_middleware
+from app.agents.middleware import (
+    SubagentStackOptions,
+    create_comms_middleware,
+    create_executor_middleware,
+)
 from app.agents.middleware.subagent import SubagentMiddleware
 from app.agents.tools import memory_tools
 from app.agents.tools.core.registry import get_tool_registry
@@ -78,11 +82,9 @@ EXECUTOR_INITIAL_TOOL_IDS = [
     "subscribe_todo_to_trigger",
     "unsubscribe_todo_from_trigger",
     "save_learned_skill",
-    # Bound statically, not left to retrieve_tools: the <playbook_check>
-    # and heal briefs name these directly, so a run whose semantic
-    # retrieval happens to miss them would read the instruction, be
-    # unable to act on it, and silently never decide. A tool a prompt
-    # names by hand has to be reachable by hand.
+    # Bound statically, not left to retrieve_tools: prompts name these
+    # directly, so a run whose semantic retrieval misses them could read
+    # the instruction and silently never act on it.
     "write_playbook",
     "decline_playbook",
     "read_playbook",
@@ -116,11 +118,9 @@ async def build_executor_graph(
     tool_dict = tool_registry.get_tool_dict()
     tool_dict.update({t.name: t for t in todo_tools})
 
-    # handoff stays bound for per-user MCP integrations (auth-required or
-    # custom), which issue their tools per user, so they never enter the
-    # global registry and can only run through their own per-user graph —
-    # which is exactly what handoff builds. activate_integration routes those
-    # to handoff rather than dead-ending them.
+    # handoff stays bound for per-user MCP integrations, whose tools never
+    # enter the global registry; activate_integration routes those to
+    # handoff rather than dead-ending them.
     tool_dict.update({"handoff": handoff_tool})
     tool_dict.update({"activate_integration": activate_integration})
     # Executor-only tools to steer or cancel a specific running subagent by id.
@@ -129,8 +129,7 @@ async def build_executor_graph(
     )
     todo_hook = create_todo_pre_model_hook(source="executor")
 
-    # Spawned subagents must not see executor-only orchestration tools —
-    # including the subagent-control tools (a subagent must not steer a peer).
+    # Spawned subagents must not see executor-only orchestration tools, and
     # activate_integration is executor-level: subagents reach integrations
     # through handoff, never by activating in-context themselves.
     excluded_subagent_tools = {
@@ -143,11 +142,13 @@ async def build_executor_graph(
 
     middleware = create_executor_middleware(
         chat_llm=chat_llm,
-        subagent_excluded_tools=excluded_subagent_tools,
-        subagent_tool_runtime_config=build_executor_child_tool_runtime_config(),
-        # The executor binds an integration's tools in its own turn, so a
-        # spawn it delegates to must inherit them to do the work.
-        subagent_inherit_parent_tools=True,
+        subagent=SubagentStackOptions(
+            excluded_tools=excluded_subagent_tools,
+            tool_runtime_config=build_executor_child_tool_runtime_config(),
+            # The executor binds an integration's tools in its own turn, so a
+            # spawn it delegates to must inherit them to do the work.
+            inherit_parent_tools=True,
+        ),
     )
 
     # Wire SubagentMiddleware with LLM and full tool registry

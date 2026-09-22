@@ -1428,6 +1428,35 @@ async def _record_timed_out_fire(
     await _rearm_quietly(workflow_scheduler, workflow, trigger_type, workflow_id)
 
 
+async def _skip_unpaid_fire(
+    scheduler: WorkflowScheduler,
+    workflow: Workflow,
+    workflow_id: str,
+    trigger_type: str | None,
+) -> str | None:
+    """Skip a fire whose owner is not paid, re-arming the next occurrence. Returns the skip reason, or None."""
+    # The single choke point for every trigger path (schedule, manual,
+    # integration) since each enqueues this same task. Only skips —
+    # deactivation belongs to the billing webhook; re-armed to resume once paid.
+    if await is_paid(workflow.user_id):
+        return None
+    log.warning(
+        f"{LogTag.WORKER} Workflow skipped — subscription required",
+        workflow_id=workflow_id,
+        user_id=workflow.user_id,
+    )
+    # Same event every HTTP/bot paywall block fires; skips rather than
+    # raising via require_active_subscription, so the funnel can see it.
+    # Explicit id: a worker has no request context for an implicit one.
+    capture_event(
+        workflow.user_id,
+        AnalyticsEvents.PAYWALL_BLOCKED,
+        {"feature": PAYWALL_FEATURE_WORKFLOW},
+    )
+    await _rearm_quietly(scheduler, workflow, trigger_type, workflow_id)
+    return f"Workflow {workflow_id} skipped — subscription required"
+
+
 async def execute_workflow_by_id(
     ctx: Mapping[str, object],  # noqa: ARG001 -- ARQ injects ctx positionally into every registered task
     workflow_id: str,
@@ -1463,25 +1492,9 @@ async def execute_workflow_by_id(
         if not workflow:
             return f"Workflow {workflow_id} not found"
 
-        # Paid-only gate, the single choke point for every trigger path (schedule,
-        # manual, integration) since each enqueues this same task. Only skips —
-        # deactivation belongs to the billing webhook; re-armed to resume once paid.
-        if not await is_paid(workflow.user_id):
-            log.warning(
-                f"{LogTag.WORKER} Workflow skipped — subscription required",
-                workflow_id=workflow_id,
-                user_id=workflow.user_id,
-            )
-            # Same event every HTTP/bot paywall block fires; skips rather than
-            # raising via require_active_subscription, so the funnel can see it.
-            # Explicit id: a worker has no request context for an implicit one.
-            capture_event(
-                workflow.user_id,
-                AnalyticsEvents.PAYWALL_BLOCKED,
-                {"feature": PAYWALL_FEATURE_WORKFLOW},
-            )
-            await _rearm_quietly(scheduler, workflow, stamp.trigger_type, workflow_id)
-            return f"Workflow {workflow_id} skipped — subscription required"
+        unpaid = await _skip_unpaid_fire(scheduler, workflow, workflow_id, stamp.trigger_type)
+        if unpaid:
+            return unpaid
 
         # Coalesced trigger events live in Redis keyed by batch_key, not the job
         # payload, so concurrent enqueues dedup to one job. Drained only after the
@@ -1554,26 +1567,9 @@ async def execute_workflow_by_id(
         await _record_timed_out_fire(workflow, workflow_id, execution_id, stamp.trigger_type)
         raise
     except Exception as e:
-        # Logged here, in the block that caught it, so the wide event carries
-        # the error from the fire's own frame; the helper only does bookkeeping.
-        cause = _unwrapped(e)
-        if isinstance(cause, RateLimitExceededException):
-            # User hit their plan's workflow-execution quota: an expected,
-            # by-design outcome, not a worker failure. WARNING keeps it off the
-            # ARQ failed-task alert.
-            log.warning(
-                f"{LogTag.WORKER} Workflow skipped — rate limit exceeded",
-                workflow_id=workflow_id,
-                error=str(cause),
-                error_type=type(cause).__name__,
-            )
-        else:
-            log.exception(
-                f"{LogTag.WORKER} Error executing workflow",
-                workflow_id=workflow_id,
-                error=str(cause),
-                error_type=type(cause).__name__,
-            )
+        # Logged from the fire's own except block, so the wide event carries the
+        # error; _record_run_failure below only does bookkeeping.
+        _log_fire_failure(_unwrapped(e), workflow_id)
         return await _record_run_failure(e, workflow, workflow_id, execution_id, stamp.trigger_type)
     finally:
         # Ownership-checked, so the agent path's executor — which adopted this
@@ -1581,6 +1577,28 @@ async def execute_workflow_by_id(
         if conversation_id and lock_task_id:
             await release_lock_if_owned(conversation_id, "", lock_task_id)
         await _reschedule_refill_safe(workflow, workflow_id, batch_key, context)
+
+
+def _log_fire_failure(cause: BaseException, workflow_id: str) -> None:
+    """Log a failed fire at the level its cause deserves.
+
+    A plan-quota rejection is an expected outcome, not a worker failure, so it
+    stays a warning and off the ARQ failed-task alert.
+    """
+    if isinstance(cause, RateLimitExceededException):
+        log.warning(
+            f"{LogTag.WORKER} Workflow skipped — rate limit exceeded",
+            workflow_id=workflow_id,
+            error=str(cause),
+            error_type=type(cause).__name__,
+        )
+        return
+    log.exception(
+        f"{LogTag.WORKER} Error executing workflow",
+        workflow_id=workflow_id,
+        error=str(cause),
+        error_type=type(cause).__name__,
+    )
 
 
 async def _resolve_workflow_user(workflow: Workflow, user_id: str) -> AuthenticatedUser:

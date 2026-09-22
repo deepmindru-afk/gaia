@@ -68,35 +68,69 @@ def render_compact_type(node: dict[str, Any]) -> str:
 def _compact_type(node: object) -> str:
     if not isinstance(node, dict):
         return "any"
+    union = _compact_union(node)
+    if union is not None:
+        return union
+    obj = _compact_object(node)
+    if obj is not None:
+        return obj
+    arr = _compact_array(node)
+    if arr is not None:
+        return arr
+    enum = _compact_enum(node)
+    if enum is not None:
+        return enum
+    type_ = node.get("type")
+    return _COMPACT_PRIMITIVES.get(str(type_), str(type_) if type_ else "any")
+
+
+def _compact_union(node: dict[str, Any]) -> str | None:
+    """A union schema (anyOf/oneOf/type-list) as ``a|b``, else None."""
     variants = node.get("anyOf") or node.get("oneOf")
     if isinstance(variants, list) and variants:
         return "|".join(sorted({_compact_type(variant) for variant in variants}))
     type_ = node.get("type")
     if isinstance(type_, list):
         return "|".join(sorted({_compact_type({**node, "type": t}) for t in type_}))
-    if type_ == "object" or (type_ is None and "properties" in node):
-        properties = node.get("properties")
-        required = set(node.get("required") or [])
-        fields = [
-            f"{name}{'' if name in required else '?'}:{_compact_type(sub)}"
-            for name, sub in (properties.items() if isinstance(properties, dict) else ())
-        ]
-        # A data-keyed map (observed shapes store these as additionalProperties):
-        # rendered as an index signature, since the keys are data, not fields.
-        additional = node.get("additionalProperties")
-        if isinstance(additional, dict):
-            fields.append(f"[key]:{_compact_type(additional)}")
-        if not fields:
-            return "obj"
-        return "{" + ", ".join(fields) + "}"
-    if type_ == "array":
-        item = _compact_type(node.get("items", {}))
-        # Union item types need grouping so {a}|{b}[] cannot misread.
-        return (f"({item})" if "|" in item else item) + "[]"
+    return None
+
+
+def _compact_object(node: dict[str, Any]) -> str | None:
+    """An object schema as ``{name:type, opt?:type, [key]:type}``, else None."""
+    type_ = node.get("type")
+    if type_ != "object" and not (type_ is None and "properties" in node):
+        return None
+    properties = node.get("properties")
+    required = set(node.get("required") or [])
+    fields = [
+        f"{name}{'' if name in required else '?'}:{_compact_type(sub)}"
+        for name, sub in (properties.items() if isinstance(properties, dict) else ())
+    ]
+    # A data-keyed map (observed shapes store these as additionalProperties):
+    # rendered as an index signature, since the keys are data, not fields.
+    additional = node.get("additionalProperties")
+    if isinstance(additional, dict):
+        fields.append(f"[key]:{_compact_type(additional)}")
+    if not fields:
+        return "obj"
+    return "{" + ", ".join(fields) + "}"
+
+
+def _compact_array(node: dict[str, Any]) -> str | None:
+    """An array schema as ``item[]`` (grouped when the item is a union), else None."""
+    if node.get("type") != "array":
+        return None
+    item = _compact_type(node.get("items", {}))
+    # Union item types need grouping so {a}|{b}[] cannot misread.
+    return (f"({item})" if "|" in item else item) + "[]"
+
+
+def _compact_enum(node: dict[str, Any]) -> str | None:
+    """A small closed enum as its JSON members joined by ``|``, else None."""
     enum = node.get("enum")
     if isinstance(enum, list) and 0 < len(enum) <= _COMPACT_ENUM_MAX_MEMBERS:
         return "|".join(json.dumps(value, default=str) for value in enum)
-    return _COMPACT_PRIMITIVES.get(str(type_), str(type_) if type_ else "any")
+    return None
 
 
 _COMPACT_PRIMITIVES = {
@@ -196,7 +230,7 @@ def _compact_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return compacted
 
 
-def _strip_noise(node: Any) -> Any:  # noqa: ANN401 -- recursive JSON tree, genuinely schemaless
+def _strip_noise(node: Any) -> Any:  # noqa: ANN401  # recursive JSON tree, genuinely schemaless
     if isinstance(node, dict):
         return {key: _strip_noise(value) for key, value in node.items() if key not in {"title"}}
     if isinstance(node, list):

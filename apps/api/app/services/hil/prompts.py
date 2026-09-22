@@ -109,11 +109,8 @@ TOOL_CLASSIFY_PROMPT = (
 )
 
 
-# --- JEV choice judge (auto mode v2) -------------------------------------------------
-# Canonical question + mapping live here so the calibration suite
-# (scripts/evals/suites/hil_judge.py) imports them from app instead of
-# carrying a copy: editing this text IS retuning the judge, and the eval
-# re-run is what proves the retune. Version tag journals with every run.
+# JEV choice judge: editing this text IS retuning the judge, proven by the
+# calibration suite re-run (imports from app, no copy). Version journals runs.
 
 JEV_QUESTIONS_VERSION = "v8-choice-richer-context"
 
@@ -165,10 +162,8 @@ JEV_QUESTION: dict[str, object] = {
 }
 
 
-# Focused forbid check (auto mode v2): does any earlier turn forbid THIS
-# action? Runs only when the main verdict would accept AND a tripwire finds
-# forbid language — a second, decomposed opinion, not a second guess at
-# everything. Versioned with the main question; journaled the same way.
+# Focused forbid check: runs only on accept-path tripwire hits, versioned and
+# journaled with the main question; a decomposed opinion, not a second guess.
 JEV_FORBID_QUESTION: dict[str, object] = {
     "type": "choice",
     "instructions": (

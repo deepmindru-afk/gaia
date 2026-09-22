@@ -12,6 +12,7 @@ never by hand here.
 """
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import re
 
@@ -57,10 +58,9 @@ def map_jev_choice(
     return "ask"
 
 
-#: Earlier-turn language that trips the forbid double-check (accept path only).
-#: Crisp prohibitions, not moods: "don't send anything yet" is a temporary
-#: boundary (asks on its own merits), while these claim the act itself is off
-#: limits. Bare "no" is deliberately absent — "no, send it" lifts, not forbids.
+#: Forbid double-check on the accept path: crisp prohibitions, not moods.
+#: Temporary boundaries ask on merits; these claim the act itself is off limits.
+#: Bare "no" absent — "no, send it" lifts, not forbids.
 _FORBID_PATTERNS = (
     r"\bnever\b",
     r"\bdon'?t\b",
@@ -115,14 +115,7 @@ def decisive_forbidden(
 ) -> bool:
     """Whether forbidden is the runaway winner, whatever its absolute number.
 
-    JEV spreads mass then under-reports confidence on forbids (0.43 top choice
-    at 0.22 confidence is routine). A 0.40 lead means the model compared the
-    options and picked one — that comparison IS the signal. One-sided by
-    design: over-rejecting is silent (no card), over-accepting runs the
-    action. The accept side keeps its absolute line plus grounding; only
-    refusal gets the margin rule. Calibrated against the hil-judge journal:
-    0.30 caught temporary-boundary asks (bg-boundary, r-hold); 0.40 keeps
-    those asking while still catching true forbids.
+    One-sided margin: a 0.40 lead over the runner-up rejects; accept keeps its line.
     """
     if choice != "forbidden":
         return False
@@ -260,12 +253,9 @@ async def ask_jev(
 
 
 class JevIntentJudge:
-    """Auto mode's classifier: JEV decides, code applies the vetoes.
+    """Auto mode classifier: JEV decides, code applies the vetoes.
 
-    ``fallback`` runs when the Decisions call fails or misbehaves — same
-    verdict shape, today's LLM behavior. ``unclear`` never escalates: a
-    confused classifier asks the user (the card carries why), it does not buy
-    a second opinion that has its own dangerous accepts.
+    Fallback runs when the Decisions call fails; unclear asks the user.
     """
 
     def __init__(self, fallback: IntentJudge | None = None) -> None:
@@ -305,14 +295,18 @@ class JevIntentJudge:
                 assistant_turns=assistant_turns,
             )
         return decide_from_verdict(
-            choice=choice,
-            confidence=confidence,
-            probabilities=probs,
-            user_messages=user_messages,
-            call=call,
-            prior_calls=prior_calls,
-            history=history,
-            forbid=await self._forbid_verdict(choice, confidence, probs, user_messages, call),
+            JevVerdict(
+                choice=choice,
+                confidence=confidence,
+                probabilities=probs,
+                forbid=await self._forbid_verdict(choice, confidence, probs, user_messages, call),
+            ),
+            JevCase(
+                call=call,
+                user_messages=user_messages,
+                prior_calls=prior_calls,
+                history=history,
+            ),
         )
 
     async def _forbid_verdict(
@@ -352,7 +346,7 @@ class JevIntentJudge:
             )
             return "unclear-forbid"
         log.info(
-            f"{LogTag.HIL} forbid double-check : {forbid_choice}",
+            f"{LogTag.HIL} forbid double-check",
             tool_name=call.tool_name,
             hil={"choice": forbid_choice, "confidence": round(forbid_conf, 3)},
         )
@@ -361,27 +355,41 @@ class JevIntentJudge:
         return "permitted"
 
 
+@dataclass(frozen=True)
+class JevVerdict:
+    """What JEV said about one call, plus the focused forbid re-check when one ran."""
+
+    choice: str
+    confidence: float
+    probabilities: Mapping[str, float] | None = None
+    forbid: str | None = None
+
+
+@dataclass(frozen=True)
+class JevCase:
+    """What a verdict is weighed against: the call, the user's words, the run's history."""
+
+    call: JudgedCall
+    user_messages: list[str]
+    prior_calls: list[PriorCall]
+    history: AutoHistory
+
+
 def decide_from_verdict(
+    verdict: JevVerdict,
+    case: JevCase,
     *,
-    choice: str,
-    confidence: float,
-    probabilities: Mapping[str, float] | None,
-    user_messages: list[str],
-    call: JudgedCall,
-    prior_calls: list[PriorCall],
-    history: AutoHistory,
     accept_line: float = HIL_JEV_ACCEPT_LINE,
     reject_floor: float = HIL_JEV_REJECT_FLOOR,
-    forbid: str | None = None,
 ) -> IntentDecision:
-    """Map one JEV verdict through the code vetoes. Pure — shared by prod and eval.
+    """Map one JEV verdict through the code vetoes. Pure, shared by prod and eval.
 
-    ``forbid`` carries the focused double-check ("forbidden" / "permitted" /
-    "unclear-forbid" / None when not run): a forbidden double-check rejects;
-    anything else leaves the mapped outcome (plus grounding/history) standing.
+    The verdict's forbid carries the focused double-check; only forbidden rejects.
     """
+    choice, confidence, call = verdict.choice, verdict.confidence, case.call
+    forbid = verdict.forbid
     log.info(
-        f"{LogTag.HIL} JEV judge : {choice}",
+        f"{LogTag.HIL} JEV judge",
         tool_name=call.tool_name,
         hil={
             "choice": choice,
@@ -395,7 +403,7 @@ def decide_from_verdict(
         accept_line=accept_line,
         reject_floor=reject_floor,
     )
-    if outcome == "ask" and decisive_forbidden(choice, probabilities or {}):
+    if outcome == "ask" and decisive_forbidden(choice, verdict.probabilities or {}):
         outcome = "reject"
     if outcome == "accept" and forbid == "forbidden":
         return IntentDecision(
@@ -418,18 +426,18 @@ def decide_from_verdict(
             f"Auto mode held this off: your messages argue against this {call.tool_name} call.",
         )
     if outcome == "accept":
-        if _history_blocks(history):
+        if _history_blocks(case.history):
             return IntentDecision(
                 "ask",
-                f"You denied {history.denied_recent} recent "
+                f"You denied {case.history.denied_recent} recent "
                 f"{call.tool_name} call(s), so this one needs your "
                 "go-ahead even though it looks authorized.",
             )
         missing = ungrounded_targets(
             call.args,
-            "\n".join(user_messages),
-            prior_calls,
-            frozenset(history.known_targets),
+            "\n".join(case.user_messages),
+            case.prior_calls,
+            frozenset(case.history.known_targets),
         )
         if missing:
             return IntentDecision(

@@ -385,15 +385,10 @@ def _builtin_overlap_lines(items: list[dict[str, str]]) -> list[str]:
 async def build_connected_integrations_manifest(user_id: str, header: str) -> str:
     """One line per connected integration, so the agent knows what it can reach.
 
-    Capability awareness only — detailed tool schemas still come from
-    ``retrieve_tools`` at inference time. The parenthesised id doubles as the
-    ``integration_id`` the executor passes to ``activate_integration``. A line
-    collapses to ``- id`` when the name IS the id, so a custom integration
-    never renders the same value twice.
-
-    A built-in whose job a connected provider is mistaken for gets its own row
-    above the accounts, because a capability the agent cannot see in this list
-    is one it attributes to whatever it can see.
+    Capability awareness only; schemas still come from retrieve_tools. The
+    parenthesised id is the integration_id for activate_integration; a row
+    collapses to just the id when the name IS the id. A builtin shadowed by
+    a connected provider gets its own row above the accounts.
     """
     try:
         items = await get_connected_integrations_named(user_id)
@@ -482,8 +477,8 @@ async def build_connected_devices_manifest(user_id: str, header: str) -> str:
 async def build_provider_metadata_block(integration_id: str | None, user_id: str | None) -> str:
     """Who the user is on this provider — GitHub login, Gmail address, etc.
 
-    Shared by the worker context sections and ``activate_integration``:
-    an executor acting on an integration directly needs the same identity a
+    Shared by the worker context sections and activate_integration: an
+    executor acting on an integration directly needs the same identity a
     worker got, or it does not know which account it is operating.
     """
     if not (integration_id and user_id):

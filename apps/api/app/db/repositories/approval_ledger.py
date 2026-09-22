@@ -21,6 +21,7 @@ from app.db.repositories.base import MongoRepository
 from app.models.hil_models import (
     LIVE_LEDGER_STATES,
     ApprovalLedgerDocument,
+    ApprovalProposal,
     LedgerState,
 )
 
@@ -32,57 +33,26 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
     uses_object_id = True
     cache_policy = None
 
-    async def register(
-        self,
-        *,
-        conversation_id: str,
-        user_id: str = "",
-        fingerprint: str,
-        tool_name: str,
-        args: dict[str, object],
-        summary: str,
-        rationale: str = "",
-        preview: str = "",
-        owner_agent: str = "",
-        blocked_by: list[str] | None = None,
-        proposing_run_id: str | None = None,
-        owner_run_type: str = "",
-        owner_id: str = "",
-    ) -> str:
-        """Insert a PENDING row, or return the live duplicate's id.
+    async def register(self, proposal: ApprovalProposal) -> str:
+        """Insert a PENDING row for the proposal, or return the live duplicate's id.
 
         Dedup consults live states only: a terminal fingerprint re-registers
         fresh (revoked-then-reproposed must not collapse into a dead id).
         The loser's read-after-conflict is what makes concurrent proposes
         converge on one id instead of double-executing on approve-all.
         """
-        existing = await self.find_live(fingerprint, conversation_id)
+        existing = await self.find_live(proposal.fingerprint, proposal.conversation_id)
         if existing is not None:
             return existing.approval_id
         approval_id = f"ap_{uuid4().hex[:12]}"
         try:
             await self.create(
-                ApprovalLedgerDocument(
-                    approval_id=approval_id,
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    fingerprint=fingerprint,
-                    tool_name=tool_name,
-                    args=args,
-                    summary=summary,
-                    rationale=rationale,
-                    preview=preview,
-                    owner_agent=owner_agent,
-                    blocked_by=list(blocked_by or []),
-                    proposing_run_id=proposing_run_id,
-                    owner_run_type=owner_run_type,
-                    owner_id=owner_id,
-                )
+                ApprovalLedgerDocument(approval_id=approval_id, **proposal.model_dump())
             )
         except DuplicateKeyError:
             # Lost the insert race (partial unique index on live
             # conversation+fingerprint): the winner's row is the id.
-            winner = await self.find_live(fingerprint, conversation_id)
+            winner = await self.find_live(proposal.fingerprint, proposal.conversation_id)
             if winner is not None:
                 return winner.approval_id
             raise

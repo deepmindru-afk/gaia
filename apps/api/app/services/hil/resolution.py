@@ -19,7 +19,7 @@ import asyncio
 import contextlib
 from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypedDict, cast
 
 from langgraph.types import Command
 
@@ -52,6 +52,15 @@ from app.utils.errors import AppError
 from shared.py.wide_events import log
 
 DecisionKind = Literal["approve", "deny", "timeout", "abandon"]
+
+
+class SweepCounts(TypedDict):
+    """One approval-sweep pass: expired timeouts, redispatched resumes, deferred subagent parks."""
+
+    expired: int
+    redispatched: int
+    deferred_subagent: int
+
 
 # Recorded on approvals closed because the user cancelled the run that parked on them.
 # No run ever reads it back (there is nothing left to resume) — it is the audit trail.
@@ -265,23 +274,13 @@ async def _resolve_record(
     """Authorize, transition exactly once, and resume — from an already-loaded record."""
     if record.user_id != user_id:
         raise ApprovalRequestForbiddenError()
-    # An approval with feedback is a conditional approval, and the stored call
-    # carries no conditions — same conversion as the ledger path and the chat
-    # classifier: record it as denied with the note attached.
+    # An approval with feedback is conditional; the stored call carries none.
+    # Same conversion as ledger and chat paths: record as denied with the note.
     if kind == "approve" and feedback is not None and feedback.strip() != "":
         kind = "deny"
-    # Checked BEFORE the decided-transition: a decision we cannot act on must
-    # fail the request (record stays pending; the sweep expires it), never
-    # report success for an action that will silently not run.
-    #
-    # Exception: a parked-subagent record (stamped ``subagent_thread_id``) decided
-    # BEFORE any resume context exists needs none for deny/timeout/abandon — and
-    # can never gain one for approve until the HIL rework supplies a resume
-    # driver. The busy lock is that proof for live collectors: held means an
-    # executor run is around to read this decision durably. A finished executor
-    # means nobody will ever collect — accepting the decision then is a false
-    # "going ahead" for an action that will never run, so it must fail loudly
-    # instead.
+    # A decision we cannot act on must fail (record stays pending for the sweep),
+    # never report success for an action that will not run. Parked-subagent
+    # records need no resume context for deny/timeout/abandon; approve needs a live collector.
     if record.resume_item is None:
         collector_alive = record.subagent_thread_id is not None and await is_executor_busy(
             record.conversation_id
@@ -291,10 +290,8 @@ async def _resolve_record(
         # its whole point is that the action does NOT happen, so it's safe to record.
         if not collector_alive and kind == "approve":
             log.error(f"{LogTag.HIL} No resume context on record", approval_id=record.approval_id)
-            # Settle the card without touching the record: the user sees
-            # finality instead of a live Approve button that 503s forever,
-            # while the record stays pending for the sweep's loud timeout.
-            # Errors already logged inside publish_decision; nothing to add.
+            # Settle the card without touching the record (stays pending for the
+            # sweep timeout); errors already logged in publish_decision.
             with contextlib.suppress(Exception):
                 await publish_decision(
                     record,
@@ -355,10 +352,8 @@ async def _dispatch_resume(
     record, so a crash before it is re-dispatched by the sweep from resume_item.
     """
     if record.subagent_thread_id:
-        # Subagent-parked approvals have no resume driver until the HIL rework:
-        # the join that rediscovered their threads is gone. Refuse loudly so the
-        # decision surfaces as not-resumable instead of dispatching a run that
-        # cannot collect it; expiry still closes the record.
+        # No resume driver for subagent-parked approvals until the HIL rework:
+        # refuse as not-resumable instead of dispatching; expiry still closes.
         log.error(
             f"{LogTag.HIL} Subagent-parked approval cannot resume without the join (HIL rework)",
             approval_id=record.approval_id,
@@ -451,7 +446,7 @@ def _observe_hil_dispatch_lag(record: HILApprovalRecord) -> None:
     log.set(hil={"dispatch_lag_s": round(lag_s, 2)})
 
 
-async def sweep_approvals() -> dict[str, int]:
+async def sweep_approvals() -> SweepCounts:
     """Resolve expired approvals and re-dispatch crashed resumes. Cron-driven.
 
     Two passes: pending past expires_at resolve as timeout (or close directly if
@@ -477,10 +472,8 @@ async def sweep_approvals() -> dict[str, int]:
     redispatched = 0
     deferred_subagent = 0
     for record in await list_decided_unresumed(HIL_DECIDED_UNRESUMED_GRACE_SECONDS):
-        # Subagent-parked approvals have no resume driver until the HIL rework:
-        # the join that rediscovered their threads is gone. Redispatching would
-        # wake executor runs that cannot collect them, every sweep, forever —
-        # so skip loudly instead. Expiry above still closes them.
+        # No resume driver for subagent-parked approvals until the HIL rework:
+        # skip loudly (redispatch would wake runs that cannot collect); expiry closes.
         if record.subagent_thread_id:
             deferred_subagent += 1
             log.warning(

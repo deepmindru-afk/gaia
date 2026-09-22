@@ -35,18 +35,12 @@ class WorkflowFireTimedOut(Exception):
 class WorkflowFireOverlapped(Exception):
     """A fire that found this workflow's conversation already busy.
 
-    A workflow owns one conversation across all its runs, and a fire claims that
-    conversation's executor lock before it does anything — both ways of running
-    it, a playbook replay and an agent turn, then run under that one claim — so
-    two fires can never run at once (seen live: two manual fires at the same
-    moment, two "Replayed 1 step(s)" results, every side effect doubled). The
-    fire is dropped rather than handed over: a fire produces the
-    workflow's ONE result, so the run holding the lock delivers it and this one
-    is neither a success to record nor a failure to tell the user about. Handing
-    it over instead would let the in-flight run absorb the dispatch and answer it
-    under ITS execution, leaving this record a clean success with an empty trace
-    and no completion notification. ``holder`` is the lock value of the run that
-    was in flight, for the record and the log.
+    A workflow owns one conversation across all runs, and a fire claims its
+    executor lock first, so two fires never run at once. The overlapped fire
+    is dropped, not handed over: the run holding the lock delivers the
+    workflow's one result, and this fire is neither a success to record nor
+    a failure to notify. holder is the in-flight run's lock value, kept for
+    the record and the log.
     """
 
     def __init__(self, *, user_id: str, conversation_id: str, holder: str) -> None:

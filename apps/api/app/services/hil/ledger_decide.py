@@ -44,6 +44,7 @@ from app.models.hil_models import (
     HILApprovalStatus,
     LedgerState,
 )
+from app.schemas.hil_schemas import BatchDecisionItem, BatchDecisionOutcome
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.hil.approvals_store import list_pending_for_conversation
 from app.services.hil.bridge import (
@@ -200,6 +201,65 @@ async def decide_ledger(
         state=target,
         queued=queued,
     )
+
+
+async def decide_ledger_batch(
+    user_id: str, decisions: list[BatchDecisionItem]
+) -> list[BatchDecisionOutcome]:
+    """Apply several ledger decisions in one submission — the batch review's ledger path.
+
+    Mirrors resolve_approvals_batch: each item commits exactly once and one
+    already-decided, forbidden or failing item never blocks the rest. No resume
+    dispatch exists here — execution and wake already happened in decide_ledger.
+    """
+    outcomes: list[BatchDecisionOutcome] = []
+    for item in decisions:
+        try:
+            outcome = await decide_ledger(
+                item.approval_id,
+                user_id=user_id,
+                kind=item.decision,
+                feedback=item.feedback,
+                v=item.v,
+            )
+        except ApprovalRequestNotFoundError:
+            outcomes.append(
+                BatchDecisionOutcome(
+                    approval_id=item.approval_id, resolved=False, reason="not_found"
+                )
+            )
+            continue
+        except ApprovalRequestForbiddenError:
+            outcomes.append(
+                BatchDecisionOutcome(
+                    approval_id=item.approval_id, resolved=False, reason="forbidden"
+                )
+            )
+            continue
+        except Exception as e:  # one item's infra failure must not strand the rest
+            log.error(
+                f"{LogTag.HIL} Ledger batch decision failed for",
+                approval_id=item.approval_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                user_id=user_id,
+            )
+            outcomes.append(
+                BatchDecisionOutcome(approval_id=item.approval_id, resolved=False, reason="error")
+            )
+            continue
+        if outcome.committed:
+            outcomes.append(BatchDecisionOutcome(approval_id=item.approval_id, resolved=True))
+        else:
+            outcomes.append(
+                BatchDecisionOutcome(
+                    approval_id=item.approval_id,
+                    resolved=False,
+                    reason="stale" if outcome.stale else "not_found",
+                    status=outcome.state.value,
+                )
+            )
+    return outcomes
 
 
 # A busy-lock holder older than this with no live session is provably dead,

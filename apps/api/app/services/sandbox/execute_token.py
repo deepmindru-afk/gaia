@@ -26,10 +26,8 @@ class SandboxExecuteClaims(BaseModel):
     # Which sandbox instance the token was minted for — audit correlation; the
     # route cannot verify network origin, so this is a record, not a check.
     sandbox_id: str | None = None
-    # The minting agent's tool space, so the route confines a call from sandbox
-    # code exactly as the in-graph proxy confines a direct one — otherwise a
-    # subagent refused a tool by ``execute`` could reach it in one line of code
-    # mode. ``None`` is the executor's space: the whole registry.
+    # Minting agent tool space, confined as the in-graph proxy confines direct
+    # calls; None is the executor space (whole registry).
     scoped_tool_names: list[str] | None = None
     exp: int
 

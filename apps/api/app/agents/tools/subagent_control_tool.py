@@ -18,7 +18,7 @@ from langchain_core.tools import tool
 
 from app.agents.core.background.running_registry import RunningSubagents
 from app.agents.core.background.subagent_channel import SubagentCancel, SubagentInbox
-from app.models.agent_models import RunningSubagent, agent_configurable
+from app.models.agent_models import AgentConfigurable, RunningSubagent, agent_configurable
 
 _NOT_RUNNING = (
     "No running subagent with id {id!r}. It may have already finished — call "
@@ -27,7 +27,8 @@ _NOT_RUNNING = (
 
 
 async def _resolve(config: RunnableConfig, subagent_id: str) -> RunningSubagent | None:
-    conversation_id = str(agent_configurable(config).get("conversation_id", ""))
+    configurable: AgentConfigurable = agent_configurable(config)
+    conversation_id = str(configurable.get("conversation_id", ""))
     return await RunningSubagents(conversation_id).get(subagent_id)
 
 
@@ -39,7 +40,8 @@ async def list_running_subagents(config: RunnableConfig) -> str:
     mean. Returns each running subagent's id, its integration, and what it is
     working on.
     """
-    conversation_id = str(agent_configurable(config).get("conversation_id", ""))
+    configurable: AgentConfigurable = agent_configurable(config)
+    conversation_id = str(configurable.get("conversation_id", ""))
     running = await RunningSubagents(conversation_id).list()
     if not running:
         return "No subagents are currently running."

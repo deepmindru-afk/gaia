@@ -383,18 +383,30 @@ async def _bot_stream_payload_frame(
     if data.keepalive:
         # Forward keepalives so bot clients reset inactivity timers.
         return keepalive_frame(), False
+    if (card := await _bot_card_frame(data, upgrade_url)) is not None:
+        return card, False
+    return _bot_message_frame(data)
 
-    # Surface rate-limit cards to bots as a dedicated notice frame (not
-    # {"text"}, which is tied to the in-flight message and would be dropped
-    # if that message gets discarded) before web-only fields are dropped below.
+
+async def _bot_card_frame(
+    data: BotWebStreamPayload, upgrade_url: Callable[[], Awaitable[str]]
+) -> str | None:
+    """Translate a payload into an out-of-band card frame, or None when it carries no card.
+
+    Runs before _bot_message_frame, which drops the web-only fields both read.
+    """
+    # Rate-limit cards go out as a notice, not {"text"}: text is tied to the
+    # in-flight message and would vanish with it if that message is discarded.
     if (rate_limit_notice := await _bot_rate_limit_notice(data, upgrade_url)) is not None:
-        return notice_frame(rate_limit_notice), False
-
-    # Surface HIL approval cards to bots as a dedicated frame the client
-    # renders as an out-of-band prompt (before tool_data is dropped below).
+        return notice_frame(rate_limit_notice)
+    # HIL approvals render as their own prompt, so they must survive that drop.
     if (approval_payload := _bot_approval_payload(data)) is not None:
-        return approval_frame(approval_payload), False
+        return approval_frame(approval_payload)
+    return None
 
+
+def _bot_message_frame(data: BotWebStreamPayload) -> tuple[str | None, bool]:
+    """Translate the message half of a payload — boundary, ack, text or terminal error."""
     # An assistant message just ended. Bots need this to know a bubble is
     # finished — and, when `discarded`, to take back the handoff preamble
     # they already showed.

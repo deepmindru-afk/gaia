@@ -271,6 +271,56 @@ def _compute_tool_diff(
     return tools_to_upsert, tools_to_delete
 
 
+def _tool_name_from_key(composite_key: str) -> str:
+    """Return the tool name half of a "namespace::tool_name" composite key."""
+    return composite_key.split("::", 1)[-1] if "::" in composite_key else composite_key
+
+
+def _put_value(tool_data: IndexedToolEntry) -> dict[str, str]:
+    """Build the persisted value for one tool: description + hash, plus subagent provenance."""
+    # Handle regular tools vs subagent tools
+    if "tool" in tool_data:
+        tool = tool_data["tool"]
+        return {
+            "description": tool.description,
+            "tool_hash": tool_data["hash"],
+        }
+    # Subagent tool: carry source/name/integration_id so retrieval can
+    # tell static ("mcp") from custom ("custom") pointers. Absent keys
+    # stay absent (legacy entries predate them).
+    value = {
+        "description": tool_data["description"],
+        "tool_hash": tool_data["hash"],
+    }
+    if "source" in tool_data:
+        value["source"] = tool_data["source"]
+    if "name" in tool_data:
+        value["name"] = tool_data["name"]
+    if "integration_id" in tool_data:
+        value["integration_id"] = tool_data["integration_id"]
+    return value
+
+
+def _upsert_op(composite_key: str, tool_data: IndexedToolEntry) -> PutOp:
+    """One upsert PutOp; the key is the tool name half of the composite key."""
+    # Extract actual tool name from composite key (namespace::tool_name)
+    return PutOp(
+        namespace=(tool_data["namespace"],),
+        key=_tool_name_from_key(composite_key),
+        value=_put_value(tool_data),
+        index=["description"],
+    )
+
+
+def _delete_op(composite_key: str, namespace: str) -> PutOp:
+    """One delete PutOp (a value-None tombstone) for a removed tool."""
+    return PutOp(
+        namespace=(namespace,),
+        key=_tool_name_from_key(composite_key),
+        value=None,
+    )
+
+
 def _build_put_operations(
     tools_to_upsert: list[tuple[str, IndexedToolEntry]],
     tools_to_delete: list[tuple[str, str]],
@@ -279,54 +329,10 @@ def _build_put_operations(
 
     composite_key format is "namespace::tool_name".
     """
-    put_ops: list[PutOp] = []
-
-    # Add upsert operations
-    for composite_key, tool_data in tools_to_upsert:
-        # Extract actual tool name from composite key (namespace::tool_name)
-        tool_name = composite_key.split("::", 1)[-1] if "::" in composite_key else composite_key
-
-        # Handle regular tools vs subagent tools
-        if "tool" in tool_data:
-            tool = tool_data["tool"]
-            value: dict[str, str] = {
-                "description": tool.description,
-                "tool_hash": tool_data["hash"],
-            }
-        else:
-            # Subagent tool: carry source/name/integration_id so retrieval can
-            # tell static ("mcp") from custom ("custom") pointers. Absent keys
-            # stay absent (legacy entries predate them).
-            value = {
-                "description": tool_data["description"],
-                "tool_hash": tool_data["hash"],
-            }
-            if "source" in tool_data:
-                value["source"] = tool_data["source"]
-            if "name" in tool_data:
-                value["name"] = tool_data["name"]
-            if "integration_id" in tool_data:
-                value["integration_id"] = tool_data["integration_id"]
-        put_ops.append(
-            PutOp(
-                namespace=(tool_data["namespace"],),
-                key=tool_name,
-                value=value,
-                index=["description"],
-            )
-        )
-
-    # Add delete operations
-    for composite_key, namespace in tools_to_delete:
-        tool_name = composite_key.split("::", 1)[-1] if "::" in composite_key else composite_key
-        put_ops.append(
-            PutOp(
-                namespace=(namespace,),
-                key=tool_name,
-                value=None,
-            )
-        )
-
+    put_ops = [_upsert_op(composite_key, tool_data) for composite_key, tool_data in tools_to_upsert]
+    put_ops.extend(
+        _delete_op(composite_key, namespace) for composite_key, namespace in tools_to_delete
+    )
     return put_ops
 
 

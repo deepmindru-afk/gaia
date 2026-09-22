@@ -176,14 +176,9 @@ class LedgerState(StrEnum):
 LIVE_LEDGER_STATES = frozenset({LedgerState.PENDING, LedgerState.APPROVED})
 
 
-class ApprovalLedgerDocument(MongoDocument):
-    """One entry in the executor-free approval ledger (``approval_ledger``).
+class ApprovalProposal(BaseModel):
+    """What a gated call proposes; the ledger mints the id and owns the state."""
 
-    Uncached and never expiring: rows are decision state read at low volume, and
-    a pending row leaves only by user decision or agent revoke — never by timer.
-    """
-
-    approval_id: str
     conversation_id: str
     user_id: str = ""
     fingerprint: str
@@ -199,6 +194,17 @@ class ApprovalLedgerDocument(MongoDocument):
     # resume through the executor inbox; set once at registration.
     owner_run_type: str = ""
     owner_id: str = ""
+    proposing_run_id: str | None = None
+
+
+class ApprovalLedgerDocument(MongoDocument, ApprovalProposal):
+    """One entry in the executor-free approval ledger (``approval_ledger``).
+
+    Uncached and never expiring: rows are decision state read at low volume, and
+    a pending row leaves only by user decision or agent revoke — never by timer.
+    """
+
+    approval_id: str
     # Whether a resume was already enqueued: the approve tap and any retry/reconnect
     # share it, so exactly one resume per approval. Every further resume needs a
     # fresh user approval (the human is the loop breaker).
@@ -207,7 +213,6 @@ class ApprovalLedgerDocument(MongoDocument):
     feedback: str | None = None
     decided_by: str | None = None
     decided_at: datetime | None = None
-    proposing_run_id: str | None = None
     v: int = 0
     created_at: datetime | None = None
     # When this row entered EXECUTING. The lazy reconciler treats EXECUTING

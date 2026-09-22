@@ -518,14 +518,19 @@ async def execute_subagent_stream(
         raise
 
     outcome = _finalize_run(run)
-    if outcome.paused:
-        status = "paused"
-    elif cancelled:
-        status = "cancelled"
-    else:
-        status = "success"
-    observe_subagent_run(time.perf_counter() - segment_start, subagent_id=label, status=status)
+    observe_subagent_run(
+        time.perf_counter() - segment_start,
+        subagent_id=label,
+        status=_segment_status(outcome, cancelled=cancelled),
+    )
     return outcome
+
+
+def _segment_status(outcome: SubagentOutcome, *, cancelled: bool) -> str:
+    """How this run segment ended, for the latency histogram's status label."""
+    if outcome.paused:
+        return "paused"
+    return "cancelled" if cancelled else "success"
 
 
 async def _consume_stream_event(run: _StreamRun, stream_mode: str, payload: object) -> None:

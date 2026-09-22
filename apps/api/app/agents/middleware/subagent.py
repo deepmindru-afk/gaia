@@ -50,7 +50,7 @@ from app.constants.hil import HIL_RESUME_CONFIG_KEY
 from app.constants.llm import SUBAGENT_RECURSION_LIMIT
 from app.constants.log_tags import LogTag
 from app.helpers.agent_helpers import AgentIdentity, AgentThread, build_agent_config
-from app.models.agent_models import AnyAgentMiddleware, agent_configurable
+from app.models.agent_models import AgentConfigurable, AnyAgentMiddleware, agent_configurable
 from app.utils.agent_utils import (
     StreamWriterCallable,
     SubagentStartDetails,
@@ -216,7 +216,7 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
         inherited_tool_names: list[str] | None,
     ) -> str:
         """Run one spawned subagent to completion, pausing the parent for approvals."""
-        configurable = agent_configurable(config)
+        configurable: AgentConfigurable = agent_configurable(config)
         # A fresh spawn has a brand-new tool_call_id, so nothing can already exist on
         # its thread — only a resume replay can, which is why the checkpoint probe is
         # gated on it and effectively every spawn skips that Postgres read.
@@ -317,18 +317,15 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
         if self._spawn_middleware_factory is None or self._spawn_graph_provider is None:
             raise ValueError("Spawn graph not configured for subagent execution")
 
-        configurable = agent_configurable(config)
+        configurable: AgentConfigurable = agent_configurable(config)
         user_id = configurable.get("user_id")
         conversation_id = str(configurable.get("conversation_id") or "")
 
         middleware_factory = self._spawn_middleware_factory
         tool_space = self._tool_space
-        # Carry the parent's activated tools into the spawn via initial_tool_names,
-        # not just the state channel: the spawn graph is cached and its bindable
-        # set is frozen at compile time, so a graph built before an integration was
-        # activated would reject those tools. Threading them here changes the cache
-        # key (see spawn_agent._cache_key), forcing a fresh graph whose registry
-        # snapshot already holds them.
+        # Seed initial_tool_names, not just state: the spawn graph is cached with
+        # its bindable set frozen at compile time, so this changes the cache key
+        # (see spawn_agent._cache_key) for a fresh graph holding the tools.
         runtime = self._tool_runtime_config
         if inherited:
             runtime = replace(
@@ -393,12 +390,9 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
             initial_state={
                 "messages": messages,
                 "todos": [],
-                # Empty unless inheriting: the spawn binds its own minimal set
-                # (read/bash/finish_task) and retrieves the rest on demand, so it
-                # keeps full powers without carrying the parent's bound schemas.
-                # Under activation the parent's activated tools are seeded so the
-                # child can act on the integration it was handed (they are also in
-                # initial_tool_names above, which is what makes them bindable).
+                # Empty unless inheriting: spawn binds its minimal set, retrieves
+                # the rest on demand; activated parent tools are seeded here and
+                # in initial_tool_names above, which makes them bindable.
                 "selected_tool_ids": inherited,
             },
             user_id=user_id,

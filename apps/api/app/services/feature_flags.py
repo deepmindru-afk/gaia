@@ -169,11 +169,6 @@ def _track_evaluation(
         )
 
 
-async def is_comms_openui_enabled(user_id: str | None) -> bool:
-    """Whether the user gets the OpenUI component reference in the comms prompt; off serves the markdown fallback."""
-    return await is_enabled(FeatureFlag.COMMS_OPENUI, user_id)
-
-
 async def is_code_mode_enabled(user_id: str | None) -> bool:
     """Whether the user's bash runs get the gaia.execute client and a per-invocation token; off runs with no GAIA_EXECUTE_* env."""
     return await is_enabled(FeatureFlag.CODE_MODE, user_id)

@@ -34,7 +34,14 @@ from app.constants.hil import (
 )
 from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
-from app.models.hil_models import HILApprovalRecord, HILApprovalStatus, LedgerState
+from app.models.agent_models import AgentConfigurable
+from app.models.hil_models import (
+    ApprovalLedgerDocument,
+    ApprovalProposal,
+    HILApprovalRecord,
+    HILApprovalStatus,
+    LedgerState,
+)
 from app.services.feature_flags import is_hil_ledger_enabled, is_jev_judge_enabled
 from app.services.hil.approvals_store import approval_id_for, get_approval
 from app.services.hil.bridge import (
@@ -49,6 +56,7 @@ from app.services.hil.bridge import (
 )
 from app.services.hil.fingerprint import approval_fingerprint
 from app.services.hil.intent import (
+    AutoContext,
     AutoHistory,
     IntentDecision,
     JudgedCall,
@@ -225,97 +233,48 @@ async def _decide_ledger(
                 if declined.auto
                 else _refusal_message(call, declined)
             )
-        auto_note = ""
-        if policy == "auto":
-            integration_name = await _integration_name_for(call.name)
-            summary = build_summary(call.name, call.args, integration_name)
-            decision = await _judge(request, context, call, None, summary)
-            if decision is not None:
-                if decision.outcome == "accept":
-                    log.info(
-                        f"{LogTag.HIL} auto-approved (ledger path)",
-                        call_name=call.name,
-                        reason=decision.reason,
-                    )
-                    return None
-                if decision.outcome == "reject":
-                    log.info(
-                        f"{LogTag.HIL} auto-rejected (ledger path)",
-                        call_name=call.name,
-                        reason=decision.reason,
-                    )
-                    return await _auto_reject(context, call, decision.reason)
-                auto_note = (
-                    f" Auto mode wasn't sure: {decision.reason}"
-                    if decision.outcome == "ask" and decision.reason
-                    else ""
-                )
-            else:
-                auto_note = ""
+        auto = await _auto_ledger_verdict(request, context, call, policy)
+        if auto.settled:
+            return auto.message
+        auto_note = auto.note
         invalid = await _invalid_args_message(request, context.user_id, call)
         if invalid is not None:
             return invalid
         fingerprint = approval_fingerprint(call.name, call.args)
         live = await approval_ledger_repository.find_live(fingerprint, context.conversation_id)
         if live is not None:
-            if live.state is LedgerState.APPROVED:
-                return _tool_message(
-                    call,
-                    f"APPROVED {live.approval_id}: {live.summary} already approved, "
-                    "awaiting redeem — not awaiting the user's decision. Do not "
-                    "re-request it; redeem it or continue other work.",
-                    "pending",
-                )
-            return _tool_message(
-                call,
-                f"PENDING {live.approval_id}: {live.summary} already requested and "
-                f"awaiting the user's decision. "
-                f"{_pending_guidance(live.approval_id, background=not context.pausable)}",
-                "pending",
-            )
+            return _live_envelope_message(call, context, live)
         denied = await approval_ledger_repository.find_latest_denied(
             fingerprint, context.conversation_id
         )
-        if denied is not None:
-            if denied.proposing_run_id and denied.proposing_run_id == context.stream_id:
-                denied_why = f" The user said: {denied.feedback!r}." if denied.feedback else ""
-                return _tool_message(
-                    call,
-                    f"REFUSED {denied.approval_id}: the user denied {denied.summary} "
-                    f"in this run.{denied_why} "
-                    "DO NOT re-request it. State what you skipped and continue without it.",
-                    "denied",
-                )
-            when = f" at {denied.decided_at.isoformat()}" if denied.decided_at else ""
-            why = f", saying {denied.feedback!r}" if denied.feedback else ""
-            deny_note = (
-                f" The user denied this exact call{when}{why}. Only re-ask if "
-                "something changed or the user asked for it."
-            )
-        else:
-            deny_note = ""
+        if denied is not None and denied.proposing_run_id == context.stream_id:
+            return _same_run_refusal_message(call, denied)
+        deny_note = _prior_denial_note(denied)
 
         integration_name = await _integration_name_for(call.name)
         summary = build_summary(call.name, call.args, integration_name)
         # Owner is the worker thread, stable across runs: subagent threads read
         # "<integration>_<conversation>", the executor "executor_<...>", so a
         # later turn of the same worker can revoke what it proposed.
-        owner = configurable_of(request).get("thread_id") or "unknown"
+        configurable: AgentConfigurable = configurable_of(request)
+        owner = configurable.get("thread_id") or "unknown"
+        # blocked_by arrives with ordering chains (Phase 3): the chain joins the
+        # fingerprint there, so identical calls on different chains never share
+        # an envelope.
         ap_id = await approval_ledger_repository.register(
-            conversation_id=context.conversation_id,
-            user_id=context.user_id,
-            fingerprint=fingerprint,
-            tool_name=call.name,
-            args=call.args,
-            summary=summary,
-            preview=clip_text(json.dumps(call.args, default=str), 500),
-            owner_agent=str(owner),
-            proposing_run_id=context.stream_id,
-            owner_run_type=context.owner_run_type,
-            owner_id=context.owner_id,
-            # blocked_by arrives with ordering chains (Phase 3): the chain
-            # joins the fingerprint there, so identical calls on different
-            # chains never share an envelope.
+            ApprovalProposal(
+                conversation_id=context.conversation_id,
+                user_id=context.user_id,
+                fingerprint=fingerprint,
+                tool_name=call.name,
+                args=call.args,
+                summary=summary,
+                preview=clip_text(json.dumps(call.args, default=str), 500),
+                owner_agent=str(owner),
+                proposing_run_id=context.stream_id,
+                owner_run_type=context.owner_run_type,
+                owner_id=context.owner_id,
+            )
         )
         log.info(
             f"{LogTag.HIL} Ledger registered gated call",
@@ -372,7 +331,7 @@ def read_gate_context(request: ToolCallRequest) -> GateContext | None:
     silently allowed, which is why it is no longer discarded here. Only a run missing an
     identity field is None, since without a user there is no policy to resolve.
     """
-    configurable = configurable_of(request)
+    configurable: AgentConfigurable = configurable_of(request)
     stream_id = configurable.get("stream_id")
     user_id = configurable.get("user_id")
     # Never ``thread_id`` — inside the executor or a subagent that is the
@@ -550,7 +509,11 @@ async def _judge(
         judge = JevIntentJudge()
     tool = await gated_tool_object(request, context.user_id, call.name)
     return await judge_intent(
-        user_id=context.user_id,
+        AutoContext(
+            user_id=context.user_id,
+            history=history,
+            never_auto_tools=never_auto,
+        ),
         user_messages=context.user_messages,
         judge=judge,
         call=JudgedCall(
@@ -566,8 +529,6 @@ async def _judge(
         # never authorization — only the user's turns authorize.
         prior_calls=prior_tool_calls(request.state, call.id),
         assistant_turns=recent_assistant_turns(request.state),
-        history=history,
-        never_auto_tools=never_auto,
     )
 
 
@@ -659,6 +620,95 @@ def _refusal_message(call: GatedCall, outcome: ApprovalOutcome) -> ToolMessage:
     # Each template uses only the fields it needs; format ignores the rest.
     content = template.format(tool=call.name, feedback=feedback, waited=approval_window_label())
     return _tool_message(call, content, status)
+
+
+@dataclass(frozen=True)
+class _AutoVerdict:
+    """Auto mode's conclusion: either it settled the call, or it left a note for the ask."""
+
+    settled: bool
+    message: ToolMessage | None = None
+    note: str = ""
+
+
+async def _auto_ledger_verdict(
+    request: ToolCallRequest, context: GateContext, call: GatedCall, policy: GatingPolicy
+) -> _AutoVerdict:
+    """Let auto mode settle a ledger-path call, or say why it still needs the user."""
+    if policy != "auto":
+        return _AutoVerdict(settled=False)
+    integration_name = await _integration_name_for(call.name)
+    summary = build_summary(call.name, call.args, integration_name)
+    decision = await _judge(request, context, call, None, summary)
+    if decision is None:
+        return _AutoVerdict(settled=False)
+    if decision.outcome == "accept":
+        log.info(
+            f"{LogTag.HIL} auto-approved (ledger path)",
+            call_name=call.name,
+            reason=decision.reason,
+        )
+        return _AutoVerdict(settled=True)
+    if decision.outcome == "reject":
+        log.info(
+            f"{LogTag.HIL} auto-rejected (ledger path)",
+            call_name=call.name,
+            reason=decision.reason,
+        )
+        return _AutoVerdict(
+            settled=True, message=await _auto_reject(context, call, decision.reason)
+        )
+    note = (
+        f" Auto mode wasn't sure: {decision.reason}"
+        if decision.outcome == "ask" and decision.reason
+        else ""
+    )
+    return _AutoVerdict(settled=False, note=note)
+
+
+def _live_envelope_message(
+    call: GatedCall, context: GateContext, live: ApprovalLedgerDocument
+) -> ToolMessage:
+    """Point the model at the live envelope this call collapsed into."""
+    if live.state is LedgerState.APPROVED:
+        return _tool_message(
+            call,
+            f"APPROVED {live.approval_id}: {live.summary} already approved, "
+            "awaiting redeem — not awaiting the user's decision. Do not "
+            "re-request it; redeem it or continue other work.",
+            "pending",
+        )
+    return _tool_message(
+        call,
+        f"PENDING {live.approval_id}: {live.summary} already requested and "
+        f"awaiting the user's decision. "
+        f"{_pending_guidance(live.approval_id, background=not context.pausable)}",
+        "pending",
+    )
+
+
+def _same_run_refusal_message(call: GatedCall, denied: ApprovalLedgerDocument) -> ToolMessage:
+    """Refuse a re-issue of a call the user already denied inside this run."""
+    denied_why = f" The user said: {denied.feedback!r}." if denied.feedback else ""
+    return _tool_message(
+        call,
+        f"REFUSED {denied.approval_id}: the user denied {denied.summary} "
+        f"in this run.{denied_why} "
+        "DO NOT re-request it. State what you skipped and continue without it.",
+        "denied",
+    )
+
+
+def _prior_denial_note(denied: ApprovalLedgerDocument | None) -> str:
+    """Render the earlier-denial aside for a fresh pending message; empty when there is none."""
+    if denied is None:
+        return ""
+    when = f" at {denied.decided_at.isoformat()}" if denied.decided_at else ""
+    why = f", saying {denied.feedback!r}" if denied.feedback else ""
+    return (
+        f" The user denied this exact call{when}{why}. Only re-ask if "
+        "something changed or the user asked for it."
+    )
 
 
 def _gate_error_message(call: GatedCall) -> ToolMessage:

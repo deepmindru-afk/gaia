@@ -115,10 +115,6 @@ class AsyncRedisCommands(Protocol):
         """LLEN — 0 for a missing key."""
         ...
 
-    async def lpop(self, name: str) -> str | None:
-        """LPOP — None when the list is empty or absent."""
-        ...
-
     async def lrange(self, name: str, start: int, end: int) -> list[str]:
         """LRANGE — inclusive on both ends; -1 is the last element."""
         ...

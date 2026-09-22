@@ -16,7 +16,8 @@ from typing import TypeVar
 
 from composio import Composio
 from composio.types import ExecuteRequestFn
-from langgraph.config import get_config
+from langgraph.config import get_config, get_stream_writer
+from langgraph.types import StreamWriter
 from pydantic import TypeAdapter
 
 from app.constants.calendar import DEFAULT_CALENDAR_COLOR, DEFAULT_EVENT_DURATION
@@ -69,13 +70,27 @@ from app.utils.calendar_utils import calendar_events_endpoint
 from app.utils.concurrency import run_on_captured_loop
 from app.utils.context_utils import execute_tool
 from app.utils.errors import AppError
-from app.utils.stream_publishers import optional_stream_writer
 from app.utils.timezone import Timezone, home_timezone_from_config
 from shared.py.wide_events import log
 
 CALENDAR_TOOLKIT = "GOOGLECALENDAR"
 
 _T = TypeVar("_T")
+
+
+def _optional_stream_writer() -> StreamWriter | None:
+    """Return the graph stream writer, or None outside a graph run.
+
+    get_stream_writer() raises outside a Pregel runtime (backend dispatch: ticket
+    redeem, sandbox, workflows), so these tools treat the writer as a best-effort
+    UI hint and skip when it returns None. The result travels in the tool's return
+    value, not the writer.
+    """
+    try:
+        writer: StreamWriter = get_stream_writer()
+    except (KeyError, RuntimeError):
+        return None
+    return writer
 
 
 def _run_sync(coro: Coroutine[object, object, _T], *, timeout: float | None = None) -> _T:
@@ -166,10 +181,8 @@ async def get_effective_timezone(user_id: str) -> tzinfo | None:
         return None
 
 
-def _resolve_event_bounds(
-    event: SingleEventInput, user_id: str
-) -> tuple[GoogleCalendarEventDateTime, GoogleCalendarEventDateTime]:
-    """Google start/end for one event; raises ValueError with a user-facing message on bad input."""
+def _parse_event_datetimes(event: SingleEventInput) -> tuple[datetime, datetime | None]:
+    """ISO start/end datetimes; raises ValueError with a user-facing message on bad input."""
     try:
         start_dt = datetime.fromisoformat(event.start_datetime)
     except ValueError as e:
@@ -181,32 +194,55 @@ def _resolve_event_bounds(
             end_dt = datetime.fromisoformat(event.end_datetime)
         except ValueError as e:
             raise ValueError(f"Invalid end_datetime format: {e}") from e
+    return start_dt, end_dt
 
-    if event.is_all_day:
-        # Google treats an all-day end.date as exclusive, so an inclusive last
-        # day (or a missing end) becomes the following date.
-        last_day = end_dt or start_dt
-        return (
-            GoogleCalendarEventDateTime(date=start_dt.strftime("%Y-%m-%d")),
-            GoogleCalendarEventDateTime(date=(last_day + timedelta(days=1)).strftime("%Y-%m-%d")),
+
+def _all_day_bounds(
+    start_dt: datetime, end_dt: datetime | None
+) -> tuple[GoogleCalendarEventDateTime, GoogleCalendarEventDateTime]:
+    """All-day Google start/end dates; the end date is exclusive, so the inclusive last day becomes the following date."""
+    last_day = end_dt or start_dt
+    return (
+        GoogleCalendarEventDateTime(date=start_dt.strftime("%Y-%m-%d")),
+        GoogleCalendarEventDateTime(date=(last_day + timedelta(days=1)).strftime("%Y-%m-%d")),
+    )
+
+
+def _stamp_user_timezone(
+    start_dt: datetime, end_dt: datetime, user_id: str
+) -> tuple[datetime, datetime]:
+    """Stamp naive datetimes with the user's home zone; raises ValueError when no zone is known."""
+    if start_dt.tzinfo is not None and end_dt.tzinfo is not None:
+        return start_dt, end_dt
+    user_tz = _run_sync(get_effective_timezone(user_id))
+    if user_tz is None:
+        # Google 400s a naked wall time, and that failure used to land after
+        # the user approved. Fail fast so the model adds an explicit offset.
+        raise ValueError(
+            "start_datetime has no UTC offset and no home timezone is "
+            "configured: pass an explicit offset (e.g. 2026-09-21T11:00:00+05:30)."
         )
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=user_tz)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=user_tz)
+    return start_dt, end_dt
+
+
+def _resolve_event_bounds(
+    event: SingleEventInput, user_id: str
+) -> tuple[GoogleCalendarEventDateTime, GoogleCalendarEventDateTime]:
+    """Google start/end for one event; raises ValueError with a user-facing message on bad input."""
+    start_dt, end_dt = _parse_event_datetimes(event)
+
+    # Google treats an all-day end.date as exclusive, so an inclusive last
+    # day (or a missing end) becomes the following date.
+    if event.is_all_day:
+        return _all_day_bounds(start_dt, end_dt)
 
     if end_dt is None:
         end_dt = start_dt + DEFAULT_EVENT_DURATION
-
-    if start_dt.tzinfo is None or end_dt.tzinfo is None:
-        user_tz = _run_sync(get_effective_timezone(user_id))
-        if user_tz is None:
-            # Google 400s a naked wall time, and that failure used to land after
-            # the user approved. Fail fast so the model adds an explicit offset.
-            raise ValueError(
-                "start_datetime has no UTC offset and no home timezone is "
-                "configured: pass an explicit offset (e.g. 2026-09-21T11:00:00+05:30)."
-            )
-        if start_dt.tzinfo is None:
-            start_dt = start_dt.replace(tzinfo=user_tz)
-        if end_dt.tzinfo is None:
-            end_dt = end_dt.replace(tzinfo=user_tz)
+    start_dt, end_dt = _stamp_user_timezone(start_dt, end_dt, user_id)
 
     if end_dt <= start_dt:
         raise ValueError("end_datetime must be after start_datetime.")
@@ -238,7 +274,7 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
             else [entry.model_dump() for entry in calendar_list.items]
         )
 
-        writer = optional_stream_writer()
+        writer = _optional_stream_writer()
         if writer is not None and summaries:
             writer(
                 {
@@ -352,7 +388,7 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
             "busy_hours": round(busy_minutes / 60, 1),
         }
 
-        writer = optional_stream_writer()
+        writer = _optional_stream_writer()
         if writer is not None and formatted_events:
             writer({"calendar_fetch_data": formatted_events})
 
@@ -392,7 +428,7 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
         except Exception:
             calendar_fetch_data = [event.model_dump() for event in events]
 
-        writer = optional_stream_writer()
+        writer = _optional_stream_writer()
         if writer is not None and calendar_fetch_data:
             writer({"calendar_fetch_data": calendar_fetch_data})
 
@@ -432,7 +468,7 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
         except Exception:
             calendar_search_data = events
 
-        writer = optional_stream_writer()
+        writer = _optional_stream_writer()
         if writer is not None and calendar_search_data:
             writer({"calendar_fetch_data": calendar_search_data})
 
@@ -746,7 +782,7 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
         if errors and not created_events:
             raise ValueError(f"All events failed validation: {failures}")
 
-        writer = optional_stream_writer()
+        writer = _optional_stream_writer()
         if writer is not None and created_events:
             displays = [
                 CalendarEventDisplay(

@@ -8,11 +8,11 @@ This rewrites those passages rather than forking the prompt. Two copies of a
 so the executor under the experiment would quietly fall behind on every prompt
 fix that lands.
 
-Every rewrite is anchored to text in EXECUTOR_AGENT_PROMPT. If an anchor stops
-matching because that prompt was edited, that one rewrite is skipped with a
-warning and the rest still apply: this builder runs at import time, so raising
-would keep the whole API from starting over one edited sentence. The anchor
-tests pin every rewrite, so a skipped one still fails loudly in CI.
+Every rewrite is anchored to text in EXECUTOR_AGENT_PROMPT. A stale anchor skips
+that one rewrite with a warning and the rest still apply: this builder runs at
+import time, so raising would keep the whole API from starting over one edited
+sentence. tests/unit/agents/prompts/test_executor_activation_prompt.py pins every
+anchor and replacement, so a skipped rewrite still fails loudly in CI.
 """
 
 from app.agents.prompts.comms_prompts import EXECUTOR_AGENT_PROMPT
@@ -111,11 +111,9 @@ _PHRASE_REWRITES: tuple[tuple[str, str], ...] = (
         "- Use these directly (not handoff):",
         "- Use these directly (no activation needed):",
     ),
-    # Discovery vocabulary, not delegation vocabulary — but just as load-bearing.
-    # Left unrewritten, these send the model hunting for a `subagent:` entry that
-    # no longer exists in this mode; retrieve_tools returns none and it falls back
-    # to fetch_webpages. Observed live: a Hacker News request scraped the web
-    # instead of activating the integration.
+    # Discovery vocabulary, not delegation: unrewritten it hunts a subagent entry
+    # that no longer exists, retrieve_tools returns none, falls back to fetch_webpages.
+    # Observed live: a Hacker News request scraped the web instead of activating.
     (
         "there is almost always a dedicated tool or subagent (e.g. subagent:hackernews, "
         "fetch_webpages, web_search_tool) that is better than hand-rolling it. Do NOT curl "
@@ -196,12 +194,7 @@ def _replace_section(prompt: str, start: str, end: str, replacement: str) -> str
 def build_activation_executor_prompt() -> str:
     """EXECUTOR_AGENT_PROMPT rewritten to teach activation instead of handoff.
 
-    A stale anchor degrades instead of raising: the one rewrite is skipped
-    with a warning and the rest still apply. Raising here would run at import
-    time (agent_template builds _EXECUTOR_BASE on import), so one edited
-    sentence in the source prompt would keep the whole API from starting. A
-    skipped rewrite leaves a single handoff-era passage behind, which the
-    anchor tests flag in CI — a missing prompt nuance, never an outage.
+    Stale anchors degrade with a warning, never raise: this runs at import.
     """
     prompt = EXECUTOR_AGENT_PROMPT
     for start, end, replacement in _SECTION_REWRITES:

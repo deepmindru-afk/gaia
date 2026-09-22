@@ -354,8 +354,6 @@ apps/api/app/workers/tasks/checkpoint_retention_tasks.py	TB001
 apps/api/app/workers/tasks/checkpoint_retention_tasks.py	TB002
 apps/api/app/workers/tasks/cleanup_tasks.py	TB001
 apps/api/app/workers/tasks/device_tasks.py	TB001
-apps/api/app/workers/tasks/hil_sweep_tasks.py	TB001
-apps/api/app/workers/tasks/hil_sweep_tasks.py	TB002
 apps/api/app/workers/tasks/memory_backfill_tasks.py	TB001
 apps/api/app/workers/tasks/memory_backfill_tasks.py	TB002
 apps/api/app/workers/tasks/memory_email_tasks.py	TB001

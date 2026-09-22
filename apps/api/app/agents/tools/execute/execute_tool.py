@@ -8,7 +8,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 
 from app.agents.tools.execute.dispatch import dispatch_tool
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import AgentConfigurable, agent_configurable
 
 
 def build_execute_tool(scoped_tools: Mapping[str, BaseTool] | None = None) -> BaseTool:
@@ -50,8 +50,9 @@ def build_execute_tool(scoped_tools: Mapping[str, BaseTool] | None = None) -> Ba
         """
         # UI-facing arg: consumed by the stream formatter (card label), not here.
         del task_description
+        configurable: AgentConfigurable = agent_configurable(config)
         result = await dispatch_tool(
-            user_id=agent_configurable(config).get("user_id"),
+            user_id=configurable.get("user_id"),
             tool_name=tool_name,
             data=data,
             config=config,

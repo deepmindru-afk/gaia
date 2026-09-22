@@ -49,12 +49,9 @@ async def _dev_base_configurable(
 ) -> tuple[AgentConfigurable, str, str]:
     """Resolve the dev user and build the parent configurable a direct run needs.
 
-    Returns (configurable, user_id, conversation_id). The conversation_id is
-    minted when absent; passing the same one across calls reuses the derived
-    agent thread, so multi-turn behavior is testable. ``model`` is a
-    DEV_MODEL_OPTIONS key; unset means DEV_DEFAULT_MODEL, so a direct run
-    honors the same env pin real chat uses instead of silently running the
-    plan-resolved lane.
+    Returns configurable, user_id, and conversation_id, minting the id when
+    absent so multi-turn behavior is testable. model is a DEV_MODEL_OPTIONS
+    key; unset means DEV_DEFAULT_MODEL, matching the env pin real chat uses.
     """
     user_doc = await require_dev_user(email)
     user_id = user_doc.id

@@ -120,7 +120,7 @@ async def call_executor(
     The executor runs in the background and posts its result to the
     conversation as a new bot message when it completes.
     """
-    base_configurable = agent_configurable(config)
+    base_configurable: AgentConfigurable = agent_configurable(config)
     # Shallow-copy so the executor's overrides (todo binding) never mutate the
     # comms agent's live RunnableConfig. The model is inherited from the comms
     # configurable (set by per-plan routing).
@@ -204,22 +204,17 @@ async def _dispatch_executor(
     lock_key = f"{EXECUTOR_BUSY_PREFIX}{conversation_id}"
     lock_value = build_lock_value(stream_id, task_id)
 
-    # A workflow fire reserves its conversation before the turn that dispatches
-    # this executor (see ``_reserve_conversation``), so the lock it finds held is
-    # its own claim, taken early to keep a second fire out. Adopting it is what
-    # makes that reservation a hand-off rather than a self-inflicted queue.
+    # A workflow fire reserves its conversation up front, so a held lock here
+    # is its own claim. Adopting it turns the reservation into a hand-off
+    # rather than a self-inflicted queue.
     acquired = await try_acquire_lock(lock_key, lock_value)
     if not acquired and (reserved := configurable.get("executor_lock_reservation")):
         acquired = await adopt_lock(conversation_id, reserved, lock_value)
 
     if not acquired:
-        # The lock is held. Distinguish two cases by the holder's stream_id:
-        #   - SAME stream_id → the comms model called call_executor twice within
-        #     ONE turn. Queuing it would run the whole task a SECOND time
-        #     (observed: deep research executed twice for a single user message).
-        #     Reject it — the first dispatch already covers this turn.
-        #   - DIFFERENT stream_id → a genuinely new request arrived while the
-        #     executor is busy; hand it to the live run's inbox.
+        # The lock is held: same stream_id means a duplicate call_executor in one
+        # turn (reject it — the first dispatch covers the turn); a different one
+        # means a new request while busy, handed to the live run's inbox.
         held_value = await redis_cache.client.get(lock_key)
         held_stream_id = parse_lock_value(decode_raw_item(held_value))[0] if held_value else ""
         if stream_id and held_stream_id == stream_id:
@@ -256,10 +251,8 @@ async def _dispatch_executor(
                 conversation_id=conversation_id,
             )
         else:
-            # The executor is mid-run on a different turn, so hand this to that
-            # run rather than deferring it: its drain hook reads the inbox before
-            # every model call, so the work lands on the next reasoning step and
-            # is answered as part of what is already going.
+            # The executor is mid-run on a different turn: hand this to that run,
+            # whose drain hook reads the inbox before every model call.
             await ExecutorInbox(conversation_id).append(task_id, task)
             log.info(
                 f"{LogTag.TOOL} Executor busy — task handed to the live run",
@@ -356,7 +349,7 @@ async def cancel_executor(
     question, or saying "nevermind" about a NEW request. Only the USER
     decides to cancel.
     """
-    configurable = agent_configurable(config)
+    configurable: AgentConfigurable = agent_configurable(config)
     conversation_id = configurable.get("thread_id", "")
 
     if not conversation_id:
@@ -403,14 +396,9 @@ async def cancel_executor(
         if not cancelled:
             return "None of the specified task_ids matched any running or pending tasks."
 
-        # The executor's thread is per-conversation and outlives the run, so a
-        # cancelled task stays in that history as unfinished business. Record the
-        # stop (and any redirect) into the same thread, or the next run reads the
-        # abandoned task and resumes exactly what the user just stopped.
-        #
-        # Only when the RUNNING task actually died. A selective cancel that
-        # spared it leaves a live executor that would drain this notice on its
-        # next model call and abandon work nobody cancelled.
+        # Record the stop into the per-conversation thread, or the next run
+        # resumes exactly what the user stopped — but only when the RUNNING
+        # task actually died; a spared live executor would drain the notice.
         if running_cancelled:
             await inbox.announce_interruption(message)
 

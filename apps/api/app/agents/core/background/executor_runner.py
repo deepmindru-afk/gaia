@@ -675,10 +675,9 @@ async def deliver_to_executor(
 ) -> None:
     """Give the executor work from outside a comms turn — the one way to do it.
 
-    A live run absorbs the task through its inbox; an idle conversation gets a run
-    started to carry it. Either way it becomes a message in an executor thread,
-    never a second parallel answer. The busy check is a fast path, not the
-    decision: the claim inside _start_executor_run is atomic.
+    A live run absorbs the task through its inbox, an idle one gets a run started
+    to carry it; never a second parallel answer. The busy check is a fast path —
+    the claim inside _start_executor_run is the atomic decision.
     """
     if not await is_executor_busy(conversation_id) and await _start_executor_run(
         conversation_id, configurable, task, workflow_execution_id=workflow_execution_id
@@ -689,6 +688,18 @@ async def deliver_to_executor(
         f"{LogTag.AGENT} Work handed to the live executor run",
         conversation_id=conversation_id,
     )
+    # Recheck AFTER appending: only a free lock needs a rescue, and the rescue
+    # carries EXECUTOR_CARRY_TASK because the entry already holds the real work.
+    if not await is_executor_busy(conversation_id) and await _start_executor_run(
+        conversation_id,
+        configurable,
+        EXECUTOR_CARRY_TASK,
+        workflow_execution_id=workflow_execution_id,
+    ):
+        log.info(
+            f"{LogTag.AGENT} Work landed mid-finalize; started a carry run",
+            conversation_id=conversation_id,
+        )
 
 
 async def _prepare_executor_run(

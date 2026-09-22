@@ -25,7 +25,7 @@ from app.constants.cache import (
 )
 from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import AgentConfigurable, agent_configurable
 from app.override.langgraph_bigtool.utils import State
 from shared.py.wide_events import log
 
@@ -82,7 +82,8 @@ async def drain_subagent_inbox_hook(
     this reads exactly the mailbox message_subagent wrote for it.
     """
     try:
-        thread_id = agent_configurable(config).get("thread_id")
+        configurable: AgentConfigurable = agent_configurable(config)
+        thread_id = configurable.get("thread_id")
         if not thread_id:
             log.warning(f"{LogTag.AGENT} drain_subagent_inbox_hook: run carries no thread_id")
             return state

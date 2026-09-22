@@ -14,22 +14,19 @@ from app.schemas.hil_schemas import (
     ApprovalDecisionResponse,
     BatchApprovalDecisionRequest,
     BatchApprovalDecisionResponse,
-    BatchDecisionOutcome,
     HILPreferencesResponse,
     SetToolOverrideRequest,
     UpdateHILPreferencesRequest,
 )
 from app.services.analytics_service import AnalyticsEvents, capture_context_event
 from app.services.feature_flags import is_hil_ledger_enabled
-from app.services.hil.ledger_decide import decide_ledger
+from app.services.hil.ledger_decide import decide_ledger, decide_ledger_batch
 from app.services.hil.preferences import (
     get_hil_preferences,
     set_tool_override,
     update_hil_preferences,
 )
 from app.services.hil.resolution import (
-    ApprovalRequestForbiddenError,
-    ApprovalRequestNotFoundError,
     resolve_approval,
     resolve_approvals_batch,
 )
@@ -122,58 +119,10 @@ async def post_batch_decision(
         hil={"operation": "batch_decision", "count": len(payload.decisions)},
     )
     if await is_hil_ledger_enabled(user_id):
-        # Executor-free path: each item commits exactly once on the ledger;
-        # one item never blocks the others. No resume dispatch exists here —
-        # execution and wake already happened inside decide_ledger.
-        outcomes: list[BatchDecisionOutcome] = []
-        for item in payload.decisions:
-            try:
-                outcome = await decide_ledger(
-                    item.approval_id,
-                    user_id=user_id,
-                    kind=item.decision,
-                    feedback=item.feedback,
-                    v=item.v,
-                )
-            except ApprovalRequestNotFoundError:
-                outcomes.append(
-                    BatchDecisionOutcome(
-                        approval_id=item.approval_id, resolved=False, reason="not_found"
-                    )
-                )
-                continue
-            except ApprovalRequestForbiddenError:
-                outcomes.append(
-                    BatchDecisionOutcome(
-                        approval_id=item.approval_id, resolved=False, reason="forbidden"
-                    )
-                )
-                continue
-            except Exception as e:
-                log.error(
-                    f"{LogTag.HIL} Ledger batch decision failed for",
-                    approval_id=item.approval_id,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                    user_id=user_id,
-                )
-                outcomes.append(
-                    BatchDecisionOutcome(
-                        approval_id=item.approval_id, resolved=False, reason="error"
-                    )
-                )
-                continue
-            if outcome.committed:
-                outcomes.append(BatchDecisionOutcome(approval_id=item.approval_id, resolved=True))
-            else:
-                outcomes.append(
-                    BatchDecisionOutcome(
-                        approval_id=item.approval_id,
-                        resolved=False,
-                        reason="stale" if outcome.stale else "not_found",
-                        status=outcome.state.value,
-                    )
-                )
+        # Executor-free path: each item commits exactly once on the ledger.
+        # No resume dispatch exists here — execution and wake already happened
+        # inside decide_ledger.
+        outcomes = await decide_ledger_batch(user_id, payload.decisions)
         log.set(hil={"resolved": sum(1 for o in outcomes if o.resolved)})
         return BatchApprovalDecisionResponse(outcomes=outcomes)
     outcomes = await resolve_approvals_batch(

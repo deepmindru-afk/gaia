@@ -23,6 +23,7 @@ from langchain_core.runnables import (
 )
 from langchain_core.runnables.utils import ConfigurableField
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_openrouter import ChatOpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
 from pydantic import BaseModel, SecretStr
@@ -88,7 +89,8 @@ _ResultT = TypeVar("_ResultT")
 _LLMT = TypeVar("_LLMT", bound=BaseChatModel)
 
 
-def without_sdk_retry(llm: _LLMT) -> _LLMT:
+# NOSONAR justification: intentional pass-through -- normalizes retries in place and returns the same client for chaining
+def without_sdk_retry(llm: _LLMT) -> _LLMT:  # NOSONAR python:S3516
     """Disable the SDK's own retry loop so with_llm_retry is the only one.
 
     The SDK loop nests under ours and turned 3 attempts into 40 requests.
@@ -142,7 +144,7 @@ PROVIDER_PRIORITY: dict[int, LLMProviderName] = {
 
 
 @cache
-def _sim_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
+def _sim_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Build the one model used for EVERYTHING under GAIA_SIM_MODE.
 
     An OpenAI-wire client pointed at the local scripted stub (tools/llm-stub).
@@ -322,8 +324,6 @@ def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatM
     # Discounted lanes behind Cloudflare 403 (error 1010) programmatic UAs; a
     # browser UA on the httpx clients passes. ChatOpenAI takes them directly
     # (ChatOpenRouter's default_headers path crashes — see init_openrouter_llm).
-    from langchain_openai import ChatOpenAI  # noqa: PLC0415
-
     browser_headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     }
@@ -504,7 +504,7 @@ def register_llm_providers() -> None:
         init_custom_llm()
 
 
-def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
+def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Build the single factory for the default model (DEFAULT_MODEL_NAME, over OpenRouter).
 
     Used by EVERY auxiliary LLM task -- the paid model is reserved for the main chat
@@ -560,7 +560,7 @@ def _provider_order_kwargs() -> _ProviderOrderKwargs:
 
 
 @cache
-def _build_default_llm(temperature: float) -> BaseChatModel:
+def _build_default_llm(temperature: float) -> ChatOpenRouter:
     llm = without_sdk_retry(
         ChatOpenRouter(
             model=DEFAULT_MODEL_NAME,
@@ -582,7 +582,7 @@ def _build_default_llm(temperature: float) -> BaseChatModel:
     return llm
 
 
-def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
+def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Return get_default_llm capped to HELPER_MAX_OUTPUT_TOKENS.
 
     For one-shot helpers whose output is small. The graph-adjacent consumers
@@ -593,7 +593,7 @@ def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatM
     llm = get_default_llm(temperature=temperature)
     if settings.GAIA_SIM_MODE:
         return llm
-    return cast(BaseChatModel, llm.model_copy(update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS}))
+    return llm.model_copy(update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS})
 
 
 def get_vision_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:

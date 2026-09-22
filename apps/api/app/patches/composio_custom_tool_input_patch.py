@@ -61,7 +61,7 @@ def apply() -> None:
         _original_invoke_trusted = CustomTool.invoke_trusted
         # Lets inspect.unwrap (and debuggers) see through to the real dispatch.
         t.cast(t.Any, _coercing_invoke_trusted).__wrapped__ = _original_invoke_trusted
-        CustomTool.invoke_trusted = _coercing_invoke_trusted  # type: ignore[method-assign]
+        CustomTool.invoke_trusted = _coercing_invoke_trusted  # type: ignore[method-assign]  # rebinding an upstream method is what a monkey-patch is; mypy rejects it by design
         _applied = True
         log.info(
             f"{LogTag.PATCH} Applied custom_tool input coercion patch",

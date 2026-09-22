@@ -275,12 +275,6 @@ def mark_executor_spawned(stream_id: str) -> None:
     session.executor_first_frame_perf = None  # new incarnation, new first frame
 
 
-def was_executor_spawned(stream_id: str) -> bool:
-    """Return True if call_executor successfully spawned for this stream."""
-    session = _sessions.get(stream_id)
-    return bool(session and session.executor_spawned)
-
-
 def signal_executor_done(
     stream_id: str, *, failed: bool = False, reason: str | None = None
 ) -> None:

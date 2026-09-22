@@ -54,6 +54,8 @@ from shared.py.wide_events import log
 
 WEBPAGE_TOOLS = [web_search_tool.name, fetch_webpages.name, deep_research.name]
 
+_SUBAGENT_PREFIX = "subagent:"
+
 
 def _is_execute_routed(tool_registry: ToolRegistry, name: str, mcp_tool_names: set[str]) -> bool:
     """Whether this tool runs through the execute proxy instead of binding.
@@ -491,11 +493,9 @@ def _build_search_tasks(
         log.info(f"{LogTag.TOOL} Adding search for general namespace (limited to 5 for core tools)")
         search_tasks.append(store.asearch(("general",), query=query, limit=5))
 
-    # Integrations this conversation activated in-context: their namespaces
-    # join the search so tools beyond the preloaded subset are discoverable
-    # from the activating run. Stamped only after a connection-checked
-    # activation, so membership implies entitlement (see active_integrations)
-    # and the user_namespaces gate above does not apply to them.
+    # Namespaces activated in-conversation join the search; membership is
+    # stamped only after a connection-checked activation, so it implies
+    # entitlement and skips the user_namespaces gate.
     for namespace in sorted(active_namespaces or ()):
         if namespace in {tool_space, "general"}:
             continue
@@ -508,11 +508,9 @@ def _build_search_tasks(
         log.info(f"{LogTag.TOOL} Adding search for desktop namespace")
         search_tasks.append(store.asearch((DESKTOP_TOOL_SPACE,), query=query, limit=10))
 
-    # Custom MCP integrations index a pointer doc here (and only MCP does:
-    # provider entries were never written to this namespace). Surfacing it is
-    # what makes an unactivated custom MCP discoverable at all — its tools
-    # live in a per-user namespace this fan-out never enters, so without this
-    # search the model could never learn its id to hand off to.
+    # Only custom MCP integrations index a pointer doc here; surfacing it is
+    # what makes an unactivated custom MCP discoverable, so the model learns
+    # its id to hand off to.
     if include_subagents:
         log.info(f"{LogTag.TOOL} Adding search for subagents namespace")
         search_tasks.append(store.asearch(("subagents",), query=query, limit=15))
@@ -559,15 +557,9 @@ def _process_chroma_search_result(
     for item in result:
         tool_key = str(item.key)
 
-        # Subagents-namespace pointers exist for MCP integrations (the writers
-        # of that namespace): static registry MCP pointers (source "mcp") and
-        # custom MCP pointers indexed at connect time (source "custom"). Both
-        # are the one subagent surface discovery keeps, because an MCP's tools
-        # live in a per-user namespace this search never enters — without the
-        # pointer the model could never learn its id to hand off to. Docs with
-        # no source predate the field and are treated as "mcp" for back-compat.
-        # Anything else found here is a stale doc from before provider entries
-        # stopped being indexed under this namespace; drop it, never surface it.
+        # Subagents-namespace pointers exist only for MCP integrations, static
+        # (source "mcp", the default for docs predating the field) or custom.
+        # Anything else here is a stale pre-index doc; drop it, never surface it.
         if hasattr(item, "namespace") and item.namespace == ("subagents",):
             if not include_subagents:
                 continue
@@ -592,12 +584,9 @@ def _process_chroma_search_result(
             if tool_key not in WEBPAGE_TOOLS:
                 continue
 
-        # Filter delegated tools in main agent context. Delegated (integration)
-        # tools execute in their owner's context only, so the main agent never
-        # sees them — with one exception: a namespace activated in-conversation
-        # via activate_integration, whose long tail the activation reply
-        # promises is retrievable. Without the exemption the activated search
-        # fan-out matches docs only to drop every one of them here.
+        # Delegated tools run in their owner's context only, except namespaces
+        # activated in-conversation via activate_integration, whose long tail
+        # the activation reply promises is retrievable.
         if include_subagents:
             namespace_key = "::".join(item.namespace) if getattr(item, "namespace", None) else ""
             if namespace_key not in (active_namespaces or ()):
@@ -720,8 +709,8 @@ def _render_discovery_response(
     mcp: list[tuple[str, str | None]] = []
     new: list[tuple[str, str | None]] = []
     for entry in final_tools:
-        if entry.startswith("subagent:"):
-            mcp.append(_split_prefixed_entry(entry, "subagent:"))
+        if entry.startswith(_SUBAGENT_PREFIX):
+            mcp.append(_split_prefixed_entry(entry, _SUBAGENT_PREFIX))
         elif entry.startswith("integration:"):
             new.append(_split_prefixed_entry(entry, "integration:"))
         else:
@@ -902,11 +891,9 @@ def get_retrieve_tools_function(
             # requested name -> canonical name, for the aliases we silently resolved
             renamed_tools: dict[str, str] = {}
             for tool_name in exact_tool_names:
-                if tool_name.startswith("subagent:"):
-                    # Discovery returns subagent: entries only for per-user MCP
-                    # integrations, so one here is either that (handled by the
-                    # model via handoff, never bound) or a hallucination —
-                    # either way it must not bind. Report unknown so the model
+                if tool_name.startswith(_SUBAGENT_PREFIX):
+                    # subagent: entries are never bound — either a per-user MCP handled
+                    # via handoff or a hallucination. Report unknown so the model
                     # re-discovers instead of echoing it back as a fake bind.
                     unknown_tool_names.append(tool_name)
                 elif (
@@ -928,10 +915,8 @@ def get_retrieve_tools_function(
                 else:
                     unknown_tool_names.append(tool_name)
 
-            # Catalog slugs whose toolkit was never materialized are absent from
-            # every local name set — rescue them through the resolver (which
-            # materializes on demand) instead of reporting a capability the
-            # catalog HAS as unknown.
+            # Catalog slugs never materialize locally — rescue them through the
+            # resolver instead of reporting a capability the catalog HAS as unknown.
             still_unknown: list[str] = []
             for name in unknown_tool_names:
                 if name.replace("_", "").isupper() and await _resolve_for_retrieval(user_id, name):
@@ -983,11 +968,9 @@ def get_retrieve_tools_function(
                 }
             )
 
-            # Bind valid tools regardless; add corrective guidance for
-            # out-of-scope names so the model takes the right path. Guidance is
-            # kept in its own list, not filtered back out of `response`: a
-            # name-vs-sentence filter re-emitted every proxied name as a bare
-            # line right under the block saying they are NOT callable by name.
+            # Bind valid tools regardless; out-of-scope guidance stays in its own
+            # list, since a name-vs-sentence filter re-emitted every proxied name
+            # as NOT callable by name.
             guidance: list[str] = []
             if out_of_scope_tool_names:
                 guidance.append(
@@ -1112,7 +1095,6 @@ def get_retrieve_tools_function(
             active_namespaces,
         )
 
-        # Deduplicate and sort
         final_tools = _deduplicate_and_sort(all_results, limit)
 
         log.set(
@@ -1151,10 +1133,8 @@ def get_retrieve_tools_function(
             ),
         )
 
-    # The LLM-facing docstring is a static constant (no subagent section:
-    # discovery surfaces subagent: entries only for per-user MCP integrations,
-    # which the handoff tool's own description covers, so nothing teaches
-    # provider handoff here).
+    # The LLM-facing docstring is a static constant: no subagent section,
+    # since the handoff tool's own description covers provider handoff.
     retrieve_tools.__doc__ = _RETRIEVE_TOOLS_BASE_DOC
 
     return retrieve_tools

@@ -47,7 +47,6 @@ from app.agents.core.subagents.subagent_helpers import (
 )
 from app.agents.core.subagents.subagent_runner import (
     SubagentExecutionContext,
-    SubagentOutcome,
     ThreadSeed,
     build_initial_messages,
     execute_subagent_stream,
@@ -69,7 +68,6 @@ from app.models.agent_models import (
     RunningSubagent,
     agent_configurable,
 )
-from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
 from app.models.subagent_models import Subagent
 from app.services.hil.approvals_store import list_parked_subagents_for_conversation
 from app.services.integrations.integration_resolver import IntegrationResolver
@@ -78,7 +76,6 @@ from app.services.oauth.oauth_service import check_integration_status
 from app.services.provider_metadata_service import get_provider_metadata
 from app.utils.agent_utils import (
     IntegrationMetadata,
-    StreamWriterCallable,
     SubagentStartDetails,
     format_subagent_end_event,
     format_subagent_start_event,
@@ -734,82 +731,6 @@ async def _has_parked_subagent(ctx: SubagentExecutionContext) -> bool:
         return False
     records = await list_parked_subagents_for_conversation(conversation_id)
     return any(record.subagent_thread_id == thread_id for record in records)
-
-
-async def resume_parked_subagent(
-    record: "HILApprovalRecord",
-    configurable: AgentConfigurable,
-    stream_writer: StreamWriterCallable,
-) -> SubagentOutcome:
-    """Resume a HIL-parked background subagent with its decided approval.
-
-    Everything is reconstructed from durable state, since the run that
-    parked it is gone. Crash-safe: a thread that already completed yields
-    its checkpointed final answer instead of being driven again.
-    """
-    agent_ref = record.subagent_agent_name or ""
-    graph, agent_name, int_id_or_error, _ = await _resolve_subagent(agent_ref, record.user_id)
-    if graph is None or agent_name is None or int_id_or_error is None:
-        return SubagentOutcome(
-            text=f"Error resuming {agent_ref}: {int_id_or_error or 'subagent not resolvable'}"
-        )
-
-    user: AgentUserContext = {
-        "user_id": record.user_id,
-        "email": configurable.get("email"),
-        "name": configurable.get("user_name"),
-    }
-    subagent_config = await build_agent_config(
-        identity=AgentIdentity(
-            conversation_id=record.conversation_id,
-            user=user,
-            agent_name=agent_name,
-        ),
-        thread=AgentThread(
-            thread_id=record.subagent_thread_id,
-            base_configurable=configurable,
-            subagent_id=agent_name,
-        ),
-    )
-    ctx = SubagentExecutionContext(
-        subagent_graph=graph,
-        agent_name=agent_name,
-        config=subagent_config,
-        configurable=agent_configurable(subagent_config),
-        integration_id=int_id_or_error,
-        initial_state={},
-        user_id=record.user_id,
-        stream_id=str(configurable.get("stream_id") or "") or None,
-    )
-
-    recovered = await recover_from_checkpoint(ctx)
-    if recovered is None:
-        # The record says a subagent parked on this thread, but the thread holds no
-        # state — its checkpoint is gone. Nothing to resume, and starting fresh would
-        # run the task again from an empty initial state, so say so instead.
-        return SubagentOutcome(text=f"Error resuming {agent_name}: its checkpoint is missing.")
-    if not recovered.paused:
-        return recovered
-
-    decision = {
-        "status": _subagent_resume_status(record.status),
-        "feedback": record.feedback,
-        "scope": record.scope,
-    }
-    return await execute_subagent_stream(
-        ctx=ctx, stream_writer=stream_writer, resume=Command(resume=decision)
-    )
-
-
-def _subagent_resume_status(status: HILApprovalStatus) -> HILApprovalStatus:
-    """Map a record's terminal status onto the gate's resumable statuses.
-
-    abandoned resumes as a denial — the gate accepts only
-    approved/denied/timeout, and abandonment means "do not act."
-    """
-    if status in (HILApprovalStatus.APPROVED, HILApprovalStatus.TIMEOUT):
-        return status
-    return HILApprovalStatus.DENIED
 
 
 async def _handoff_rejection(

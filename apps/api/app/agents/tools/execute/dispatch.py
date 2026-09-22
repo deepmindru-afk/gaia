@@ -31,16 +31,15 @@ from app.constants.execute import (
 )
 from app.constants.llm import TOOL_EXECUTION_TIMEOUT_SECONDS, TOOL_TIMEOUT_EXEMPT_TOOLS
 from app.constants.log_tags import LogTag
+from app.models.agent_models import AgentConfigurable, agent_configurable
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.storage.metrics import _register_once
 from app.services.tool_shape_service import record_observed_shape
 from shared.py.wide_events import log, spawn_logged_task
 
-# THE health metric of the proxy migration: bind_tools gave provider-constrained
-# args (a malformed call was structurally impossible); execute moves that check
-# to runtime, so invalid_args/ok is the retries-per-successful-action ratio that
-# says whether the trade is paying. Charted in Grafana; labels are the closed
-# outcome set below, never tool names (unbounded cardinality).
+# Health metric of the proxy migration: invalid_args/ok is the
+# retries-per-successful-action ratio. Charted in Grafana; labels are the
+# closed outcome set below, never tool names (unbounded cardinality).
 _EXECUTE_DISPATCH_TOTAL = _register_once(
     "gaia_execute_dispatch_total",
     lambda: Counter(
@@ -207,11 +206,9 @@ async def dispatch_tool(
         )
         return _failure(user_id, resolved_name, validated)
 
-    # Named before the run so an infrastructure failure — which propagates from
-    # here — still says WHICH tool it was. The outcome is stamped only once the
-    # invoke has actually returned: stamping "ok" up front made this field, the
-    # health metric of the migration, report success for every dispatch that
-    # raised.
+    # Named before the run so a propagated infrastructure failure still says
+    # which tool it was; the ok outcome is stamped only once the invoke has
+    # actually returned.
     log.set_ns("execute", tool=resolved_name)
     # Long-running orchestration tools manage their own lifecycles — the same
     # exemption the in-graph node applies, read from the same constant so a
@@ -221,13 +218,9 @@ async def dispatch_tool(
         async with asyncio.timeout(bound):
             output = await tool.ainvoke(validated, config=config)
     except TimeoutError:
-        # The only failure whose effect is unknown: the provider may have
-        # applied it after we stopped waiting. Bounded HERE so both surfaces
-        # inherit it and the model gets THIS structured error: the in-graph
-        # node's own bound is a backstop set strictly above this one (see
-        # TOOL_TIMEOUT_BACKSTOP_BUFFER_SECONDS), and the sandbox route has none
-        # of its own — its client would otherwise give up first and retry a
-        # mutation that was still in flight.
+        # The only failure whose effect is unknown — the provider may have
+        # applied it after we stopped waiting. Bounded here so the model gets
+        # this structured error; see TOOL_TIMEOUT_BACKSTOP_BUFFER_SECONDS.
         return _failure(
             user_id,
             resolved_name,
@@ -255,10 +248,9 @@ async def dispatch_tool(
 
     _EXECUTE_DISPATCH_TOTAL.labels(outcome="ok").inc()
     if user_id:
-        # The one TOOL_USED per proxied run, attributed to the REAL tool with
-        # via="execute" so it can be ratioed against execute failures. The
-        # middleware emitter skips calls named `execute` for exactly this reason
-        # (root CLAUDE.md: one action, one event, one emitter).
+        # The one TOOL_USED per proxied run, attributed to the real tool with
+        # via="execute" (the middleware emitter skips calls named execute for
+        # this reason: one action, one event, one emitter).
         capture_event(
             user_id,
             AnalyticsEvents.TOOL_USED,
@@ -284,12 +276,12 @@ async def _dispatch_ticket(
     answers, not failures: they return ``ok=True`` with the refusal as the
     output, so the model reads them instead of tripping the failure metric.
     """
-    # Deferred import: ledger services reach the registry via dispatch, so a
-    # top-level import would close the same cycle revoke_tool documented.
-    from app.models.agent_models import agent_configurable  # noqa: PLC0415
-    from app.services.hil.ledger_decide import redeem_approved, revoke_ticket  # noqa: PLC0415
+    from app.services.hil.ledger_decide import (  # noqa: PLC0415 -- ledger_decide reaches the registry via dispatch; a top-level import closes that cycle
+        redeem_approved,
+        revoke_ticket,
+    )
 
-    configurable = agent_configurable(config)
+    configurable: AgentConfigurable = agent_configurable(config)
     caller = str(configurable.get("thread_id") or "")
     ticket_user = str(configurable.get("user_id") or user_id or "")
     conversation_id = str(configurable.get("conversation_id") or "")
@@ -365,4 +357,4 @@ def _validate_args(tool: BaseTool, data: dict[str, Any]) -> dict[str, Any] | Dis
         )
     # exclude_unset so tool-side defaults stay the tool's own — mirrors the
     # bind path, which forwards only the args the model actually supplied.
-    return model.model_dump(exclude_unset=True)
+    return model.model_dump(mode="json", exclude_unset=True)
