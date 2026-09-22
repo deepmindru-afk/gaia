@@ -50,3 +50,13 @@ def test_the_sdk_fallback_counts_only_the_bench_users_traces(
     monkeypatch.setattr(subprocess, "run", _cli_missing)
     monkeypatch.setattr(langsmith, "Client", _FakeClient)
     assert agent_bench._tokens_between(START, END, BENCH_USER) == 100
+
+
+def test_an_unresolved_bench_user_reports_tokens_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGSMITH_PROJECT", "bench")
+    monkeypatch.setattr(agent_bench, "_load_api_env", lambda: None)
+    monkeypatch.setattr(subprocess, "run", _cli_missing)
+    monkeypatch.setattr(langsmith, "Client", _FakeClient)
+    assert agent_bench._tokens_between(START, END, None) is None

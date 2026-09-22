@@ -150,23 +150,25 @@ def _resolve_user_id(api: str, user: str, timeout: int) -> str | None:
         return None
 
 
-def _is_bench_users_run(metadata: dict[str, Any], user_id: str | None) -> bool:
+def _is_bench_users_run(metadata: dict[str, Any], user_id: str) -> bool:
     """Whether a root trace belongs to the bench user; the project is shared across worktrees."""
-    return not user_id or metadata.get("user_id") == user_id
+    owner = metadata.get("user_id")
+    return isinstance(owner, str) and owner == user_id
 
 
 def _tokens_between(start: datetime, end: datetime, user_id: str | None = None) -> int | None:
-    """Sum of root-trace tokens in the window, or None when tracing is unavailable.
+    """Sum of the bench user's root-trace tokens in the window, or None when unavailable.
 
-    Prefers the `langsmith` CLI (no SDK import, works off env auth); falls back
-    to the SDK when the CLI is missing.
+    Unavailable also covers an unresolved user: the project is shared across
+    worktrees, so an unscoped sum would count their traces as this arm's.
+    Prefers the `langsmith` CLI; falls back to the SDK when the CLI is missing.
     """
     import os
     import subprocess
 
     _load_api_env()
     project = os.environ.get("LANGSMITH_PROJECT")
-    if not project:
+    if not project or not user_id:
         return None
     try:
         out = subprocess.run(

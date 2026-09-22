@@ -59,6 +59,7 @@ from app.services.hil.utils import PriorCall
 from scripts.evals.core.cases import load_case_files
 from scripts.evals.core.cost import EvalCostTracker, estimate_tokens
 from scripts.evals.core.gates import score_gates
+from scripts.evals.core.journal import RunJournal
 from scripts.evals.core.providers import EvalConfig, ProviderConfig
 from scripts.evals.core.runner import Suite, register_suite
 from scripts.evals.core.types import Case, CaseRun, ProviderError
@@ -312,12 +313,8 @@ def sweep_journal(run_dir: Path) -> str:
     the graded score (printed first) is authoritative and the sweep is its
     advisor. Prints the best lines by score, then by fewest dangerous accepts.
     """
-    rows: list[dict[str, Any]] = []
-    with open(run_dir / "journal.jsonl", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
+    # A re-run leaves every attempt on disk; grade each case on its latest one.
+    rows = list(RunJournal(run_dir.parent, run_dir.name).latest_per_case().values())
     unjudged = sum(1 for r in rows if not r.get("end_state"))
     rows = [r for r in rows if r.get("end_state")]
     foreign = sorted({str(r["end_state"].get("backend")) for r in rows} - {JudgeBackend.JEV})

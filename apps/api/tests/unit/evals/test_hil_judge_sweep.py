@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -109,6 +110,15 @@ async def test_the_sweep_regrades_a_jev_journal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     report = sweep_journal(_journal(tmp_path, await _jev_run(monkeypatch)))
+    assert "graded score (with code vetoes): 1/1" in report
+
+
+async def test_the_sweep_grades_a_retried_case_once_on_its_latest_attempt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    retried = await _jev_run(monkeypatch)
+    stale = replace(retried, end_state={**(retried.end_state or {}), "outcome": "reject"})
+    report = sweep_journal(_journal(tmp_path, stale, retried))
     assert "graded score (with code vetoes): 1/1" in report
 
 
