@@ -1,10 +1,13 @@
 """Observed-shape learning — structure in, structure stored, values never."""
 
 from datetime import UTC, datetime
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.constants.execute import TOOL_SHAPE_MAX_KEYS_PER_OBJECT
+from app.constants.log_tags import LogTag
 from app.services import tool_shape_service
 from app.services.tool_shape_service import record_observed_shape
 
@@ -204,6 +207,123 @@ class TestRecordObservedShape:
             await record_observed_shape("T", "plain text result", scope=SCOPE)
         repo.get_shape.assert_not_awaited()
         repo.record.assert_not_awaited()
+
+    async def test_the_stored_shape_carries_no_schema_dialect_marker(self) -> None:
+        repo = _repo()
+        with patch(REPO, repo):
+            await record_observed_shape("T", {"a": 1}, scope=SCOPE)
+        (_, _, schema), _ = repo.record.await_args
+        assert schema == {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}},
+            "required": ["a"],
+        }
+
+    async def test_a_shape_exactly_at_the_size_cap_is_still_stored(self) -> None:
+        exact = len(
+            json.dumps(
+                {"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"]}
+            )
+        )
+        repo = _repo()
+        with patch(REPO, repo), patch.object(tool_shape_service, "TOOL_SHAPE_MAX_CHARS", exact):
+            await record_observed_shape("T", {"a": 1}, scope=SCOPE)
+        repo.record.assert_awaited_once()
+
+    async def test_an_oversized_shape_is_reported_for_its_tool(self) -> None:
+        repo = _repo()
+        with (
+            patch(REPO, repo),
+            patch.object(tool_shape_service, "TOOL_SHAPE_MAX_CHARS", 10),
+            patch.object(tool_shape_service, "log") as mock_log,
+        ):
+            await record_observed_shape("GMAIL_FETCH_EMAILS", {"a": 1}, scope=SCOPE)
+        mock_log.warning.assert_called_once_with(
+            f"{LogTag.TOOL} observed shape exceeds the size cap; keeping the stored one",
+            tool_name="GMAIL_FETCH_EMAILS",
+        )
+
+    async def test_a_dict_exactly_at_the_key_limit_stays_a_record(self) -> None:
+        record = {f"field_{n}": n for n in range(TOOL_SHAPE_MAX_KEYS_PER_OBJECT)}
+        repo = _repo()
+        with patch(REPO, repo):
+            await record_observed_shape("T", {"record": record}, scope=SCOPE)
+        (_, _, schema), _ = repo.record.await_args
+        assert set(schema["properties"]["record"]["properties"]) == set(record)
+
+    async def test_a_map_node_keeps_no_required_list_for_its_data_keys(self) -> None:
+        repo = _repo()
+        with patch(REPO, repo):
+            await record_observed_shape("T", {"per_user": {"a@x.com": {"n": 1}}}, scope=SCOPE)
+        (_, _, schema), _ = repo.record.await_args
+        assert set(schema["properties"]["per_user"]) == {"type", "additionalProperties"}
+
+    async def test_named_fields_beside_a_map_keep_their_required_list(self) -> None:
+        stored = {
+            "type": "object",
+            "properties": {"total": {"type": "integer"}},
+            "required": ["total"],
+            "additionalProperties": {"type": "integer"},
+        }
+        repo = _repo(existing_schema=stored)
+        with patch(REPO, repo):
+            await record_observed_shape("T", {"total": 3}, scope=SCOPE)
+        (_, _, schema), _ = repo.record.await_args
+        assert schema["required"] == ["total"]
+        assert schema["additionalProperties"] == {"type": "integer"}
+
+    async def test_a_stored_map_value_shape_unions_with_the_next_observation(self) -> None:
+        stored = {
+            "type": "object",
+            "properties": {
+                "per_user": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {"n": {"type": "integer"}},
+                        "required": ["n"],
+                    },
+                }
+            },
+        }
+        repo = _repo(existing_schema=stored)
+        with patch(REPO, repo):
+            await record_observed_shape(
+                "T", {"per_user": {"bob@x.com": {"flag": True}}}, scope=SCOPE
+            )
+        (_, _, schema), _ = repo.record.await_args
+        value_shape = schema["properties"]["per_user"]["additionalProperties"]
+        assert set(value_shape["properties"]) == {"n", "flag"}
+        assert "required" not in value_shape
+
+    async def test_a_map_nested_in_a_union_round_trips_through_the_next_merge(self) -> None:
+        stored = {
+            "type": "object",
+            "properties": {
+                "per_user": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "object",
+                                "properties": {"n": {"type": "integer"}},
+                            },
+                        },
+                    ]
+                }
+            },
+        }
+        repo = _repo(existing_schema=stored)
+        with patch(REPO, repo):
+            await record_observed_shape(
+                "T", {"per_user": {"bob@x.com": {"flag": True}}}, scope=SCOPE
+            )
+        (_, _, schema), _ = repo.record.await_args
+        assert "*" not in json.dumps(schema)
+        branches = schema["properties"]["per_user"]["anyOf"]
+        map_branch = next(b for b in branches if b.get("type") == "object")
+        assert set(map_branch["additionalProperties"]["properties"]) == {"n", "flag"}
 
     async def test_non_json_scalars_become_string_typed_not_errors(self) -> None:
         repo = _repo()

@@ -67,7 +67,7 @@ async def record_observed_shape(tool_name: str, output: object, *, scope: str) -
         builder.add_schema(_additional_to_sentinel(existing.output_schema))
     builder.add_object(_sample(output))
     schema = builder.to_schema()
-    schema.pop("$schema", None)
+    del schema["$schema"]
     schema = cast(dict[str, object], _sentinel_to_additional(schema))
     if len(json.dumps(schema, default=str)) > TOOL_SHAPE_MAX_CHARS:
         log.warning(
@@ -87,7 +87,8 @@ def _sample(node: object) -> object:
     if node is None or isinstance(node, str | int | float | bool):
         return node
     # Non-JSON scalar (datetime, Decimal, ...): its serialized form is a string.
-    return str(node)
+    # Unmutated: only the type is learned, and every str() result is a string.
+    return str(node)  # pragma: no mutate
 
 
 def _sample_dict(node: dict[object, object]) -> dict[str, object]:
@@ -121,8 +122,11 @@ def _sentinel_to_additional(node: object) -> object:
         sentinel_schema: _SchemaNode | None = (
             cast(_SchemaNode, sentinel) if isinstance(sentinel, dict) else None
         )
+        # Unmutated default: a sentinel always samples at least one value, so genson emits items.
         out["additionalProperties"] = (
-            sentinel_schema.get("items", {}) if sentinel_schema is not None else {}
+            sentinel_schema.get("items", {})  # pragma: no mutate
+            if sentinel_schema is not None
+            else {}
         )
         if not properties:
             del out["properties"]

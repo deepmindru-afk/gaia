@@ -4,6 +4,7 @@ Sources (Google contacts, Gravatar, domain favicon) degrade silently and
 merge field-wise in priority order; results are cached per (user, email).
 """
 
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -28,6 +29,7 @@ from app.services.email_profile_service import (
     _merge_profiles,
     _person_to_profile,
     _pick_photo,
+    _search_google_people,
     fetch_email_profile,
     fetch_email_profiles,
 )
@@ -264,6 +266,59 @@ class TestFetchEmailProfiles:
 
         assert results["alice@example.com"].title == "Alice"
         assert results["bob@example.com"].title is None
+
+
+def _cold_search(
+    search_payloads: list[dict],
+) -> tuple[list[ProxyRequest], Callable[[ProxyRequest], Awaitable[dict | None]]]:
+    """Answer each People search call in turn, and people.get with nothing."""
+    requests: list[ProxyRequest] = []
+    payloads = iter(search_payloads)
+
+    async def fake_proxy_request(request: ProxyRequest) -> dict | None:
+        requests.append(request)
+        if request.endpoint == PEOPLE_SEARCH_ENDPOINT:
+            return next(payloads)
+        return {}
+
+    return requests, fake_proxy_request
+
+
+class TestSearchWarmupRetry:
+    """Google's contact search returns empty until warmed up; the retry must repeat the original query."""
+
+    async def test_a_cold_search_is_warmed_up_then_retried_with_the_same_request(self, mock_http):
+        requests, fake = _cold_search([{"results": []}, {"results": []}, _search_result(_person())])
+        mock_http.proxy.side_effect = fake
+
+        with patch(f"{_MOD}.PEOPLE_SEARCH_WARMUP_DELAY_SECONDS", 0):
+            profile = await _search_google_people(
+                USER_ID, PEOPLE_SEARCH_ENDPOINT, EMAIL, PEOPLE_SEARCH_READ_MASK
+            )
+
+        assert profile is not None
+        assert profile.title == "Alice Example"
+        searches = [r for r in requests if r.endpoint == PEOPLE_SEARCH_ENDPOINT]
+        assert [r.query["query"] for r in searches] == [EMAIL, "", EMAIL]
+        assert searches[2] == ProxyRequest(
+            user_id=USER_ID,
+            toolkit="GMAIL",
+            method="GET",
+            endpoint=PEOPLE_SEARCH_ENDPOINT,
+            query={"query": EMAIL, "readMask": PEOPLE_SEARCH_READ_MASK},
+        )
+
+    async def test_a_retry_that_fails_finds_no_one_instead_of_raising(self, mock_http):
+        requests, fake = _cold_search([{"results": []}, {"results": []}, None])
+        mock_http.proxy.side_effect = fake
+
+        with patch(f"{_MOD}.PEOPLE_SEARCH_WARMUP_DELAY_SECONDS", 0):
+            profile = await _search_google_people(
+                USER_ID, PEOPLE_SEARCH_ENDPOINT, EMAIL, PEOPLE_SEARCH_READ_MASK
+            )
+
+        assert profile is None
+        assert len(requests) == 3
 
 
 class TestPersonToProfile:

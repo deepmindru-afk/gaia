@@ -237,6 +237,7 @@ class TestGetPlans:
         assert len(plans) == 1
         assert plans[0].name == "Cached Plan"
         mock_plan_repository.list_plans.assert_not_awaited()
+        mock_redis_cache.get.assert_awaited_once_with(ACTIVE_PLANS_CACHE_KEY)
 
     async def test_clears_cache_on_incompatible_data(
         self,
@@ -649,6 +650,40 @@ class TestCreateSubscription:
         assert "billing_address" not in prod_kwargs
         assert "phone_number" not in prod_kwargs["customer"]
         assert "show_saved_payment_methods" not in prod_kwargs
+
+    @pytest.mark.parametrize(
+        ("names", "expected_name"),
+        [
+            ({"first_name": "Alice", "name": "Alice Smith"}, "Alice"),
+            ({"first_name": None, "name": "Alice Smith"}, "Alice Smith"),
+            ({"first_name": None, "name": None}, "User"),
+        ],
+        ids=["first-name", "full-name", "no-name"],
+    )
+    async def test_the_checkout_is_prefilled_with_the_users_email_and_best_name(
+        self,
+        payment_service,
+        mock_users_collection,
+        mock_subscription_repository,
+        mock_plan_repository,
+        mock_dodo_client,
+        names: dict[str, str | None],
+        expected_name: str,
+    ):
+        _set_user(mock_users_collection, {**SAMPLE_USER_DOC, **names})
+        mock_subscription_repository.get_active_for_user = AsyncMock(return_value=None)
+        mock_dodo_client.checkout_sessions.create = MagicMock(
+            return_value=SimpleNamespace(session_id="sess_004", checkout_url="https://pay/x")
+        )
+        mock_plan_repository.list_plans = AsyncMock(return_value=[])
+
+        with patch.object(payment_service_module.settings, "ENV", "production"):
+            await payment_service.create_subscription(
+                user_id=FAKE_USER_ID, product_id="prod_abc123"
+            )
+
+        customer = mock_dodo_client.checkout_sessions.create.call_args.kwargs["customer"]
+        assert customer == {"email": FAKE_EMAIL, "name": expected_name}
 
     async def test_return_url_follows_the_requested_path(
         self,

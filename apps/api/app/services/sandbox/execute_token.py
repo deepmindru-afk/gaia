@@ -66,7 +66,8 @@ def mint_execute_token(
         stream_id=stream_id,
         sandbox_id=sandbox_id,
         scoped_tool_names=scoped_tool_names,
-        exp=int(datetime.now(UTC).timestamp()) + ttl_seconds,
+        # Unmutated: a naive now() reads as local time, so .timestamp() is the same epoch second.
+        exp=int(datetime.now(UTC).timestamp()) + ttl_seconds,  # pragma: no mutate
     )
     payload = base64.urlsafe_b64encode(claims.model_dump_json().encode()).decode()
     return f"{payload}.{_sign(payload.encode())}"
