@@ -530,6 +530,15 @@ async def _finalize_executor_run(
     # Work landing after this run's LAST model call has no further reasoning step
     # to absorb it, so carry it into a fresh run. Runs on EVERY terminal path,
     # cancelled included: a Stop targets the running task, not later work.
+
+    # Failed before it had a context: carried work would fail setup identically, forever.
+    if result_type == "error" and ctx is None:
+        log.warning(
+            f"{LogTag.AGENT} Executor setup failed; pending work left for the next run",
+            conversation_id=run.conversation_id,
+            task_id=run.task_id,
+        )
+        return
     await _carry_pending_into_new_run(run, ctx)
 
 

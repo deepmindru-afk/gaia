@@ -338,6 +338,27 @@ class TestCancelStillCarriesHandedOverWork:
         boundaries.inbox_cls.return_value.retire.assert_not_awaited()
         spawn.assert_awaited_once()
 
+    async def test_a_run_that_failed_setup_does_not_restart_itself_for_its_pending_work(
+        self, boundaries
+    ) -> None:
+        """No context means no model call: the carried work would fail setup the same way, forever."""
+        create_session("s1", RunKind.QUEUED)
+        boundaries.pending = [InboxEntry(id="e1", text="the handed-over ask")]
+        boundaries.prepare.return_value = PreparedQueuedTask(
+            run=_run(RunKind.QUEUED, stream_id="queued_next"),
+            task="the handed-over ask",
+            configurable={"stream_id": "queued_next"},
+        )
+
+        with patch.object(er, "run_executor_background", new_callable=AsyncMock) as spawn:
+            await er._finalize_executor_run(
+                _run(RunKind.QUEUED), TASK, "Executor agent not available", "error"
+            )
+            await asyncio.sleep(0)
+
+        spawn.assert_not_awaited()
+        boundaries.inbox_cls.return_value.retire.assert_not_awaited()
+
 
 class TestRecordPause:
     """_record_pause must fail the run, never the process, when the write fails.
