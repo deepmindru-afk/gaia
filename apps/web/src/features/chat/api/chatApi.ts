@@ -20,6 +20,7 @@ import type {
 } from "@shared/chat";
 import type { DesktopToolResult } from "@shared/desktop-tools";
 import { getSubscriptionRequiredDetail } from "@shared/types/subscription";
+import { BATCH_OUTCOME_REASON } from "@/features/chat/utils/batchOutcome";
 import { apiBaseUrl, clientHeaders } from "@/lib/api/client";
 import { api, binaryField, formDataSerializer } from "@/lib/api/typed";
 import { desktopClientHeaders } from "@/lib/electron/api";
@@ -509,9 +510,9 @@ export const chatApi = {
 
   /**
    * Decide several pending approvals in one submission (the batch review's
-   * "Approve all"/"Decline all"). Per-approval outcomes come back in the
-   * response — an already-resolved item never fails the rest. Chunked to the
-   * server's 25-item cap so a large sheet commits instead of 422ing whole.
+   * "Approve all"/"Decline all"), chunked to the server's 25-item cap. Chunks
+   * commit independently, so a failed chunk comes back as per-item "error"
+   * outcomes beside the committed ones; throws only when every chunk failed.
    */
   postApprovalBatchDecision: async (
     payload: BatchApprovalDecisionPayload,
@@ -526,7 +527,7 @@ export const chatApi = {
     }
     // Disjoint slices with no ordering dependency (chunked only for the 25-item
     // cap), so they fan out in parallel rather than serially.
-    const responses = await Promise.all(
+    const results = await Promise.allSettled(
       chunks.map((decisions) =>
         api.post("/api/v1/approvals/batch-decision", {
           body: { decisions },
@@ -534,6 +535,20 @@ export const chatApi = {
         }),
       ),
     );
-    return { outcomes: responses.flatMap((r) => r.outcomes) };
+    const firstFailure = results.find((r) => r.status === "rejected");
+    if (firstFailure && results.every((r) => r.status === "rejected")) {
+      throw firstFailure.reason;
+    }
+    return {
+      outcomes: results.flatMap((result, i) =>
+        result.status === "fulfilled"
+          ? result.value.outcomes
+          : chunks[i].map(({ approval_id }) => ({
+              approval_id,
+              resolved: false,
+              reason: BATCH_OUTCOME_REASON.ERROR,
+            })),
+      ),
+    };
   },
 };

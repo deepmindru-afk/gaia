@@ -1,5 +1,12 @@
 import type { ApprovalStatus } from "@shared/chat";
 
+/** Why a batch item did not commit — the server's vocabulary (ledger_decide.py). */
+export const BATCH_OUTCOME_REASON = {
+  NOT_FOUND: "not_found",
+  STALE: "stale",
+  ERROR: "error",
+} as const;
+
 /** Server-reported ledger states that name a real card status. */
 const KNOWN_STATUSES: ReadonlySet<string> = new Set<string>([
   "pending",

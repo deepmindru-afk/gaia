@@ -49,4 +49,47 @@ describe("chatApi approval decisions", () => {
     ).toHaveLength(5);
     expect(response.outcomes).toHaveLength(30);
   });
+
+  it("keeps committed chunks' outcomes when another chunk fails", async () => {
+    post.mockImplementation(
+      async (_url: string, init: { body: { decisions: unknown[] } }) => {
+        const ids = (init.body.decisions as { approval_id: string }[]).map(
+          (d) => d.approval_id,
+        );
+        if (ids.includes("ap_25")) throw new ApiError("Bad gateway", 502);
+        return {
+          outcomes: ids.map((approval_id) => ({
+            approval_id,
+            resolved: true,
+            reason: null,
+          })),
+        };
+      },
+    );
+    const decisions = Array.from({ length: 30 }, (_, i) => ({
+      approval_id: `ap_${i}`,
+      decision: "approve" as const,
+    }));
+    const response = await chatApi.postApprovalBatchDecision({ decisions });
+    expect(response.outcomes).toHaveLength(30);
+    expect(response.outcomes.slice(0, 25).every((o) => o.resolved)).toBe(true);
+    expect(response.outcomes.slice(25)).toEqual(
+      decisions.slice(25).map(({ approval_id }) => ({
+        approval_id,
+        resolved: false,
+        reason: "error",
+      })),
+    );
+  });
+
+  it("throws when no chunk committed, so the caller reports total failure", async () => {
+    post.mockRejectedValue(new ApiError("Bad gateway", 502));
+    const decisions = Array.from({ length: 30 }, (_, i) => ({
+      approval_id: `ap_${i}`,
+      decision: "approve" as const,
+    }));
+    await expect(
+      chatApi.postApprovalBatchDecision({ decisions }),
+    ).rejects.toBeInstanceOf(ApiError);
+  });
 });

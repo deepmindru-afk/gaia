@@ -10,7 +10,10 @@ import type {
 import { useEffect, useState } from "react";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
-import { resolveBatchOutcomeStatus } from "@/features/chat/utils/batchOutcome";
+import {
+  BATCH_OUTCOME_REASON,
+  resolveBatchOutcomeStatus,
+} from "@/features/chat/utils/batchOutcome";
 import { toast } from "@/lib/toast";
 import ApprovalRequestSection from "./ApprovalRequestSection";
 import { useApprovalResolver } from "./ApprovalResolveContext";
@@ -90,7 +93,7 @@ export default function ApprovalRequestGroup({
         // sent no state.
         if (outcome.resolved) {
           settle(outcome.approval_id, status, null);
-        } else if (outcome.reason === "not_found") {
+        } else if (outcome.reason === BATCH_OUTCOME_REASON.NOT_FOUND) {
           settle(
             outcome.approval_id,
             resolveBatchOutcomeStatus(outcome.status, status),
@@ -99,7 +102,9 @@ export default function ApprovalRequestGroup({
         }
       }
       if (
-        response.outcomes.some((o) => !o.resolved && o.reason !== "not_found")
+        response.outcomes.some(
+          (o) => !o.resolved && o.reason !== BATCH_OUTCOME_REASON.NOT_FOUND,
+        )
       ) {
         toast.error("Some approvals couldn't be submitted — please try again");
       }
