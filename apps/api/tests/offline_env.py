@@ -20,6 +20,13 @@ os.environ["DEV_AUTH_BYPASS_EMAIL"] = ""
 # routes LLM calls to the stub; "" would be a pydantic bool_parsing error, so "false".
 os.environ["DEV_UNLIMITED_RATE_LIMITS"] = "false"
 os.environ["GAIA_SIM_MODE"] = "false"
+# Code mode mints per-invocation tokens; pin it off so a developer's .env
+# cannot leak execute env into hermetic bash tests. Opt in per test.
+os.environ["ENABLE_CODE_MODE"] = "false"
+# Same leak, opposite pin: the OpenUI experiment ships ON and the prompt-contract
+# tests assert the OpenUI variant, so a developer's ENABLE_COMMS_OPENUI=false in
+# .env would flip the suite's static prompts. Flag-off paths opt in per test.
+os.environ["ENABLE_COMMS_OPENUI"] = "true"
 os.environ.setdefault(
     "MONGO_DB",
     "mongodb://localhost:27017/gaia_test?serverSelectionTimeoutMS=100&connectTimeoutMS=100",
