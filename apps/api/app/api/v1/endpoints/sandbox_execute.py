@@ -62,7 +62,7 @@ async def _enforce_budget(run_id: str) -> None:
             fix="Batch work inside the script; a fresh bash run mints a fresh budget",
             status_code=429,
         )
-    minute_key = f"sandbox_execute:rate:{run_id}:{int(time.time() // 60)}"
+    minute_key = f"sandbox_execute:rate:{run_id}:{int(time.time()) // 60}"
     rate = await redis_cache.client.incr(minute_key)
     if rate == 1:
         await redis_cache.client.expire(minute_key, 120)
@@ -104,7 +104,7 @@ def _claims_from_authorization(authorization: str) -> SandboxExecuteClaims:
 @router.post("/execute")
 async def sandbox_execute(
     payload: SandboxExecuteRequest,
-    authorization: Annotated[str, Header()] = "",
+    authorization: Annotated[str, Header()] = "",  # pragma: no mutate — no scheme, same 401
 ) -> SandboxExecuteResponse:
     log.set(sandbox_execute={"tool_name": payload.tool_name})
     claims = _claims_from_authorization(authorization)
@@ -145,7 +145,7 @@ class SandboxToolSchemaRequest(BaseModel):
 @router.post("/tool-schema")
 async def sandbox_tool_schema(
     payload: SandboxToolSchemaRequest,
-    authorization: Annotated[str, Header()] = "",
+    authorization: Annotated[str, Header()] = "",  # pragma: no mutate — no scheme, same 401
 ) -> ToolContract:
     """The full tool contract behind the discovery doc's pointer.
 
