@@ -24,10 +24,11 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, ToolCall, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langgraph.errors import GraphBubbleUp
+from langgraph.graph.message import Messages
 from langgraph.store.base import BaseStore
 from langgraph.types import Command
 
@@ -40,7 +41,11 @@ from app.agents.middleware.runtime_adapter import (
 )
 from app.constants.execute import EXECUTE_TOOL_NAME
 from app.constants.log_tags import LogTag
-from app.models.agent_models import AgentMiddlewareStack
+from app.models.agent_models import (
+    AgentConfigurable,
+    AgentMiddlewareStack,
+    agent_configurable,
+)
 from app.override.langgraph_bigtool.utils import State, messages_delta_reducer
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.latency_metrics import observe_tool_call
@@ -50,7 +55,7 @@ from shared.py.wide_events import log
 # (a bare AIMessage / ExtendedModelResponse for the model hook); this executor only
 # ever feeds and consumes ModelResponse, so the model chain is narrowed to it.
 ModelCallHandler = Callable[[ModelRequest], Awaitable[ModelResponse]]
-ToolCallHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]]
+ToolCallHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[str]]]
 
 
 def _tool_metric_name(tool_name: str, tool: BaseTool | None) -> str:
@@ -65,7 +70,7 @@ def _tool_metric_name(tool_name: str, tool: BaseTool | None) -> str:
     return tool_name or "unknown"
 
 
-def _apply_state_update(current_state: dict[str, Any], update: Mapping[str, Any]) -> None:
+def _apply_state_update(current_state: State, update: Mapping[str, object]) -> None:
     """Merge a middleware hook's return into current_state, in place.
 
     A hook returns a LangGraph state update resolved through each channel's reducer, so a
@@ -76,10 +81,10 @@ def _apply_state_update(current_state: dict[str, Any], update: Mapping[str, Any]
     for key, value in update.items():
         if key == "messages":
             current_state["messages"] = messages_delta_reducer(
-                current_state.get("messages", []), [value]
+                current_state.get("messages", []), [cast(Messages, value)]
             )
         else:
-            current_state[key] = value
+            cast(dict[str, object], current_state)[key] = value
 
 
 def _has_override(mw: AgentMiddleware, method_name: str) -> bool:
@@ -148,7 +153,7 @@ class MiddlewareExecutor:
             return state
 
         runtime = self._create_runtime(config, store)
-        current_state: dict[str, Any] = dict(state)
+        current_state: State = state.copy()
 
         for mw in self.middleware:
             try:
@@ -190,7 +195,7 @@ class MiddlewareExecutor:
             return state
 
         runtime = self._create_runtime(config, store)
-        current_state: dict[str, Any] = dict(state)
+        current_state: State = state.copy()
 
         for mw in self.middleware:
             try:
@@ -223,7 +228,7 @@ class MiddlewareExecutor:
         state: State,
         config: RunnableConfig,
         store: BaseStore | None,
-        tools: list[BaseTool | dict[str, Any]],
+        tools: list[BaseTool | dict[str, object]],
         invoke_fn: Callable[..., Awaitable[AIMessage]],
     ) -> AIMessage:
         """Wrap the model invocation with all wrap_model_call middleware.
@@ -308,13 +313,13 @@ class MiddlewareExecutor:
 
     async def wrap_tool_invocation(
         self,
-        tool_call: dict[str, Any],
+        tool_call: ToolCall,
         tool: BaseTool | None,
         state: State,
         config: RunnableConfig,
         store: BaseStore | None,
-        invoke_fn: Callable[..., Awaitable[ToolMessage | Command[Any]]],
-    ) -> ToolMessage | Command[Any]:
+        invoke_fn: Callable[..., Awaitable[ToolMessage | Command[str]]],
+    ) -> ToolMessage | Command[str]:
         """Wrap a tool invocation with all wrap_tool_call middleware.
 
         Creates a chain of handlers where each middleware wraps the next;
@@ -324,19 +329,20 @@ class MiddlewareExecutor:
         """
         tool_name = tool_call.get("name", "unknown")
         # Attribute the capture by the run's user; personless runs are skipped.
-        configurable = config.get("configurable") or {}
-        tool_user_id = configurable.get("user_id") if isinstance(configurable, dict) else None
+        configurable: AgentConfigurable = agent_configurable(config)
+        tool_user_id = configurable.get("user_id")
         runtime = self._create_tool_runtime(config, store, tool_name)
-        request = create_tool_call_request(tool_call, tool, state, runtime)
+        # A ToolCall is a plain dict at runtime; create_tool_call_request re-normalizes it.
+        request = create_tool_call_request(cast(dict[str, object], tool_call), tool, state, runtime)
 
         # Set once the tool has run, so the fallback below retries only a middleware
         # that failed *before* the tool. tool_attempted covers the third case: the
         # tool raised, so tool_result is still None but a retry re-fires side effects.
-        tool_result: ToolMessage | Command[Any] | None = None
+        tool_result: ToolMessage | Command[str] | None = None
         tool_attempted = False
 
         # Build the handler chain from inside out
-        async def final_handler(req: ToolCallRequest) -> ToolMessage | Command[Any]:
+        async def final_handler(req: ToolCallRequest) -> ToolMessage | Command[str]:
             """Innermost handler - actually calls the tool."""
             nonlocal tool_result, tool_attempted
             tool_attempted = True
@@ -364,7 +370,7 @@ class MiddlewareExecutor:
                 ) -> ToolCallHandler:
                     """Bind this middleware and handler by value, so every link does not close over the loop's last middleware."""
 
-                    async def wrapped(req: ToolCallRequest) -> ToolMessage | Command[Any]:
+                    async def wrapped(req: ToolCallRequest) -> ToolMessage | Command[str]:
                         """Run the middleware's async wrap_tool_call hook around the rest of the chain."""
                         return await middleware.awrap_tool_call(req, handler)
 
@@ -378,16 +384,16 @@ class MiddlewareExecutor:
                 ) -> ToolCallHandler:
                     """Bind a sync-hook middleware by value into the chain, which stays async end to end."""
 
-                    async def wrapped(req: ToolCallRequest) -> ToolMessage | Command[Any]:
+                    async def wrapped(req: ToolCallRequest) -> ToolMessage | Command[str]:
                         """Run the sync wrap_tool_call hook, awaiting its result when the hook turns out to be a coroutine."""
                         # Async handler into the sync hook — see wrap_model_invocation.
                         result: Any = middleware.wrap_tool_call(
                             req,
-                            cast(Callable[[ToolCallRequest], ToolMessage | Command[Any]], handler),
+                            cast(Callable[[ToolCallRequest], ToolMessage | Command[str]], handler),
                         )
                         if inspect.iscoroutine(result):
                             result = await result
-                        return cast(ToolMessage | Command[Any], result)
+                        return cast(ToolMessage | Command[str], result)
 
                     return wrapped
 

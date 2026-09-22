@@ -41,6 +41,8 @@ class PublicIntegrationSearchHit(BaseModel):
 
     integration_id: str
     relevance_score: float
+    # Read by retrieve_tools to label its integration: entries; the store does not return it yet.
+    name: str | None = None
 
 
 class IntegrationToolsSlice(BaseModel):

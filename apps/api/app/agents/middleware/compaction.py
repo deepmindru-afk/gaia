@@ -20,12 +20,18 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 import hashlib
 import json
-from typing import Any, Literal, cast
+from typing import Literal, Protocol, TypedDict, cast
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.language_models import LanguageModelLike
-from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AnyMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolCall,
+    ToolMessage,
+)
 from langgraph.types import Command
 
 from app.agents.workspace.offload import (
@@ -46,7 +52,7 @@ from app.constants.summarization import (
     COMPACTION_SUMMARY_TIMEOUT_SECONDS,
     MIN_COMPACTION_SIZE,
 )
-from app.models.agent_models import runtime_configurable
+from app.models.agent_models import AgentConfigurable, runtime_configurable
 from app.services.storage import JuiceFSUnavailable, write_session_file
 from app.utils.multimodal import (
     MessageContent,
@@ -60,6 +66,20 @@ from shared.py.wide_events import log
 OffloadFmt = Literal["json", "jsonl", "text"]
 
 COMPACTION_TRUNCATED_MARKER = "[Compacted in context]"
+
+
+class _ToolBindingState(TypedDict, total=False):
+    """The graph-state channels a tool request's state and a tool's Command update carry here."""
+
+    messages: list[AnyMessage]
+    selected_tool_ids: list[str]
+
+
+class _AttributeToolCall(Protocol):
+    """A tool call reaching middleware in attribute form rather than as the ToolCall dict."""
+
+    name: str
+    id: str | None
 
 
 def estimate_context_usage(messages: Sequence[AnyMessage], context_window: int) -> float:
@@ -254,7 +274,7 @@ def _stub_spill_message(
     tool_call_id: str,
     reason: str,
     status: str,
-    existing_additional_kwargs: dict[str, Any],
+    existing_additional_kwargs: dict[str, object],
 ) -> ToolMessage:
     """Build the deterministic-preview spill message for an already-written file.
 
@@ -320,7 +340,7 @@ def _summarized_compact_message(
     status: str,
     content_str: str,
     spilled: tuple[OffloadFmt, str] | None,
-    existing_additional_kwargs: dict[str, Any],
+    existing_additional_kwargs: dict[str, object],
 ) -> ToolMessage:
     """Build the LLM-summary compaction message, with an optional spill pointer.
 
@@ -329,7 +349,7 @@ def _summarized_compact_message(
     summary stands alone. spilled is (fmt, sandbox_path) from _write_raw_output.
     """
     body = f"[{tool_name} compacted — {reason}] {summary}"
-    additional: dict[str, Any] = {
+    additional: dict[str, object] = {
         **existing_additional_kwargs,
         "original_length": len(content_str),
         "compacted": True,
@@ -386,7 +406,7 @@ def _truncate_in_context(
     tool_call_id: str,
     reason: str,
     status: str,
-    existing_additional_kwargs: dict[str, Any],
+    existing_additional_kwargs: dict[str, object],
 ) -> ToolMessage | None:
     """Compact content_str in place, keeping its head and tail plus a loud marker.
 
@@ -449,7 +469,7 @@ async def compact_tool_output(
     status: str = "success",
     always_persist: bool = False,
     excluded: bool = False,
-    existing_additional_kwargs: dict[str, Any] | None = None,
+    existing_additional_kwargs: dict[str, object] | None = None,
     summary_llm: LanguageModelLike | None = None,
 ) -> ToolMessage | None:
     """Decide-and-compact a tool output. The one canonical compaction path.
@@ -554,25 +574,26 @@ async def compact_tool_output(
     )
 
 
-def _as_tool_message_command(result: object) -> Command[Any] | None:
-    """Return result when it is a Command whose payload is exactly one ToolMessage.
+def _as_tool_message_command(result: object) -> tuple[Command[str], ToolMessage] | None:
+    """Return (result, its ToolMessage) when result is a Command carrying exactly one ToolMessage.
 
     None for anything else — a multi-message or message-less Command is not a
     tool output and must pass through untouched.
     """
     if not isinstance(result, Command) or not isinstance(result.update, dict):
         return None
-    messages = result.update.get("messages")
+    update: _ToolBindingState = cast(_ToolBindingState, result.update)
+    messages = update.get("messages")
     if isinstance(messages, list) and len(messages) == 1 and isinstance(messages[0], ToolMessage):
-        return result
+        return result, messages[0]
     return None
 
 
 def _merge_into_command(
-    original: Command[Any],
-    bound: ToolMessage | Command[Any],
+    original: Command[str],
+    bound: ToolMessage | Command[str],
     message: ToolMessage,
-) -> Command[Any]:
+) -> Command[str]:
     """Write the compacted message (and any offload binds) back into original.
 
     Mutates the Command's own update dict rather than building a new Command, so
@@ -581,11 +602,12 @@ def _merge_into_command(
     reach the model.
     """
     # A dict by construction — _as_tool_message_command only matches that shape.
-    update = cast(dict[str, Any], original.update)
+    update: _ToolBindingState = cast(_ToolBindingState, original.update)
     update["messages"] = [message]
     if isinstance(bound, Command) and isinstance(bound.update, dict):
-        update["messages"] = bound.update.get("messages", update["messages"])
-        extra = bound.update.get("selected_tool_ids") or []
+        bound_update: _ToolBindingState = cast(_ToolBindingState, bound.update)
+        update["messages"] = bound_update.get("messages", update["messages"])
+        extra = bound_update.get("selected_tool_ids") or []
         existing = update.get("selected_tool_ids") or []
         update["selected_tool_ids"] = [*existing, *(t for t in extra if t not in existing)]
     return original
@@ -624,21 +646,21 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
-    ) -> ToolMessage | Command[Any]:
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[str]]],
+    ) -> ToolMessage | Command[str]:
         result = await handler(request)
 
         # A tool that binds tools or drives the graph returns a Command wrapping a
         # ToolMessage (spawn_subagent, activate_integration); unwrapped it is never
         # compacted. Updated in place so any goto/resume it carries survives.
-        command = _as_tool_message_command(result)
-        message = command.update["messages"][0] if command is not None else result
+        matched = _as_tool_message_command(result)
+        command, message = matched if matched is not None else (None, result)
         if not isinstance(message, ToolMessage):
             return result
 
         # `ToolCall` is a TypedDict, but tool calls also reach middleware in
-        # attribute form; Any keeps the else-branch from being narrowed away.
-        tool_call: Any = request.tool_call
+        # attribute form; the union keeps the else-branch from being narrowed away.
+        tool_call: ToolCall | _AttributeToolCall = request.tool_call
         if isinstance(tool_call, dict):
             tool_name = tool_call.get("name", "")
             tool_call_id = tool_call.get("id", "")
@@ -646,7 +668,7 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
             tool_name = tool_call.name
             tool_call_id = tool_call.id
 
-        configurable = runtime_configurable(request)
+        configurable: AgentConfigurable = runtime_configurable(request)
         thread_id = configurable.get("thread_id")
 
         # Same per-request routing the model node does: bind this request's
@@ -682,7 +704,7 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
 
     def _bind_offload_tools(
         self, result: ToolMessage, request: ToolCallRequest
-    ) -> ToolMessage | Command[Any]:
+    ) -> ToolMessage | Command[str]:
         """Append query_json/grep to selected_tool_ids if result carries an offload marker.
 
         Binds only the mining tools not already selected — selected_tool_ids is an
@@ -692,7 +714,7 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
         info = read_offload(result)
         if info is None:
             return result
-        state = getattr(request, "state", None) or {}
+        state: _ToolBindingState = getattr(request, "state", None) or _ToolBindingState()
         already = set(state.get("selected_tool_ids", []) or [])
         to_bind = [name for name in tools_for_offload(info) if name not in already]
         if not to_bind:
@@ -701,7 +723,7 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
 
     def _get_context_usage(self, request: ToolCallRequest) -> float:
         try:
-            state = getattr(request, "state", None)
+            state: _ToolBindingState | None = getattr(request, "state", None)
             if state is None:
                 return 0.0
             return estimate_context_usage(state.get("messages", []), self.context_window)

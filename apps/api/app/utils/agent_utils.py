@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.core.subagents.registry import get_subagent_by_id
 from app.agents.tools.core.registry import ToolRegistry, get_tool_registry
-from app.agents.tools.execute.unwrap import unwrap_execute_call
+from app.agents.tools.execute.unwrap import ExecuteCallArgs, unwrap_execute_call
 from app.constants.agents import INTERNAL_AGENT_TAG_PATTERN
 from app.constants.cache import HANDOFF_NAME_CACHE_PREFIX
 from app.constants.log_tags import LogTag
@@ -216,11 +216,13 @@ async def format_tool_call_entry(
     # An execute-proxied call renders as its REAL tool (name/category/icon/inputs
     # from the unwrapped identity), else every card collapses to a generic
     # "Execute" row. The proxy's task_description becomes the card's label.
-    call_args: dict[str, Any] = tool_call.get("args", {}) or {}
+    call_args: dict[str, object] = tool_call.get("args", {}) or {}
     task_description: str | None = None
     unwrapped_name, unwrapped_args = unwrap_execute_call(tool_name_raw, call_args)
     if unwrapped_name != tool_name_raw:
-        raw_description = call_args.get("task_description")
+        # A renamed call is by construction an execute call, so these are its args.
+        execute_args: ExecuteCallArgs = cast(ExecuteCallArgs, call_args)
+        raw_description = execute_args.get("task_description")
         task_description = raw_description if isinstance(raw_description, str) else None
         tool_name_raw = unwrapped_name
         call_args = unwrapped_args

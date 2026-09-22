@@ -16,7 +16,7 @@ import asyncio
 from collections.abc import Container
 from enum import StrEnum
 import json
-from typing import Any
+from typing import Any, TypedDict, cast
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -81,6 +81,12 @@ class ToolExecutionResult(BaseModel):
     error: DispatchError | None = None
 
 
+class _TicketData(TypedDict, total=False):
+    """A ticket operation's data as the model sent it; unvalidated, hence object."""
+
+    id: object
+
+
 def dispatch_config_for(user_id: str) -> RunnableConfig:
     """Run config carrying the caller's identity for user-bound wrappers.
 
@@ -101,7 +107,7 @@ async def dispatch_tool(
     *,
     user_id: str | None,
     tool_name: str,
-    data: dict[str, Any],
+    data: dict[str, object],
     config: RunnableConfig,
     integration_only: bool = False,
     scoped_tool_names: Container[str] | None = None,
@@ -264,7 +270,7 @@ async def _dispatch_ticket(
     *,
     user_id: str | None,
     tool_name: str,
-    data: dict[str, Any],
+    data: dict[str, object],
     config: RunnableConfig,
 ) -> ToolExecutionResult:
     """Honor a ticket operation (approve/revoke) on a ledger row.
@@ -285,7 +291,8 @@ async def _dispatch_ticket(
     caller = str(configurable.get("thread_id") or "")
     ticket_user = str(configurable.get("user_id") or user_id or "")
     conversation_id = str(configurable.get("conversation_id") or "")
-    approval_id = data.get("id")
+    ticket: _TicketData = cast(_TicketData, data)
+    approval_id = ticket.get("id")
     if not isinstance(approval_id, str) or not approval_id:
         return ToolExecutionResult(
             ok=True,
@@ -336,7 +343,7 @@ def _failure(user_id: str | None, tool_name: str, error: DispatchError) -> ToolE
     return ToolExecutionResult(ok=False, resolved_name=tool_name, error=error)
 
 
-def _validate_args(tool: BaseTool, data: dict[str, Any]) -> dict[str, Any] | DispatchError:
+def _validate_args(tool: BaseTool, data: dict[str, object]) -> dict[str, object] | DispatchError:
     """``data`` coerced through the tool's schema, or the correction to return.
 
     Provider-side constrained decoding is gone under the proxy — this check is
