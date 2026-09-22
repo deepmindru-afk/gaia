@@ -572,7 +572,7 @@ async def initialize_chroma_tools_store() -> ChromaStore:
     async def _seed() -> None:
         # Re-read existing inside the lease so a follower that waited out a leader
         # replica's seed sees the leader's writes and embeds nothing.
-        current_tools = _get_current_tools_with_hashes(tool_registry)
+        current_tools: dict[str, IndexedToolEntry] = _get_current_tools_with_hashes(tool_registry)
         managed_namespaces = {tool_data["namespace"] for tool_data in current_tools.values()}
         log.set(vector=VectorContext(operation="upsert", collection="langgraph_tools_store"))
         log.info(
