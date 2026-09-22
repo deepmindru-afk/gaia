@@ -11,7 +11,11 @@ from langchain_core.tools import BaseTool, tool
 import pytest
 
 from app.agents.core.nodes.pre_model_hooks import worker_pre_model_hooks
-from app.agents.core.subagents.base_subagent import SubAgentFactory, SubAgentToolConfig
+from app.agents.core.subagents.base_subagent import (
+    SubAgentFactory,
+    SubAgentToolConfig,
+    build_scoped_tool_dict,
+)
 from app.agents.core.subagents.spawn_agent import _build_spawn_graph
 from app.agents.middleware.factory import SubagentStackOptions
 from app.agents.middleware.subagent import SubagentMiddleware, SubagentMiddlewareConfig
@@ -979,6 +983,58 @@ async def test_missing_declared_tools_warn_under_their_exact_declaration_kind():
     assert auto_bind and auto_bind[0].kwargs["missing_tools"] == ["missing_auto"]
     assert auto_bind[0].kwargs["provider"] == "provider"
     assert extra_initial and extra_initial[0].kwargs["missing_tools"] == ["missing_extra"]
+    assert extra_initial[0].kwargs["provider"] == "provider"
+
+
+@pytest.mark.asyncio
+async def test_a_provider_subagent_drains_its_own_mailbox_not_the_executors():
+    captured = await _run_factory_recording_wiring(config=SubAgentToolConfig())
+
+    assert captured["worker"].call_args.kwargs == {"drains_subagent_inbox": True}
+
+
+def _scoped_provider_tools() -> tuple[dict[str, BaseTool], list[str]]:
+    return build_scoped_tool_dict(
+        tool_registry=_DummyRegistry([normal_tool], {"normal_tool": normal_tool}),
+        tool_space="provider_space",
+        mcp_tools=None,
+        include_finish_task=True,
+    )
+
+
+def test_a_scoped_subagent_binds_its_space_the_proxy_and_finish_task():
+    scoped, initial_ids = _scoped_provider_tools()
+
+    assert initial_ids == ["normal_tool", "execute", "get_tool_schema", FINISH_TASK_NAME]
+    assert {name: tool.name for name, tool in scoped.items() if name in initial_ids} == {
+        name: name for name in initial_ids
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_subagents_execute_proxy_is_confined_to_its_own_tool_dict():
+    """A Gmail subagent's execute must refuse Slack's tools; the proxy sees exactly this dict."""
+    scoped, _ = _scoped_provider_tools()
+    dispatch = AsyncMock(return_value=SimpleNamespace(ok=True, error=None, output="done"))
+
+    with patch("app.agents.tools.execute.execute_tool.dispatch_tool", dispatch):
+        await scoped["execute"].ainvoke(
+            {"task_description": "Run it", "tool_name": "normal_tool", "data": {}},
+            config={"configurable": {}},
+        )
+
+    assert dispatch.await_args.kwargs["scoped_tool_names"] == set(scoped)
+
+
+@pytest.mark.asyncio
+async def test_a_subagents_bash_carries_the_same_confinement_into_code_mode():
+    scoped, _ = _scoped_provider_tools()
+    run_bash = AsyncMock(return_value="ok")
+
+    with patch("app.agents.tools.coding.bash_tool._run_bash", run_bash):
+        await scoped["bash"].ainvoke({"command": "ls"}, config={"configurable": {}})
+
+    assert run_bash.await_args.kwargs["scoped_tools"] is scoped
 
 
 # ---------------------------------------------------------------------------

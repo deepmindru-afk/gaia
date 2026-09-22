@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.agents.core.subagents.base_subagent import SubAgentFactory, SubAgentToolConfig
+
 
 def _category(*, require_integration: bool, tool_names: list[str]) -> SimpleNamespace:
     return SimpleNamespace(
@@ -156,28 +158,14 @@ class TestFactoryDoesNotBindIntegrationTools:
     Internal extras still do.
     """
 
-    async def test_integration_auto_bind_excluded_from_initial_ids(self) -> None:
-        from app.agents.core.subagents.base_subagent import (
-            SubAgentFactory,
-            SubAgentToolConfig,
-        )
-
-        scoped = {
-            name: MagicMock(name=name)
-            for name in (
-                "GMAIL_FETCH_MESSAGES",
-                "query_json",
-                "search_memory",
-                "read",
-                "bash",
-                "execute",
-                "get_tool_schema",
-                "finish_task",
-            )
-        }
+    @staticmethod
+    async def _initial_ids(
+        config: SubAgentToolConfig, registry: MagicMock, provider_tool_ids: list[str]
+    ) -> list[str]:
+        names = [*provider_tool_ids, "search_memory", "read", "bash", "execute"]
+        scoped = {name: MagicMock(name=name) for name in [*names, "get_tool_schema"]}
         for name, tool in scoped.items():
             tool.name = name
-
         captured: dict = {}
 
         def _fake_create_agent(**kwargs):
@@ -193,16 +181,11 @@ class TestFactoryDoesNotBindIntegrationTools:
             ),
             patch(
                 "app.agents.core.subagents.base_subagent.get_tool_registry",
-                new=AsyncMock(
-                    return_value=_registry(
-                        integration_names={"GMAIL_FETCH_MESSAGES"},
-                        internal_names={"query_json"},
-                    )
-                ),
+                new=AsyncMock(return_value=registry),
             ),
             patch(
                 "app.agents.core.subagents.base_subagent.build_scoped_tool_dict",
-                return_value=(scoped, ["GMAIL_FETCH_MESSAGES", "query_json"]),
+                return_value=(scoped, provider_tool_ids),
             ),
             patch(
                 "app.agents.core.subagents.base_subagent.create_subagent_middleware",
@@ -232,22 +215,44 @@ class TestFactoryDoesNotBindIntegrationTools:
             ),
         ):
             await SubAgentFactory.create_provider_subagent(
-                provider="gmail",
-                name="gmail_agent",
-                llm=MagicMock(),
-                config=SubAgentToolConfig(
-                    tool_space="gmail",
-                    auto_bind_tools=["GMAIL_FETCH_MESSAGES"],
-                    extra_initial_tools=["query_json"],
-                ),
+                provider="gmail", name="gmail_agent", llm=MagicMock(), config=config
             )
+        return list(captured["tools_config"].initial_tool_ids)
 
-        initial_ids = list(captured["tools_config"].initial_tool_ids)
+    async def test_integration_auto_bind_excluded_from_initial_ids(self) -> None:
+        initial_ids = await self._initial_ids(
+            SubAgentToolConfig(
+                tool_space="gmail",
+                auto_bind_tools=["GMAIL_FETCH_MESSAGES"],
+                extra_initial_tools=["query_json"],
+            ),
+            _registry(integration_names={"GMAIL_FETCH_MESSAGES"}, internal_names={"query_json"}),
+            ["GMAIL_FETCH_MESSAGES", "query_json"],
+        )
+
         assert "query_json" in initial_ids
         assert "GMAIL_FETCH_MESSAGES" not in initial_ids
         # The proxy itself always binds: preloaded docs are unusable without it.
         assert "execute" in initial_ids
         assert "get_tool_schema" in initial_ids
+
+    async def test_a_per_user_mcp_startup_tool_preloads_instead_of_binding(self) -> None:
+        """No registry category knows a per-user MCP tool, so only the subagent's own MCP list marks it execute-routed."""
+        mcp_tool = MagicMock(name="notion_search")
+        mcp_tool.name = "notion_search"
+
+        initial_ids = await self._initial_ids(
+            SubAgentToolConfig(
+                tool_space="mcp_notion",
+                mcp_tools=[mcp_tool],
+                auto_bind_tools=["notion_search"],
+            ),
+            _registry(integration_names=set(), internal_names=set()),
+            ["notion_search"],
+        )
+
+        assert "notion_search" not in initial_ids
+        assert "execute" in initial_ids
 
 
 @pytest.mark.unit
