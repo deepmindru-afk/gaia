@@ -308,9 +308,7 @@ def _test_files_for(
         # app.memory.engine, whose real-tier tests drive every store line.)
         consumers = _importers_of(module)
         for consumer in consumers:
-            hits.extend(
-                _test_files_for(consumer.replace("app.", "", 1), tests_dir, _seen)
-            )
+            hits.extend(_test_files_for(consumer.replace("app.", "", 1), tests_dir, _seen))
     hits.sort(key=lambda p: (not p.startswith(str(tests_dir / "unit")), p))
     return hits
 

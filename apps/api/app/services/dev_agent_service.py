@@ -23,7 +23,7 @@ from app.agents.core.subagents.subagent_runner import (
 from app.agents.llm.lane import AgentRole, dev_option_for
 from app.constants.log_tags import LogTag
 from app.helpers.agent_helpers import AgentIdentity, AgentLane, AgentTurn, build_agent_config
-from app.models.agent_models import AgentConfigurable, AgentUserContext
+from app.models.agent_models import AgentConfigurable, AgentRunnableConfig, AgentUserContext
 from app.schemas.dev_schemas import DevAgentRunResponse, DevSubagentInfo
 from app.services.dev_service import require_dev_user
 from app.utils.errors import create_error
@@ -62,7 +62,7 @@ async def _dev_base_configurable(
         "name": user_doc.name,
     }
     user_preferences, writing_style = onboarding_preferences(user_doc.onboarding)
-    config = await build_agent_config(
+    config: AgentRunnableConfig = await build_agent_config(
         identity=AgentIdentity(
             conversation_id=cid,
             user=user,
@@ -122,10 +122,11 @@ async def run_executor_direct(
         conversation_id=cid,
         response_length=len(outcome.text),
     )
+    run_configurable: AgentConfigurable = ctx.configurable
     return DevAgentRunResponse(
         user_id=user_id,
         conversation_id=cid,
-        thread_id=ctx.configurable.get("thread_id", ""),
+        thread_id=run_configurable.get("thread_id", ""),
         agent=ctx.agent_name,
         message=outcome.text,
     )
@@ -164,10 +165,11 @@ async def run_subagent_direct(
         conversation_id=cid,
         response_length=len(outcome.text),
     )
+    run_configurable: AgentConfigurable = ctx.configurable
     return DevAgentRunResponse(
         user_id=user_id,
         conversation_id=cid,
-        thread_id=ctx.configurable.get("thread_id", ""),
+        thread_id=run_configurable.get("thread_id", ""),
         agent=ctx.agent_name,
         message=outcome.text,
     )

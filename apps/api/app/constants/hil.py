@@ -6,6 +6,7 @@ the tool registry (app/agents/tools/core/registry.py), the single source of trut
 for every tool in the app.
 """
 
+from enum import StrEnum
 from typing import Final, Literal
 
 from app.constants.cache import EXECUTOR_BUSY_TTL
@@ -57,6 +58,16 @@ HIL_JEV_URL = "https://openrouter.ai/api/alpha/decisions"
 HIL_JEV_TIMEOUT_SECONDS = 15
 HIL_JEV_ACCEPT_LINE = 0.50
 HIL_JEV_REJECT_FLOOR = 0.50
+
+
+class JevChoice(StrEnum):
+    """The choice labels the JEV questions offer (prompts.py criteria) and answers carry."""
+
+    AUTHORIZED = "authorized"
+    FORBIDDEN = "forbidden"
+    UNCLEAR = "unclear"
+    PERMITTED = "permitted"
+
 
 # The only statuses a `Command(resume=...)` payload may carry. Anything else
 # is treated as a denial. "abandoned" is absent: resolution.py maps it to a deny before sending.

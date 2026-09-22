@@ -553,9 +553,10 @@ def test_interrupt_note_with_quoted_directive_is_ignored():
 
 
 def test_unbound_tool_routes_through_execute_when_proxy_present():
-    """Execute cutover: integration tools never bind, so an unavailable scripted
-    tool routes through the execute proxy — binding it would loop forever
-    (observed live: retrieve_tools re-emitted to the recursion limit)."""
+    """Execute cutover: an unbindable scripted integration tool routes through execute.
+
+    Binding it would loop forever (observed live: retrieve_tools re-emitted to the recursion limit).
+    """
     script = '[[tool:GMAIL_SEND_EMAIL {"recipient_email": "a@b.c"}]] [[say:Done]]'
     executor = frozenset({"retrieve_tools", "execute"})
 

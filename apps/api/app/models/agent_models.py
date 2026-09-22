@@ -146,6 +146,15 @@ class LlmCallMetadata(TypedDict, total=False):
     llm_label: str
 
 
+class StreamChunkMetadata(TypedDict, total=False):
+    """The run-metadata keys a messages-mode stream consumer reads off one chunk.
+
+    silent is stamped by quiet LLM calls (llm/client.py, follow_up_actions_node) so their tokens never stream.
+    """
+
+    silent: bool
+
+
 class AgentRunnableConfig(RunnableConfig):
     """What ``build_agent_config`` returns: a ``RunnableConfig`` plus ``agent_name``.
 

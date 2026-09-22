@@ -17,9 +17,11 @@ dashboard, not here.
 import asyncio
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+
+from posthog import Posthog
 
 from app.config.settings import settings
+from app.constants.analytics import POSTHOG_PROVIDER_KEY
 from app.core.lazy_loader import providers
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from shared.py.wide_events import log
@@ -70,7 +72,7 @@ def _default(flag: FeatureFlag) -> bool:
             return bool(settings.ENABLE_HIL_JEV_JUDGE)
 
 
-def _coerce_result(result: Any, default: bool) -> bool:  # noqa: ANN401 -- posthog SDK returns untyped flag values; validated here
+def _coerce_result(result: object, default: bool) -> bool:
     """Interpret a PostHog flag value against a default.
 
     None means unevaluated (no targeting matched, or an upstream error) and
@@ -85,13 +87,14 @@ def _coerce_result(result: Any, default: bool) -> bool:  # noqa: ANN401 -- posth
     return bool(result)
 
 
-def _get_posthog_client() -> Any | None:  # noqa: ANN401 -- posthog SDK is untyped at the boundary
+def _get_posthog_client() -> Posthog | None:
     """Return the shared PostHog client, or None when unconfigured."""
     try:
-        if not providers.is_available("posthog"):
+        if not providers.is_available(POSTHOG_PROVIDER_KEY):
             log.debug("PostHog client not available, flag falls back to default")
             return None
-        return providers.get("posthog")
+        client: Posthog | None = providers.get(POSTHOG_PROVIDER_KEY)
+        return client
     except Exception as e:
         log.debug(
             "PostHog provider lookup failed, flag falls back to default",

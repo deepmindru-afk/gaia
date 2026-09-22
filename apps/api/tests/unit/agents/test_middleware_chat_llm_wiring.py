@@ -483,11 +483,13 @@ class TestExecutorStackComposition:
     def _executor(chat_llm: BaseChatModel, subagent_llm: BaseChatModel, runtime, registry) -> list:
         return create_executor_middleware(
             chat_llm=chat_llm,
-            subagent_llm=subagent_llm,
-            subagent_tools=[_spawnable_tool],
-            subagent_registry=registry,
-            subagent_excluded_tools={"handoff"},
-            subagent_tool_runtime_config=runtime,
+            subagent=SubagentStackOptions(
+                llm=subagent_llm,
+                tools=[_spawnable_tool],
+                registry=registry,
+                excluded_tools={"handoff"},
+                tool_runtime_config=runtime,
+            ),
         )
 
     def test_the_executor_stack_is_this_exact_sequence(self) -> None:

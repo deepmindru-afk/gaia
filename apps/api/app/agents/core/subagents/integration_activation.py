@@ -11,7 +11,7 @@ Binding in-turn is the point. Returning only prose would leave the caller to
 spend a whole retrieve_tools round trip rediscovering tools the config names.
 """
 
-from typing import Annotated, Any, cast
+from typing import Annotated, cast
 
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -164,13 +164,13 @@ def _handoff_redirect(integration_id: str) -> str:
     )
 
 
-def _reply(tool_call_id: str, text: str, bind: list[str] | None = None) -> Command[Any]:
+def _reply(tool_call_id: str, text: str, bind: list[str] | None = None) -> Command[str]:
     """Build the tool's result, binding any tools it names in the same turn.
 
     selected_tool_ids has an append reducer, so listing names here adds them to
     what the model can call on its very next step — no discovery round trip.
     """
-    update: dict[str, Any] = {"messages": [ToolMessage(content=text, tool_call_id=tool_call_id)]}
+    update: dict[str, object] = {"messages": [ToolMessage(content=text, tool_call_id=tool_call_id)]}
     if bind:
         update["selected_tool_ids"] = bind
     return Command(update=update)
@@ -261,7 +261,7 @@ async def activate_integration(
     integration_id: Annotated[str, "The ID of the integration to activate (e.g., 'gmail')."],
     config: RunnableConfig,
     tool_call_id: Annotated[str, InjectedToolCallId],
-) -> Command[Any]:
+) -> Command[str]:
     """Load an integration's tools and expertise into this conversation.
 
     Preloads its most-used integration tools as schema docs (run them via

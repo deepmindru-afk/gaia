@@ -16,7 +16,7 @@ the node commits.
 """
 
 import json
-from typing import cast
+from typing import NotRequired, TypedDict, cast
 from uuid import uuid4
 
 from langchain_core.messages import AnyMessage, HumanMessage
@@ -30,9 +30,17 @@ from app.constants.cache import EXECUTOR_INBOX_PREFIX, EXECUTOR_INBOX_TTL
 from app.constants.executor import INBOX_ENTRY_ID, INTERRUPTION_NOTICE
 from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache
-from app.models.agent_models import InboxDrain, InboxEntry, agent_configurable
+from app.models.agent_models import AgentConfigurable, InboxDrain, InboxEntry, agent_configurable
 from app.override.langgraph_bigtool.utils import INJECTED_MESSAGES_KEY, State
 from shared.py.wide_events import log
+
+
+class _StoredInboxEntry(TypedDict):
+    """The JSON one inbox entry is stored as; tag is absent on entries written before it existed."""
+
+    id: str
+    text: str
+    tag: NotRequired[str]
 
 
 def decide_drain(entries: list[InboxEntry], messages: list[AnyMessage]) -> InboxDrain:
@@ -87,9 +95,8 @@ class RedisInbox:
     @staticmethod
     def _encode(entry: InboxEntry) -> str:
         """Encode deterministically so retire can remove the exact value append wrote."""
-        return json.dumps(
-            {"id": entry.id, "text": entry.text, "tag": entry.tag.value}, sort_keys=True
-        )
+        stored: _StoredInboxEntry = {"id": entry.id, "text": entry.text, "tag": entry.tag.value}
+        return json.dumps(stored, sort_keys=True)
 
     async def append(self, entry_id: str, text: str, tag: AgentTag | None = None) -> InboxEntry:
         """Add pending work for whichever run reads this channel next."""
@@ -191,7 +198,7 @@ def _decode(raw: bytes | memoryview | str) -> InboxEntry | None:
     """
     try:
         text = decode_raw_item(raw)
-        payload = json.loads(text)
+        payload: _StoredInboxEntry = json.loads(text)
         return InboxEntry(
             id=payload["id"],
             text=payload["text"],
@@ -240,7 +247,8 @@ async def drain_inbox_hook(state: State, config: RunnableConfig, store: BaseStor
         # conversation_id, never thread_id: the executor graph runs on the WRAPPED
         # thread (executor_<conversation>), so keying the inbox on thread_id builds
         # executor:inbox:executor_<conv> and silently never matches call_executor.
-        conversation_id = agent_configurable(config).get("conversation_id")
+        configurable: AgentConfigurable = agent_configurable(config)
+        conversation_id = configurable.get("conversation_id")
         if not conversation_id:
             log.warning(f"{LogTag.AGENT} drain_inbox_hook: run carries no conversation_id")
             return state

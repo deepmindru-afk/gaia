@@ -1,7 +1,7 @@
 """Shared tool runtime configuration for agent and child-agent execution."""
 
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TypedDict
 
 from app.agents.tools.core.retrieval import get_retrieve_tools_function
 from app.constants.general import FINISH_TASK_NAME
@@ -22,12 +22,18 @@ class ToolRuntimeConfig:
     include_subagents_in_retrieve: bool = False
 
 
+class CreateAgentToolKwargs(TypedDict):
+    """The tool keyword arguments create_agent takes, merged into its call kwargs."""
+
+    tools_config: ToolRetrievalConfig
+
+
 def build_create_agent_tool_kwargs(
     tool_runtime_config: ToolRuntimeConfig,
     *,
     tool_space: str,
     bindable_tool_names: set[str] | None = None,
-) -> dict[str, Any]:
+) -> CreateAgentToolKwargs:
     """Build create_agent tool config from shared tool runtime config.
 
     `bindable_tool_names` is the set of tools the agent's graph can actually bind

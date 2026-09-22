@@ -9,10 +9,10 @@ context pays for a shape only when something actually consumes it.
 """
 
 import json
-from typing import Any, cast
+from typing import TypedDict, cast
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 from app.constants.execute import (
     ARGS_SCHEMA_MAX_CHARS,
@@ -26,6 +26,23 @@ from app.utils.general_utils import clip_text
 # signature; it is plumbing, never something the model supplies.
 _INTERNAL_ARG_NAMES = {"__runnable_config__"}
 _DESCRIPTION_MAX_CHARS = 600
+
+
+class _SchemaNode(TypedDict, total=False):
+    """The JSON Schema keywords the renderers read off one schema node.
+
+    Provider and observed schemas are never validated, so a keyword whose value
+    varies by provider stays JsonValue and every read keeps its isinstance guard.
+    """
+
+    type: str | list[str]
+    properties: dict[str, JsonValue]
+    required: list[str]
+    items: JsonValue
+    anyOf: JsonValue
+    oneOf: JsonValue
+    enum: JsonValue
+    additionalProperties: JsonValue
 
 
 def render_tool_doc(tool: BaseTool) -> str:
@@ -43,20 +60,20 @@ def render_tool_doc(tool: BaseTool) -> str:
     return clip_text("\n".join(lines), SCHEMA_DOC_MAX_CHARS)
 
 
-def render_compact_type_budgeted(schema: dict[str, Any], budget: int) -> str:
+def render_compact_type_budgeted(schema: dict[str, JsonValue], budget: int) -> str:
     """Compact type notation within budget, depth-collapsing when oversized."""
     rendered = render_compact_type(schema)
     if len(rendered) <= budget:
         return rendered
     for levels in _SCHEMA_PRUNE_LEVELS:
         # Pruned properties render as bare `obj`, so depth degrades gracefully.
-        pruned = render_compact_type(cast(dict[str, Any], _prune_to_levels(schema, levels)))
+        pruned = render_compact_type(cast(dict[str, JsonValue], _prune_to_levels(schema, levels)))
         if len(pruned) <= budget:
             return f"{pruned}\n(deeper fields omitted for size; the real data has them)"
     return clip_text(rendered, budget)
 
 
-def render_compact_type(node: dict[str, Any]) -> str:
+def render_compact_type(node: dict[str, JsonValue]) -> str:
     """A JSON schema as terse type notation, e.g. ``{id:str, tags?:str[]}``.
 
     Structure only — descriptions and schema ceremony are what make real
@@ -68,23 +85,24 @@ def render_compact_type(node: dict[str, Any]) -> str:
 def _compact_type(node: object) -> str:
     if not isinstance(node, dict):
         return "any"
-    union = _compact_union(node)
+    schema: _SchemaNode = cast(_SchemaNode, node)
+    union = _compact_union(schema)
     if union is not None:
         return union
-    obj = _compact_object(node)
+    obj = _compact_object(schema)
     if obj is not None:
         return obj
-    arr = _compact_array(node)
+    arr = _compact_array(schema)
     if arr is not None:
         return arr
-    enum = _compact_enum(node)
+    enum = _compact_enum(schema)
     if enum is not None:
         return enum
-    type_ = node.get("type")
+    type_ = schema.get("type")
     return _COMPACT_PRIMITIVES.get(str(type_), str(type_) if type_ else "any")
 
 
-def _compact_union(node: dict[str, Any]) -> str | None:
+def _compact_union(node: _SchemaNode) -> str | None:
     """A union schema (anyOf/oneOf/type-list) as ``a|b``, else None."""
     variants = node.get("anyOf") or node.get("oneOf")
     if isinstance(variants, list) and variants:
@@ -95,7 +113,7 @@ def _compact_union(node: dict[str, Any]) -> str | None:
     return None
 
 
-def _compact_object(node: dict[str, Any]) -> str | None:
+def _compact_object(node: _SchemaNode) -> str | None:
     """An object schema as ``{name:type, opt?:type, [key]:type}``, else None."""
     type_ = node.get("type")
     if type_ != "object" and not (type_ is None and "properties" in node):
@@ -116,7 +134,7 @@ def _compact_object(node: dict[str, Any]) -> str | None:
     return "{" + ", ".join(fields) + "}"
 
 
-def _compact_array(node: dict[str, Any]) -> str | None:
+def _compact_array(node: _SchemaNode) -> str | None:
     """An array schema as ``item[]`` (grouped when the item is a union), else None."""
     if node.get("type") != "array":
         return None
@@ -125,7 +143,7 @@ def _compact_array(node: dict[str, Any]) -> str | None:
     return (f"({item})" if "|" in item else item) + "[]"
 
 
-def _compact_enum(node: dict[str, Any]) -> str | None:
+def _compact_enum(node: _SchemaNode) -> str | None:
     """A small closed enum as its JSON members joined by ``|``, else None."""
     enum = node.get("enum")
     if isinstance(enum, list) and 0 < len(enum) <= _COMPACT_ENUM_MAX_MEMBERS:
@@ -143,7 +161,7 @@ _COMPACT_PRIMITIVES = {
 _COMPACT_ENUM_MAX_MEMBERS = 6
 
 
-def _args_schema_of(tool: BaseTool) -> dict[str, Any]:
+def _args_schema_of(tool: BaseTool) -> dict[str, JsonValue]:
     schema = getattr(tool, "args_schema", None)
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         raw = schema.model_json_schema()
@@ -154,7 +172,7 @@ def _args_schema_of(tool: BaseTool) -> dict[str, Any]:
     return _compact_schema(raw)
 
 
-def _response_schema_of(tool: BaseTool) -> dict[str, Any] | None:
+def _response_schema_of(tool: BaseTool) -> dict[str, JsonValue] | None:
     metadata = getattr(tool, "metadata", None)
     if not isinstance(metadata, dict):
         return None
@@ -173,7 +191,7 @@ _SCHEMA_TRUNCATION_NOTE = (
 _SCHEMA_PRUNE_LEVELS = (3, 2, 1)
 
 
-def _render_budgeted_schema(schema: dict[str, Any], budget: int) -> str:
+def _render_budgeted_schema(schema: dict[str, JsonValue], budget: int) -> str:
     """One schema section within budget: full, depth-pruned, or names-only."""
     full = _dumps(schema)
     if len(full) <= budget:
@@ -182,9 +200,10 @@ def _render_budgeted_schema(schema: dict[str, Any], budget: int) -> str:
         pruned = _dumps(_prune_to_levels(schema, levels))
         if len(pruned) <= budget:
             return f"{pruned}\n{_SCHEMA_TRUNCATION_NOTE}"
-    properties = schema.get("properties")
+    node: _SchemaNode = cast(_SchemaNode, schema)
+    properties = node.get("properties")
     names = sorted(properties) if isinstance(properties, dict) else []
-    floor = _dumps({"type": schema.get("type", "object"), "fields": names})
+    floor = _dumps({"type": node.get("type", "object"), "fields": names})
     return f"{clip_text(floor, budget)}\n{_SCHEMA_TRUNCATION_NOTE}"
 
 
@@ -215,22 +234,21 @@ def _dumps(value: object) -> str:
     return json.dumps(value, separators=(",", ":"), default=str)
 
 
-def _compact_schema(schema: dict[str, Any]) -> dict[str, Any]:
+def _compact_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
     """Strip generator noise (titles, internal params, $defs plumbing keys)."""
     # cast, not isinstance: _strip_noise maps dict->dict by construction.
-    compacted = cast(dict[str, Any], _strip_noise(schema))
-    properties = compacted.get("properties")
+    compacted = cast(dict[str, JsonValue], _strip_noise(schema))
+    node: _SchemaNode = cast(_SchemaNode, compacted)
+    properties = node.get("properties")
     if isinstance(properties, dict):
         for name in _INTERNAL_ARG_NAMES:
             properties.pop(name, None)
-        if isinstance(compacted.get("required"), list):
-            compacted["required"] = [
-                r for r in compacted["required"] if r not in _INTERNAL_ARG_NAMES
-            ]
+        if isinstance(node.get("required"), list):
+            node["required"] = [r for r in node["required"] if r not in _INTERNAL_ARG_NAMES]
     return compacted
 
 
-def _strip_noise(node: Any) -> Any:  # noqa: ANN401  # recursive JSON tree, genuinely schemaless
+def _strip_noise(node: JsonValue) -> JsonValue:
     if isinstance(node, dict):
         return {key: _strip_noise(value) for key, value in node.items() if key not in {"title"}}
     if isinstance(node, list):

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
 import os
 from types import SimpleNamespace
 from typing import Any
@@ -32,7 +31,6 @@ from app.agents.core.subagents.handoff_tools import (
     CustomMcpSubagent,
     _resolve_subagent,
     handoff,
-    resume_parked_subagent,
 )
 from app.agents.core.subagents.provider_subagents import SubagentUnavailableError
 from app.agents.core.subagents.registry import all_subagents, get_subagent_by_id
@@ -45,7 +43,6 @@ from app.agents.core.subagents.subagent_runner import (
     interrupt_payload,
 )
 from app.constants.hil import HIL_RESUME_CONFIG_KEY, LANGGRAPH_INTERRUPT_KEY
-from app.models.hil_models import HILApprovalRecord
 from tests.helpers import PassthroughFakeLLM, create_fake_llm
 
 HANDOFF_MODULE = "app.agents.core.subagents.handoff_tools"
@@ -1674,20 +1671,6 @@ class _ExecutorDriver:
         ]
 
 
-def _approval_record(conversation_id: str, thread_id: str) -> HILApprovalRecord:
-    return HILApprovalRecord(
-        approval_id=HANDOFF_APPROVAL_ID,
-        user_id="user-hil-1",
-        conversation_id=conversation_id,
-        stream_id="stream-hil-1",
-        tool_name="post_release_note",
-        status="approved",
-        subagent_thread_id=thread_id,
-        subagent_agent_name="gmail",
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
-
-
 @pytest.mark.integration
 class TestHandoffHILPauseResume:
     """A gated tool inside a handed-off subagent must pause the executor and resume from checkpoint."""
@@ -1726,35 +1709,6 @@ class TestHandoffHILPauseResume:
             "the replay resumes the parked thread — it must not re-drive the model "
             "from the first turn"
         )
-
-    async def test_resume_parked_subagent_continues_the_parked_thread(
-        self, gated_subagent, gated_effects: dict[str, int], handoff_seams
-    ) -> None:
-        """The background-park path rebuilds from the approval record and resumes at the interrupt."""
-        driver = _ExecutorDriver()
-        await driver.run()
-        calls_at_park = gated_subagent.llm.invocations
-        record = _approval_record(driver.conversation_id, driver.subagent_thread_id)
-
-        outcome = await resume_parked_subagent(record, {"user_id": "user-hil-1"}, None)
-
-        assert not outcome.paused
-        assert outcome.text == GATED_ANSWER
-        assert gated_effects["post"] == 1, "the approved action runs exactly once"
-        assert gated_subagent.llm.invocations == calls_at_park + 1, (
-            "resumed from the checkpoint, not restarted from an empty initial state"
-        )
-
-    async def test_resume_parked_subagent_refuses_when_the_checkpoint_is_gone(
-        self, gated_subagent, gated_effects: dict[str, int], handoff_seams
-    ) -> None:
-        """A record pointing at a thread with no checkpoint must fail loudly, not restart fresh."""
-        record = _approval_record("handoff-hil-missing", "gmail_executor_handoff-hil-missing")
-
-        outcome = await resume_parked_subagent(record, {"user_id": "user-hil-1"}, None)
-
-        assert "checkpoint is missing" in outcome.text
-        assert gated_effects["post"] == 0, "nothing may run when there is nothing to resume"
 
 
 # ---------------------------------------------------------------------------

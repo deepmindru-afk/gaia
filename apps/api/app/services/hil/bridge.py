@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from app.agents.core.background.session import RunKind, get_session
 from app.constants.cache import HIL_DECLINED_PREFIX
@@ -53,6 +53,26 @@ from app.services.hil.utils import GatedCall
 from app.services.latency_metrics import observe_hil_pause
 from app.utils.general_utils import clip_text
 from shared.py.wide_events import log, spawn_logged_task
+
+
+class _SessionFrame(TypedDict, total=False):
+    """A session.tool_events frame as read here; other writers share the list, so values are unchecked."""
+
+    tool_data: object
+    _held_approval: object
+
+
+class _FrameToolData(TypedDict, total=False):
+    tool_name: object
+    data: object
+
+
+class _ApprovalFrameData(TypedDict, total=False):
+    """An approval_request frame's data object, mutated in place when its card settles."""
+
+    approval_id: object
+    status: str
+    feedback: str
 
 
 @dataclass
@@ -413,18 +433,18 @@ def settle_session_approval_frame(
         settled = False
         kept: list[dict[str, Any]] = []
         for event in session.tool_events:
-            tool_data = event.get("tool_data") if isinstance(event, dict) else None
-            if not isinstance(tool_data, dict):
+            tool_data: _FrameToolData | None = _frame_tool_data(event)
+            if tool_data is None:
                 kept.append(event)
                 continue
             if tool_data.get("tool_name") != APPROVAL_REQUEST_TOOL_NAME:
                 kept.append(event)
                 continue
-            data = tool_data.get("data")
-            if not isinstance(data, dict) or data.get("approval_id") != approval_id:
+            data: _ApprovalFrameData | None = _frame_approval_data(tool_data)
+            if data is None or data.get("approval_id") != approval_id:
                 kept.append(event)
                 continue
-            if drop_if_unpublished and event.get("_held_approval") is True:
+            if drop_if_unpublished and _is_held(event):
                 settled = True
                 continue
             data["status"] = status
@@ -458,12 +478,12 @@ async def flush_held_approval_cards(stream_id: str) -> int:
         flushed = 0
         kept: list[dict[str, Any]] = []
         for event in session.tool_events:
-            if not isinstance(event, dict) or event.get("_held_approval") is not True:
+            if not _is_held(event):
                 kept.append(event)
                 continue
-            tool_data = event.get("tool_data")
-            data = tool_data.get("data") if isinstance(tool_data, dict) else None
-            approval_id = data.get("approval_id") if isinstance(data, dict) else None
+            tool_data: _FrameToolData | None = _frame_tool_data(event)
+            data: _ApprovalFrameData | None = _frame_approval_data(tool_data)
+            approval_id = data.get("approval_id") if data is not None else None
             try:
                 row = (
                     await approval_ledger_repository.get_by_approval_id(approval_id)
@@ -507,6 +527,29 @@ async def flush_held_approval_cards(stream_id: str) -> int:
             error_type=type(e).__name__,
         )
         return 0
+
+
+def _frame_tool_data(event: object) -> _FrameToolData | None:
+    """Return a session frame's tool_data object, or None when it carries none."""
+    if not isinstance(event, dict):
+        return None
+    frame: _SessionFrame = cast(_SessionFrame, event)
+    tool_data = frame.get("tool_data")
+    return cast(_FrameToolData, tool_data) if isinstance(tool_data, dict) else None
+
+
+def _frame_approval_data(tool_data: _FrameToolData | None) -> _ApprovalFrameData | None:
+    """Return the data object inside a frame's tool_data, or None when it carries none."""
+    data = tool_data.get("data") if tool_data is not None else None
+    return cast(_ApprovalFrameData, data) if isinstance(data, dict) else None
+
+
+def _is_held(event: object) -> bool:
+    """Whether a session frame is a live-run card still held for the end-of-run flush."""
+    if not isinstance(event, dict):
+        return False
+    frame: _SessionFrame = cast(_SessionFrame, event)
+    return frame.get("_held_approval") is True
 
 
 def _approval_entry(

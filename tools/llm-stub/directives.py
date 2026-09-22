@@ -326,7 +326,7 @@ def _work_primary_index(messages: Sequence[dict[str, Any]]) -> int | None:
 def _collect_work_directives(
     messages: Sequence[dict[str, Any]],
 ) -> tuple[list[ToolDirective], SayDirective | None, int | None]:
-    """The current task's directives PLUS every steer folded into its run.
+    """Collect the current task's directives PLUS every steer folded into its run.
 
     A run works through the whole plan — the original tool directives and each
     ``<user_interjection>`` the drain hook injected, in order, each once — then

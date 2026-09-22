@@ -5,12 +5,20 @@ streaming formatter, analytics, and the tool node's timeout check must agree on
 what a proxied call "is", and five private copies of this logic would drift.
 """
 
-from typing import Any
+from typing import TypedDict, cast
 
 from app.constants.execute import EXECUTE_TOOL_NAME
 
 
-def unwrap_execute_call(name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+class ExecuteCallArgs(TypedDict, total=False):
+    """The execute proxy's own args as the model sent them: unvalidated, so every value is object."""
+
+    task_description: object
+    tool_name: object
+    data: object
+
+
+def unwrap_execute_call(name: str, args: dict[str, object]) -> tuple[str, dict[str, object]]:
     """The REAL (name, args) of a call, seen through the execute proxy.
 
     An execute call carries its actual tool in ``args["tool_name"]``/``args["data"]``.
@@ -20,8 +28,9 @@ def unwrap_execute_call(name: str, args: dict[str, Any]) -> tuple[str, dict[str,
     """
     if name != EXECUTE_TOOL_NAME:
         return name, args
-    real_name = args.get("tool_name")
+    execute_args: ExecuteCallArgs = cast(ExecuteCallArgs, args)
+    real_name = execute_args.get("tool_name")
     if not isinstance(real_name, str) or not real_name:
         return name, args
-    data = args.get("data")
+    data = execute_args.get("data")
     return real_name, data if isinstance(data, dict) else {}

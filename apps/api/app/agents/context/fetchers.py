@@ -16,6 +16,7 @@ import asyncio
 from datetime import UTC, datetime
 import functools
 import re
+from typing import TypedDict, cast
 
 from app.agents.context.section_context import SectionContext
 from app.agents.context.text import (
@@ -50,6 +51,7 @@ from app.services.storage._vfs_common import folder_name
 from app.services.tools.tools_service import get_integration_tool_list
 from app.services.tracked_todo_service import tracked_todo_service
 from app.utils.artifact_utils import artifact_url_base
+from app.utils.user_preferences_utils import OnboardingPreferencesRecord
 from shared.py.wide_events import log
 
 
@@ -234,7 +236,7 @@ async def build_tracked_todos_block(ctx: SectionContext) -> str:
 NEW_USER_CONVERSATION_LIMIT = 3
 
 
-def _selected_needs(preferences: dict[str, object]) -> list[OnboardingNeed]:
+def _selected_needs(preferences: OnboardingPreferencesRecord) -> list[OnboardingNeed]:
     """Return the onboarding needs off a raw preferences bag, in the order picked.
 
     A value this build does not know (an older client, a renamed need) is
@@ -260,8 +262,11 @@ async def build_new_user_guidance_block(ctx: SectionContext) -> str:
     """
     if not (ctx.user_id and ctx.user_preferences):
         return ""
-    needs = _selected_needs(ctx.user_preferences)
-    other_need = ctx.user_preferences.get("other_need")
+    preferences: OnboardingPreferencesRecord = cast(
+        OnboardingPreferencesRecord, ctx.user_preferences
+    )
+    needs = _selected_needs(preferences)
+    other_need = preferences.get("other_need")
     if not isinstance(other_need, str):
         other_need = None
     if not needs and not other_need:
@@ -278,7 +283,7 @@ async def build_new_user_guidance_block(ctx: SectionContext) -> str:
         return ""
     if conversations > NEW_USER_CONVERSATION_LIMIT:
         return ""
-    profession = ctx.user_preferences.get("profession")
+    profession = preferences.get("profession")
     # The chips GAIA itself offered at the end of the seeded conversation. Their
     # first message is usually one of them, and without this the model treats a
     # one-word choice as a fragment it has to ask about.
@@ -349,23 +354,30 @@ async def build_active_todo_banner(ctx: SectionContext) -> str:
     return format_active_todo_banner(doc) if doc else ""
 
 
-def _dedupe_by_provider(items: list[dict[str, str]]) -> list[dict[str, str]]:
+class _ConnectedIntegration(TypedDict):
+    """One row of get_connected_integrations_named: an integration id and its display name."""
+
+    id: str
+    name: str
+
+
+def _dedupe_by_provider(items: list[_ConnectedIntegration]) -> list[_ConnectedIntegration]:
     """One row per provider, keeping whichever row resolved to a display name.
 
     A connected set can hold two ids for the same account (a legacy
     google_calendar beside today's googlecalendar) — rendering both once gave
     the agent two handoff targets, one resolving to no subagent.
     """
-    by_provider: dict[str, dict[str, str]] = {}
+    by_provider: dict[str, _ConnectedIntegration] = {}
     for item in items:
         key = re.sub(r"[^a-z0-9]", "", item["id"].lower())
-        held = by_provider.get(key)
+        held: _ConnectedIntegration | None = by_provider.get(key)
         if held is None or (held["name"] == held["id"] and item["name"] != item["id"]):
             by_provider[key] = item
     return list(by_provider.values())
 
 
-def _builtin_overlap_lines(items: list[dict[str, str]]) -> list[str]:
+def _builtin_overlap_lines(items: list[_ConnectedIntegration]) -> list[str]:
     """Rows spelling out the built-ins a connected provider would otherwise mask."""
     names = {item["id"]: item["name"] for item in items}
     lines: list[str] = []
@@ -391,7 +403,7 @@ async def build_connected_integrations_manifest(user_id: str, header: str) -> st
     a connected provider gets its own row above the accounts.
     """
     try:
-        items = await get_connected_integrations_named(user_id)
+        items = cast(list[_ConnectedIntegration], await get_connected_integrations_named(user_id))
     except Exception as e:
         log.warning(
             "Error building connected-integrations manifest",
@@ -402,7 +414,7 @@ async def build_connected_integrations_manifest(user_id: str, header: str) -> st
         return ""
     if not items:
         return ""
-    connected = _dedupe_by_provider(items)
+    connected: list[_ConnectedIntegration] = _dedupe_by_provider(items)
     lines = [header, *_builtin_overlap_lines(connected)]
     for item in connected:
         iid, name = item["id"], item["name"]

@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 import json
 from typing import (
     Annotated,
-    Any,
+    NotRequired,
     TypeAlias,
     TypedDict,
     Union,
@@ -23,7 +23,7 @@ from typing import (
 from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt import InjectedStore
 from langgraph.store.base import BaseStore, SearchItem
-from pydantic import Field
+from pydantic import Field, TypeAdapter
 
 from app.agents.core.subagents.active_integrations import get_active
 from app.agents.core.subagents.registry import get_subagent_by_id
@@ -40,8 +40,10 @@ from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
 from app.config.oauth_config import OAUTH_INTEGRATIONS
 from app.constants.log_tags import LogTag
 from app.db.chroma.public_integrations_store import search_public_integrations
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import AgentConfigurable, agent_configurable
 from app.models.chat_models import ConversationSource
+from app.models.integration_models import PublicIntegrationSearchHit
+from app.models.integrations.composio_hooks import RunMetadata
 from app.override.langgraph_bigtool.utils import RetrieveToolsResult
 from app.services.integrations.integration_service import (
     get_user_available_tool_namespaces,
@@ -349,10 +351,26 @@ class ScoredToolHit(TypedDict):
     score: float | None
 
 
-# What one search-fan-out entry yields: Chroma's typed SearchItems, or the
-# public-integration store's raw dicts. Kept as a union since the backends
-# differ; the consumer discriminates on the first element and narrows with cast.
-SearchTaskResult: TypeAlias = Union[list[SearchItem], list[dict[str, Any]]]
+# One search-fan-out entry: Chroma's SearchItems, or the public-integration store's
+# raw dicts. The consumer discriminates on the first element, casting SearchItems
+# and validating the dicts into PublicIntegrationSearchHit.
+SearchTaskResult: TypeAlias = Union[list[SearchItem], list[dict[str, object]]]
+_PUBLIC_INTEGRATION_HITS = TypeAdapter(list[PublicIntegrationSearchHit])
+
+
+class _SubagentPointerValue(TypedDict, total=False):
+    """The stored value of a subagents-namespace pointer doc, as far as retrieval reads it."""
+
+    name: str
+    source: str
+
+
+class _DiscoveredTool(TypedDict):
+    """One tools_to_bind entry of the discovery payload the model reads."""
+
+    name: str
+    source: str
+    needs_approval: NotRequired[bool]
 
 
 async def _resolve_connected_subagents(user_id: str) -> dict[str, str | None]:
@@ -520,7 +538,7 @@ def _build_search_tasks(
 
 
 def _process_public_integration_result(
-    result: list[dict[str, Any]],
+    result: list[PublicIntegrationSearchHit],
 ) -> list[ScoredToolHit]:
     """Process public integration search results.
 
@@ -531,15 +549,15 @@ def _process_public_integration_result(
     """
     processed: list[ScoredToolHit] = []
     for item in result:
-        integration_id = item.get("integration_id")
+        integration_id = item.integration_id
         if integration_id:
-            name = item.get("name")
+            name = item.name
             key = (
                 f"integration:{integration_id} ({name})"
                 if name
                 else f"integration:{integration_id}"
             )
-            processed.append(ScoredToolHit(id=key, score=item.get("relevance_score", 0)))
+            processed.append(ScoredToolHit(id=key, score=item.relevance_score))
     return processed
 
 
@@ -563,9 +581,10 @@ def _process_chroma_search_result(
         if hasattr(item, "namespace") and item.namespace == ("subagents",):
             if not include_subagents:
                 continue
-            value = getattr(item, "value", None)
-            if not isinstance(value, dict):
+            raw_value = getattr(item, "value", None)
+            if not isinstance(raw_value, dict):
                 continue
+            value: _SubagentPointerValue = cast(_SubagentPointerValue, raw_value)
             source = value.get("source", "mcp")
             if source not in ("custom", "mcp"):
                 continue
@@ -623,7 +642,9 @@ async def _process_search_results(
             continue
 
         if isinstance(result[0], dict):
-            processed = _process_public_integration_result(cast(list[dict[str, Any]], result))
+            processed = _process_public_integration_result(
+                _PUBLIC_INTEGRATION_HITS.validate_python(result)
+            )
         else:
             items = cast(list[SearchItem], result)
             try:
@@ -674,8 +695,13 @@ def _deduplicate_and_sort(
         if r["id"] not in seen:
             seen.add(r["id"])
             unique_results.append(r)
-    unique_results.sort(key=lambda x: x["score"] or 0.0, reverse=True)
-    return [str(r["id"]) for r in unique_results[:limit]]
+    unique_results.sort(key=_hit_score, reverse=True)
+    top: list[ScoredToolHit] = unique_results[:limit]
+    return [str(r["id"]) for r in top]
+
+
+def _hit_score(hit: ScoredToolHit) -> float:
+    return hit["score"] or 0.0
 
 
 def _split_prefixed_entry(entry: str, prefix: str) -> tuple[str, str | None]:
@@ -716,10 +742,10 @@ def _render_discovery_response(
         else:
             bindable.append(entry)
 
-    def _tool_entry(name: str) -> dict[str, Any]:
+    def _tool_entry(name: str) -> _DiscoveredTool:
         category = tool_registry.get_category_of_tool(name)
         meta = tool_registry.get_tool_meta(name)
-        entry: dict[str, Any] = {
+        entry: _DiscoveredTool = {
             "name": name,
             "source": connected_integrations.get(category) or category
             if category in connected_integrations
@@ -733,7 +759,7 @@ def _render_discovery_response(
         sid, name = pair
         return {"id": sid, "name": name} if name else {"id": sid}
 
-    payload: dict[str, Any] = {
+    payload: dict[str, object] = {
         "tools_to_bind": [_tool_entry(n) for n in bindable],
         "mcp_subagents": [_id_entry(p) for p in mcp],
         "new_integrations": [_id_entry(p) for p in new],
@@ -817,14 +843,15 @@ def get_retrieve_tools_function(
         # of how many names it means to bind. A plain array schema fixes it.
         exact_tool_names: list[str] = Field(default_factory=list),
     ) -> RetrieveToolsResult:
+        configurable: AgentConfigurable = agent_configurable(config)
         log.info(
             f"{LogTag.TOOL} retrieve_tools called",
             query=query,
             exact_tool_names=exact_tool_names,
             tool_space=tool_space,
             include_subagents=include_subagents,
-            user_id=agent_configurable(config).get("user_id")
-            or config.get("metadata", {}).get("user_id"),
+            user_id=configurable.get("user_id")
+            or RunMetadata.model_validate(config.get("metadata", {})).user_id,
         )
         if not query and not exact_tool_names:
             # A no-usable-argument call (e.g. exact_tool_names=[]) must NOT crash
@@ -851,18 +878,16 @@ def get_retrieve_tools_function(
 
         # Desktop tools only surface for desktop-app conversations, and only
         # in the main agent context (subagents keep their own tool space).
-        conversation_source = ConversationSource.coerce(
-            agent_configurable(config).get("conversation_source")
-        )
+        conversation_source = ConversationSource.coerce(configurable.get("conversation_source"))
         desktop_enabled = (
             conversation_source is ConversationSource.DESKTOP and tool_space == "general"
         )
 
         # Get user_id from config (try configurable first, then metadata as fallback)
-        user_id = agent_configurable(config).get("user_id")
+        user_id = configurable.get("user_id")
         if not user_id:
             # Fallback to metadata
-            user_id = config.get("metadata", {}).get("user_id")
+            user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
             if user_id and "configurable" in config:
                 # Update configurable with user_id for consistency
                 config["configurable"]["user_id"] = user_id
@@ -1018,9 +1043,7 @@ def get_retrieve_tools_function(
         )
 
         # Build and execute search tasks
-        active_namespaces = await _active_tool_spaces(
-            agent_configurable(config).get("conversation_id")
-        )
+        active_namespaces = await _active_tool_spaces(configurable.get("conversation_id"))
         search_tasks = _build_search_tasks(
             store,
             query or "",
@@ -1072,12 +1095,8 @@ def get_retrieve_tools_function(
         for result in results:
             if isinstance(result, list) and result and not isinstance(result[0], dict):
                 for item in result:
-                    if isinstance(item, dict):
-                        namespace = item.get("namespace")
-                        tool_key = item.get("key")
-                    else:
-                        namespace = getattr(item, "namespace", None)
-                        tool_key = getattr(item, "key", None)
+                    namespace = getattr(item, "namespace", None)
+                    tool_key = getattr(item, "key", None)
                     if tool_key is None:
                         continue
                     chroma_preview.append(f"{namespace}::{tool_key}")

@@ -81,6 +81,7 @@ class _AgentTriggerContext(BaseModel):
 
     active_todo_id: str | None = None
     todo_id: str | None = None
+    todo_title: str | None = None
     execution_mode: object = None
     workflow_id: str | None = None
     workflow_title: str = ""
@@ -90,6 +91,9 @@ class _AgentTriggerContext(BaseModel):
     )
     playbook_replayed_calls: list[dict[str, object]] | None = Field(
         default=None, validation_alias=PLAYBOOK_REPLAYED_CALLS_KEY
+    )
+    executor_lock_reservation: str | None = Field(
+        default=None, validation_alias=WORKFLOW_LOCK_CONTEXT_KEY
     )
 
 
@@ -217,7 +221,7 @@ async def _core_agent_logic(
                 execution_mode=str(execution_mode),
                 workflow_title=_workflow_text(request.selectedWorkflow, "title"),
                 workflow_description=_workflow_text(request.selectedWorkflow, "description"),
-                todo_title=str((trigger_context or {}).get("todo_title") or ""),
+                todo_title=trigger.todo_title or "",
             ),
             user_request=request.message,
             user_preferences=user_preferences,
@@ -247,15 +251,13 @@ async def _core_agent_logic(
     # Workflow runs carry their id/title so the background executor's delivery
     # path can route the final result to the workflow-completion notification
     # instead of a normal conversation message. Absent for interactive chat.
-    if trigger_context and trigger_context.get("workflow_id"):
-        configurable["workflow_id"] = trigger_context["workflow_id"]
-        configurable["workflow_title"] = trigger_context.get("workflow_title", "")
-        configurable["workflow_notify_on_completion"] = trigger_context.get(
-            "workflow_notify_on_completion", True
-        )
-        configurable["playbook_fallback"] = trigger_context.get(PLAYBOOK_FALLBACK_CONTEXT_KEY)
+    if trigger_context and trigger.workflow_id:
+        configurable["workflow_id"] = trigger.workflow_id
+        configurable["workflow_title"] = trigger.workflow_title
+        configurable["workflow_notify_on_completion"] = trigger.workflow_notify_on_completion
+        configurable["playbook_fallback"] = trigger.playbook_fallback
         configurable["playbook_replayed_calls"] = trigger.playbook_replayed_calls
-        configurable["executor_lock_reservation"] = trigger_context.get(WORKFLOW_LOCK_CONTEXT_KEY)
+        configurable["executor_lock_reservation"] = trigger.executor_lock_reservation
 
     log.set(
         agent={

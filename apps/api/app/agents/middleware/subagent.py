@@ -153,7 +153,7 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
             selected_tool_ids: Annotated[list[str], InjectedState("selected_tool_ids")],
             config: RunnableConfig,
             context: str = "",
-        ) -> Command[Any]:
+        ) -> Command[str]:
             """Spawn a subagent to handle a subtask with focused execution."""
             if middleware._llm is None:
                 return Command(
