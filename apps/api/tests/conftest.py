@@ -43,9 +43,39 @@ _hypothesis_settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 # Environment setup — runs at import time, before any app module is loaded.
 # ---------------------------------------------------------------------------
 
-# Env fence + Infisical patch, shared with scripts/export_openapi.py. Imported
-# here (not at the top) because it must run before any app module loads.
-import tests.offline_env  # isort: skip  # noqa: F401 -- imported for its side effects
+os.environ["ENV"] = "development"
+# Force the dev auth bypass OFF: a machine set up for agent-driven e2e has
+# DEV_AUTH_BYPASS_EMAIL in .env, which short-circuits WorkOSAuthMiddleware. Empty
+# (not popped) keeps load_dotenv(override=False) from re-injecting the .env value.
+os.environ["DEV_AUTH_BYPASS_EMAIL"] = ""
+# Same fix for the dev overrides that change behaviour, not carry a secret:
+# DEV_UNLIMITED_RATE_LIMITS breaks the rate-limit tests, GAIA_SIM_MODE stubs the
+# LLM. Both are typed bool, so the neutral value must parse — "false", not "".
+os.environ["DEV_UNLIMITED_RATE_LIMITS"] = "false"
+os.environ["GAIA_SIM_MODE"] = "false"
+# Code mode mints per-invocation tokens; pin it off so a developer's .env
+# cannot leak execute env into hermetic bash tests. Opt in per test.
+os.environ["ENABLE_CODE_MODE"] = "false"
+# Same leak, opposite pin: the OpenUI experiment ships ON and the prompt-contract
+# tests assert the OpenUI variant, so a developer's ENABLE_COMMS_OPENUI=false in
+# .env would flip the suite's static prompts. Flag-off paths opt in per test.
+os.environ["ENABLE_COMMS_OPENUI"] = "true"
+os.environ.setdefault(
+    "MONGO_DB",
+    "mongodb://localhost:27017/gaia_test?serverSelectionTimeoutMS=100&connectTimeoutMS=100",
+)
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("WORKOS_API_KEY", "sk_test_fake")
+os.environ.setdefault("WORKOS_CLIENT_ID", "client_fake")
+os.environ.setdefault("WORKOS_COOKIE_PASSWORD", "a" * 32)
+os.environ.setdefault("RESEND_API_KEY", "re_test_fake")
+os.environ.setdefault("RESEND_AUDIENCE_ID", "aud_fake")
+os.environ.setdefault("EMAIL_UNSUBSCRIBE_SECRET", "test-unsubscribe-secret-" + "x" * 16)
+os.environ.setdefault(
+    "MCP_ENCRYPTION_KEY",
+    "dGVzdF9lbmNyeXB0aW9uX2tleV8zMl9ieXRlcw==",  # pragma: allowlist secret
+)
+os.environ.setdefault("AGENT_SECRET", "test-agent-secret-" + "x" * 32)  # pragma: allowlist secret
 
 # Imported after the env setup above: document models extend MongoDocument,
 # pulling in app.config.settings which instantiates settings at import

@@ -27,7 +27,7 @@ from app.agents.core.background.session import (
     create_session,
     teardown_session,
 )
-from app.models.chat_models import ConversationModel
+from app.models.chat_models import ConversationModel, MessageKind
 from app.models.message_models import MessageRequestWithHistory
 from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
@@ -495,6 +495,50 @@ class TestSaveConversationAsync:
             )
         request_arg = mock_update.call_args.args[0]
         assert request_arg.conversation_id == "specific_conv_id"
+
+    async def test_react_ack_is_stamped_emoji_ack_with_target(self, test_user, basic_body) -> None:
+        """A comms REACT turn saves the bare emoji with kind + target so every surface (reload, sync, second device) renders it as a reaction badge."""
+        mock_update = AsyncMock()
+        with (
+            patch("app.services.chat.persistence.update_messages", new=mock_update),
+        ):
+            await _save_conversation_async(
+                body=basic_body,
+                user=test_user,
+                conversation_id="conv_123",
+                complete_message="😎",
+                tool_data={},
+                metadata={},
+                user_message_id="umsg_1",
+                bot_message_id="bmsg_1",
+                kind=MessageKind.EMOJI_ACK,
+                reacts_to_message_id="umsg_1",
+            )
+        request_arg = mock_update.call_args.args[0]
+        bot_msg = request_arg.messages[1]
+        assert bot_msg.response == "😎"
+        assert bot_msg.kind is MessageKind.EMOJI_ACK
+        assert bot_msg.reacts_to_message_id == "umsg_1"
+
+    async def test_plain_reply_stays_text_without_target(self, test_user, basic_body):
+        mock_update = AsyncMock()
+        with (
+            patch("app.services.chat.persistence.update_messages", new=mock_update),
+        ):
+            await _save_conversation_async(
+                body=basic_body,
+                user=test_user,
+                conversation_id="conv_123",
+                complete_message="all set",
+                tool_data={},
+                metadata={},
+                user_message_id="umsg_1",
+                bot_message_id="bmsg_1",
+            )
+        request_arg = mock_update.call_args.args[0]
+        bot_msg = request_arg.messages[1]
+        assert bot_msg.kind is MessageKind.TEXT
+        assert bot_msg.reacts_to_message_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -1587,15 +1631,6 @@ class TestTurnLatencyHelpers:
         session.executor_spawned = True
         try:
             assert _executor_delegation(stream_id) == (True, False)
-        finally:
-            teardown_session(stream_id)
-
-    def test_executor_delegation_queued_task_is_delegated_and_queued(self) -> None:
-        stream_id = "latency-delegation-queued"
-        session = create_session(stream_id, RunKind.QUEUED)
-        session.executor_queued_task_id = "task-1"
-        try:
-            assert _executor_delegation(stream_id) == (True, True)
         finally:
             teardown_session(stream_id)
 

@@ -16,6 +16,8 @@ import fakeredis.aioredis
 from prometheus_client import REGISTRY
 import pytest
 
+from app.agents.core.background.executor_queue import LockClaim
+from app.models.hil_models import HILApprovalStatus
 from app.schemas.hil_schemas import BatchDecisionOutcome
 from app.services.hil.resolution import (
     CANCELLED_FEEDBACK,
@@ -172,6 +174,19 @@ class TestTheResumeSlotIsExclusive:
         assert await claim_resume_dispatch("conv-someone-else") is True
 
 
+class TestResumeSeizesTheConversation:
+    async def test_a_resume_takes_the_lock_its_paused_run_still_holds(self, resume: Any) -> None:
+        """The paused run holds this conversation's lock ON PURPOSE while it waits on the user, so a resume must seize it."""
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=make_record())),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock()),
+            patch(f"{MODULE}.mark_resumed", new=AsyncMock()),
+        ):
+            await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+        assert resume.prepare.await_args.kwargs["claim"] is LockClaim.SEIZE
+
+
 class TestUnresumableRecords:
     async def test_a_record_with_no_resume_context_is_not_marked_decided(self, resume: Any) -> None:
         # Ordering invariant. If the decided-transition happened first, the user would be
@@ -181,19 +196,23 @@ class TestUnresumableRecords:
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
             patch(f"{MODULE}.mark_decided", new=AsyncMock()) as decided,
+            patch(f"{MODULE}.publish_decision", new=AsyncMock()) as settle,
             pytest.raises(ApprovalNotResumableError),
         ):
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
 
         assert decided.await_count == 0  # stays pending; the sweep will expire it
         assert resume.prepare.await_count == 0
+        # ...but the card settles so the user stops staring at a live Approve button.
+        settle.assert_awaited_once()
+        assert settle.await_args.args[1] == HILApprovalStatus.ABANDONED
 
     async def test_an_early_decision_on_a_parked_subagent_decides_without_dispatch(
         self, resume: Any
     ) -> None:
-        # The user answers before the executor reaches its join (no resume_item yet).
-        # With a live executor (busy lock held), the decision must land durably but
-        # must NOT dispatch or stamp a resume — the running executor collects it.
+        # The user answers a parked subagent's card BEFORE any resume context
+        # exists. With a live executor the decision still lands durably and must NOT
+        # dispatch or stamp a resume — resuming the parked thread is the HIL rework.
         record = make_record(resume_item=None, subagent_thread_id="gmail_executor_conv-1")
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
@@ -205,6 +224,25 @@ class TestUnresumableRecords:
         assert decided.await_count == 1  # the decision is durable
         assert resume.prepare.await_count == 0  # nothing to wake — executor is running
         assert resume.mark_resumed.await_count == 0  # no dispatch happened, none stamped
+
+    async def test_approve_with_feedback_records_denied_old_path(self, resume: Any) -> None:
+        # Same permission-scope conversion as the ledger path and the chat
+        # classifier: the stored call carries no conditions, so "approve +
+        # note" records as denied with the note instead of running.
+        from app.models.hil_models import HILApprovalStatus
+
+        record = make_record()
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)) as decided,
+        ):
+            await resolve_approval(
+                approval_id="appr-1", user_id=USER_ID, kind="approve", feedback="cc finance"
+            )
+
+        decided.assert_awaited_once()
+        assert decided.await_args.args[1] == HILApprovalStatus.DENIED
+        assert decided.await_args.kwargs["feedback"] == "cc finance"
 
     async def test_an_early_decision_with_no_live_executor_fails_loudly(self, resume: Any) -> None:
         # Fire-and-forget: the executor finished without joining, so nobody will collect
@@ -302,9 +340,9 @@ class TestDecisionSemantics:
         assert resume.runner.call_args.kwargs["resume"].resume["status"] == "denied"
 
     async def test_the_returned_record_carries_the_full_decision_forward(self, resume: Any) -> None:
-        # The loaded record predates the transition; the caller and the resume dispatch
-        # must see the decided image, not the pending snapshot. Every copied field is
-        # load-bearing — a renamed key silently drops it back to the pending value.
+        # The caller and resume dispatch must see the decided image, not the pending
+        # snapshot; every copied field is load-bearing. approve+feedback is a
+        # conditional approval, recorded as denied with the note.
         record = make_record()
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
@@ -319,7 +357,7 @@ class TestDecisionSemantics:
             )
 
         assert decided is not record
-        assert decided.status == "approved"
+        assert decided.status == "denied"
         assert decided.feedback == "looks good"
         assert decided.scope == "always"
         assert decided.decided_by == USER_ID
@@ -426,6 +464,19 @@ class TestAbandonConversation:
         assert decided.await_args.args[1] == "abandoned"
         assert resume.prepare.await_count == 0
 
+    async def test_foreign_records_are_skipped_not_closed(self, resume: Any) -> None:
+        # The resume-less close path must authorize like every other decision
+        # path: another user's record is skipped, never decided.
+        record = make_record(approval_id="a1", resume_item=None, user_id="someone-else")
+        with (
+            patch(f"{MODULE}.list_pending_for_conversation", new=AsyncMock(return_value=[record])),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock()) as decided,
+        ):
+            abandoned = await abandon_conversation_approvals("conv-1", USER_ID, "moved on")
+
+        assert abandoned == []
+        decided.assert_not_awaited()
+
 
 class TestSweep:
     async def test_expired_approvals_time_out_and_resume_their_runs(self, resume: Any) -> None:
@@ -437,7 +488,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 1, "redispatched": 0}
+        assert counts == {"expired": 1, "redispatched": 0, "deferred_subagent": 0}
         assert decided.await_args.args[1] == "timeout"
         assert resume.runner.call_args.kwargs["resume"].resume["status"] == "timeout"
 
@@ -451,7 +502,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 0, "redispatched": 1}
+        assert counts == {"expired": 0, "redispatched": 1, "deferred_subagent": 0}
         assert resume.runner.call_args.kwargs["resume"].resume["status"] == "approved"
 
     async def test_a_stranded_abandoned_record_redispatches_as_a_denial(self, resume: Any) -> None:
@@ -479,7 +530,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 0, "redispatched": 0}
+        assert counts == {"expired": 0, "redispatched": 0, "deferred_subagent": 0}
         assert resume.runner.call_count == 0
 
     async def test_one_bad_record_does_not_strand_the_rest_of_the_expiry_pass(
@@ -502,7 +553,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 1, "redispatched": 0}
+        assert counts == {"expired": 1, "redispatched": 0, "deferred_subagent": 0}
         assert resume.runner.call_count == 1  # only the good record's run resumed
 
     async def test_one_failed_redispatch_does_not_abort_the_rest_of_the_sweep(
@@ -530,7 +581,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 0, "redispatched": 1}
+        assert counts == {"expired": 0, "redispatched": 1, "deferred_subagent": 0}
         assert resume.runner.call_count == 1  # only the good record's run resumed
 
 
@@ -612,6 +663,47 @@ class TestCancelledRunApprovals:
         ):
             assert await cancel_conversation_approvals(CONVERSATION_ID, USER_ID) == []
         assert decided.await_count == 0
+
+
+class TestSubagentParksHaveNoResumeDriver:
+    """Until the HIL rework supplies one, subagent-parked approvals must neither dispatch doomed resume runs nor retry forever — they wait out their TTL while the expiry pass still closes them."""
+
+    async def test_sweep_defers_subagent_thread_records_without_dispatch(self) -> None:
+        record = make_record(
+            approval_id="appr-9",
+            status="approved",
+            subagent_thread_id="gmail_executor_conv-1",
+        )
+        with (
+            patch(f"{MODULE}.list_expired_pending", new=AsyncMock(return_value=[])),
+            patch(f"{MODULE}.list_decided_unresumed", new=AsyncMock(return_value=[record])),
+            patch(f"{MODULE}._dispatch_resume", new=AsyncMock()) as dispatch,
+        ):
+            result = await sweep_approvals()
+
+        dispatch.assert_not_awaited()
+        assert result == {"expired": 0, "redispatched": 0, "deferred_subagent": 1}
+
+    async def test_dispatch_refuses_subagent_thread_records_loudly(self, resume: Any) -> None:
+        from app.services.hil.resolution import _dispatch_resume
+
+        record = make_record(subagent_thread_id="gmail_executor_conv-1")
+        with pytest.raises(ApprovalNotResumableError):
+            await _dispatch_resume(record, resume_status="approved", feedback=None, scope="once")
+
+        resume.claim.assert_not_awaited()
+        resume.runner.assert_not_awaited()
+        resume.mark_resumed.assert_not_awaited()
+
+    async def test_executor_gate_pauses_still_dispatch(self, resume: Any) -> None:
+        from app.services.hil.resolution import _dispatch_resume
+
+        record = make_record(subagent_thread_id=None)
+        await _dispatch_resume(record, resume_status="approved", feedback=None, scope="once")
+        await asyncio.sleep(0)
+
+        resume.runner.assert_awaited_once()
+        resume.mark_resumed.assert_awaited_once()
 
 
 class TestHILWaitBenchmarks:

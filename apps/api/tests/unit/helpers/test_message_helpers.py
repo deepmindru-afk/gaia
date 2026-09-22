@@ -48,9 +48,10 @@ class TestCreateSystemMessage:
         assert isinstance(web_a, SystemMessage)
         assert web_a.content == web_b.content
         assert web_a.content != whatsapp.content
-        # Output-format addenda should be inline in the static per-channel
-        # prompt — web has OpenUI, text-only has platform restrictions.
-        assert ":::openui" in web_a.content
+        # Output-format addenda are inline in the static per-channel prompt (web
+        # has OpenUI, text-only has platform restrictions). Assert on the addendum
+        # marker, not the fence literal: the base prompt names :::openui either way.
+        assert "---OpenUI Lang (Rich UI Components)---" in web_a.content
         assert "Platform Context" in whatsapp.content
 
     def test_executor_agent_is_static(self) -> None:
@@ -87,6 +88,9 @@ class TestFormatToolSelectionMessage:
         assert "Find info about AI" in result
         assert "Web Search" in result
         assert "TOOL SELECTION" in result
+        assert "activate_integration" in result
+        assert "handoff" not in result
+        assert "subagent:" not in result
 
     def test_without_content(self) -> None:
         result = format_tool_selection_message(

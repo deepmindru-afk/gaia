@@ -1,6 +1,7 @@
 """Tests for app/agents/tools/core/retrieval.py — tool retrieval functions."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,52 +28,15 @@ class TestGetUserContext:
     async def test_no_user_id_returns_defaults(self):
         from app.agents.tools.core.retrieval import _get_user_context
 
-        with patch(
-            "app.agents.tools.core.retrieval.all_subagents",
-            return_value=(),
-        ):
-            ns, connected, internal = await _get_user_context(
-                None, "general", include_subagents=True
-            )
+        ns, connected = await _get_user_context(None, "general", include_subagents=True)
         assert "general" in ns
         assert connected == {}
-        assert internal == set()
-
-    @pytest.mark.asyncio
-    async def test_includes_internal_subagents(self):
-        from app.agents.tools.core.retrieval import _get_user_context
-
-        with patch(
-            "app.agents.tools.core.retrieval.all_subagents",
-            return_value=(_make_subagent_mock("gmail", "internal"),),
-        ):
-            ns, connected, internal = await _get_user_context(
-                None, "general", include_subagents=True
-            )
-        assert "gmail" in internal
-
-    @pytest.mark.asyncio
-    async def test_excludes_internal_subagents_when_disabled(self):
-        from app.agents.tools.core.retrieval import _get_user_context
-
-        with patch(
-            "app.agents.tools.core.retrieval.all_subagents",
-            return_value=(_make_subagent_mock("gmail", "internal"),),
-        ):
-            ns, connected, internal = await _get_user_context(
-                None, "general", include_subagents=False
-            )
-        assert internal == set()
 
     @pytest.mark.asyncio
     async def test_with_user_id_gets_namespaces(self):
         from app.agents.tools.core.retrieval import _get_user_context
 
         with (
-            patch(
-                "app.agents.tools.core.retrieval.all_subagents",
-                return_value=(),
-            ),
             patch(
                 "app.agents.tools.core.retrieval.get_user_available_tool_namespaces",
                 new_callable=AsyncMock,
@@ -85,9 +49,7 @@ class TestGetUserContext:
                 return_value={"gmail": None},
             ),
         ):
-            ns, connected, internal = await _get_user_context(
-                "user1", "general", include_subagents=True
-            )
+            ns, connected = await _get_user_context("user1", "general", include_subagents=True)
         assert "general" in ns
         assert "gmail" in ns
         # gmail is not a platform integration -> treated as custom -> connected
@@ -99,18 +61,12 @@ class TestGetUserContext:
 
         with (
             patch(
-                "app.agents.tools.core.retrieval.all_subagents",
-                return_value=(),
-            ),
-            patch(
                 "app.agents.tools.core.retrieval.get_user_available_tool_namespaces",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("db fail"),
             ),
         ):
-            ns, connected, internal = await _get_user_context(
-                "user1", "myspace", include_subagents=True
-            )
+            ns, connected = await _get_user_context("user1", "myspace", include_subagents=True)
         # Falls back to seeded defaults — non-platform tool spaces are NOT seeded
         assert "general" in ns
         assert "myspace" not in ns
@@ -123,10 +79,6 @@ class TestGetUserContext:
 
         with (
             patch(
-                "app.agents.tools.core.retrieval.all_subagents",
-                return_value=(slack_subagent,),
-            ),
-            patch(
                 "app.agents.tools.core.retrieval.get_user_available_tool_namespaces",
                 new_callable=AsyncMock,
                 return_value=["general", "slack", "subagents"],
@@ -137,9 +89,7 @@ class TestGetUserContext:
                 return_value={"slack": slack_subagent.name},
             ),
         ):
-            ns, connected, internal = await _get_user_context(
-                "user1", "general", include_subagents=True
-            )
+            ns, connected = await _get_user_context("user1", "general", include_subagents=True)
         assert "slack" in connected
 
 
@@ -155,12 +105,7 @@ class TestBuildSearchTasks:
         store = MagicMock()
         store.asearch = AsyncMock(return_value=[])
         tasks = _build_search_tasks(
-            store,
-            "email",
-            "gmail",
-            {"gmail", "general"},
-            include_subagents=False,
-            limit=10,
+            store, "email", "gmail", {"gmail", "general"}, include_subagents=False, limit=10
         )
         # gmail search + general search (limited)
         assert len(tasks) == 2
@@ -182,7 +127,21 @@ class TestBuildSearchTasks:
             if asyncio.iscoroutine(t):
                 t.close()
 
-    def test_includes_subagent_searches(self):
+    def test_no_subagent_searches_when_disabled(self):
+        from app.agents.tools.core.retrieval import _build_search_tasks
+
+        store = MagicMock()
+        store.asearch = AsyncMock(return_value=[])
+        tasks = _build_search_tasks(
+            store, "email", "general", {"general"}, include_subagents=False, limit=10
+        )
+        # Only the general search — scoped agents never look for subagents.
+        assert len(tasks) == 1
+        for t in tasks:
+            if asyncio.iscoroutine(t):
+                t.close()
+
+    def test_subagent_and_public_searches_when_enabled(self):
         from app.agents.tools.core.retrieval import _build_search_tasks
 
         store = MagicMock()
@@ -190,7 +149,7 @@ class TestBuildSearchTasks:
         tasks = _build_search_tasks(
             store, "email", "general", {"general"}, include_subagents=True, limit=10
         )
-        # general + subagents search + public integrations search
+        # general + subagents namespace (MCP pointers) + public integrations
         assert len(tasks) == 3
         for t in tasks:
             if asyncio.iscoroutine(t):
@@ -209,33 +168,6 @@ class TestBuildSearchTasks:
         for t in tasks:
             if asyncio.iscoroutine(t):
                 t.close()
-
-
-# ---------------------------------------------------------------------------
-# _process_public_integration_result
-# ---------------------------------------------------------------------------
-
-
-class TestProcessPublicIntegrationResult:
-    def test_processes_results(self):
-        from app.agents.tools.core.retrieval import _process_public_integration_result
-
-        items = [
-            {"integration_id": "abc123", "name": "My App", "relevance_score": 0.9},
-            {"integration_id": "def456", "name": None, "relevance_score": 0.5},
-        ]
-        result = _process_public_integration_result(items)
-        assert len(result) == 2
-        assert result[0]["id"] == "subagent:abc123 (My App)"
-        assert result[0]["score"] == pytest.approx(0.9)
-        assert result[1]["id"] == "subagent:def456"
-
-    def test_skips_missing_integration_id(self):
-        from app.agents.tools.core.retrieval import _process_public_integration_result
-
-        items = [{"name": "No ID"}]
-        result = _process_public_integration_result(items)
-        assert len(result) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -276,44 +208,6 @@ class TestProcessChromaSearchResult:
         result = _process_chroma_search_result(
             [item], {"GMAIL_SEND"}, registry, include_subagents=True
         )
-        assert len(result) == 0
-
-    def test_subagent_namespace_items(self):
-        from app.agents.tools.core.retrieval import _process_chroma_search_result
-
-        item = self._make_item("gmail", namespace=("subagents",), value={"name": "Gmail"})
-        registry = MagicMock()
-
-        result = _process_chroma_search_result([item], set(), registry, include_subagents=True)
-        assert len(result) == 1
-        assert result[0]["id"] == "subagent:gmail (Gmail)"
-
-    def test_subagent_namespace_skipped_when_disabled(self):
-        from app.agents.tools.core.retrieval import _process_chroma_search_result
-
-        item = self._make_item("gmail", namespace=("subagents",))
-        registry = MagicMock()
-
-        result = _process_chroma_search_result([item], set(), registry, include_subagents=False)
-        assert len(result) == 0
-
-    def test_subagent_prefix_key(self):
-        from app.agents.tools.core.retrieval import _process_chroma_search_result
-
-        item = self._make_item("subagent:gmail", namespace=("general",))
-        registry = MagicMock()
-
-        result = _process_chroma_search_result([item], set(), registry, include_subagents=True)
-        assert len(result) == 1
-        assert result[0]["id"] == "subagent:gmail"
-
-    def test_subagent_prefix_skipped_when_disabled(self):
-        from app.agents.tools.core.retrieval import _process_chroma_search_result
-
-        item = self._make_item("subagent:gmail", namespace=("general",))
-        registry = MagicMock()
-
-        result = _process_chroma_search_result([item], set(), registry, include_subagents=False)
         assert len(result) == 0
 
     def test_general_namespace_filters_non_webpage_tools_for_subagent(self):
@@ -368,15 +262,6 @@ class TestProcessChromaSearchResult:
         )
         assert len(result) == 0
 
-    def test_subagent_key_with_existing_prefix(self):
-        from app.agents.tools.core.retrieval import _process_chroma_search_result
-
-        item = self._make_item("subagent:slack", namespace=("subagents",), value={"name": "Slack"})
-        registry = MagicMock()
-
-        result = _process_chroma_search_result([item], set(), registry, include_subagents=True)
-        assert result[0]["id"] == "subagent:slack (Slack)"
-
 
 # ---------------------------------------------------------------------------
 # _process_search_results
@@ -404,7 +289,7 @@ class TestProcessSearchResults:
         assert processed == []
 
     @pytest.mark.asyncio
-    async def test_routes_dict_results_to_public(self):
+    async def test_dict_results_render_as_integration_entries(self):
         from app.agents.tools.core.retrieval import _process_search_results
 
         registry = MagicMock()
@@ -412,8 +297,7 @@ class TestProcessSearchResults:
         processed = await _process_search_results(
             [public_results], set(), registry, include_subagents=True
         )
-        assert len(processed) == 1
-        assert "subagent:abc" in str(processed[0]["id"])
+        assert [r["id"] for r in processed] == ["integration:abc (App)"]
 
 
 # ---------------------------------------------------------------------------
@@ -466,56 +350,6 @@ class TestDeduplicateAndSort:
         assert out == ["b", "a"]
 
 
-# ---------------------------------------------------------------------------
-# _inject_available_subagents
-# ---------------------------------------------------------------------------
-
-
-class TestInjectAvailableSubagents:
-    def test_noop_when_disabled(self):
-        from app.agents.tools.core.retrieval import _inject_available_subagents
-
-        result = _inject_available_subagents(
-            ["tool_a"], {"internal"}, {"connected": None}, include_subagents=False
-        )
-        assert result == ["tool_a"]
-
-    def test_injects_internal_and_connected(self):
-        from app.agents.tools.core.retrieval import _inject_available_subagents
-
-        sa_internal = MagicMock()
-        sa_internal.name = "Internal App"
-
-        with patch(
-            "app.agents.tools.core.retrieval.get_subagent_by_id",
-            return_value=sa_internal,
-        ):
-            result = _inject_available_subagents(
-                ["tool_a"],
-                {"int1"},
-                # connected_integrations is now dict[str, str | None] — name included
-                {"conn1": "Connected App"},
-                include_subagents=True,
-            )
-        assert "tool_a" in result
-        assert "subagent:int1 (Internal App)" in result
-        assert "subagent:conn1 (Connected App)" in result
-
-    def test_no_duplicates(self):
-        from app.agents.tools.core.retrieval import _inject_available_subagents
-
-        with patch(
-            "app.agents.tools.core.retrieval.get_subagent_by_id",
-            return_value=None,
-        ):
-            result = _inject_available_subagents(
-                ["subagent:int1"], {"int1"}, {}, include_subagents=True
-            )
-        # "subagent:int1" already in discovered, should not add duplicate
-        assert result.count("subagent:int1") == 1
-
-
-# ---------------------------------------------------------------------------
 # get_retrieve_tools_function / retrieve_tools
 # ---------------------------------------------------------------------------
 
@@ -527,17 +361,16 @@ class TestGetRetrieveToolsFunction:
         fn = get_retrieve_tools_function()
         assert callable(fn)
 
-    def test_docstring_includes_subagent_section(self):
+    def test_docstring_has_no_subagent_section(self):
         from app.agents.tools.core.retrieval import get_retrieve_tools_function
 
-        fn = get_retrieve_tools_function(include_subagents=True)
-        assert "SUBAGENT TOOLS" in fn.__doc__
-
-    def test_docstring_excludes_subagent_section(self):
-        from app.agents.tools.core.retrieval import get_retrieve_tools_function
-
-        fn = get_retrieve_tools_function(include_subagents=False)
-        assert "SUBAGENT TOOLS" not in fn.__doc__
+        for fn in (
+            get_retrieve_tools_function(),
+            get_retrieve_tools_function(include_subagents=False),
+        ):
+            assert "SUBAGENT TOOLS" not in (fn.__doc__ or "")
+            assert "subagent:" not in (fn.__doc__ or "")
+            assert "handoff" not in (fn.__doc__ or "")
 
 
 class TestRetrieveToolsBinding:
@@ -554,11 +387,18 @@ class TestRetrieveToolsBinding:
 
         mock_registry = MagicMock()
         mock_registry.get_tool_names.return_value = ["TOOL_A", "TOOL_B"]
+        mock_registry.get_category.return_value = SimpleNamespace(require_integration=False)
 
-        with patch(
-            "app.agents.tools.core.retrieval.get_tool_registry",
-            new_callable=AsyncMock,
-            return_value=mock_registry,
+        with (
+            patch(
+                "app.agents.tools.core.retrieval.get_tool_registry",
+                new_callable=AsyncMock,
+                return_value=mock_registry,
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.resolve_tool",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             await fn(
                 store=store,
@@ -570,6 +410,7 @@ class TestRetrieveToolsBinding:
             "mode": "binding",
             "tools_requested": 2,
             "tools_bound": 1,
+            "tools_proxied": 0,
             "tools_filtered": 1,
         }
 
@@ -603,11 +444,18 @@ class TestRetrieveToolsBinding:
 
         mock_registry = MagicMock()
         mock_registry.get_tool_names.return_value = ["TOOL_A", "TOOL_B"]
+        mock_registry.get_category.return_value = SimpleNamespace(require_integration=False)
 
-        with patch(
-            "app.agents.tools.core.retrieval.get_tool_registry",
-            new_callable=AsyncMock,
-            return_value=mock_registry,
+        with (
+            patch(
+                "app.agents.tools.core.retrieval.get_tool_registry",
+                new_callable=AsyncMock,
+                return_value=mock_registry,
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.resolve_tool",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             result = await fn(
                 store=store,
@@ -619,7 +467,7 @@ class TestRetrieveToolsBinding:
         assert "TOOL_C" not in result["tools_to_bind"]
 
     @pytest.mark.asyncio
-    async def test_binding_mode_returns_corrective_for_subagents(self):
+    async def test_binding_mode_reports_subagent_names_as_unknown(self):
         from app.agents.tools.core.retrieval import get_retrieve_tools_function
 
         fn = get_retrieve_tools_function(include_subagents=True)
@@ -628,11 +476,18 @@ class TestRetrieveToolsBinding:
 
         mock_registry = MagicMock()
         mock_registry.get_tool_names.return_value = ["TOOL_A"]
+        mock_registry.get_category.return_value = SimpleNamespace(require_integration=False)
 
-        with patch(
-            "app.agents.tools.core.retrieval.get_tool_registry",
-            new_callable=AsyncMock,
-            return_value=mock_registry,
+        with (
+            patch(
+                "app.agents.tools.core.retrieval.get_tool_registry",
+                new_callable=AsyncMock,
+                return_value=mock_registry,
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.resolve_tool",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             result = await fn(
                 store=store,
@@ -640,10 +495,11 @@ class TestRetrieveToolsBinding:
                 exact_tool_names=["subagent:gmail"],
             )
 
-        # Subagents are handed off to, never bound: binding mode returns
-        # corrective guidance instead of echoing the name back as a fake bind.
+        # Discovery never returns subagents, so a subagent: name is reported
+        # unknown — never as a bind, and with no handoff pointer.
         assert result["tools_to_bind"] == []
-        assert any("handoff" in r for r in result["response"])
+        assert "subagent:gmail" in result["response_text"]
+        assert "handoff" not in result["response_text"]
 
     @pytest.mark.asyncio
     async def test_binding_mode_filters_subagents_when_disabled(self):
@@ -655,11 +511,18 @@ class TestRetrieveToolsBinding:
 
         mock_registry = MagicMock()
         mock_registry.get_tool_names.return_value = ["TOOL_A"]
+        mock_registry.get_category.return_value = SimpleNamespace(require_integration=False)
 
-        with patch(
-            "app.agents.tools.core.retrieval.get_tool_registry",
-            new_callable=AsyncMock,
-            return_value=mock_registry,
+        with (
+            patch(
+                "app.agents.tools.core.retrieval.get_tool_registry",
+                new_callable=AsyncMock,
+                return_value=mock_registry,
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.resolve_tool",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             result = await fn(
                 store=store,
@@ -704,7 +567,7 @@ class TestRetrieveToolsDiscovery:
             patch(
                 "app.agents.tools.core.retrieval._get_user_context",
                 new_callable=AsyncMock,
-                return_value=({"general"}, {}, set()),
+                return_value=({"general"}, {}),
             ),
             patch(
                 "app.agents.tools.core.retrieval._user_mcp_tool_names",
@@ -726,6 +589,7 @@ class TestRetrieveToolsDiscovery:
             "per_namespace_hits": {"general": 2},
             "candidates_after_filter": 1,
             "chroma_preview": ["('general',)::TOOL_A", "('general',)::TOOL_B"],
+            "active_namespaces": [],
         }
 
     @pytest.mark.asyncio
@@ -750,7 +614,7 @@ class TestRetrieveToolsDiscovery:
                 "app.agents.tools.core.retrieval._get_user_context",
                 new_callable=AsyncMock,
                 # connected_integrations is now dict[str, str | None], not set
-                return_value=({"general"}, {}, set()),
+                return_value=({"general"}, {}),
             ),
         ):
             # Pass exact_tool_names=[] explicitly — the Field() default is a FieldInfo
@@ -785,7 +649,7 @@ class TestRetrieveToolsDiscovery:
                 "app.agents.tools.core.retrieval._get_user_context",
                 new_callable=AsyncMock,
                 # connected_integrations is now dict[str, str | None], not set
-                return_value=({"general"}, {}, set()),
+                return_value=({"general"}, {}),
             ) as mock_ctx,
         ):
             # Pass exact_tool_names=[] explicitly — the Field() default is a FieldInfo
@@ -795,3 +659,298 @@ class TestRetrieveToolsDiscovery:
         # user_id should have been resolved from metadata
         mock_ctx.assert_called_once()
         assert mock_ctx.call_args[0][0] == "from_metadata"
+
+
+# ---------------------------------------------------------------------------
+# Activated-namespace discovery
+# ---------------------------------------------------------------------------
+
+
+class TestActivatedNamespaceDiscovery:
+    def _github_hit(self):
+        item = MagicMock()
+        item.key = "GITHUB_LIST_PULL_REQUESTS"
+        item.score = 0.9
+        item.namespace = ("github",)
+        return item
+
+    @pytest.mark.asyncio
+    async def test_active_integration_namespace_is_searched(self):
+        """An activated integration's tools must be discoverable from the activating run: discovery searches its namespace, so the "use retrieve_tools for the rest" the activation reply promises works."""
+        from app.agents.tools.core import retrieval
+
+        seen: list = []
+
+        async def fake_asearch(namespace, query="", limit=25):
+            seen.append(namespace)
+            if namespace == ("github",):
+                return [self._github_hit()]
+            return []
+
+        store = MagicMock()
+        store.asearch = fake_asearch
+        config: dict = {"configurable": {"user_id": "u1", "conversation_id": "c1"}}
+
+        registry = MagicMock()
+        registry.get_tool_names.return_value = ["GITHUB_LIST_PULL_REQUESTS"]
+        category = MagicMock()
+        # Genuinely delegated, like the real GITHUB category: the hit must
+        # still survive because the namespace was activated in-conversation.
+        category.is_delegated = True
+        registry.get_category_of_tool.return_value = "github_cat"
+        registry.get_category.return_value = category
+
+        with (
+            patch(
+                "app.agents.tools.core.retrieval.get_tool_registry",
+                new_callable=AsyncMock,
+                return_value=registry,
+            ),
+            patch(
+                "app.agents.tools.core.retrieval._get_user_context",
+                new_callable=AsyncMock,
+                return_value=({"general"}, {}),
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.get_active",
+                new_callable=AsyncMock,
+                return_value={"github"},
+            ),
+        ):
+            fn = retrieval.get_retrieve_tools_function(tool_space="general")
+            result = await fn(
+                store=store, config=config, query="list pull requests", exact_tool_names=[]
+            )
+
+        assert ("github",) in seen
+        assert "GITHUB_LIST_PULL_REQUESTS" in result["response"]
+
+    @pytest.mark.asyncio
+    async def test_no_active_integrations_searches_no_extra_namespace(self):
+        from app.agents.tools.core import retrieval
+
+        seen: list = []
+
+        async def fake_asearch(namespace, query="", limit=25):
+            seen.append(namespace)
+            return []
+
+        store = MagicMock()
+        store.asearch = fake_asearch
+        config: dict = {"configurable": {"user_id": "u1", "conversation_id": "c1"}}
+
+        registry = MagicMock()
+        registry.get_tool_names.return_value = []
+
+        with (
+            patch(
+                "app.agents.tools.core.retrieval.get_tool_registry",
+                new_callable=AsyncMock,
+                return_value=registry,
+            ),
+            patch(
+                "app.agents.tools.core.retrieval._get_user_context",
+                new_callable=AsyncMock,
+                return_value=({"general"}, {}),
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.get_active",
+                new_callable=AsyncMock,
+                return_value=set(),
+            ),
+        ):
+            fn = retrieval.get_retrieve_tools_function(tool_space="general")
+            await fn(store=store, config=config, query="list pull requests", exact_tool_names=[])
+
+        assert ("github",) not in seen
+        assert set(seen) <= {("general",), ("subagents",)}
+
+    @pytest.mark.asyncio
+    async def test_unknown_active_id_is_dropped_with_warning(self):
+        """A stamped id the registry no longer knows never reaches the store."""
+        from app.agents.tools.core import retrieval
+
+        with patch(
+            "app.agents.tools.core.retrieval.get_active",
+            new_callable=AsyncMock,
+            return_value={"deleted_integration"},
+        ):
+            assert await retrieval._active_tool_spaces("c1") == set()
+
+
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Activated-namespace exemption: activated tools surface as real tools
+# ---------------------------------------------------------------------------
+
+
+class TestActivatedNamespaceTools:
+    """An activated integration's tools must reach the model as tools (run via execute), never as subagent pointers — and only that namespace is exempt: every other delegated tool stays hidden."""
+
+    def _delegated_hit(self, key="GITHUB_LIST_PULL_REQUESTS", namespace=("github",)):
+        item = MagicMock()
+        item.key = key
+        item.score = 0.9
+        item.namespace = namespace
+        return item
+
+    def _delegated_registry(self):
+        registry = MagicMock()
+        registry.get_category_of_tool.return_value = "GITHUB"
+        category = MagicMock()
+        category.is_delegated = True
+        registry.get_category.return_value = category
+        return registry
+
+    def test_activated_namespace_delegated_hit_survives(self):
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        result = _process_chroma_search_result(
+            [self._delegated_hit()],
+            {"GITHUB_LIST_PULL_REQUESTS"},
+            self._delegated_registry(),
+            include_subagents=True,
+            active_namespaces={"github"},
+        )
+        assert [r["id"] for r in result] == ["GITHUB_LIST_PULL_REQUESTS"]
+
+    def test_non_activated_delegated_hit_still_dropped(self):
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        result = _process_chroma_search_result(
+            [self._delegated_hit()],
+            {"GITHUB_LIST_PULL_REQUESTS"},
+            self._delegated_registry(),
+            include_subagents=True,
+            active_namespaces={"gmail"},
+        )
+        assert result == []
+
+    def test_no_stamp_still_drops(self):
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        result = _process_chroma_search_result(
+            [self._delegated_hit()],
+            {"GITHUB_LIST_PULL_REQUESTS"},
+            self._delegated_registry(),
+            include_subagents=True,
+            active_namespaces=set(),
+        )
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_discovery_end_to_end_no_provider_subagent_surface(self):
+        """The reported bug: a github-namespace Chroma hit reached the model as nothing (delegated filter) next to a subagent:github pointer."""
+        import json
+
+        from app.agents.tools.core import retrieval
+        from shared.py.wide_events import log
+
+        item = MagicMock()
+        item.key = "GITHUB_LIST_PULL_REQUESTS"
+        item.score = 0.9
+        item.namespace = ("github",)
+
+        async def fake_asearch(namespace, query="", limit=25):
+            if namespace == ("github",):
+                return [item]
+            return []
+
+        store = MagicMock()
+        store.asearch = fake_asearch
+        config: dict = {"configurable": {"user_id": "u1", "conversation_id": "c1"}}
+
+        registry = self._delegated_registry()
+        registry.get_tool_names.return_value = ["GITHUB_LIST_PULL_REQUESTS"]
+        registry.get_tool_meta.return_value = None
+
+        log.reset()
+        with (
+            patch(
+                "app.agents.tools.core.retrieval.get_tool_registry",
+                new_callable=AsyncMock,
+                return_value=registry,
+            ),
+            patch(
+                "app.agents.tools.core.retrieval._get_user_context",
+                new_callable=AsyncMock,
+                return_value=({"general", "github"}, {"github": "GitHub"}),
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.get_active",
+                new_callable=AsyncMock,
+                return_value={"github"},
+            ),
+            patch(
+                "app.agents.tools.core.retrieval._user_mcp_tool_names",
+                new_callable=AsyncMock,
+                return_value=set(),
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.search_public_integrations",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            fn = retrieval.get_retrieve_tools_function(tool_space="general")
+            result = await fn(
+                store=store, config=config, query="list pull requests", exact_tool_names=[]
+            )
+
+        assert "GITHUB_LIST_PULL_REQUESTS" in result["response"]
+        assert not [e for e in result["response"] if e.startswith("subagent:")]
+        body = json.loads(result["response_text"])
+        assert body["mcp_subagents"] == []
+        assert body["new_integrations"] == []
+        assert "handoff" not in result["response_text"]
+
+    def test_mcp_pointer_in_subagents_namespace_survives(self):
+        """Custom MCP pointers are the one subagent surface: source=='custom' entries render as subagent: entries for handoff."""
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        item = self._delegated_hit("my-mcp", namespace=("subagents",))
+        item.value = {"name": "My MCP", "source": "custom"}
+        registry = MagicMock()
+        result = _process_chroma_search_result([item], set(), registry, include_subagents=True)
+        assert [r["id"] for r in result] == ["subagent:my-mcp (My MCP)"]
+
+    def test_stale_provider_doc_in_subagents_namespace_dropped(self):
+        """Docs with an unknown source (pre-removal provider entries that were re-tagged, never "custom" or "mcp") never surface, even though the namespace is searched."""
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        item = self._delegated_hit("github", namespace=("subagents",))
+        item.value = {"name": "GitHub", "source": "provider"}
+        registry = MagicMock()
+        result = _process_chroma_search_result([item], {"github"}, registry, include_subagents=True)
+        assert result == []
+
+    def test_static_mcp_pointer_in_subagents_namespace_survives(self):
+        """Static registry MCP pointers (source=='mcp', written by the seed) render as subagent: entries instead of being dropped as stale."""
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        item = self._delegated_hit("subagent:notes", namespace=("subagents",))
+        item.value = {"name": "Notes", "source": "mcp", "integration_id": "notes"}
+        registry = MagicMock()
+        result = _process_chroma_search_result([item], set(), registry, include_subagents=True)
+        assert [r["id"] for r in result] == ["subagent:subagent:notes (Notes)"]
+
+    def test_legacy_pointer_without_source_is_treated_as_mcp(self):
+        """Docs written before the source field existed carry no source; they are the static pointers the seed used to write, so they surface."""
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        item = self._delegated_hit("subagent:notes", namespace=("subagents",))
+        item.value = {"name": "Notes"}
+        registry = MagicMock()
+        result = _process_chroma_search_result([item], set(), registry, include_subagents=True)
+        assert [r["id"] for r in result] == ["subagent:subagent:notes (Notes)"]
+
+    @pytest.mark.asyncio
+    async def test_public_hits_render_as_integration_entries(self):
+        """Marketplace hits render as integration: entries — activatable, never handed off."""
+        from app.agents.tools.core.retrieval import _process_search_results
+
+        registry = MagicMock()
+        public = [{"integration_id": "linear", "name": "Linear", "relevance_score": 0.7}]
+        processed = await _process_search_results([public], set(), registry, include_subagents=True)
+        assert [r["id"] for r in processed] == ["integration:linear (Linear)"]

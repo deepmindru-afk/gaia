@@ -322,7 +322,7 @@ class TestWhatTheIntentJudgeIsAskedAbout:
             pausable=True,
         )
         call = GatedCall(name="send_email", id="call-1", args={"to": "bob@example.com"})
-        allowed = IntentDecision(True, "You asked me to send Bob the deck.")
+        allowed = IntentDecision(outcome="accept", reason="You asked me to send Bob the deck.")
 
         with (
             patch(f"{MODULE}.has_pausing_sibling", new=AsyncMock(return_value=False)),
@@ -339,3 +339,37 @@ class TestWhatTheIntentJudgeIsAskedAbout:
             args={"to": "bob@example.com"},
             summary="Send email — to: bob@example.com",
         )
+
+
+class TestGateValidatesArgsBeforeAsking:
+    async def test_malformed_args_fail_without_a_card_or_a_pause(self) -> None:
+        # The user must never approve a call the model will have to retry.
+        # Invalid args fail fast with the schema error on the barrier path too:
+        # no card, no pause, tool never runs.
+        from langchain_core.tools import StructuredTool
+        from pydantic import BaseModel
+
+        class _StrictArgs(BaseModel):
+            to: str
+            subject: str
+
+        strict = StructuredTool.from_function(
+            func=lambda: None, name="send_email", description="Send.", args_schema=_StrictArgs
+        )
+        handler = _Handler()
+        with (
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
+            patch(f"{MODULE}.gated_tool_object", new=AsyncMock(return_value=strict)),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value=None)),
+            patch(f"{MODULE}.publish_approval_request", new=AsyncMock()) as pub,
+            patch(f"{MODULE}.interrupt") as intr,
+        ):
+            result = await run_through_gate(make_request(args={"to": "bob"}), handler)
+
+        assert handler.ran is False
+        pub.assert_not_awaited()
+        intr.assert_not_called()
+        assert isinstance(result, ToolMessage)
+        assert result.additional_kwargs[HIL_STATUS_KWARG] == "error"
+        assert "subject" in str(result.content)
+        assert "no approval was requested" in str(result.content)

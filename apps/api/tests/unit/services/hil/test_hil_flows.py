@@ -282,7 +282,9 @@ class TestApprovalWindowLabel:
 class TestAutoJourney:
     async def test_an_authorized_call_runs_without_ever_asking(self, gate: dict) -> None:
         gate["policy"].return_value = "auto"
-        gate["judge"].return_value = IntentDecision(True, "you said send the deck to bob")
+        gate["judge"].return_value = IntentDecision(
+            outcome="accept", reason="you said send the deck to bob"
+        )
         handler = Handler(gate["log"])
 
         result = await run_through_gate(make_request(), handler)
@@ -296,7 +298,9 @@ class TestAutoJourney:
         # If the tool then fails, the user must still see that GAIA decided to act, and
         # why. Publishing after the handler loses exactly the case that needs explaining.
         gate["policy"].return_value = "auto"
-        gate["judge"].return_value = IntentDecision(True, "you said send the deck to bob")
+        gate["judge"].return_value = IntentDecision(
+            outcome="accept", reason="you said send the deck to bob"
+        )
         handler = Handler(gate["log"], explode=True)
 
         with pytest.raises(RuntimeError):
@@ -308,7 +312,9 @@ class TestAutoJourney:
     async def test_the_judges_reason_travels_onto_the_receipt(self, gate: dict) -> None:
         # A receipt with no "why" is not accountability.
         gate["policy"].return_value = "auto"
-        gate["judge"].return_value = IntentDecision(True, "you said send the deck to bob")
+        gate["judge"].return_value = IntentDecision(
+            outcome="accept", reason="you said send the deck to bob"
+        )
 
         await run_through_gate(make_request(), Handler(gate["log"]))
 
@@ -316,7 +322,9 @@ class TestAutoJourney:
 
     async def test_an_unauthorized_call_falls_back_to_asking(self, gate: dict) -> None:
         gate["policy"].return_value = "auto"
-        gate["judge"].return_value = IntentDecision(False, "you never asked for this")
+        gate["judge"].return_value = IntentDecision(
+            outcome="ask", reason="you never asked for this"
+        )
         await asks(gate, make_request())
         decides(gate, status="approved")
         handler = Handler(gate["log"])

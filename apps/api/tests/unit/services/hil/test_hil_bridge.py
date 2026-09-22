@@ -23,11 +23,13 @@ import pytest
 from app.constants.hil import HIL_SUMMARY_MAX_ARG_CHARS, HIL_SUMMARY_MAX_ARGS
 from app.constants.log_tags import LogTag
 from app.models.hil_models import HILApprovalStatus
+from app.services.analytics_service import AnalyticsEvents
 from app.services.hil.bridge import (
     ApprovalOutcome,
     build_summary,
     publish_approval_request,
     publish_decision,
+    publish_ledger_request,
     recall_declined_call,
     remember_declined_call,
 )
@@ -345,6 +347,27 @@ class TestDeclineMemory:
             await recall_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"}) is None
         )
 
+    async def test_an_auto_refusal_round_trips_its_provenance(self) -> None:
+        # The retry message differs ("auto declined" vs "the user declined"), so
+        # the provenance must survive the Redis round trip.
+        await remember_declined_call(
+            STREAM_ID, "send_email", {"to": "bob@example.com"}, "stop spamming", auto=True
+        )
+
+        outcome = await recall_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"})
+
+        assert outcome is not None
+        assert outcome.auto is True
+        assert outcome.feedback == "stop spamming"
+
+    async def test_a_user_decline_still_reads_as_user_made(self) -> None:
+        await remember_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"}, "no")
+
+        outcome = await recall_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"})
+
+        assert outcome is not None
+        assert outcome.auto is False
+
     async def test_unserializable_arguments_do_not_crash_the_gate(self) -> None:
         # Tool args come from an LLM and are only loosely typed. A key derivation that
         # raises here would fail the gate closed on every call carrying an odd value.
@@ -395,3 +418,166 @@ class TestSummary:
 
     def test_a_call_with_no_arguments_still_reads_as_a_sentence(self) -> None:
         assert build_summary("delete_everything", {}, None) == "Delete everything"
+
+
+class TestCardShownEvent:
+    async def test_register_emits_card_shown_with_user_id(self, bridge: dict) -> None:
+        """The funnel's first event must attribute to the row's user — the bridge carries no request context, so an inferred id is unavailable and an anonymous capture would strand it."""
+        with patch(f"{MODULE}.capture_event") as capture:
+            await publish_ledger_request(
+                approval_id="ap_1",
+                stream_id=STREAM_ID,
+                user_id=USER_ID,
+                conversation_id=CONVERSATION_ID,
+                tool_call=TOOL_CALL,
+                summary="Send it",
+                integration_name="Gmail",
+            )
+
+        capture.assert_called_once_with(
+            USER_ID,
+            AnalyticsEvents.HIL_CARD_SHOWN,
+            {
+                "approval_id": "ap_1",
+                "tool_name": "send_email",
+                "ledger_version": 0,
+                "background": False,
+            },
+        )
+
+    async def test_background_register_marks_background(self, bridge: dict) -> None:
+        with patch(f"{MODULE}.capture_event") as capture:
+            await publish_ledger_request(
+                approval_id="ap_1",
+                stream_id=STREAM_ID,
+                user_id=USER_ID,
+                conversation_id=CONVERSATION_ID,
+                tool_call=TOOL_CALL,
+                summary="Send it",
+                integration_name="Gmail",
+                live=False,
+            )
+
+        assert capture.call_args.args[2]["background"] is True
+
+
+class TestBackgroundFlagSync:
+    async def test_publish_with_owner_marks_the_conversation(self, bridge: dict) -> None:
+        with (
+            patch(f"{MODULE}.capture_event"),
+            patch(
+                f"{MODULE}.conversation_repository.mark_background_with_live_approval",
+                new=AsyncMock(return_value=True),
+            ) as mark,
+        ):
+            await publish_ledger_request(
+                approval_id="ap_1",
+                stream_id=STREAM_ID,
+                user_id=USER_ID,
+                conversation_id=CONVERSATION_ID,
+                tool_call=TOOL_CALL,
+                summary="Send it",
+                integration_name="Gmail",
+                owner_run_type="todo",
+                owner_id="todo-9",
+            )
+
+        mark.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID)
+
+    async def test_publish_without_owner_touches_no_flag(self, bridge: dict) -> None:
+        with (
+            patch(f"{MODULE}.capture_event"),
+            patch(
+                f"{MODULE}.conversation_repository.mark_background_with_live_approval",
+                new=AsyncMock(),
+            ) as mark,
+        ):
+            await publish_ledger_request(
+                approval_id="ap_1",
+                stream_id=STREAM_ID,
+                user_id=USER_ID,
+                conversation_id=CONVERSATION_ID,
+                tool_call=TOOL_CALL,
+                summary="Send it",
+                integration_name="Gmail",
+            )
+
+        mark.assert_not_called()
+
+    async def test_sync_sets_flag_from_live_rows(self) -> None:
+        from app.models.hil_models import LedgerState
+        from app.services.hil.bridge import sync_conversation_approval_flag
+
+        live = MagicMock()
+        live.user_id = USER_ID
+        live.state = LedgerState.PENDING
+        dead = MagicMock()
+        dead.user_id = USER_ID
+        dead.state = LedgerState.DENIED
+        foreign = MagicMock()
+        foreign.user_id = "someone-else"
+        foreign.state = LedgerState.PENDING
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(return_value=[live, dead, foreign]),
+            ),
+            patch(
+                f"{MODULE}.conversation_repository.refresh_live_approval_flag",
+                new=AsyncMock(),
+            ) as refresh,
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+        refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=True)
+
+    async def test_sync_clears_flag_when_nothing_live(self) -> None:
+        from app.services.hil.bridge import sync_conversation_approval_flag
+
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                f"{MODULE}.conversation_repository.refresh_live_approval_flag",
+                new=AsyncMock(),
+            ) as refresh,
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+        refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=False)
+
+    async def test_approved_ticket_keeps_no_sidebar_row(self) -> None:
+        """Decided means nothing left to tap: the sidebar flag is PENDING-only."""
+        from app.models.hil_models import LedgerState
+        from app.services.hil.bridge import sync_conversation_approval_flag
+
+        approved = MagicMock()
+        approved.user_id = USER_ID
+        approved.state = LedgerState.APPROVED
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(return_value=[approved]),
+            ),
+            patch(
+                f"{MODULE}.conversation_repository.refresh_live_approval_flag",
+                new=AsyncMock(),
+            ) as refresh,
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+        refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=False)
+
+    async def test_sync_failure_never_breaks_the_gate(self) -> None:
+        from app.services.hil.bridge import sync_conversation_approval_flag
+
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(side_effect=RuntimeError("mongo down")),
+            ),
+            patch(f"{MODULE}.log"),
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)

@@ -100,12 +100,11 @@ class TestComputeToolHash:
 
 @pytest.mark.asyncio
 class TestGetSubagentTools:
-    async def test_returns_subagent_tools(self):
+    async def test_skips_provider_integrations(self):
         cfg = SubAgentConfig(
             has_subagent=True,
             agent_name="gmail_agent",
             tool_space="gmail_space",
-            handoff_tool_name="call_gmail",
             domain="email",
             use_cases="send, read",
             capabilities="full CRUD",
@@ -125,10 +124,41 @@ class TestGetSubagentTools:
         ):
             result = _get_subagent_tools()
 
-        assert "subagents::subagent:gmail" in result
-        entry = result["subagents::subagent:gmail"]
+        # Provider integrations surface as their own tools, never as
+        # subagent pointers — nothing is indexed for them.
+        assert result == {}
+
+    async def test_indexes_mcp_integrations(self):
+        cfg = SubAgentConfig(
+            has_subagent=True,
+            agent_name="notes_agent",
+            tool_space="notes_space",
+            domain="notes",
+            use_cases="read, write",
+            capabilities="full CRUD",
+            system_prompt="You are notes.",
+        )
+        subagent = Subagent(
+            id="notes",
+            name="Notes",
+            provider="notes",
+            managed_by="mcp",
+            config=cfg,
+            short_name="notes",
+        )
+        with patch(
+            "app.db.chroma.chroma_tools_store.all_subagents",
+            return_value=(subagent,),
+        ):
+            result = _get_subagent_tools()
+
+        assert "subagents::subagent:notes" in result
+        entry = result["subagents::subagent:notes"]
         assert entry["namespace"] == "subagents"
-        assert "Gmail" in entry["description"]
+        assert "Notes" in entry["description"]
+        assert entry["source"] == "mcp"
+        assert entry["name"] == "Notes"
+        assert entry["integration_id"] == "notes"
 
     async def test_skips_when_registry_empty(self):
         # Registry never surfaces entries without a config; an empty registry
@@ -396,6 +426,32 @@ class TestBuildPutOperations:
         ]
         ops = _build_put_operations(to_upsert, [])
         assert ops[0].value["description"] == "sub desc"
+
+    def test_upsert_subagent_tool_persists_pointer_fields(self):
+        """Source/name/integration_id must reach the PutOp value: retrieval tells static ("mcp") from custom ("custom") pointers by them."""
+        to_upsert = [
+            (
+                "subagents::subagent:notes",
+                {
+                    "hash": "h",
+                    "namespace": "subagents",
+                    "description": "sub desc",
+                    "source": "mcp",
+                    "name": "Notes",
+                    "integration_id": "notes",
+                },
+            )
+        ]
+        ops = _build_put_operations(to_upsert, [])
+        assert ops[0].value["source"] == "mcp"
+        assert ops[0].value["name"] == "Notes"
+        assert ops[0].value["integration_id"] == "notes"
+
+    def test_upsert_regular_tool_carries_no_pointer_fields(self):
+        tool = SimpleNamespace(description="desc")
+        to_upsert = [("ns::my_tool", {"hash": "h", "namespace": "ns", "tool": tool})]
+        ops = _build_put_operations(to_upsert, [])
+        assert "source" not in ops[0].value
 
     def test_delete_operation_has_none_value(self):
         to_delete = [("ns::old_tool", "ns")]

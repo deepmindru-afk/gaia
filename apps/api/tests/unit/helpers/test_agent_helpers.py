@@ -1,5 +1,6 @@
 """Comprehensive tests for app/helpers/agent_helpers.py."""
 
+import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -27,6 +28,7 @@ from app.helpers.agent_helpers import (
     _record_interruption_quietly,
     _SilentAccumulators,
     _stamp_langfuse,
+    background_authorization,
     build_agent_config,
     build_initial_state,
     execute_graph_silent,
@@ -63,7 +65,6 @@ def _make_subagent(
         has_subagent=True,
         agent_name=f"{subagent_id}_agent",
         tool_space=f"{subagent_id}_space",
-        handoff_tool_name=f"call_{subagent_id}",
         domain=subagent_id,
         capabilities=f"{subagent_id} stuff",
         use_cases=f"{subagent_id} use",
@@ -916,6 +917,52 @@ class TestRecentUserMessages:
         ]
 
         assert recent_user_messages(history, "send it") == ["draft an email to Bob", "send it"]
+
+
+class TestBackgroundAuthorization:
+    """Schedule text authorizes background runs the way words authorize live turns."""
+
+    def test_interactive_runs_pass_through_untouched(self) -> None:
+        turns = ["send it"]
+        assert (
+            background_authorization(
+                turns,
+                execution_mode="interactive",
+                workflow_title="Morning briefing",
+                todo_title="Brief me",
+            )
+            is turns
+        )
+
+    def test_workflow_definition_is_appended_as_standing_authorization(self) -> None:
+        out = background_authorization(
+            ["Execute workflow: Morning briefing"],
+            execution_mode="background",
+            workflow_title="Morning briefing",
+            workflow_description="Emails my calendar and top emails",
+        )
+        assert out[0] == "Execute workflow: Morning briefing"
+        assert out[1] == "Scheduled workflow: Morning briefing. Emails my calendar and top emails"
+
+    def test_generated_content_never_authorizes(self) -> None:
+        # Steps and execution prompts may be LLM-generated (GeneratedStep), so the
+        # function does not even accept them — only human-written display fields
+        # travel. A generated step naming a recipient grounds nothing.
+        params = set(inspect.signature(background_authorization).parameters)
+        assert "workflow_steps" not in params
+        assert "workflow_prompt" not in params
+
+    def test_todo_title_is_added_unless_the_prompt_covers_it(self) -> None:
+        assert background_authorization(
+            ["check calendar and brief me"], execution_mode="background", todo_title="Brief me"
+        ) == ["check calendar and brief me", "Tracked todo: Brief me"]
+        assert background_authorization(
+            ["Brief me on today"], execution_mode="background", todo_title="Brief me"
+        ) == ["Brief me on today"]
+
+    def test_a_run_with_no_schedule_text_is_unchanged(self) -> None:
+        turns = ["health check"]
+        assert background_authorization(turns, execution_mode="background") is turns
 
     def test_with_all_selections(self):
         request = MagicMock()

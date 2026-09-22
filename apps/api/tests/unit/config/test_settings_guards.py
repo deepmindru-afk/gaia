@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from pydantic import ValidationError
 import pytest
 
+from app.constants.execute import SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS
+
 
 @pytest.fixture(autouse=True)
 def _reset_settings_cache():
@@ -187,6 +189,29 @@ def test_development_allows_http_dodo_base_url(monkeypatch):
     assert settings_obj.DODO_PAYMENTS_BASE_URL == "http://localhost:8899"
 
 
+def test_short_sandbox_execute_secret_refuses_to_boot():
+    """A sandbox execute token names whose tools the host runs, and nothing else binds that claim — a guessable signing secret means running any user's tools."""
+    with pytest.raises(ValidationError, match="at least 32 characters"):
+        _prod_settings(SANDBOX_EXECUTE_TOKEN_SECRET="dev")
+
+
+def test_a_long_enough_sandbox_execute_secret_is_accepted():
+    secret = "x" * SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS
+    assert (
+        secret == _prod_settings(SANDBOX_EXECUTE_TOKEN_SECRET=secret).SANDBOX_EXECUTE_TOKEN_SECRET
+    )
+
+
+def test_unset_sandbox_execute_secret_stays_valid():
+    """Both code-mode vars unset means code mode ships dark — not a misconfig."""
+    assert _prod_settings(SANDBOX_EXECUTE_TOKEN_SECRET=None).SANDBOX_EXECUTE_TOKEN_SECRET is None
+
+
+def test_a_blank_sandbox_execute_secret_reads_as_unset():
+    """KEY= with nothing after it is how a templated compose/Infisical/k8s env renders an unfilled optional secret — the same shape .env.example uses for every other one."""
+    assert _prod_settings(SANDBOX_EXECUTE_TOKEN_SECRET="").SANDBOX_EXECUTE_TOKEN_SECRET is None
+
+
 def test_init_openrouter_llm_pins_context_window_profile(monkeypatch):
     """Every chat LLM must carry its context-window profile: fractional-token middleware reads it at graph build and raises otherwise."""
     from app.agents.llm import client
@@ -262,7 +287,10 @@ def test_init_custom_llm_wires_every_kwarg_and_profile(monkeypatch):
     )
 
     captured: dict[str, object] = {}
-    monkeypatch.setattr(client, "ChatOpenRouter", _fake_chat_openrouter(captured))
+    # The custom lane deliberately constructs ChatOpenAI (imported inside
+    # _build_custom_llm), not client.ChatOpenRouter — fake the class the
+    # production path actually instantiates.
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", _fake_chat_openrouter(captured))
     monkeypatch.setattr(client.settings, "ENV", "development")
     monkeypatch.setattr(client.settings, "GAIA_SIM_MODE", False)
     # PROVIDER_MODELS freezes at import from the ambient env; CI has no
@@ -278,7 +306,9 @@ def test_init_custom_llm_wires_every_kwarg_and_profile(monkeypatch):
     assert captured["temperature"] == DEFAULT_LLM_TEMPERATURE
     assert str(captured["base_url"]) == "http://localhost:9999/v1"
     assert str(captured["api_key"]) == "sk-dev"
-    assert captured["max_tokens"] == DEV_LLM_MAX_OUTPUT_TOKENS
+    # ChatOpenAI aliases max_tokens to max_completion_tokens at construction
+    # (still sent as max_tokens on the wire) — assert what is passed.
+    assert captured["max_completion_tokens"] == DEV_LLM_MAX_OUTPUT_TOKENS
     assert captured["streaming"] is True
     assert captured["stream_usage"] is True
     assert llm.profile == {"max_input_tokens": DEFAULT_MAX_TOKENS}

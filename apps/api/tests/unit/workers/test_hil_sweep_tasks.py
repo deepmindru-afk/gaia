@@ -19,7 +19,7 @@ class TestTheCronRunsTheSweep:
     async def test_the_sweep_is_actually_invoked(self) -> None:
         with patch(
             f"{MODULE}.sweep_approvals",
-            new=AsyncMock(return_value={"expired": 0, "redispatched": 0}),
+            new=AsyncMock(return_value={"expired": 0, "redispatched": 0, "deferred_subagent": 0}),
         ) as sweep:
             await sweep_hil_approvals({})
 
@@ -31,8 +31,8 @@ class TestTheCronRunsTheSweep:
         # quiet one.
         with patch(
             f"{MODULE}.sweep_approvals",
-            new=AsyncMock(return_value={"expired": 3, "redispatched": 2}),
+            new=AsyncMock(return_value={"expired": 3, "redispatched": 2, "deferred_subagent": 1}),
         ):
             result = await sweep_hil_approvals({})
 
-        assert result == "expired=3 redispatched=2"
+        assert result == "expired=3 redispatched=2 deferred_subagent=1"

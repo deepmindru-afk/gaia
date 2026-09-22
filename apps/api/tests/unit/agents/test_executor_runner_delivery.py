@@ -24,6 +24,10 @@ from app.agents.core.background.session import (
     ExecutorRun,
     RunKind,
 )
+from app.constants.executor import (
+    EXECUTOR_NARRATION_FAILED_ERROR_MESSAGE,
+    EXECUTOR_NARRATION_FAILED_MESSAGE,
+)
 from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
 from app.models.chat_models import ConversationSource, MessageModel, ToolDataEntry
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
@@ -67,6 +71,7 @@ async def _deliver(
     *,
     comms_text="result text",
     result_text="raw",
+    result_type="final",
     platform_delivered=True,
     task_id=None,
 ):
@@ -95,7 +100,7 @@ async def _deliver(
         await rd.deliver_result(
             _run(task_id=task_id),
             result_text=result_text,
-            result_type="final",
+            result_type=result_type,
             tool_data=None,
         )
     return save, platform, ws
@@ -141,12 +146,29 @@ class TestDeliverResultRouting:
 
         assert save.await_args.kwargs["user"] == AuthenticatedUser(user_id="user-1")
 
-    async def test_falls_back_to_raw_executor_text_when_comms_unavailable(self) -> None:
-        # comms returns "" → the raw executor text must still be delivered.
+    async def test_never_leaks_raw_executor_text_when_comms_unavailable(self) -> None:
+        # The executor's terminal text is internal monologue, so a narration
+        # failure delivers a notice instead of publishing it verbatim.
         _save, platform, _ws = await _deliver(
-            ConversationSource.WHATSAPP, comms_text="", result_text="raw executor output"
+            ConversationSource.WHATSAPP,
+            comms_text="",
+            result_text="Let me find the delete tool.",
         )
-        assert platform.await_args.args[2] == "raw executor output"
+        delivered = platform.await_args.args[2]
+        assert delivered == EXECUTOR_NARRATION_FAILED_MESSAGE
+        assert "delete tool" not in delivered
+
+    async def test_never_leaks_a_raw_exception_when_error_narration_fails(self) -> None:
+        # The error path carries str(e) from executor_runner, not curated copy.
+        _save, platform, _ws = await _deliver(
+            ConversationSource.WHATSAPP,
+            comms_text="",
+            result_text="KeyError('composio_auth')",
+            result_type="error",
+        )
+        delivered = platform.await_args.args[2]
+        assert delivered == EXECUTOR_NARRATION_FAILED_ERROR_MESSAGE
+        assert "KeyError" not in delivered
 
 
 class TestDeliveryOutcomeIsOnTheWideEvent:
@@ -202,7 +224,7 @@ class TestDeliveryOutcomeIsOnTheWideEvent:
         await _deliver(ConversationSource.TELEGRAM, comms_text="", result_text="raw output")
 
         assert log.get()["result_delivery"]["narrated"] is False
-        assert log.get()["result_delivery"]["text_length"] == len("raw output")
+        assert log.get()["result_delivery"]["text_length"] == len(EXECUTOR_NARRATION_FAILED_MESSAGE)
         assert log.get()["result_delivery"]["delivered"] is True
 
 
@@ -415,7 +437,7 @@ class TestDeliveryLatency:
         assert REGISTRY.get_sample_value("delivery_narration_seconds_sum", labels) == before + 0.5
 
     async def test_narration_fallback_is_recorded_under_the_fallback_status(self) -> None:
-        # comms unavailable -> the raw text is delivered, and the sample is
+        # comms unavailable -> the notice is delivered, and the sample is
         # labelled "fallback". A recased or renamed status would silently split
         # the fallback rate across two series.
         run = _run(RunKind.QUEUED, stream_id="queued_lat3", task_id="task-lat3")
@@ -431,7 +453,7 @@ class TestDeliveryLatency:
             patch.object(rd.time, "perf_counter", side_effect=[3.0, 3.5]),
         ):
             assert await rd._narrate_result(run, "raw fallback text", "final", "") == (
-                "raw fallback text"
+                EXECUTOR_NARRATION_FAILED_MESSAGE
             )
         assert (
             REGISTRY.get_sample_value("delivery_narration_seconds_count", count_labels)
@@ -1928,6 +1950,7 @@ class TestBroadcastPayloadIsWhatTheClientUpserts:
             "response": "voiced",
             "message_id": "msg-1",
             "date": "2026-01-01T00:00:00+00:00",
+            "kind": "text",
             "task_id": "task-7",
             "replyToMessage": {
                 "id": "user-msg-1",
@@ -1944,6 +1967,7 @@ class TestBroadcastPayloadIsWhatTheClientUpserts:
             "response": "voiced",
             "message_id": "msg-1",
             "date": "2026-01-01T00:00:00+00:00",
+            "kind": "text",
         }
 
 
@@ -2212,3 +2236,220 @@ class TestRunBoundaryCarriesWorkflowExecution:
             await er.run_executor_background(run, "do things", {"user_id": "user-1"})
 
         assert seen["workflow"] is None
+
+
+class TestCommsDirectiveDelivery:
+    """Comms can answer a not-mention-worthy background update with a control line: SILENCE (deliver nothing) or REACT (a one-emoji acknowledgment)."""
+
+    async def test_silence_delivers_nothing_on_any_surface(self) -> None:
+        with patch.object(rd, "capture_event") as capture:
+            save, platform, ws = await _deliver(
+                ConversationSource.WHATSAPP, comms_text="SILENCE: routine calendar refresh"
+            )
+        save.assert_not_awaited()
+        platform.assert_not_awaited()
+        ws.assert_not_awaited()
+        # Attributed to the run's owner, or the funnel joins nobody. One resolution
+        # event per update, tagged with the outcome; the reason text never leaves.
+        capture.assert_called_once()
+        assert capture.call_args.args[0] == "user-1"
+        assert capture.call_args.args[1] == rd.AnalyticsEvents.CHAT_BACKGROUND_UPDATE_RESOLVED
+        assert capture.call_args.args[2] == {"outcome": "silence"}
+
+    async def test_silence_on_web_broadcasts_nothing(self) -> None:
+        save, platform, ws = await _deliver(
+            ConversationSource.WEB, comms_text="SILENCE: nothing new"
+        )
+        save.assert_not_awaited()
+        ws.assert_not_awaited()
+        platform.assert_not_awaited()
+
+    async def test_react_delivers_the_emoji_as_the_message_on_a_bot(self) -> None:
+        with patch.object(rd, "capture_event") as capture:
+            save, platform, _ws = await _deliver(
+                ConversationSource.WHATSAPP, comms_text="REACT: 👍"
+            )
+        platform.assert_awaited_once()
+        assert platform.await_args.args[2] == "👍"
+        capture.assert_called_once()
+        assert capture.call_args.args[0] == "user-1"
+        assert capture.call_args.args[1] == rd.AnalyticsEvents.CHAT_BACKGROUND_UPDATE_RESOLVED
+        assert capture.call_args.args[2] == {
+            "outcome": "react",
+            "emoji": "👍",
+            "delivery": "fallback_text",
+        }
+        # The ack intent is recorded on the persisted message, not left to be
+        # reverse-engineered from the body being emoji-only.
+        assert save.await_args.args[0].messages[0].kind is rd.MessageKind.EMOJI_ACK
+
+    async def test_react_delivers_the_emoji_over_websocket_on_web(self) -> None:
+        save, _platform, ws = await _deliver(ConversationSource.WEB, comms_text="REACT: ✅")
+        ws.assert_awaited_once()
+        assert ws.await_args.args[1]["message"]["response"] == "✅"
+        assert save.await_args.args[0].messages[0].kind is rd.MessageKind.EMOJI_ACK
+
+    async def test_react_attaches_a_native_reaction_when_the_platform_id_is_known(
+        self,
+    ) -> None:
+        """The recorded platform id turns the ack into a real reaction: the reaction envelope goes out and no text bubble is sent."""
+        run = replace(_run(), user_message_id="user-msg-1")
+        with (
+            patch.object(
+                rd, "narrate_executor_result", new_callable=AsyncMock, return_value="REACT: 👍"
+            ),
+            patch.object(rd, "generate_follow_up_actions", new_callable=AsyncMock, return_value=[]),
+            patch.object(rd, "update_messages", new_callable=AsyncMock) as save,
+            patch.object(
+                rd,
+                "_get_conversation_source",
+                new_callable=AsyncMock,
+                return_value=ConversationSource.WHATSAPP,
+            ),
+            patch.object(
+                rd,
+                "_lookup_platform_message_id",
+                new_callable=AsyncMock,
+                return_value="wamid.123",
+            ),
+            patch.object(
+                rd, "deliver_reaction_to_platform", new_callable=AsyncMock, return_value=True
+            ) as react,
+            patch.object(rd, "deliver_message_to_platform", new_callable=AsyncMock) as platform,
+            patch.object(rd, "_broadcast_message", new_callable=AsyncMock) as ws,
+            patch.object(rd, "capture_event") as capture,
+        ):
+            await rd.deliver_result(run, result_text="raw", result_type="final", tool_data=None)
+        react.assert_awaited_once_with(
+            ConversationSource.WHATSAPP,
+            "user-1",
+            "wamid.123",
+            "👍",
+            conversation_id="conv-1",
+        )
+        platform.assert_not_awaited()
+        ws.assert_not_awaited()
+        # The ack is still persisted (history/audit), targeted at the GAIA
+        # message it answers so every surface can render it as a reaction.
+        saved = save.await_args.args[0].messages[0]
+        assert saved.kind is rd.MessageKind.EMOJI_ACK
+        assert saved.response == "👍"
+        assert saved.reacts_to_message_id == "user-msg-1"
+        assert capture.call_args.args[2] == {
+            "outcome": "react",
+            "emoji": "👍",
+            "delivery": "reaction",
+        }
+
+    async def test_react_falls_back_to_text_without_a_platform_id(self) -> None:
+        """Older turns and non-bot triggers have no recorded platform id: the emoji goes out as a text bubble and the ack is never lost."""
+        run = replace(_run(), user_message_id="user-msg-1")
+        with (
+            patch.object(
+                rd, "narrate_executor_result", new_callable=AsyncMock, return_value="REACT: 👍"
+            ),
+            patch.object(rd, "generate_follow_up_actions", new_callable=AsyncMock, return_value=[]),
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(
+                rd,
+                "_get_conversation_source",
+                new_callable=AsyncMock,
+                return_value=ConversationSource.WHATSAPP,
+            ),
+            patch.object(
+                rd, "_lookup_platform_message_id", new_callable=AsyncMock, return_value=None
+            ),
+            patch.object(rd, "deliver_reaction_to_platform", new_callable=AsyncMock) as react,
+            patch.object(
+                rd, "deliver_message_to_platform", new_callable=AsyncMock, return_value=True
+            ) as platform,
+            patch.object(rd, "_broadcast_message", new_callable=AsyncMock),
+        ):
+            await rd.deliver_result(run, result_text="raw", result_type="final", tool_data=None)
+        react.assert_not_awaited()
+        platform.assert_awaited_once()
+        assert platform.await_args.args[2] == "👍"
+
+    async def test_web_badge_payload_carries_kind_and_reaction_target(self) -> None:
+        """The web client renders an emoji-ack as a badge on the answered message, not a new bubble — it needs kind + target in the push."""
+        run = replace(_run(), user_message_id="user-msg-1")
+        with (
+            patch.object(
+                rd, "narrate_executor_result", new_callable=AsyncMock, return_value="REACT: ✅"
+            ),
+            patch.object(rd, "generate_follow_up_actions", new_callable=AsyncMock, return_value=[]),
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd, "_get_conversation_source", new_callable=AsyncMock, return_value=None),
+            patch.object(
+                rd,
+                "_lookup_user_message_content",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch.object(rd, "_broadcast_message", new_callable=AsyncMock) as ws,
+            patch.object(rd, "_spawn_deferred_follow_ups"),
+        ):
+            await rd.deliver_result(run, result_text="raw", result_type="final", tool_data=None)
+        message = ws.await_args.args[1]["message"]
+        assert message["response"] == "✅"
+        assert message["kind"] == "emoji_ack"
+        assert message["reacts_to_message_id"] == "user-msg-1"
+
+    async def test_react_resolves_to_no_speakable_text(self) -> None:
+        """Voice must not read the emoji aloud: a react returns (None, id)."""
+        run = replace(_run(), user_message_id="user-msg-1")
+        with (
+            patch.object(
+                rd, "narrate_executor_result", new_callable=AsyncMock, return_value="REACT: ✅"
+            ),
+            patch.object(rd, "generate_follow_up_actions", new_callable=AsyncMock, return_value=[]),
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd, "_get_conversation_source", new_callable=AsyncMock, return_value=None),
+            patch.object(
+                rd,
+                "_lookup_user_message_content",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch.object(rd, "_broadcast_message", new_callable=AsyncMock),
+            patch.object(rd, "_spawn_deferred_follow_ups"),
+        ):
+            text, message_id = await rd.deliver_result(
+                run, result_text="raw", result_type="final", tool_data=None
+            )
+        assert text is None
+        assert message_id
+
+    async def test_react_spawns_no_deferred_follow_ups(self) -> None:
+        """Follow-up chips attach to a rendered message; a badge has none, so generating them burns an LLM call for chips that go nowhere."""
+        run = replace(_run(), user_message_id="user-msg-1")
+        with (
+            patch.object(
+                rd, "narrate_executor_result", new_callable=AsyncMock, return_value="REACT: ✅"
+            ),
+            patch.object(rd, "generate_follow_up_actions", new_callable=AsyncMock, return_value=[]),
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd, "_get_conversation_source", new_callable=AsyncMock, return_value=None),
+            patch.object(
+                rd,
+                "_lookup_user_message_content",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch.object(rd, "_broadcast_message", new_callable=AsyncMock),
+            patch.object(rd, "_spawn_deferred_follow_ups") as spawn,
+        ):
+            await rd.deliver_result(run, result_text="raw", result_type="final", tool_data=None)
+        spawn.assert_not_called()
+
+    async def test_ordinary_text_still_delivers_normally(self) -> None:
+        with patch.object(rd, "capture_event") as capture:
+            save, platform, _ws = await _deliver(
+                ConversationSource.WHATSAPP, comms_text="Booked your 9am flight."
+            )
+        assert platform.await_args.args[2] == "Booked your 9am flight."
+        # The baseline outcome is captured too, so silence/react rates have a
+        # denominator; an ordinary message stays MessageKind.TEXT.
+        assert capture.call_args.args[1] == rd.AnalyticsEvents.CHAT_BACKGROUND_UPDATE_RESOLVED
+        assert capture.call_args.args[2] == {"outcome": "reply", "delivery": "message"}
+        assert save.await_args.args[0].messages[0].kind is rd.MessageKind.TEXT

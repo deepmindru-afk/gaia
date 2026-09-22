@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from app.agents.core.background.executor_channel import drain_inbox_hook
 from app.constants.db import LANGGRAPH_SETUP_LOCK_ID
 
 _MOD = "app.agents.core.graph_builder.build_graph"
@@ -427,6 +428,17 @@ class TestBuildCommsGraph:
             assert "call_executor" in tool_registry
             assert "add_memory" in tool_registry
             assert "search_memory" in tool_registry
+            # Comms stays a thin front door: tracked-todo work is delegated to
+            # the executor, which owns the lifecycle tools and their rules.
+            for name in (
+                "create_tracked_todo",
+                "update_tracked_todo",
+                "complete_tracked_todo",
+                "search_todo_context",
+                "list_tracked_todos",
+                "update_tracked_todo_canvas",
+            ):
+                assert name not in tool_registry, f"{name} must stay executor-only"
             # Comms runs open-web lookups itself instead of delegating to the executor.
             assert "web_search_tool" in tool_registry
             assert "fetch_webpages" in tool_registry
@@ -493,6 +505,73 @@ class TestBuildExecutorGraph:
         assert kwargs["hooks_config"].require_finish_to_end is True
         assert "save_learned_skill" in kwargs["tools_config"].initial_tool_ids
 
+    async def test_handoff_is_the_delegation_tool_by_default(self):
+        with ExitStack() as stack:
+            deps = _apply_patches(stack)
+            from app.agents.core.graph_builder.build_graph import build_executor_graph
+
+            async with build_executor_graph(chat_llm=deps["llm"], in_memory_checkpointer=True):
+                pass
+
+            call = deps["mocks"][f"{_MOD}.create_agent"].call_args
+            kwargs, registry = call.kwargs, call.args[1]
+
+        assert "handoff" in kwargs["tools_config"].initial_tool_ids
+        assert "handoff" in registry
+        # activate_integration is always bound; handoff stays for per-user MCP.
+        assert "activate_integration" in kwargs["tools_config"].initial_tool_ids
+        assert "activate_integration" in registry
+
+    async def test_activate_integration_bound_and_handoff_kept(self):
+        """Activation leads with activate_integration but keeps handoff bound: it is the only path for per-user MCP integrations, which cannot be activated in-context, so both live in the bound set and the registry."""
+        with ExitStack() as stack:
+            deps = _apply_patches(stack)
+            from app.agents.core.graph_builder.build_graph import build_executor_graph
+
+            async with build_executor_graph(chat_llm=deps["llm"], in_memory_checkpointer=True):
+                pass
+
+            call = deps["mocks"][f"{_MOD}.create_agent"].call_args
+            kwargs, registry = call.kwargs, call.args[1]
+
+        assert "activate_integration" in kwargs["tools_config"].initial_tool_ids
+        assert "activate_integration" in registry
+        assert "handoff" in kwargs["tools_config"].initial_tool_ids
+        assert "handoff" in registry
+
+    async def test_activate_integration_leads_the_initial_tool_set(self):
+        """activate_integration leads; the full initial set (handoff included) follows."""
+        from app.agents.core.graph_builder.build_graph import EXECUTOR_INITIAL_TOOL_IDS
+
+        with ExitStack() as stack:
+            deps = _apply_patches(stack)
+            from app.agents.core.graph_builder.build_graph import build_executor_graph
+
+            async with build_executor_graph(chat_llm=deps["llm"], in_memory_checkpointer=True):
+                pass
+
+            kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
+
+        expected = ["activate_integration", *EXECUTOR_INITIAL_TOOL_IDS]
+        assert kwargs["tools_config"].initial_tool_ids == expected
+
+    async def test_no_join_tool_bound(self):
+        """Neither wait_for_subagents nor any successor is bound: background results arrive via the executor inbox and steering needs no join."""
+        with ExitStack() as stack:
+            deps = _apply_patches(stack)
+            from app.agents.core.graph_builder.build_graph import build_executor_graph
+
+            async with build_executor_graph(chat_llm=deps["llm"], in_memory_checkpointer=True):
+                pass
+
+            call = deps["mocks"][f"{_MOD}.create_agent"].call_args
+            kwargs, registry = call.kwargs, call.args[1]
+
+        assert "wait_for_subagents" not in kwargs["tools_config"].initial_tool_ids
+        assert "collect_subagent_results" not in kwargs["tools_config"].initial_tool_ids
+        assert "wait_for_subagents" not in registry
+        assert "collect_subagent_results" not in registry
+
     async def test_yields_compiled_graph_postgres(self):
         fake_cp = MagicMock(name="postgres_checkpointer")
         fake_manager = MagicMock()
@@ -545,11 +624,14 @@ class TestBuildExecutorGraph:
             mock_ca.assert_called_once()
             kwargs = mock_ca.call_args.kwargs
             assert kwargs["agent_config"].agent_name == "executor_agent"
-            # Exact equality, not membership: a renamed id silently drops that
-            # tool from the executor's initial bind set, and membership lets the
-            # typo through as long as one asserted name survives.
+            # Exact equality, not membership: a renamed id silently drops that tool
+            # from the executor's initial bind set, and membership passes as long as
+            # one name survives. activate_integration leads unconditionally.
             assert kwargs["tools_config"].initial_tool_ids == [
+                "activate_integration",
                 "handoff",
+                "execute",
+                "get_tool_schema",
                 "plan_tasks",
                 "update_tasks",
                 "read",
@@ -557,10 +639,13 @@ class TestBuildExecutorGraph:
                 "edit",
                 "bash",
                 "deep_research",
-                "wait_for_subagents",
+                "list_running_subagents",
+                "message_subagent",
+                "cancel_subagent",
                 "read_manual",
                 "create_tracked_todo",
                 "update_tracked_todo",
+                "update_tracked_todo_canvas",
                 "complete_tracked_todo",
                 "search_todo_context",
                 "list_tracked_todos",
@@ -589,7 +674,7 @@ class TestBuildExecutorGraph:
             call = deps["mocks"][f"{_MOD}.create_agent"].call_args
             assert "handoff" in call.args[1]
 
-    async def test_executor_pre_model_hooks_includes_todo_hook(self):
+    async def test_executor_pre_model_hooks_includes_todo_hook_and_the_inbox_drain(self):
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -599,9 +684,13 @@ class TestBuildExecutorGraph:
 
             kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
             pre_model_hooks = kwargs["hooks_config"].pre_model_hooks
-            # executor: filter_messages_node, adapt_media_node,
-            # manage_system_prompts_node, todo_hook
-            assert len(pre_model_hooks) == 4
+            # executor: filter_messages_node, adapt_media_node, todo_hook,
+            # drain_inbox_hook, manage_system_prompts_node
+            assert len(pre_model_hooks) == 5
+            # Named rather than counted: the drain is what lets work handed over
+            # mid-run reach the executor at all, and a count alone would stay
+            # green if it were swapped for anything else.
+            assert drain_inbox_hook in pre_model_hooks
 
     async def test_a_supplied_model_is_the_one_the_graph_is_built_with(self):
         """A caller that hands in a model gets that model, not a freshly built one — rebuilding could pick a provider with no key."""

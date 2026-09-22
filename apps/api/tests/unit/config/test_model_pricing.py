@@ -24,6 +24,7 @@ from app.config.model_pricing import (
 from app.constants.llm import (
     AUX_MODEL_NAME,
     DEFAULT_MODEL_NAME,
+    HIL_JUDGE_MODEL_NAME,
     MEMORY_MODEL_NAME,
     OPENROUTER_MODEL_TOOL_IMAGE_SUPPORT,
     PAID_MODEL_NAME,
@@ -44,7 +45,14 @@ def _fresh_wide_event() -> None:
 # Every model id the runtime actually meters. A new runtime model constant
 # must be added to MODEL_PRICING, or the coverage test below catches it.
 RUNTIME_MODEL_IDS = sorted(
-    {DEFAULT_MODEL_NAME, PAID_MODEL_NAME, AUX_MODEL_NAME, MEMORY_MODEL_NAME, VISION_MODEL_NAME}
+    {
+        DEFAULT_MODEL_NAME,
+        PAID_MODEL_NAME,
+        AUX_MODEL_NAME,
+        MEMORY_MODEL_NAME,
+        VISION_MODEL_NAME,
+        HIL_JUDGE_MODEL_NAME,
+    }
 )
 
 
@@ -81,9 +89,17 @@ class TestEveryRuntimeModelIsPriced:
     def test_the_default_model_carries_its_real_rate(self) -> None:
         pricing = get_model_pricing(DEFAULT_MODEL_NAME)
 
-        assert pricing.input_cost_per_1k == 0.00014
-        assert pricing.output_cost_per_1k == 0.00028
-        assert pricing.cached_input_cost_per_1k == 0.000028
+        assert pricing.input_cost_per_1k == 0.00004
+        assert pricing.output_cost_per_1k == 0.00008
+        assert pricing.cached_input_cost_per_1k == 0.000016
+
+    def test_the_judge_model_carries_its_real_rate(self) -> None:
+        """The approval gate judges here; an unpriced judge id would meter at DEFAULT_PRICING (~3x input, ~1x output — close enough to look right while being wrong, the worst kind of drift)."""
+        pricing = get_model_pricing(HIL_JUDGE_MODEL_NAME)
+
+        assert pricing.input_cost_per_1k == 0.0003
+        assert pricing.output_cost_per_1k == 0.0025
+        assert pricing.cached_input_cost_per_1k == 0.00003
 
     def test_an_unknown_model_still_gets_the_loud_default(self) -> None:
         assert get_model_pricing("some-model-nobody-registered") == DEFAULT_PRICING
@@ -158,8 +174,8 @@ class TestAuxModelPricing:
         assert result["cached_input_cost"] == pytest.approx(
             80_000 / 1000 * rate.cached_input_cost_per_1k
         )
-        # The 0731 rate card prices cached input at exactly a fifth of uncached.
-        assert rate.cached_input_cost_per_1k == pytest.approx(rate.input_cost_per_1k / 5)
+        # The live 0731 rate card prices cached input at two-fifths of uncached.
+        assert rate.cached_input_cost_per_1k == pytest.approx(rate.input_cost_per_1k * 2 / 5)
 
 
 def _with_rate(pricing: ModelPricing) -> AbstractContextManager[MagicMock]:

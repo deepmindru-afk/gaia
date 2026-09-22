@@ -78,9 +78,12 @@ def _construct(factory: Callable[[], Any]) -> Any:
 def _retries(llm: Any) -> bool:
     """Whether the SDK client will run its own retry loop.
 
-    Asserted on the config the SDK actually reads at request time, not on
-    max_retries: that kwarg cannot express "off" — setting it to 0 only stops
-    langchain passing a config, and the SDK then applies its own one-hour default.
+    The OpenRouter SDK ignores max_retries=0 (applies a one-hour default), so
+    its truth lives in retry_config, which without_sdk_retry sets non-backoff.
+    The OpenAI SDK (the dev lane's ChatOpenAI) honors max_retries=0 — there the
+    count is the honest signal.
     """
-    config = llm.client.sdk_configuration.retry_config
-    return getattr(config, "strategy", None) == "backoff"
+    sdk_config = getattr(getattr(llm, "client", None), "sdk_configuration", None)
+    if sdk_config is not None:
+        return getattr(sdk_config.retry_config, "strategy", None) == "backoff"
+    return getattr(llm, "max_retries", None) not in (0, None)

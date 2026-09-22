@@ -29,7 +29,7 @@ import fakeredis.aioredis
 from langgraph.store.memory import InMemoryStore
 import pytest
 
-from app.agents.core.background.executor_runner import QUEUED_EXECUTOR_TASK_NAME
+from app.agents.core.background.executor_runner import DETACHED_EXECUTOR_TASK_NAME
 from app.agents.core.background.redis_writer import STREAM_PUBLISH_TASK_NAME
 from app.agents.core.background.session import teardown_session
 from app.agents.core.graph_builder import build_graph as build_graph_module
@@ -415,13 +415,13 @@ async def drain_resumes() -> None:
 async def drain_background_runs() -> None:
     """Wait out every executor task still in flight, whatever spawned it.
 
-    Loops until both the spawn_background_task set and HIL's resume set are
-    empty — a run in either can spawn into the other. Load-bearing for
-    isolation: hil_world's patches are process-wide, so a leftover run
-    executes against the next test's store (this file's only flake).
+    Two module-level keep-alive sets (spawn_background_task and HIL's own resume
+    set) can each spawn into the other, so draining one once is not enough — this
+    loops until both empty. Load-bearing for isolation: hil_world's patches are
+    process-wide, so a run that outlives its test corrupts the next test's store.
     """
     while pending := [
-        *_tasks_named(STREAM_PUBLISH_TASK_NAME, QUEUED_EXECUTOR_TASK_NAME),
+        *_tasks_named(STREAM_PUBLISH_TASK_NAME, DETACHED_EXECUTOR_TASK_NAME),
         *resolution._resume_tasks,
     ]:
         await asyncio.gather(*pending, return_exceptions=True)

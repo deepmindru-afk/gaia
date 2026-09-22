@@ -233,6 +233,18 @@ class TestBotStreamPayloadFrame:
         assert payload == {"text": "hello there"}
         assert stop is False
 
+    async def test_emoji_ack_is_forwarded_so_bots_take_back_the_directive(self):
+        # Regression: the parse-at-boundary refactor moved translation onto
+        # BotWebStreamPayload, which had no emoji_ack field, so the ack was dropped
+        # (extra="ignore") and bots showed the raw REACT: <emoji> text.
+        data = {"emoji_ack": {"emoji": "😎", "reacts_to_message_id": "umsg-1"}}
+        frame, stop = await _bot_stream_payload_frame(
+            BotWebStreamPayload.model_validate(data), "user-1"
+        )
+        payload = json.loads(frame[len("data: ") : -2])
+        assert payload == {"emoji_ack": {"emoji": "😎", "reacts_to_message_id": "umsg-1"}}
+        assert stop is False
+
     async def test_error_field_is_translated_and_stops_the_stream(self):
         frame, stop = await _bot_stream_payload_frame(
             BotWebStreamPayload.model_validate({"error": "boom"}), "user-1"

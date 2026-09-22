@@ -54,7 +54,6 @@ def _make_subagent_config(agent_name: str = "github_agent") -> SubAgentConfig:
         has_subagent=True,
         agent_name=agent_name,
         tool_space="github_space",
-        handoff_tool_name="call_github",
         domain="github",
         capabilities="github stuff",
         use_cases="github use",
@@ -575,6 +574,39 @@ class TestExecuteSubagentStream:
         # verify "First " appears and "Second" does not (cancellation succeeded).
         assert "First " in result.text
         assert "Second" not in result.text
+
+    async def test_executor_cancel_stops_the_stream_with_a_cancelled_result(self):
+        """A targeted executor cancel (its flag raised) stops the subagent at the next superstep and returns a SUBAGENT_CANCELLED result, so the executor learns it stopped rather than reading a silent partial."""
+
+        async def _fake_astream(*args, **kwargs):
+            yield ("updates", {"agent": {"messages": []}})
+            yield ("messages", (AIMessageChunk(content="should not reach"), {}))
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(subagent_graph=mock_graph, stream_id="s-1")
+
+        fake_cancel = MagicMock()
+        fake_cancel.is_requested = AsyncMock(return_value=True)
+        fake_cancel.clear = AsyncMock()
+
+        with (
+            patch("app.agents.core.subagents.subagent_runner.log"),
+            patch(
+                "app.agents.core.subagents.subagent_runner.stream_manager.is_cancelled",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "app.agents.core.subagents.subagent_runner.SubagentCancel",
+                return_value=fake_cancel,
+            ),
+        ):
+            result = await execute_subagent_stream(ctx)
+
+        assert "<subagent_cancelled>" in result.text
+        assert "should not reach" not in result.text
+        fake_cancel.clear.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_non_tuple_events_skipped(self):
@@ -1147,6 +1179,8 @@ class TestPrepareExecutorExecution:
             if m.type == "human" and not m.additional_kwargs.get("time_context")
         )
         assert "DIRECT EXECUTION HINT" in task_msg.content
+        assert 'activate_integration(integration_id="github")' in task_msg.content
+        assert "handoff(" not in task_msg.content
 
     @pytest.mark.asyncio
     async def test_no_hint_without_tool_category(self):
@@ -1314,7 +1348,7 @@ class TestBuildSubagentSystemPrompt:
                 return_value=integration,
             ),
             patch(
-                "app.agents.context.sections.get_provider_metadata",
+                "app.agents.context.fetchers.get_provider_metadata",
                 new_callable=AsyncMock,
                 return_value={"Username": "testuser"},
             ) as mock_meta,

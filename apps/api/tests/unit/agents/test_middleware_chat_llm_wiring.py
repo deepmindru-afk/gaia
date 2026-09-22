@@ -8,6 +8,7 @@ tests pin that wiring so a separate resolution path can't creep back in.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -36,7 +37,6 @@ from app.agents.middleware.hil_approval import HILApprovalMiddleware
 from app.agents.middleware.loop_guard import LoopGuardMiddleware
 from app.agents.middleware.media import MediaDescriptionMiddleware
 from app.agents.middleware.subagent import SubagentMiddleware
-from app.agents.middleware.subagent_join import SubagentJoinMiddleware
 from app.agents.middleware.summarization import (
     WorkspaceArchivingSummarizationMiddleware,
 )
@@ -375,7 +375,6 @@ class TestSpawnWiring:
                 excluded_tools={"handoff"},
                 tool_space="gmail",
                 tool_runtime_config=runtime,
-                join=True,
             ),
         )
         spawner = next((mw for mw in stack if isinstance(mw, SubagentMiddleware)), None)
@@ -399,7 +398,7 @@ class TestSpawnWiring:
         """Order is the contract: accounting outside, HIL gate before side effects, loop guard sees raw results."""
         stack = create_middleware_stack(
             chat_llm=_fake_llm(),
-            subagent=SubagentStackOptions(enabled=True, join=True),
+            subagent=SubagentStackOptions(enabled=True),
         )
 
         assert _types(stack) == [
@@ -410,7 +409,6 @@ class TestSpawnWiring:
             WorkspaceCompactionMiddleware,
             MediaDescriptionMiddleware,
             LoopGuardMiddleware,
-            SubagentJoinMiddleware,
         ]
 
     def test_the_spawn_factory_builds_a_child_that_cannot_spawn_again(self) -> None:
@@ -503,7 +501,6 @@ class TestExecutorStackComposition:
             WorkspaceCompactionMiddleware,
             MediaDescriptionMiddleware,
             LoopGuardMiddleware,
-            SubagentJoinMiddleware,
         ]
 
     def test_the_executor_spawn_wiring_reaches_the_middleware(self) -> None:
@@ -547,7 +544,6 @@ class TestExecutorStackComposition:
                 registry=registry,
                 excluded_tools={"handoff"},
                 tool_runtime_config=runtime,
-                join=True,
             ),
             "context": ContextOptions(compaction_excluded_tools=COMPACTION_EXCLUSIONS),
         }
@@ -593,6 +589,7 @@ class TestCommsAndSubagentDelegation:
         assert summarizer.model is llm
 
     def test_a_subagent_delegates_the_exact_options(self, monkeypatch) -> None:
+        """Everything the caller passed reaches the stack verbatim — except enabled, which is forced off below."""
         captured = _spy_on_stack(monkeypatch)
         llm = _fake_llm()
         options = SubagentStackOptions(enabled=True, llm=llm, tool_space="gmail")
@@ -602,8 +599,19 @@ class TestCommsAndSubagentDelegation:
         assert captured == {
             "agent_name": "gmail_agent",
             "chat_llm": llm,
-            "subagent": options,
+            "subagent": replace(options, enabled=False),
             "context": ContextOptions(
                 summarize=True, compact=True, compaction_excluded_tools=COMPACTION_EXCLUSIONS
             ),
         }
+
+    def test_a_subagent_can_never_spawn_however_it_was_asked_to(self, monkeypatch) -> None:
+        """Only the executor spawns."""
+        captured = _spy_on_stack(monkeypatch)
+
+        create_subagent_middleware(
+            agent_name="gmail_agent",
+            subagent=SubagentStackOptions(enabled=True, llm=_fake_llm(), tool_space="gmail"),
+        )
+
+        assert captured["subagent"].enabled is False

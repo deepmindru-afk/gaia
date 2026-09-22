@@ -23,7 +23,7 @@ from app.agents.context.sections import SECTIONS, Section, sections_for
 from app.agents.context.slots import PromptSlot
 from app.agents.context.text import (
     CONNECTED_INTEGRATIONS_HEADER,
-    EXECUTOR_CONNECTED_INTEGRATIONS_HEADER,
+    EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER,
 )
 from app.agents.context.tiers import ALL_TIERS, AgentTier
 from app.config.oauth_config import get_integration_by_id
@@ -118,6 +118,7 @@ class TestTheTableIsWellFormed:
             "integrations_manifest",
             "connected_devices",
             "skills",
+            "open_pendings",
         ]
         assert [s.id for s in sections_for(AgentTier.EXECUTOR, PromptSlot.MEMORY_RECALL)] == [
             "core_memory",
@@ -229,19 +230,22 @@ class TestUserPreferences:
 
 @pytest.mark.unit
 class TestIntegrationsManifest:
-    """The executor performs the handoffs, so its header states the list is live and names the subagent_id; comms gets the short form."""
+    """The executor activates integrations itself, so its header states the list is live and names the parenthesised id as the activate_integration id.
+
+    Comms gets the short form.
+    """
 
     @staticmethod
     def _connected() -> AsyncMock:
         return AsyncMock(return_value=[{"id": "gmail", "name": "Gmail"}])
 
-    async def test_the_executor_gets_the_handoff_instructions(self) -> None:
+    async def test_the_executor_gets_the_activation_instructions(self) -> None:
         with patch(
             "app.agents.context.fetchers.get_connected_integrations_named", self._connected()
         ):
             rendered = await section("integrations_manifest").fetch(ctx(AgentTier.EXECUTOR))
 
-        assert rendered.startswith(EXECUTOR_CONNECTED_INTEGRATIONS_HEADER)
+        assert rendered.startswith(EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER)
 
     async def test_comms_gets_the_capability_awareness_header(self) -> None:
         with patch(
@@ -266,7 +270,7 @@ class TestProviderMetadata:
     async def test_it_names_who_the_user_is_on_that_provider(self) -> None:
         """Two fields, not one: with a single entry the \\n joining them would be unobservable."""
         with patch(
-            "app.agents.context.sections.get_provider_metadata",
+            "app.agents.context.fetchers.get_provider_metadata",
             AsyncMock(return_value={"email": "ada@example.com", "login": "ada"}),
         ):
             rendered = await section("provider_metadata").fetch(
@@ -278,7 +282,7 @@ class TestProviderMetadata:
     async def test_it_asks_about_this_user_on_this_provider(self) -> None:
         """The provider comes from the resolved integration, not the raw id."""
         metadata = AsyncMock(return_value={})
-        with patch("app.agents.context.sections.get_provider_metadata", metadata):
+        with patch("app.agents.context.fetchers.get_provider_metadata", metadata):
             await section("provider_metadata").fetch(
                 ctx(AgentTier.PROVIDER_SUBAGENT, integration_id=INTEGRATION_ID)
             )
@@ -287,7 +291,7 @@ class TestProviderMetadata:
 
     async def test_an_unknown_user_is_never_looked_up(self) -> None:
         metadata = AsyncMock(return_value={"email": "ada@example.com"})
-        with patch("app.agents.context.sections.get_provider_metadata", metadata):
+        with patch("app.agents.context.fetchers.get_provider_metadata", metadata):
             rendered = await section("provider_metadata").fetch(
                 SectionContext(AgentTier.PROVIDER_SUBAGENT, integration_id=INTEGRATION_ID)
             )
@@ -298,7 +302,7 @@ class TestProviderMetadata:
     async def test_an_unregistered_integration_is_never_looked_up(self) -> None:
         """A subagent id that resolves to no integration has no provider to ask about."""
         metadata = AsyncMock(return_value={"email": "ada@example.com"})
-        with patch("app.agents.context.sections.get_provider_metadata", metadata):
+        with patch("app.agents.context.fetchers.get_provider_metadata", metadata):
             rendered = await section("provider_metadata").fetch(
                 ctx(AgentTier.PROVIDER_SUBAGENT, integration_id="not-a-real-integration")
             )
@@ -307,7 +311,7 @@ class TestProviderMetadata:
         metadata.assert_not_awaited()
 
     async def test_no_metadata_yields_no_block(self) -> None:
-        with patch("app.agents.context.sections.get_provider_metadata", AsyncMock(return_value={})):
+        with patch("app.agents.context.fetchers.get_provider_metadata", AsyncMock(return_value={})):
             assert (
                 await section("provider_metadata").fetch(
                     ctx(AgentTier.PROVIDER_SUBAGENT, integration_id=INTEGRATION_ID)
@@ -318,7 +322,7 @@ class TestProviderMetadata:
     async def test_a_failed_lookup_is_visible_in_the_wide_event(self) -> None:
         async with captured_wide_event() as event:
             with patch(
-                "app.agents.context.sections.get_provider_metadata",
+                "app.agents.context.fetchers.get_provider_metadata",
                 AsyncMock(side_effect=RuntimeError("composio down")),
             ):
                 rendered = await section("provider_metadata").fetch(
@@ -498,3 +502,17 @@ class TestSkills:
 
         assert rendered == ""
         assert isinstance(rendered, str)
+
+
+@pytest.mark.unit
+class TestConversationIdReachesSections:
+    def test_from_configurable_carries_conversation_id(self) -> None:
+        """Ledger-backed sections (open pendings) read the conversation off the closed context shape — proven against the actual data path, not just the field existing."""
+        ctx = SectionContext.from_configurable(
+            AgentTier.EXECUTOR, {"conversation_id": "c1", "user_id": "u1"}
+        )
+        assert ctx.conversation_id == "c1"
+
+    def test_missing_conversation_id_is_none_not_crash(self) -> None:
+        ctx = SectionContext.from_configurable(AgentTier.EXECUTOR, {})
+        assert ctx.conversation_id is None

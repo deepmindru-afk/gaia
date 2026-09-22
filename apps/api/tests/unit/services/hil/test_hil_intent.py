@@ -15,9 +15,16 @@ import pytest
 
 from app.agents.llm.client import StructuredCallOptions, silent_metered_config
 from app.constants.hil import HIL_JUDGE_MIN_QUOTE_WORDS, HIL_LLM_TIMEOUT_SECONDS
+from app.constants.llm import HIL_JUDGE_FALLBACK_MODEL_NAMES, HIL_JUDGE_MODEL_NAME
 from app.services.hil.intent import JudgedCall, RiskFactor, _Verdict, judge_intent
 from app.services.hil.prompts import INTENT_JUDGE_PROMPT
-from app.services.hil.utils import PriorCall, args_preview, render_prior_calls
+from app.services.hil.utils import (
+    PriorCall,
+    args_preview,
+    render_assistant_turns,
+    render_prior_calls,
+    render_tool_schema,
+)
 
 MODULE = "app.services.hil.intent"
 
@@ -138,6 +145,29 @@ class TestVetoes:
         assert decision.aligned is True
 
 
+class TestReject:
+    """The judge can refuse outright — no card, no retry — with a reason.
+
+    A refusal is not an authorization, so it needs no grounding quote; and a
+    reject must survive even a fully clean signal set, or "reject" is decor.
+    """
+
+    async def test_reject_verdict_refuses_without_needing_a_quote(self) -> None:
+        decision, _ = await judge(verdict(verdict="reject", authorizing_quote=""))
+        assert decision.outcome == "reject"
+        assert decision.aligned is False
+
+    async def test_reject_beats_clean_signals(self) -> None:
+        decision, _ = await judge(verdict(verdict="reject"))
+        assert decision.outcome == "reject"
+
+    async def test_the_reject_reason_reaches_the_decision(self) -> None:
+        decision, _ = await judge(
+            verdict(verdict="reject", reason="You denied this exact call twice.")
+        )
+        assert decision.reason == "You denied this exact call twice."
+
+
 class TestFailsTowardAsking:
     async def test_no_user_turns_asks_without_ever_calling_the_llm(self) -> None:
         # No turns to verify against — spending a judge call here would be wasteful and
@@ -195,17 +225,22 @@ class TestWhatTheJudgeIsAsked:
             earlier="draft an email to bob about the deck",
             latest="looks good, send it",
             prior_actions=render_prior_calls(prior),
+            assistant_turns=render_assistant_turns([]),
+            history="No recent decisions on send_email.",
             tool="send_email",
             description="(no description)",
             summary="Send email — to: bob@example.com",
             args=args_preview(call.args),
+            schema=render_tool_schema(call.tool_schema),
         )
         assert llm.await_args.kwargs["label"] == "hil_intent_judge"
         # Metered to the user whose gate this is, and bounded — an unbounded judge
         # call holds the gated tool open for as long as the provider takes.
         assert llm.await_args.kwargs["config"] == silent_metered_config("u-hil")
         assert llm.await_args.kwargs["options"] == StructuredCallOptions(
-            timeout=HIL_LLM_TIMEOUT_SECONDS
+            timeout=HIL_LLM_TIMEOUT_SECONDS,
+            model_name=HIL_JUDGE_MODEL_NAME,
+            fallback_model_names=HIL_JUDGE_FALLBACK_MODEL_NAMES,
         )
 
     async def test_a_quote_spanning_two_turns_is_grounded_by_the_joined_transcript(

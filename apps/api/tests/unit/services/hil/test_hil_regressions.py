@@ -18,7 +18,6 @@ from langgraph.errors import GraphInterrupt
 import pytest
 
 from app.agents.core.subagents.subagent_runner import recover_from_checkpoint
-from app.constants.general import WAIT_FOR_SUBAGENTS_NAME
 from app.constants.hil import (
     HIL_EXEMPT_TOOLS,
     HIL_PAUSING_TOOLS,
@@ -133,16 +132,11 @@ class TestFinishedSubagentIsNotDrivenTwice:
         assert outcome.text == "Task completed."
 
 
-class TestJoinToolIsNeverGated:
-    """Bug: wait_for_subagents was absent from HIL_EXEMPT_TOOLS.
-
-    It is registered directly into the executor's tool dict rather than the ToolRegistry,
-    so the gate sent it to the LLM destructive classifier, which fails CLOSED — a
-    classifier outage would gate the very join that collects parked approvals.
-    """
+class TestExemptToolsAreNeverGated:
+    """The join tool is gone, but the regression coverage stays: HIL_EXEMPT_TOOLS must keep covering every bound orchestration tool, or the gate sends one to the LLM destructive classifier, which fails CLOSED."""
 
     def test_the_join_tool_is_exempt(self) -> None:
-        assert WAIT_FOR_SUBAGENTS_NAME in HIL_EXEMPT_TOOLS
+        assert {"handoff", "spawn_subagent"} <= HIL_EXEMPT_TOOLS
 
     async def test_the_gate_runs_it_without_resolving_any_policy(self) -> None:
         ran = False
@@ -153,7 +147,7 @@ class TestJoinToolIsNeverGated:
             return ToolMessage(content="collected", tool_call_id="call-1")
 
         with patch(f"{GATE}.resolve_policy", new=AsyncMock()) as policy:
-            result = await run_through_gate(make_request(name=WAIT_FOR_SUBAGENTS_NAME), handler)
+            result = await run_through_gate(make_request(name="handoff"), handler)
 
         assert ran is True
         assert result.content == "collected"
@@ -166,11 +160,10 @@ class TestJoinToolIsNeverGated:
 
 
 class TestExemptSiblingsThatPauseSuppressAutoApproval:
-    """Bug: the sibling guard skipped every exempt tool.
+    """Bug: the sibling guard skipped every exempt tool, but handoff is exempt AND can pause.
 
-    handoff and wait_for_subagents are exempt AND can pause, so a gated tool sharing a
-    message with one of them auto-ran, then ran a SECOND time when the pause re-ran the
-    whole node.
+    A gated tool sharing a message with one of them auto-ran, then ran a SECOND time when the pause
+    re-ran the whole node.
     """
 
     @pytest.fixture(autouse=True)
@@ -187,7 +180,7 @@ class TestExemptSiblingsThatPauseSuppressAutoApproval:
         ):
             yield
 
-    @pytest.mark.parametrize("pausing_tool", ["handoff", WAIT_FOR_SUBAGENTS_NAME])
+    @pytest.mark.parametrize("pausing_tool", ["handoff", "spawn_subagent"])
     async def test_a_pausing_sibling_blocks_auto_approval(self, pausing_tool: str) -> None:
         request = make_request(
             call_id="call-1",
@@ -244,7 +237,9 @@ class TestExemptSiblingsThatPauseSuppressAutoApproval:
             patch(f"{GATE}.remember_declined_call", new=AsyncMock()),
             patch(
                 f"{GATE}.judge_intent",
-                new=AsyncMock(return_value=IntentDecision(True, "you said send it")),
+                new=AsyncMock(
+                    return_value=IntentDecision(outcome="accept", reason="you said send it")
+                ),
             ) as judge,
             patch(f"{GATE}.interrupt", side_effect=GraphInterrupt(())) as interrupt,
         ):
@@ -359,7 +354,9 @@ class TestAPendingRecordParksInsteadOfRunning:
             judge = stack.enter_context(
                 patch(
                     f"{GATE}.judge_intent",
-                    new=AsyncMock(return_value=IntentDecision(True, "you said send it")),
+                    new=AsyncMock(
+                        return_value=IntentDecision(outcome="accept", reason="you said send it")
+                    ),
                 )
             )
             with pytest.raises(GraphInterrupt):
@@ -407,7 +404,9 @@ class TestAResumeWithNoDecisionFailsClosed:
             result = await run_through_gate(make_request(), handler)
 
         handler.assert_not_awaited(), "no record decision means no execution, ever"
-        assert result.additional_kwargs[HIL_STATUS_KWARG] == "denied"
+        # System error, not a denial: the run could pause (it just did), but no
+        # decision landed on its record. "denied" would lie about the cause.
+        assert result.additional_kwargs[HIL_STATUS_KWARG] == "error"
 
     async def test_an_approved_record_does_run_it(self) -> None:
         # The positive control: without this, "never runs" would also pass if the gate
@@ -542,7 +541,7 @@ class TestCancelledRunIsNotResurrectedByItsApproval:
             counts = await sweep_approvals()
             await drain_spawned_tasks()
 
-        assert counts == {"expired": 0, "redispatched": 0}
+        assert counts == {"expired": 0, "redispatched": 0, "deferred_subagent": 0}
         assert runner.await_count == 0
 
     async def test_clearing_the_resume_context_actually_unsets_the_field(self) -> None:
