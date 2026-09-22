@@ -24,13 +24,13 @@ from app.agents.skills.registry import (
     list_skills,
 )
 from app.constants.log_tags import LogTag
+from app.models.integrations.composio_hooks import RunMetadata
 from shared.py.wide_events import log
 
 
 def _get_user_id(config: RunnableConfig) -> str:
     """Extract user_id from config metadata."""
-    metadata = config.get("metadata", {}) if config else {}
-    user_id = metadata.get("user_id")
+    user_id = RunMetadata.model_validate(config.get("metadata", {}) if config else {}).user_id
     if not isinstance(user_id, str) or not user_id:
         raise ValueError("User ID not found in configuration")
     return user_id

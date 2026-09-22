@@ -24,12 +24,14 @@ from app.agents.core.background.session import release_bg_integration
 from app.agents.core.subagents.call_record import append_call_record
 from app.agents.core.subagents.subagent_runner import (
     SubagentExecutionContext,
+    SubagentInitialState,
     execute_subagent_stream,
 )
 from app.constants.agents import AgentTag
 from app.constants.executor import EXECUTOR_COLLECTION_TASK
 from app.constants.log_tags import LogTag
 from app.models.agent_models import AgentConfigurable, RunningSubagent
+from app.models.hil_models import HilInterruptPayload
 from app.services.hil.approvals_store import stamp_subagent_resume
 from app.utils.agent_utils import (
     IntegrationMetadata,
@@ -82,8 +84,9 @@ async def run_subagent_background(
         handoff.icon_url,
     )
     record_calls = handoff.record_calls
+    configurable: AgentConfigurable = ctx.configurable
 
-    conversation_id = str(ctx.configurable.get("conversation_id", ""))
+    conversation_id = str(configurable.get("conversation_id", ""))
     # This task outlives the spawning executor turn, so it needs its own
     # wide-event boundary or every log.set() is silently discarded.
     # get_trace_id() correlates this event with the run that dispatched it.
@@ -117,13 +120,14 @@ async def run_subagent_background(
             # THIS worker by id while it runs (message_subagent / cancel_subagent).
             # Deregistered in `finally`, so a finished OR parked subagent leaves.
             if subagent_id:
+                initial_state: SubagentInitialState = ctx.initial_state
                 await RunningSubagents(conversation_id).register(
                     RunningSubagent(
                         subagent_id=subagent_id,
-                        subagent_thread_id=str(ctx.configurable.get("thread_id", "")),
+                        subagent_thread_id=str(configurable.get("thread_id", "")),
                         integration_id=integration_id or "",
                         agent_name=ctx.agent_name,
-                        task_summary=str(ctx.initial_state.get("intent", ""))[:200],
+                        task_summary=str(initial_state.get("intent", ""))[:200],
                         started_at=datetime.now(UTC).isoformat(),
                     )
                 )
@@ -175,7 +179,7 @@ async def run_subagent_background(
                 await RunningSubagents(conversation_id).deregister(subagent_id)
             if integration_id:
                 release_bg_integration(stream_id, integration_id)
-            await _wake_if_executor_rested(conversation_id, ctx.configurable)
+            await _wake_if_executor_rested(conversation_id, configurable)
 
 
 async def _wake_if_executor_rested(conversation_id: str, configurable: AgentConfigurable) -> None:
@@ -214,7 +218,7 @@ async def _deliver_result(conversation_id: str, agent_name: str, result: str) ->
 
 
 async def _park(
-    ctx: SubagentExecutionContext, interrupt: dict[str, object], stream_id: str
+    ctx: SubagentExecutionContext, interrupt: HilInterruptPayload, stream_id: str
 ) -> None:
     """Record a HIL-paused subagent durably and say so out loud.
 
@@ -222,8 +226,9 @@ async def _park(
     announced to the executor inbox: parked work with no witness rots silently
     until expiry, and the HIL rework that will review it is not built yet.
     """
+    configurable: AgentConfigurable = ctx.configurable
     approval_id = str(interrupt.get("approval_id", ""))
-    thread_id = str(ctx.configurable.get("thread_id", ""))
+    thread_id = str(configurable.get("thread_id", ""))
     if not approval_id or not thread_id:
         # Unresumable pause: without the id pair nothing can ever collect this
         # subagent. Surface it as an error result rather than stranding silently.
@@ -236,7 +241,7 @@ async def _park(
         subagent_thread_id=thread_id,
         subagent_agent_name=ctx.agent_name,
     )
-    conversation_id = str(ctx.configurable.get("conversation_id", ""))
+    conversation_id = str(configurable.get("conversation_id", ""))
     if conversation_id:
         await ExecutorInbox(conversation_id).append(
             str(uuid4()),
