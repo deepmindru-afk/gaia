@@ -152,7 +152,7 @@ def prior_tool_calls(state: object, exclude_id: str) -> list[PriorCall]:
         PriorCall(
             name=call["name"],
             args=call.get("args", {}) or {},
-            output=outputs.get(call.get("id", ""), ""),
+            output=outputs.get(call_id, "") if (call_id := call.get("id")) else "",
         )
         for call in made
         if call.get("name") and call.get("id") != exclude_id

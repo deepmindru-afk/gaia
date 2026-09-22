@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
-from langchain_core.messages import ToolCall
+from langchain_core.messages import AIMessage, ToolCall
 from langchain_core.tools import BaseTool
 import pytest
 
@@ -383,6 +383,14 @@ class TestPriorOutputShapes:
         assert prior_tool_calls({"messages": [ai]}, exclude_id="pending") == [
             PriorCall(name="CREATE", args={"to": "b"}, output="")
         ]
+
+    def test_a_call_without_an_id_never_borrows_a_result(self) -> None:
+        ai = AIMessage(content="", tool_calls=[{"id": None, "name": "CREATE", "args": {}}])
+        orphan = {"tool_call_id": "c9", "content": "someone else's result"}
+
+        (call,) = prior_tool_calls({"messages": [ai, orphan]}, exclude_id="pending")
+
+        assert call.output == ""
 
     def test_a_dict_shaped_tool_result_is_attached(self) -> None:
         ai = ai_message_with_calls({"id": "c1", "name": "CREATE", "args": {}})
