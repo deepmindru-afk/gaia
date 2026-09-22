@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from app.agents.core.background.executor_channel import drain_inbox_hook
+from app.agents.middleware.factory import SubagentStackOptions
 from app.constants.db import LANGGRAPH_SETUP_LOCK_ID
 
 _MOD = "app.agents.core.graph_builder.build_graph"
@@ -662,6 +663,40 @@ class TestBuildExecutorGraph:
                 "list_devices",
                 "run_on_device",
             ]
+
+    async def test_spawned_subagents_inherit_tools_but_never_the_orchestration_ones(self):
+        """A spawn must see what the executor bound, minus the executor-only tools it could recurse or self-activate through."""
+        runtime_config = MagicMock(name="child_tool_runtime_config")
+        with ExitStack() as stack:
+            deps = _apply_patches(
+                stack,
+                {
+                    f"{_MOD}.build_executor_child_tool_runtime_config": MagicMock(
+                        return_value=runtime_config
+                    )
+                },
+            )
+            from app.agents.core.graph_builder.build_graph import build_executor_graph
+
+            async with build_executor_graph(chat_llm=deps["llm"], in_memory_checkpointer=True):
+                pass
+
+            factory = deps["mocks"][f"{_MOD}.create_executor_middleware"]
+
+        assert factory.call_args.kwargs == {
+            "chat_llm": deps["llm"],
+            "subagent": SubagentStackOptions(
+                excluded_tools={
+                    "handoff",
+                    "list_running_subagents",
+                    "message_subagent",
+                    "cancel_subagent",
+                    "activate_integration",
+                },
+                tool_runtime_config=runtime_config,
+                inherit_parent_tools=True,
+            ),
+        }
 
     async def test_executor_tool_registry_includes_handoff(self):
         with ExitStack() as stack:
