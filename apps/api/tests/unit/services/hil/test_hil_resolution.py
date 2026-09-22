@@ -340,9 +340,9 @@ class TestDecisionSemantics:
         assert resume.runner.call_args.kwargs["resume"].resume["status"] == "denied"
 
     async def test_the_returned_record_carries_the_full_decision_forward(self, resume: Any) -> None:
-        # The loaded record predates the transition; the caller and the resume dispatch
-        # must see the decided image, not the pending snapshot. Every copied field is
-        # load-bearing — a renamed key silently drops it back to the pending value.
+        # The caller and resume dispatch must see the decided image, not the pending
+        # snapshot; every copied field is load-bearing. approve+feedback is a
+        # conditional approval, recorded as denied with the note.
         record = make_record()
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
@@ -357,7 +357,7 @@ class TestDecisionSemantics:
             )
 
         assert decided is not record
-        assert decided.status == "approved"
+        assert decided.status == "denied"
         assert decided.feedback == "looks good"
         assert decided.scope == "always"
         assert decided.decided_by == USER_ID
