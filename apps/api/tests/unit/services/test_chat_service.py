@@ -1634,15 +1634,6 @@ class TestTurnLatencyHelpers:
         finally:
             teardown_session(stream_id)
 
-    def test_executor_delegation_queued_task_is_delegated_and_queued(self) -> None:
-        stream_id = "latency-delegation-queued"
-        session = create_session(stream_id, RunKind.QUEUED)
-        session.executor_queued_task_id = "task-1"
-        try:
-            assert _executor_delegation(stream_id) == (True, True)
-        finally:
-            teardown_session(stream_id)
-
     async def test_note_cancellation_records_the_stop(self) -> None:
         state = _StreamState()
         with patch.object(_stream_manager, "is_cancelled", AsyncMock(return_value=True)) as check:

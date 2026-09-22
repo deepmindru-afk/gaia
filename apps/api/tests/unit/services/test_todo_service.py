@@ -76,6 +76,16 @@ def _no_analytics():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _no_pending_approvals():
+    """Neutralize the cross-domain ledger read; no live approvals by default."""
+    with patch(
+        "app.services.todos.todo_service.approval_ledger_repository.list_live_by_owners",
+        new=AsyncMock(return_value=[]),
+    ):
+        yield
+
+
 def _make_todo_doc(
     *,
     todo_id: str | None = None,
