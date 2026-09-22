@@ -7,11 +7,13 @@ most confident and asks whether the code around it still refuses.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.hil.intent import AutoHistory, JudgedCall
+from app.services.hil.intent import AutoHistory, IntentDecision, JudgedCall
 from app.services.hil.jev_judge import (
+    JevCase,
     JevIntentJudge,
+    JevVerdict,
     ask_jev,
     decide_from_verdict,
     decisive_forbidden,
@@ -53,10 +55,8 @@ def _answer(
     }
 
 
-def _client(answer: dict[str, Any] | Exception):
+def _client(answer: dict[str, Any] | Exception) -> AsyncMock:
     """Fake httpx.AsyncClient serving one Decisions answer (or raising)."""
-    from unittest.mock import MagicMock
-
     response = MagicMock()
     response.json.return_value = answer
     client = AsyncMock()
@@ -73,7 +73,7 @@ async def _decide(
     call: JudgedCall | None = None,
     history: AutoHistory | None = None,
     fallback: Any = None,
-):
+) -> IntentDecision:
     judge = JevIntentJudge(
         fallback=fallback
         if fallback is not None
@@ -183,14 +183,18 @@ class TestForbidTripwire:
 
     async def test_forbidden_double_check_rejects(self) -> None:
         d = decide_from_verdict(
-            choice="authorized",
-            confidence=0.9,
-            probabilities={"authorized": 0.9},
-            user_messages=["send it"],
-            call=_call(),
-            prior_calls=[],
-            history=AutoHistory(),
-            forbid="forbidden",
+            JevVerdict(
+                choice="authorized",
+                confidence=0.9,
+                probabilities={"authorized": 0.9},
+                forbid="forbidden",
+            ),
+            JevCase(
+                call=_call(),
+                user_messages=["send it"],
+                prior_calls=[],
+                history=AutoHistory(),
+            ),
         )
         assert d.outcome == "reject"
 
@@ -198,28 +202,36 @@ class TestForbidTripwire:
         # The tripwire fired (forbid words present) but the check cleared it:
         # contradictory turns still need the human — a card, never a run.
         d = decide_from_verdict(
-            choice="authorized",
-            confidence=0.9,
-            probabilities={"authorized": 0.9},
-            user_messages=["don't send anything yet", "send it"],
-            call=_call(),
-            prior_calls=[],
-            history=AutoHistory(),
-            forbid="permitted",
+            JevVerdict(
+                choice="authorized",
+                confidence=0.9,
+                probabilities={"authorized": 0.9},
+                forbid="permitted",
+            ),
+            JevCase(
+                call=_call(),
+                user_messages=["don't send anything yet", "send it"],
+                prior_calls=[],
+                history=AutoHistory(),
+            ),
         )
         assert d.outcome == "ask"
         assert "earlier message" in d.reason
 
     async def test_failed_double_check_floors_accept_to_ask(self) -> None:
         d = decide_from_verdict(
-            choice="authorized",
-            confidence=0.9,
-            probabilities={"authorized": 0.9},
-            user_messages=["don't send anything yet", "send it"],
-            call=_call(),
-            prior_calls=[],
-            history=AutoHistory(),
-            forbid="unclear-forbid",
+            JevVerdict(
+                choice="authorized",
+                confidence=0.9,
+                probabilities={"authorized": 0.9},
+                forbid="unclear-forbid",
+            ),
+            JevCase(
+                call=_call(),
+                user_messages=["don't send anything yet", "send it"],
+                prior_calls=[],
+                history=AutoHistory(),
+            ),
         )
         assert d.outcome == "ask"
 
@@ -319,20 +331,23 @@ class TestGrounding:
         # authorized verdict plus the create call's output carrying the draft
         # id. The id traces to the run, so the veto stands down.
         d = decide_from_verdict(
-            choice="authorized",
-            confidence=0.9,
-            probabilities={"authorized": 0.9},
-            user_messages=["send test mail to maradiyadhruv0@gmail.com", "send"],
-            call=_call(args={"draft_id": "r6898160653200701840"}),
-            prior_calls=[
-                PriorCall(
-                    name="GMAIL_CREATE_DRAFT",
-                    args={"to": "maradiyadhruv0@gmail.com", "subject": "Test email"},
-                    output='{"draft_id": "r6898160653200701840"}',
-                )
-            ],
-            history=AutoHistory(),
-            forbid=None,
+            JevVerdict(
+                choice="authorized",
+                confidence=0.9,
+                probabilities={"authorized": 0.9},
+            ),
+            JevCase(
+                call=_call(args={"draft_id": "r6898160653200701840"}),
+                user_messages=["send test mail to maradiyadhruv0@gmail.com", "send"],
+                prior_calls=[
+                    PriorCall(
+                        name="GMAIL_CREATE_DRAFT",
+                        args={"to": "maradiyadhruv0@gmail.com", "subject": "Test email"},
+                        output='{"draft_id": "r6898160653200701840"}',
+                    )
+                ],
+                history=AutoHistory(),
+            ),
         )
         assert d.outcome == "accept"
 
@@ -368,8 +383,6 @@ class TestVetoes:
 
 class TestFallback:
     async def test_transport_failure_runs_the_fallback_not_an_allow(self) -> None:
-        from app.services.hil.intent import IntentDecision
-
         fallback = AsyncMock(**{"decide.return_value": IntentDecision("ask", "llm says ask")})
         d = await _decide(ConnectionError("down"), fallback=fallback)
         assert d.outcome == "ask"
@@ -432,8 +445,6 @@ class TestWire:
 
     async def test_enrichment_rides_only_when_it_exists(self) -> None:
         """Empty evidence reads as missing evidence and costs confidence, so an old-shape call posts the old-shape state — and a rich call carries it all."""
-        from app.services.hil.utils import PriorCall
-
         client = _client(_answer("unclear", 0.5))
         with patch(f"{MODULE}.httpx.AsyncClient", return_value=client):
             with patch(f"{MODULE}.settings") as settings:

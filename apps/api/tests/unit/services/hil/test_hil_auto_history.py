@@ -11,8 +11,11 @@ from unittest.mock import AsyncMock, patch
 
 from app.models.hil_models import ApprovalLedgerDocument, LedgerState
 from app.services.hil.intent import (
+    AutoContext,
     AutoHistory,
+    IntentDecision,
     JudgedCall,
+    _Verdict,
     judge_intent,
     summarize_history,
 )
@@ -54,10 +57,8 @@ def test_blank_rows_are_no_signal() -> None:
     assert summarize_history([]) == AutoHistory()
 
 
-async def _judge(history: AutoHistory) -> Any:
+async def _judge(history: AutoHistory) -> IntentDecision:
     """Real judge_intent, mocked LLM saying allow with a genuine quote."""
-    from app.services.hil.intent import _Verdict
-
     llm_verdict = _Verdict(
         authorized_scope="email bob the deck",
         authorizing_quote="draft an email to bob about the deck",
@@ -70,7 +71,7 @@ async def _judge(history: AutoHistory) -> Any:
     )
     with patch(f"{MODULE}.ainvoke_structured", new=AsyncMock(return_value=llm_verdict)):
         return await judge_intent(
-            user_id="u",
+            AutoContext(user_id="u", history=history),
             user_messages=USER_TURNS,
             call=JudgedCall(
                 tool_name="send_email",
@@ -79,7 +80,6 @@ async def _judge(history: AutoHistory) -> Any:
                 summary="Send email",
             ),
             prior_calls=[],
-            history=history,
         )
 
 

@@ -10,6 +10,14 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.hil_models import LedgerState
+from app.services.analytics_service import AnalyticsEvents
+from app.services.hil import resume as resume_module
+from app.services.hil.resume import (
+    _resume_todo,
+    _resume_workflow,
+    record_owner_deny,
+    resume_owner_after_approval,
+)
 
 MODULE = "app.services.hil.resume"
 
@@ -31,15 +39,11 @@ def _row(**overrides: Any) -> MagicMock:
 
 class TestResumeAfterApproval:
     async def test_no_owner_is_a_no_op(self) -> None:
-        from app.services.hil.resume import resume_owner_after_approval
-
         with patch(f"{MODULE}.approval_ledger_repository") as repo:
             await resume_owner_after_approval(_row())
         repo.claim_resume.assert_not_called()
 
     async def test_lost_claim_means_another_tap_already_resumed(self) -> None:
-        from app.services.hil.resume import resume_owner_after_approval
-
         with (
             patch(f"{MODULE}.approval_ledger_repository") as repo,
             patch(f"{MODULE}._resume_todo", new=AsyncMock()) as resume,
@@ -49,9 +53,6 @@ class TestResumeAfterApproval:
         resume.assert_not_awaited()
 
     async def test_todo_resume_logs_and_reenqueues(self) -> None:
-        from app.services.hil import resume as resume_module
-        from app.services.hil.resume import resume_owner_after_approval
-
         with (
             patch.object(resume_module, "approval_ledger_repository") as repo,
             patch(f"{MODULE}._resume_todo", new=AsyncMock()) as resume,
@@ -61,8 +62,6 @@ class TestResumeAfterApproval:
         resume.assert_awaited_once()
 
     async def test_unknown_owner_type_claims_but_runs_nothing(self) -> None:
-        from app.services.hil.resume import resume_owner_after_approval
-
         with patch(f"{MODULE}.approval_ledger_repository") as repo:
             repo.claim_resume = AsyncMock(return_value=True)
             with patch(f"{MODULE}.log"):
@@ -70,8 +69,6 @@ class TestResumeAfterApproval:
         repo.claim_resume.assert_awaited_once()
 
     async def test_resume_failure_never_raises(self) -> None:
-        from app.services.hil.resume import resume_owner_after_approval
-
         with (
             patch(f"{MODULE}.approval_ledger_repository") as repo,
             patch(
@@ -85,10 +82,6 @@ class TestResumeAfterApproval:
 
 class TestResumeTodo:
     async def test_resume_enqueues_into_the_parked_conversation(self) -> None:
-        # Lazy imports inside _resume_todo bind at call time: patch the source
-        # modules, never the resume module's namespace.
-        from app.services.hil.resume import _resume_todo
-
         pool = MagicMock()
         enqueued: dict[str, Any] = {}
 
@@ -101,7 +94,7 @@ class TestResumeTodo:
                 new=AsyncMock(return_value=pool),
             ),
             patch(
-                "app.workers.queue.enqueue_worker_job",
+                f"{MODULE}.enqueue_worker_job",
                 new=_fake_enqueue,
             ),
         ):
@@ -114,8 +107,6 @@ class TestResumeTodo:
 
 class TestResumeWorkflow:
     async def test_requeued_with_receipt_context(self) -> None:
-        from app.services.hil.resume import _resume_workflow
-
         queued: dict[str, Any] = {}
 
         async def _fake_queue(workflow_id: str, user_id: str, context: Any) -> bool:
@@ -134,12 +125,10 @@ class TestResumeWorkflow:
 
 class TestRecordDeny:
     async def test_todo_deny_leaves_a_skip_trace(self) -> None:
-        from app.services.hil.resume import record_owner_deny
-
         service = MagicMock()
         service.append_activity_entry = AsyncMock(return_value=True)
         with patch(
-            "app.services.tracked_todo_service.tracked_todo_service",
+            f"{MODULE}.tracked_todo_service",
             service,
         ):
             await record_owner_deny(_row(owner_run_type="todo", owner_id="todo-3"), "too pricey")
@@ -147,12 +136,10 @@ class TestRecordDeny:
         assert "denied" in entry and "too pricey" in entry
 
     async def test_workflow_and_live_denies_record_nothing(self) -> None:
-        from app.services.hil.resume import record_owner_deny
-
         service = MagicMock()
         service.append_activity_entry = AsyncMock()
         with patch(
-            "app.services.tracked_todo_service.tracked_todo_service",
+            f"{MODULE}.tracked_todo_service",
             service,
         ):
             await record_owner_deny(_row(owner_run_type="workflow", owner_id="wf-1"), None)
@@ -162,9 +149,6 @@ class TestRecordDeny:
 
 class TestResumedEvent:
     async def test_todo_resume_emits_event_with_user_id(self) -> None:
-        from app.services.analytics_service import AnalyticsEvents
-        from app.services.hil.resume import _resume_todo
-
         pool = MagicMock()
         with (
             patch(
@@ -172,7 +156,7 @@ class TestResumedEvent:
                 new=AsyncMock(return_value=pool),
             ),
             patch(
-                "app.workers.queue.enqueue_worker_job",
+                f"{MODULE}.enqueue_worker_job",
                 new=AsyncMock(),
             ),
             patch("app.services.hil.resume.capture_event") as capture,
@@ -186,9 +170,6 @@ class TestResumedEvent:
         )
 
     async def test_workflow_resume_emits_event_with_user_id(self) -> None:
-        from app.services.analytics_service import AnalyticsEvents
-        from app.services.hil.resume import _resume_workflow
-
         async def _fake_queue(workflow_id: str, user_id: str, context: Any) -> bool:
             return True
 

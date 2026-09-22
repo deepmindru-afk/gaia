@@ -982,7 +982,7 @@ class TestApprovalExpiry:
 
             counts = await sweep()
 
-            assert counts == "expired=1 redispatched=0", (
+            assert counts == "expired=1 redispatched=0 deferred_subagent=0", (
                 f"the sweep must report the one expiry it performed, got {counts!r}"
             )
             record = world.approvals.only_record()
@@ -1012,7 +1012,7 @@ class TestApprovalExpiry:
 
             counts = await sweep()
 
-            assert counts == "expired=0 redispatched=0", (
+            assert counts == "expired=0 redispatched=0 deferred_subagent=0", (
                 f"a live approval is not the sweep's to touch, got {counts!r}"
             )
             record = world.approvals.only_record()
@@ -1230,7 +1230,7 @@ class TestResumeAgainstAThreadWithNoInterrupt:
             orphan_the_resume(world)
             counts = await sweep()
 
-            assert counts == "expired=0 redispatched=1", (
+            assert counts == "expired=0 redispatched=1 deferred_subagent=0", (
                 f"the sweep must re-dispatch the crashed resume, got {counts!r}"
             )
             assert len(await world.outputs_for(GATED_CALL_ID)) == 1, (
