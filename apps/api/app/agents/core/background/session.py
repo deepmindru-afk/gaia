@@ -28,9 +28,9 @@ class RunKind(StrEnum):
              silent/workflow); tool events reach the user over the comms
              stream and the comms path attaches them to its own message.
     QUEUED — a DETACHED run: it owns its own stream and self-publishes its
-             results. Materialized by ``prepare_run_from_item`` for a HIL
-             approval resume or a background-subagent collection wake. The
-             name predates the executor queue's removal; nothing is queued.
+             results. Materialized by prepare_run_from_item for a HIL approval
+             resume or a background-subagent collection wake. The name predates
+             the executor queue's removal; nothing is queued.
     """
 
     LIVE = "live"

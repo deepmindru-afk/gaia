@@ -65,22 +65,10 @@ async def run_subagent_background(
 ) -> None:
     """Run a worker subagent in the background and store its result.
 
-    Designed for asyncio.create_task(). Never raises — all exceptions
-    caught and stored as the subagent's result text.
-
-    A HIL pause is not an error: the subagent's graph is checkpointed, so this
-    stamps the approval record with the thread id, announces the pause to the
-    executor inbox, and exits. Reviewing the parked approval belongs to the
-    HIL rework; until then the record waits out its TTL.
-
-    Args:
-        ctx: Fully prepared SubagentExecutionContext.
-        stream_id: Active SSE stream ID for tool event publishing.
-        integration_metadata: Optional icon/name metadata for tool events.
-        integration_id: Releases this integration's background slot on exit.
-        record_calls: Workflow runs only — append the subagent's successful tool
-            calls to the stored result so the executor can transcribe them into
-            a playbook (see ``call_record``).
+    Designed for asyncio.create_task(); never raises — every exception is caught
+    and stored as the subagent's result text. A HIL pause is not an error: the
+    graph is checkpointed, so this stamps the approval record with the thread id,
+    announces the pause to the executor inbox, and exits.
     """
     handoff = handoff or BackgroundHandoff()
     integration_metadata, subagent_id, integration_id = (
@@ -217,10 +205,8 @@ async def _deliver_result(conversation_id: str, agent_name: str, result: str) ->
     """Hand a finished background result to the executor's inbox.
 
     The drain hook injects it before the executor's next reasoning step, so no
-    collect call is needed: results (and failures) arrive on their own whether
-    the executor is mid-turn or rested (the wake below starts a turn that reads
-    the same inbox). Agent-prefixed, because an inbox entry carries no
-    attribution of its own.
+    collect call is needed whether the executor is mid-turn or rested. Agent-
+    prefixed, because an inbox entry carries no attribution of its own.
     """
     await ExecutorInbox(conversation_id).append(
         str(uuid4()), f"{agent_name}: {result}", AgentTag.SUBAGENT_RESULT

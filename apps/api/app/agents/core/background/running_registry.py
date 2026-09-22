@@ -1,11 +1,9 @@
 """The registry of a conversation's currently-running subagents.
 
 While a subagent runs, the executor needs a stable, addressable handle for it —
-to steer it (``message_subagent``) or stop it (``cancel_subagent``). Nothing
-tracked that before: a running subagent was only a pending count plus an
-integration set, neither of which names one worker. This is that handle: a Redis
-hash keyed by ``conversation_id`` whose fields are subagent ids, so the executor
-can enumerate exactly what is live and address one by id.
+to steer it (message_subagent) or stop it (cancel_subagent). This is that
+handle: a Redis hash keyed by conversation_id whose fields are subagent ids, so
+the executor can enumerate exactly what is live and address one by id.
 
 Registered when a subagent starts, deregistered when it finishes — running only.
 A finished or HIL-parked subagent is not here (a parked one has stopped and is
@@ -30,7 +28,7 @@ class RunningSubagents:
         self._key = f"{RUNNING_SUBAGENTS_PREFIX}{conversation_id}"
 
     async def register(self, subagent: RunningSubagent) -> None:
-        """Mark a subagent live. Idempotent on ``subagent_id``."""
+        """Mark a subagent live. Idempotent on subagent_id."""
         if not redis_cache.client:
             return
         await redis_cache.client.hset(
@@ -51,7 +49,7 @@ class RunningSubagents:
         return [subagent for value in raw.values() if (subagent := _decode(value)) is not None]
 
     async def get(self, subagent_id: str) -> RunningSubagent | None:
-        """The named subagent if it is still running, else ``None``."""
+        """Return the named subagent if it is still running, else None."""
         return next(
             (s for s in await self.list() if s.subagent_id == subagent_id),
             None,

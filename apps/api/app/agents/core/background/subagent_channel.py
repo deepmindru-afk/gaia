@@ -1,21 +1,14 @@
 """The per-subagent mailbox: how the EXECUTOR steers ONE running subagent.
 
-The executor inbox (:mod:`executor_channel`) carries the user speaking to the
-executor. This is its mirror one tier down: a channel the executor writes to —
-via its ``message_subagent`` tool — to reach one specific running subagent,
-drained by that subagent's own pre-model hook.
+The executor inbox (executor_channel) carries the user speaking to the executor.
+This is its mirror one tier down: a channel the executor writes to via its
+message_subagent tool to reach one specific running subagent, drained by that
+subagent's own pre-model hook.
 
-Two rules keep it honest:
-
-- **Keyed by the subagent's own thread_id**, so a message addressed to one
-  subagent never reaches a sibling. There can be several subagents live at once;
-  relevance is per-subagent and only the executor knows it, so the executor
-  routes and nothing here broadcasts.
-- **Never the executor inbox.** A subagent drains only its own mailbox; work the
-  user addressed to the executor stays with the executor.
-
-Storage (:class:`RedisInbox`) and the inject/retire rule (:func:`decide_drain`,
-:func:`apply_drain`) are reused from :mod:`executor_channel` so the two tiers
+Two rules keep it honest: it is keyed by the subagent's own thread_id so a
+message never reaches a sibling, and it is never the executor inbox — a subagent
+drains only its own mailbox. Storage (RedisInbox) and the inject/retire rule
+(decide_drain, apply_drain) are reused from executor_channel so the two tiers
 share one canonical mechanism.
 """
 
@@ -40,8 +33,8 @@ from shared.py.wide_events import log
 class SubagentInbox(RedisInbox):
     """Steering messages the executor addressed to one running subagent.
 
-    Keyed by the subagent's own thread_id (``<integration>_executor_<conv>`` for a
-    handoff, ``spawn_<conv>_<tool_call_id>`` for a spawn), so only the subagent
+    Keyed by the subagent's own thread_id (<integration>_executor_<conv> for a
+    handoff, spawn_<conv>_<tool_call_id> for a spawn), so only the subagent
     running on that thread drains it.
     """
 
@@ -56,9 +49,9 @@ class SubagentInbox(RedisInbox):
 class SubagentCancel:
     """A targeted stop flag for one running subagent, keyed by its thread_id.
 
-    Set by the executor's ``cancel_subagent`` tool, polled by that subagent's
-    stream loop, so a cancel stops exactly that worker — not the executor and not
-    a sibling subagent (unlike the stream-scoped cancel, which is shared).
+    Set by the executor's cancel_subagent tool, polled by that subagent's stream
+    loop, so a cancel stops exactly that worker — not the executor and not a
+    sibling subagent (unlike the stream-scoped cancel, which is shared).
     """
 
     def __init__(self, subagent_thread_id: str) -> None:
@@ -84,9 +77,9 @@ async def drain_subagent_inbox_hook(
 ) -> State:
     """Pre-model hook: pull steers the executor addressed to THIS subagent.
 
-    Mirrors :func:`drain_inbox_hook` but keyed on the subagent's own thread_id.
-    A subagent's run carries its own thread as ``thread_id`` in the configurable,
-    so this reads exactly the mailbox ``message_subagent`` wrote for it.
+    Mirrors drain_inbox_hook but keyed on the subagent's own thread_id. A
+    subagent's run carries its own thread as thread_id in the configurable, so
+    this reads exactly the mailbox message_subagent wrote for it.
     """
     try:
         thread_id = agent_configurable(config).get("thread_id")

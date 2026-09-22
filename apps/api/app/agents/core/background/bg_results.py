@@ -10,12 +10,11 @@ from app.db.redis import redis_cache
 
 
 async def try_claim_bg_dispatch(conversation_id: str, tool_call_id: str) -> bool:
-    """One background dispatch per handoff tool call, durable across node replays.
+    """Claim the one dispatch slot for a handoff tool call; False when a replay already did.
 
-    A ``handoff`` sharing its node run with a pause re-runs when the pause resumes;
-    ``tool_call_id`` lives in the checkpointed AI message,
-    so this SETNX makes the side effect (spawning the subagent) idempotent as the
-    pre-interrupt code must be. True = first dispatch, proceed.
+    A handoff sharing its node run with a pause re-runs when the pause resumes,
+    and tool_call_id lives in the checkpointed AI message, so this SETNX makes
+    spawning the subagent idempotent. True means first dispatch, proceed.
     """
     key = f"{HIL_BG_RESULTS_KEY_PREFIX}dispatch:{conversation_id}:{tool_call_id}"
     return bool(await redis_cache.client.set(key, "1", nx=True, ex=HIL_BG_RESULTS_TTL_SECONDS))

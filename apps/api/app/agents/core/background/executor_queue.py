@@ -1,15 +1,15 @@
 """Per-conversation executor busy-lock mechanics and detached-run materialization.
 
 One executor runs per conversation at a time, guarded by the
-``executor:busy:{conversation_id}`` Redis lock. Work that arrives while the lock
-is held is not deferred — it goes to the conversation's inbox and the live run
-absorbs it (see ``executor_channel``). There is no queue of pending runs.
+executor:busy:{conversation_id} Redis lock. Work that arrives while the lock is
+held is not deferred — it goes to the conversation's inbox and the live run
+absorbs it (see executor_channel). There is no queue of pending runs.
 
-What remains here is the lock itself and :func:`prepare_run_from_item`, which
-materializes a DETACHED run — one that owns its own stream rather than sharing a
-comms turn's. HIL approval resume is its main consumer; the collection wake-up is
-the other. Preparing is this module's job, spawning the runner's, which is the
-one-way dependency (runner → queue) that keeps the import graph acyclic.
+What remains here is the lock itself and prepare_run_from_item, which
+materializes a DETACHED run that owns its own stream rather than sharing a comms
+turn's. HIL approval resume is its main consumer; the collection wake-up is the
+other. Preparing is this module's job, spawning the runner's — the one-way
+dependency (runner -> queue) that keeps the import graph acyclic.
 """
 
 from dataclasses import dataclass
@@ -50,12 +50,12 @@ QUEUED_STREAM_ID_PREFIX = "queued_"
 class ExecutorRunItem(TypedDict, total=False):
     """The serialized run context stored between an executor turn and its re-dispatch.
 
-    Written by :func:`build_run_item` into the Redis queue and into
-    ``HILApprovalRecord.resume_item``; read back by :func:`prepare_run_from_item`.
+    Written by build_run_item into the Redis queue and into
+    HILApprovalRecord.resume_item; read back by prepare_run_from_item.
 
-    ``total=False`` is the honest shape, not a shortcut: the HIL resume path
-    re-dispatches from ``record.resume_item or {}``, so an absent or empty item
-    is a real, handled input — every read below supplies a default.
+    total=False is the honest shape: the HIL resume path re-dispatches from
+    record.resume_item or {}, so an absent or empty item is a real, handled
+    input — every read below supplies a default.
     """
 
     task: str
@@ -63,15 +63,12 @@ class ExecutorRunItem(TypedDict, total=False):
     configurable: AgentConfigurable
     conversation_id: str
     user_message_id: str | None
-    #: The original live turn's bot message id, set only when this item was
-    #: written by a HIL pause (``_record_pause``) — a plain queue enqueue never
-    #: sets it. Read back by ``prepare_run_from_item`` into ``ExecutorRun``.
+    # Original live turn's bot message id, set only by a HIL pause (_record_pause);
+    # a plain queue enqueue never sets it. Read back into ExecutorRun.
     bot_message_id: str | None
-    #: The workflow execution the run belongs to. It exists only on the workflow
-    #: task's wide event, and a queue pop or HIL resume rebuilds the run in some
-    #: other context (the previous run's finalize, the approval request), so the
-    #: item is the only thing that can carry it across. Read back into
-    #: ``ExecutorRun`` so the resumed run's model calls stay attributable.
+    # Workflow execution the run belongs to. It lives only on the workflow task's
+    # wide event, and a queue pop or HIL resume rebuilds the run elsewhere, so the
+    # item is the only carrier across; read into ExecutorRun for attribution.
     workflow_execution_id: str | None
 
 
@@ -144,18 +141,12 @@ async def try_acquire_lock(lock_key: str, lock_value: str) -> bool:
 
 
 async def adopt_lock(conversation_id: str, reserved_value: str, lock_value: str) -> bool:
-    """Take over a lock this run's own reservation holds. Returns whether it did.
-
-    A workflow fire reserves its conversation before it starts, so no second fire
-    can slip into the window before the first one dispatches an executor. That
-    executor is the run the reservation was made FOR, not a rival, so it adopts
-    the lock instead of handing its task to a live run that does not exist.
+    """Take over a lock this run's own reservation holds; return whether it did.
 
     Compare-and-set under WATCH, not a plain SET: a reservation can lapse on TTL
-    and be re-taken by a genuinely different run, and overwriting that would put
-    two executors on one conversation — the exact failure the lock exists to
-    stop. Falls back to True (allow execution) if Redis is unavailable, like
-    :func:`try_acquire_lock`, which is also the only way to reach here.
+    and be re-taken by a different run, and overwriting that would put two
+    executors on one conversation. Falls back to True (allow execution) when
+    Redis is unavailable, like try_acquire_lock.
     """
     if not redis_cache.client:
         return True
@@ -175,12 +166,11 @@ async def adopt_lock(conversation_id: str, reserved_value: str, lock_value: str)
 
 
 async def break_holder_lock(conversation_id: str, expected_value: str) -> bool:
-    """Delete the busy lock iff it still carries ``expected_value``.
+    """Delete the busy lock only while it still carries expected_value.
 
-    Compare-and-delete under WATCH: a live run that re-acquired between the
-    read and the delete changes the value, and the delete aborts instead of
-    stranding it. Returns whether the lock is gone (deleted here or already
-    absent). Falls back to False when Redis is unavailable.
+    Compare-and-delete under WATCH: a live run that re-acquired between the read
+    and the delete changes the value, so the delete aborts instead of stranding
+    it. Returns whether the lock is gone; falls back to False when Redis is down.
     """
     if not redis_cache.client:
         return False
@@ -199,16 +189,11 @@ async def break_holder_lock(conversation_id: str, expected_value: str) -> bool:
 
 
 async def get_lock_state(conversation_id: str, stream_id: str, task_id: str | None) -> LockState:
-    """Classify the busy lock relative to this run.
+    """Classify the busy lock relative to this run: OURS, FREE, or FOREIGN.
 
-    OURS    — the lock still carries this run's value; we may pop/release.
-    FREE    — no lock (TTL expiry, or cancel_executor released it); a stranded
-              queue may need reclaiming, but only via NX so we never trample a
-              concurrent acquirer.
-    FOREIGN — a newer run owns it; a stale finalize must not touch the lock or
-              the queue (the owner's own finalize drains it).
-
-    Redis-unavailable degrades to OURS — the pre-ownership-check behavior.
+    OURS carries this run's value; FREE has no lock (reclaim only via NX);
+    FOREIGN means a newer run owns it and a stale finalize must not touch it.
+    Redis-unavailable degrades to OURS, the pre-ownership-check behavior.
     """
     if not redis_cache.client:
         return LockState.OURS
@@ -231,9 +216,8 @@ async def get_lock_holder(conversation_id: str) -> str | None:
 async def is_executor_busy(conversation_id: str) -> bool:
     """Whether ANY executor run (running or parked) holds this conversation's lock.
 
-    Redis-unavailable degrades to ``False``: the caller (HIL early-decision) must
-    treat "cannot tell" as "no collector is alive" and fail closed — recording a
-    decision nobody will act on is a false promise to the user.
+    Redis-unavailable degrades to False: the caller (HIL early-decision) must
+    treat "cannot tell" as "no collector is alive" and fail closed.
     """
     if not redis_cache.client:
         return False
@@ -243,11 +227,9 @@ async def is_executor_busy(conversation_id: str) -> bool:
 async def release_lock_if_owned(conversation_id: str, stream_id: str, task_id: str | None) -> None:
     """Delete the busy lock only while this run still owns it.
 
-    Unconditional deletion let a stale (e.g. cancelled-then-replaced) run's
-    finalize free a lock a NEWER run had acquired, enabling concurrent
-    executors in one conversation. The get→compare→delete here is not atomic,
-    but it closes the deterministic case; the residual window is the
-    microseconds between compare and delete.
+    Unconditional deletion let a stale run's finalize free a lock a NEWER run
+    had acquired, enabling concurrent executors in one conversation. The
+    get-compare-delete here is not atomic but closes the deterministic case.
     """
     if await get_lock_state(conversation_id, stream_id, task_id) is LockState.OURS:
         await redis_cache.delete(f"{EXECUTOR_BUSY_PREFIX}{conversation_id}")
@@ -256,13 +238,11 @@ async def release_lock_if_owned(conversation_id: str, stream_id: str, task_id: s
 async def extend_lock_if_owned(
     conversation_id: str, stream_id: str, task_id: str | None, ttl_seconds: int
 ) -> bool:
-    """Re-arm the busy lock's TTL while this run still owns it.
+    """Re-arm the busy lock's TTL while this run still owns it; return whether it did.
 
-    For a run that parks on a HIL approval: its lock's TTL has been counting down
-    since the run *started*, but the pause may outlive it, and a lock that lapses
-    under a checkpointed interrupt lets a new run take the thread and discard it.
-    Ownership-checked like ``release_lock_if_owned`` — a stale run must never
-    extend a lock a newer one now holds. Returns whether the TTL was re-armed.
+    A run parked on a HIL approval may outlive its lock's TTL, and a lapse under
+    a checkpointed interrupt lets a new run take the thread. Ownership-checked
+    like release_lock_if_owned so a stale run never extends a newer one's lock.
     """
     if not redis_cache.client:
         return False
@@ -306,12 +286,10 @@ def build_run_item(
 ) -> ExecutorRunItem:
     """Build the one serialized run-context shape the queue and HIL resume store write.
 
-    Read back by ``prepare_run_from_item``. Add fields here, not at the write
-    sites, or a resumed run silently drops what a queued run keeps.
-
-    ``workflow_execution_id`` defaults to the execution in flight on the caller's
-    wide event — a run that already knows its own passes it explicitly, since a
-    pause is recorded from inside the run's boundary, not the workflow task's."""
+    Read back by prepare_run_from_item; add fields here, not at the write sites,
+    or a resumed run silently drops what a queued run keeps. workflow_execution_id
+    defaults to the execution in flight on the caller's wide event.
+    """
     return {
         "task": task,
         "task_id": identity.task_id,
@@ -324,13 +302,11 @@ def build_run_item(
 
 
 def safe_configurable(configurable: AgentConfigurable) -> AgentConfigurable:
-    """Return the serializable subset of a ``configurable``, safe to persist and rebuild a run from.
+    """Return the serializable subset of a configurable, safe to persist and rebuild from.
 
-    The GAIA-owned keys minus the run-scoped ones.
-    Every surviving key is an ``AgentConfigurable`` key by construction (Type
-    Safety item 12). A declared key holding an unserializable value is dropped
-    with a WARNING rather than in silence: silent dropping is how a queued run
-    quietly stopped being the run the user started.
+    The GAIA-owned keys minus the run-scoped ones. A declared key holding an
+    unserializable value is dropped with a WARNING, never silently — silent
+    dropping is how a queued run quietly stopped being the run the user started.
     """
     kept: dict[str, Any] = {}
     for key, value in configurable.items():
@@ -352,11 +328,9 @@ async def prepare_run_from_item(
 ) -> PreparedQueuedTask | None:
     """Claim the busy lock and prepare a fresh run+stream from a stored item.
 
-    Every detached run — a HIL approval resume, a collection wake, work carried
-    out of a finished run — starts here, so this is the single place the
-    conversation is claimed and the stream the frontend subscribes to is minted.
-    ``claim`` says which of the two claims applies (see :class:`LockClaim`);
-    ``None`` means the conversation is already taken and no run was started.
+    Every detached run starts here, so this is the single place the conversation
+    is claimed and the frontend's stream is minted. claim picks which claim
+    applies (see LockClaim); None means the conversation is already taken.
     """
     if not redis_cache.client:
         return None
@@ -380,10 +354,9 @@ async def prepare_run_from_item(
             )
             return None
     else:
-        # Seize with the RAW client, matching try_acquire_lock / get_lock_state.
-        # redis_cache.set() JSON-encodes the string (wrapping it in quotes),
-        # which get_lock_state's raw read would never match — so the resumed run
-        # would see its own lock as FOREIGN and leave it wedged until its TTL.
+        # Seize with the RAW client: redis_cache.set() JSON-encodes (quotes) the
+        # value, which get_lock_state's raw read never matches, so the resumed run
+        # would see its own lock as FOREIGN and wedge it until TTL.
         await redis_cache.client.set(lock_key, lock_value, ex=EXECUTOR_BUSY_TTL)
 
     session = create_session(queued_stream_id, RunKind.QUEUED)

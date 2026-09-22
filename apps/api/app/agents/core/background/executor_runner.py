@@ -323,13 +323,11 @@ def _executor_ttft_ms(run: ExecutorRun, run_start: float) -> float | None:
 class _ExecutorResult(NamedTuple):
     """One executor run's terminal shape.
 
-    ``paused_on`` holds the approval id(s) when the run stopped on a HIL
-    interrupt instead of finishing — one for a gate pause (batch pauses arrive
-    with the HIL rework).
-
-    ``ctx`` is the prepared execution context, kept so finalize can read the
-    thread this run actually wrote; ``None`` when preparation itself failed, in
-    which case no model call happened and nothing was committed."""
+    paused_on holds the approval id(s) when the run stopped on a HIL interrupt
+    instead of finishing. ctx is the prepared execution context, kept so finalize
+    can read the thread this run wrote; None when preparation itself failed, in
+    which case no model call happened and nothing was committed.
+    """
 
     text: str
     type: str
@@ -445,10 +443,9 @@ async def _finalize_executor_run(
     # delivery comes back empty. None means a live run — comms owns those cards.
     tool_data = drain_executor_tool_data(run.stream_id) if run.executor_owns_tool_data else None
 
-    # Held approval cards go live here, not mid-run: the open client never
-    # renders them until a full refresh otherwise. Before the done signal so
-    # the session is still alive; failure only skips the live push, never
-    # finalize — the drain above already persisted the frames.
+    # Held approval cards go live here, before the done signal so the session is
+    # still alive; failure only skips the live push, never finalize — the drain
+    # above already persisted the frames.
     try:
         from app.services.hil.bridge import (  # noqa: PLC0415 -- runner is imported too broadly for a top-level hil import
             flush_held_approval_cards,
@@ -530,12 +527,9 @@ async def _finalize_executor_run(
             observe_executor_e2e(e2e_s, status=end_status, queued=queued)
     observe_executor_run_total(status=end_status, queued=queued)
 
-    # Work handed over mid-run is normally absorbed by the run itself. The one
-    # case it cannot be is a hand-off that lands after this run's LAST model
-    # call — there is no further reasoning step to read it. Carry that into a
-    # fresh run rather than leaving it to sit. Runs on EVERY terminal path,
-    # cancelled included: a Stop targets the running task, not work the user
-    # added afterwards.
+    # Work landing after this run's LAST model call has no further reasoning step
+    # to absorb it, so carry it into a fresh run. Runs on EVERY terminal path,
+    # cancelled included: a Stop targets the running task, not later work.
     await _carry_pending_into_new_run(run, ctx)
 
 
@@ -681,14 +675,10 @@ async def deliver_to_executor(
 ) -> None:
     """Give the executor work from outside a comms turn — the one way to do it.
 
-    Whether a run already exists is an implementation detail of delivery, not two
-    different behaviours: a live run absorbs the task through its inbox, and an
-    idle conversation gets a run started to carry it. Either way the task ends up
-    as a message in an executor thread, never as a second parallel answer.
-
-    The busy check is a fast path, not the decision: the claim inside
-    ``_start_executor_run`` is atomic, so a run that starts between the two lands
-    the task in the inbox instead of racing a second run onto the same thread.
+    A live run absorbs the task through its inbox; an idle conversation gets a run
+    started to carry it. Either way it becomes a message in an executor thread,
+    never a second parallel answer. The busy check is a fast path, not the
+    decision: the claim inside _start_executor_run is atomic.
     """
     if not await is_executor_busy(conversation_id) and await _start_executor_run(
         conversation_id, configurable, task, workflow_execution_id=workflow_execution_id

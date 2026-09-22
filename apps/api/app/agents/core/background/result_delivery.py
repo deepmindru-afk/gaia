@@ -102,32 +102,12 @@ async def deliver_result(
     *,
     tool_data: list[ToolDataEntry] | None,
 ) -> tuple[str | None, str | None]:
-    """Narrate, persist, and deliver a finished executor run's result.
+    """Narrate a finished executor run through comms, persist it, and deliver it.
 
-    Comms is invoked silently — no SSE stream. Its generated text becomes the
-    user-visible bot message. The executor's terminal text is NOT shown to the
-    user directly; it's internal context for comms.
-
-    Returns ``(narrated_text, message_id)`` of the saved bot message (voice mode
-    speaks the text and bubbles it by that id). ``(None, None)`` on failure.
-    A REACT resolves to ``(None, message_id)``: the ack is saved and routed as
-    a reaction, but there is no speakable text — voice stays silent.
-
-    The message is always saved to the conversation, then delivered over EXACTLY
-    ONE transport chosen by the conversation's own ``source``:
-      - workflow runs → the proactive workflow notification (multi-channel)
-      - bot conversations (whatsapp/telegram/discord/slack) → that platform's
-        API (bots have no WebSocket — it's their only inbound path)
-      - everything else (web/mobile/system) → the WebSocket push web/mobile listen on
-    Routing keys on the conversation, not the run that produced the message, so a
-    background/scheduled run posting into a bot conversation still reaches it.
-
-    Tool cards: ``tool_data`` is the caller's pre-signal snapshot, already gated
-    on ``run.executor_owns_tool_data`` — ``None`` for a live run, whose cards the
-    chat stream attaches to the comms ack instead (attaching them here too would
-    render every card twice). Queued runs key the saved message on
-    ``message_id == task_id`` so the frontend sync reconciles it with the live
-    placeholder by id — the WebSocket push is immediacy only.
+    Comms is invoked silently (no SSE); its text is the user-visible message.
+    Returns (narrated_text, message_id); (None, None) on failure; a REACT gives
+    (None, message_id). The message saves, then routes over EXACTLY ONE transport
+    chosen by the conversation's source (workflow notification, bot API, or WS).
     """
     try:
         return await _narrate_and_deliver(run, result_text, result_type, tool_data, returned_note)
@@ -274,11 +254,9 @@ async def _narrate_and_deliver(
 
     notification_text = await _narrate_result(run, result_text, result_type, returned_note)
 
-    # Comms may judge a background update not worth a full message and answer with a
-    # control line instead: SILENCE (deliver nothing) or REACT (a one-emoji ack). One
-    # event records the outcome for every update; the emoji, never the reason/text.
-    # The delivery prop tells whether the ack attached natively, rendered as a
-    # client badge, or fell back to a text bubble.
+    # Comms may answer with a control line instead of a message: SILENCE (deliver
+    # nothing) or REACT (one-emoji ack). One event records the outcome and the
+    # emoji (never reason/text); the delivery prop says how the ack landed.
     directive = interpret_comms_output(notification_text)
     is_react = directive.kind is CommsDirectiveKind.REACT
 
@@ -307,16 +285,9 @@ async def _narrate_and_deliver(
     else:
         log.set(comms_delivery="message")
 
-    # A HIL-resumed run reconciles onto the ORIGINAL live turn's message
-    # (``run.bot_message_id``, see ``_record_pause``) instead of minting a
-    # rival one. Otherwise queued runs share an id with the live placeholder
-    # useExecutorStream rendered, so the frontend's existing conversation sync
-    # reconciles by id. Other runs have no placeholder, so a fresh id is fine.
-    #
-    # QUEUED is load-bearing: every LIVE run also carries ``bot_message_id``
-    # (threaded for a possible pause), but only ``_record_pause`` writes it
-    # into a queue item. On presence alone every live run would take the
-    # merge path and race the comms stream's own save.
+    # A HIL-resumed run reconciles onto the ORIGINAL message (run.bot_message_id);
+    # QUEUED is load-bearing because every live run carries bot_message_id but only
+    # _record_pause writes it into a queue item — presence alone would race comms.
     is_hil_resume = run.is_queued and bool(run.bot_message_id)
     bot_message = _build_bot_message(
         run,
@@ -396,10 +367,9 @@ async def _narrate_and_deliver(
         delivered = False
         transport = "platform"
         if is_react:
-            # A native platform reaction anchored to the user's message. Falls
-            # back to the one-emoji text bubble below when the target has no
-            # recorded platform id (older turns, non-bot triggers) or the
-            # publish fails — the acknowledgment is never lost.
+            # Native platform reaction anchored to the user's message; falls back
+            # to the one-emoji text bubble below when there is no recorded platform
+            # id or the publish fails, so the acknowledgment is never lost.
             platform_message_id = await _lookup_platform_message_id(
                 run.conversation_id, run.user_message_id, user_id
             )
@@ -1136,11 +1106,10 @@ async def _lookup_platform_message_id(
     user_message_id: str | None,
     user_id: str,
 ) -> str | None:
-    """The platform-native id of a user message, for anchoring a reaction.
+    """Return the platform-native id of a user message, for anchoring a reaction.
 
-    Returns None when there is no triggering user message (scheduled runs) or
-    the turn predates platform-id recording — the caller falls back to sending
-    the emoji as a text bubble.
+    Returns None when there is no triggering user message (scheduled runs) or the
+    turn predates platform-id recording — the caller falls back to a text bubble.
     """
     if not user_message_id:
         return None

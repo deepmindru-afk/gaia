@@ -1,27 +1,18 @@
 """The live channel by which new work reaches a RUNNING executor.
 
-One executor runs per conversation. Before this module, work handed over while
-that executor was busy went onto a FIFO of serialized *run requests*, so an
-entry had two possible destinies — absorbed by the live run, or spawned as a
-second run with its own stream and its own separate answer. "Give the executor
-work" therefore meant two different things depending on timing.
-
-This module replaces that with one rule:
+One executor runs per conversation. This module enforces one rule:
 
     An inbox entry always becomes a message inside an executor run.
     It never becomes a run of its own.
 
-So an entry carries only ``{id, text}``. Nothing about a run is stored here —
-every writer already holds the context it would need to start one, which is the
-only reason the old queue serialized run context at all.
+So an entry carries only {id, text}. Nothing about a run is stored here — every
+writer already holds the context it would need to start one.
 
 Storage, framing, the drain decision and the hook that applies it live together
-in this file on purpose. They are one mechanism: splitting the "what do we
-inject" rule away from the "where is it kept" rule is what makes a channel like
-this unreadable. The only piece elsewhere is the commit itself, in the vendored
-model node (:func:`pop_injected_messages`) — a pre-model hook's return shapes
-the model input and is never checkpointed, so the hook stages and the node
-commits.
+here on purpose: they are one mechanism. The only piece elsewhere is the commit
+itself, in the vendored model node (pop_injected_messages) — a pre-model hook's
+return shapes the model input and is never checkpointed, so the hook stages and
+the node commits.
 """
 
 import json
@@ -47,10 +38,9 @@ from shared.py.wide_events import log
 def decide_drain(entries: list[InboxEntry], messages: list[AnyMessage]) -> InboxDrain:
     """Split pending entries into "inject now" and "already landed, drop it".
 
-    Pure, so the rule that governs the channel can be tested without Redis or a
-    graph. An entry is retired only once it is *visible in the thread*, never
-    when it is merely read — a run that dies between reading and committing
-    therefore loses nothing, because it never removed anything.
+    Pure, so the channel's rule is testable without Redis or a graph. An entry is
+    retired only once it is visible in the thread, never when merely read, so a
+    run that dies between reading and committing loses nothing.
     """
     committed = {
         message.additional_kwargs.get(INBOX_ENTRY_ID)
@@ -65,10 +55,9 @@ def decide_drain(entries: list[InboxEntry], messages: list[AnyMessage]) -> Inbox
 def as_interjection(entry: InboxEntry) -> HumanMessage:
     """Frame an entry as the user speaking mid-run.
 
-    A ``HumanMessage`` and not a ``SystemMessage``: it lands in the CONVERSATION
-    slot, which is the only accumulating one, so it reads to the model exactly
-    like the request that started the run. The tag marks it as internal framing
-    and is stripped before anything reaches the user.
+    A HumanMessage, not a SystemMessage: it lands in the CONVERSATION slot, the
+    only accumulating one, so it reads to the model like the request that started
+    the run. The tag marks it as internal framing and is stripped before the user.
     """
     return HumanMessage(
         content=wrap_agent_payload(entry.tag, entry.text),
@@ -80,16 +69,16 @@ class RedisInbox:
     """A Redis-list mailbox: append, non-destructive read, targeted retire.
 
     The shared mechanics behind both the conversation-level executor inbox and
-    the per-subagent mailbox — one canonical list channel so the two tiers can
-    never drift in how an entry is stored, framed, or retired. Reads never
-    remove; ``retire`` is the only removal, so the channel is safe to read from
-    a run that may die at any point. Subclasses only choose the Redis key, the
-    entry TTL, and the default tag; the drain *rule* stays in :func:`decide_drain`.
+    the per-subagent mailbox, so the two tiers never drift in how an entry is
+    stored, framed, or retired. Reads never remove; retire is the only removal,
+    so the channel is safe to read from a run that may die at any point.
+    Subclasses only choose the key, TTL, and default tag; the drain rule stays in
+    decide_drain.
     """
 
     #: Entry expiry; a subclass overrides for its own channel.
     ttl: int = EXECUTOR_INBOX_TTL
-    #: Tag applied to an ``append`` that names no tag of its own.
+    #: Tag applied to an append that names no tag of its own.
     default_tag: AgentTag = AgentTag.USER_INTERJECTION
 
     def __init__(self, key: str) -> None:
@@ -97,7 +86,7 @@ class RedisInbox:
 
     @staticmethod
     def _encode(entry: InboxEntry) -> str:
-        """Deterministic, so ``retire`` can remove the exact value ``append`` wrote."""
+        """Encode deterministically so retire can remove the exact value append wrote."""
         return json.dumps(
             {"id": entry.id, "text": entry.text, "tag": entry.tag.value}, sort_keys=True
         )
@@ -130,11 +119,10 @@ class RedisInbox:
 class ExecutorInbox(RedisInbox):
     """Pending messages for one conversation's executor.
 
-    Not a queue: see the module docstring. Reads are non-destructive and
-    ``retire`` is the only removal, so the inbox is safe to read from a run that
-    may die at any point — and what has actually been delivered is read off the
-    executor's thread (:func:`decide_drain`), never off a marker here that could
-    disagree with it.
+    Not a queue: see the module docstring. Reads are non-destructive and retire
+    is the only removal, so the inbox is safe to read from a run that may die at
+    any point — and what has actually been delivered is read off the executor's
+    thread (decide_drain), never off a marker here that could disagree with it.
     """
 
     ttl = EXECUTOR_INBOX_TTL
@@ -145,14 +133,12 @@ class ExecutorInbox(RedisInbox):
         super().__init__(f"{EXECUTOR_INBOX_PREFIX}{conversation_id}")
 
     async def clear(self) -> int:
-        """Drop everything pending. Returns how many entries went.
+        """Drop everything pending; return how many entries went.
 
-        Atomically DETACHES the current list before measuring and deleting it,
-        so a steering ``append`` that lands mid-cancel is not swept away with the
-        batch being cleared. ``RENAME`` moves the whole list in one atomic step;
-        any append after it starts a fresh list under the live key and survives,
-        while the count reflects exactly the detached batch. A count-then-delete
-        would leave a window where such an append is deleted, losing the work.
+        Atomically DETACHES the current list before measuring and deleting it, so
+        a steering append that lands mid-cancel is not swept away. RENAME moves
+        the list in one atomic step; any later append starts a fresh list under
+        the live key and survives. A count-then-delete would lose such an append.
         """
         client = redis_cache.client
         if not client:
@@ -171,17 +157,10 @@ class ExecutorInbox(RedisInbox):
     async def announce_interruption(self, message: str | None = None) -> list[InboxEntry]:
         """Tell the next run that the one before it was force-stopped.
 
-        The executor's thread is per-conversation and persists, so a cancelled
-        run leaves its abandoned task sitting in that history. Without this note
-        the next run reads it as unfinished business and picks it straight back
-        up — which is exactly what the user stopped. Committing the stop into the
-        same thread is what makes an interrupt actually mean stop.
-
-        A redirect ("stop that, do X instead") is appended as its own entry
-        rather than folded into the notice. The notice is context for whatever
-        the user does next and is never work in its own right; folding them
-        together made a bare Stop look like pending work, and finalize started
-        a fresh run whose task WAS the stop notice.
+        The per-conversation thread persists, so a cancelled run leaves its
+        abandoned task in history; without this note the next run picks it back
+        up. A redirect ("stop that, do X instead") is a separate entry, not folded
+        into the notice — folding once made a bare Stop look like pending work.
         """
         entries = [
             await self.append(str(uuid4()), INTERRUPTION_NOTICE, AgentTag.EXECUTOR_INTERRUPTED)
@@ -191,11 +170,11 @@ class ExecutorInbox(RedisInbox):
         return entries
 
     async def discard(self, entry_ids: set[str]) -> list[str]:
-        """Drop the named entries. Returns the ids actually removed.
+        """Drop the named entries; return the ids actually removed.
 
-        Entry ids are the ``task_id`` the dispatching tool minted, so a user
-        cancelling "that second thing I asked for" reaches work that is still
-        pending here as well as work already running.
+        Entry ids are the task_id the dispatching tool minted, so a user
+        cancelling "that second thing I asked for" reaches work still pending
+        here as well as work already running.
         """
         removed = [entry for entry in await self.read() if entry.id in entry_ids]
         for entry in removed:
@@ -228,8 +207,8 @@ async def apply_drain(inbox: RedisInbox, state: State, *, log_key: str) -> State
 
     The one place the drain rule turns into a state change — shared by the
     executor inbox and the per-subagent mailbox so both tiers inject and retire
-    identically. Staged under ``INJECTED_MESSAGES_KEY`` because a hook's own
-    return is discarded after the call; the model node commits it.
+    identically. Staged under INJECTED_MESSAGES_KEY because a hook's own return is
+    discarded after the call; the model node commits it.
     """
     entries = await inbox.read()
     if not entries:
@@ -258,10 +237,9 @@ async def drain_inbox_hook(state: State, config: RunnableConfig, store: BaseStor
     the next reasoning step rather than the next run.
     """
     try:
-        # ``conversation_id``, never ``thread_id``: the executor graph runs on the
-        # WRAPPED thread (``executor_<conversation>``), so keying the inbox on
-        # thread_id builds ``executor:inbox:executor_<conv>`` and silently never
-        # matches what ``call_executor`` wrote. AgentConfigurable documents this.
+        # conversation_id, never thread_id: the executor graph runs on the WRAPPED
+        # thread (executor_<conversation>), so keying the inbox on thread_id builds
+        # executor:inbox:executor_<conv> and silently never matches call_executor.
         conversation_id = agent_configurable(config).get("conversation_id")
         if not conversation_id:
             log.warning(f"{LogTag.AGENT} drain_inbox_hook: run carries no conversation_id")
