@@ -161,7 +161,7 @@ async def test_websocket_path_builds_exact_target_message_and_verdict() -> None:
     assert target.user_msg_content == ""
     assert broadcast.await_args.kwargs["notification_text"] == "drink water"
     assert broadcast.await_args.kwargs["tool_data"] is None
-    assert broadcast.await_args.kwargs["follow_up_actions"] == []
+    assert "follow_up_actions" not in broadcast.await_args.kwargs
 
     # The verdict logged for the run: delivered over the websocket, on this source.
     assert verdict.call_args.kwargs["transport"] == "websocket"

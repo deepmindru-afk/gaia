@@ -10,9 +10,10 @@ Two invariants, both owned by result_delivery.py:
   the user already saw, or resurrects an approval they already decided.
 """
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -29,12 +30,14 @@ from app.constants.executor import (
     EXECUTOR_NARRATION_FAILED_MESSAGE,
 )
 from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
+from app.constants.log_tags import LogTag
 from app.models.chat_models import ConversationSource, MessageModel, ToolDataEntry
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
 from app.models.message_models import ReplyToMessageData
 from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 from shared.py.wide_events import log
+from tests.helpers import captured_wide_event
 
 
 def _run(
@@ -2453,3 +2456,348 @@ class TestCommsDirectiveDelivery:
         assert capture.call_args.args[1] == rd.AnalyticsEvents.CHAT_BACKGROUND_UPDATE_RESOLVED
         assert capture.call_args.args[2] == {"outcome": "reply", "delivery": "message"}
         assert save.await_args.args[0].messages[0].kind is rd.MessageKind.TEXT
+
+
+@dataclass
+class _Delivered:
+    """Every seam one deliver_result call touched, plus the wide event it wrote."""
+
+    returned: tuple[str | None, str | None]
+    event: dict[str, Any]
+    save: AsyncMock
+    platform: AsyncMock
+    reaction: AsyncMock
+    lookup: AsyncMock
+    ws: AsyncMock
+    follow_ups: AsyncMock
+    spawn: MagicMock
+    capture: MagicMock
+    to_platforms: AsyncMock
+    notify: AsyncMock
+
+
+async def _deliver_run(
+    run: ExecutorRun,
+    *,
+    comms_text: str,
+    source: ConversationSource | None,
+    result_type: str = "final",
+    tool_data: list[ToolDataEntry] | None = None,
+    follow_ups: list[str] | None = None,
+    platform_id: str | None = None,
+) -> _Delivered:
+    """Run deliver_result with every I/O seam recorded; the routing logic runs for real."""
+    async with captured_wide_event() as event:
+        with (
+            patch.object(
+                rd, "narrate_executor_result", new_callable=AsyncMock, return_value=comms_text
+            ),
+            patch.object(
+                rd,
+                "generate_follow_up_actions",
+                new_callable=AsyncMock,
+                return_value=follow_ups or [],
+            ) as generated,
+            patch.object(rd, "update_messages", new_callable=AsyncMock) as save,
+            patch.object(
+                rd, "_get_conversation_source", new_callable=AsyncMock, return_value=source
+            ),
+            patch.object(
+                rd, "_lookup_user_message_content", new_callable=AsyncMock, return_value=""
+            ),
+            patch.object(
+                rd, "_lookup_platform_message_id", new_callable=AsyncMock, return_value=platform_id
+            ) as lookup,
+            patch.object(
+                rd, "deliver_reaction_to_platform", new_callable=AsyncMock, return_value=True
+            ) as reaction,
+            patch.object(
+                rd, "deliver_message_to_platform", new_callable=AsyncMock, return_value=True
+            ) as platform,
+            patch.object(rd, "_broadcast_message", new_callable=AsyncMock) as ws,
+            patch.object(rd, "_spawn_deferred_follow_ups") as spawn,
+            patch.object(rd, "capture_event") as capture,
+            patch.object(rd, "deliver_result_to_platforms", new_callable=AsyncMock) as to_platforms,
+            patch.object(rd, "_dispatch_workflow_notification", new_callable=AsyncMock) as notify,
+        ):
+            returned = await rd.deliver_result(
+                run, result_text="raw", result_type=result_type, tool_data=tool_data
+            )
+    return _Delivered(
+        returned=returned,
+        event=event,
+        save=save,
+        platform=platform,
+        reaction=reaction,
+        lookup=lookup,
+        ws=ws,
+        follow_ups=generated,
+        spawn=spawn,
+        capture=capture,
+        to_platforms=to_platforms,
+        notify=notify,
+    )
+
+
+def _saved(delivered: _Delivered) -> MessageModel:
+    return delivered.save.await_args.args[0].messages[0]
+
+
+class TestTheCommsVerdictIsOnTheWideEvent:
+    @pytest.mark.parametrize(
+        ("comms_text", "expected"),
+        [
+            (
+                "SILENCE: routine refresh",
+                {"comms_delivery": "silenced", "silence_reason": "routine refresh"},
+            ),
+            ("REACT: 👍", {"comms_delivery": "reacted"}),
+            ("Booked your flight.", {"comms_delivery": "message"}),
+        ],
+    )
+    async def test_how_comms_answered_is_recorded(
+        self, comms_text: str, expected: dict[str, str]
+    ) -> None:
+        delivered = await _deliver_run(
+            _run(), comms_text=comms_text, source=ConversationSource.WHATSAPP
+        )
+
+        assert {key: delivered.event.get(key) for key in expected} == expected
+        assert ("silence_reason" in delivered.event) is ("silence_reason" in expected)
+
+
+class TestResolutionAnalyticsIsOnePerUpdate:
+    """One chat:background_update_resolved per update, deduped on the task (or conversation) it resolved."""
+
+    async def test_a_queued_run_dedupes_on_its_task(self) -> None:
+        delivered = await _deliver_run(
+            _run(RunKind.QUEUED, task_id="task-7"), comms_text="Done.", source=None
+        )
+
+        assert delivered.capture.call_args.kwargs == {
+            "dedupe_key": "chat_background_update_resolved:task-7"
+        }
+
+    async def test_a_taskless_run_dedupes_on_its_conversation(self) -> None:
+        delivered = await _deliver_run(_run(), comms_text="Done.", source=None)
+
+        assert delivered.capture.call_args.kwargs == {
+            "dedupe_key": "chat_background_update_resolved:conv-1"
+        }
+
+    async def test_a_web_react_lands_as_a_badge(self) -> None:
+        delivered = await _deliver_run(
+            replace(_run(), user_message_id="user-msg-1"), comms_text="REACT: ✅", source=None
+        )
+
+        assert delivered.capture.call_args.args[2] == {
+            "outcome": "react",
+            "emoji": "✅",
+            "delivery": "badge",
+        }
+
+    async def test_a_web_reply_is_delivered_over_the_websocket(self) -> None:
+        delivered = await _deliver_run(_run(), comms_text="Done.", source=ConversationSource.WEB)
+
+        assert delivered.event["result_delivery"]["transport"] == "websocket"
+        assert delivered.event["result_delivery"]["delivered"] is True
+
+
+class TestInlineFollowUpsOnlyWhereNothingWaits:
+    """Bot and workflow paths attach follow-ups inline; the web path defers them; a reaction gets none."""
+
+    async def test_a_bot_reply_carries_its_follow_ups_inline(self) -> None:
+        delivered = await _deliver_run(
+            _run(),
+            comms_text="Booked your flight.",
+            source=ConversationSource.WHATSAPP,
+            follow_ups=["Add it to my calendar"],
+        )
+
+        assert delivered.follow_ups.await_args.args[0] == "Booked your flight."
+        assert _saved(delivered).follow_up_actions == ["Add it to my calendar"]
+
+    async def test_a_bot_reaction_generates_no_follow_ups(self) -> None:
+        delivered = await _deliver_run(
+            _run(), comms_text="REACT: 👍", source=ConversationSource.WHATSAPP
+        )
+
+        delivered.follow_ups.assert_not_awaited()
+
+    async def test_the_web_answer_is_not_gated_on_follow_ups(self) -> None:
+        delivered = await _deliver_run(
+            _run(), comms_text="Done.", source=ConversationSource.WEB, tool_data=CARDS
+        )
+
+        delivered.follow_ups.assert_not_awaited()
+        kwargs = delivered.spawn.call_args.kwargs
+        assert kwargs["bot_message"].message_id == _saved(delivered).message_id
+        assert kwargs["result_type"] == "final"
+        assert kwargs["tool_data"] == CARDS
+        assert kwargs["target"].conversation_id == "conv-1"
+
+    async def test_a_web_ack_with_no_answered_message_carries_no_reaction_target(self) -> None:
+        delivered = await _deliver_run(_run(), comms_text="REACT: ✅", source=None)
+
+        assert "reacts_to_message_id" not in delivered.ws.await_args.args[1]["message"]
+
+
+class TestAWorkflowResult:
+    async def test_a_finished_workflow_reaches_the_platforms_and_the_badge(self) -> None:
+        delivered = await _deliver_run(_run(workflow=True), comms_text="Digest ready.", source=None)
+
+        assert delivered.to_platforms.await_args.kwargs["notification_text"] == "Digest ready."
+        notify = delivered.notify.await_args.kwargs
+        assert notify["msg_type"] == "final"
+        assert notify["target"].conversation_id == "conv-1"
+        assert notify["target"].user_id == "user-1"
+        assert delivered.returned == ("Digest ready.", _saved(delivered).message_id)
+        assert delivered.capture.call_args.args[2] == {"outcome": "reply", "delivery": "message"}
+
+    async def test_a_failed_workflow_notifies_failure_but_posts_nothing_to_platforms(self) -> None:
+        delivered = await _deliver_run(
+            _run(workflow=True), comms_text="It failed.", source=None, result_type="error"
+        )
+
+        delivered.to_platforms.assert_not_awaited()
+        assert delivered.notify.await_args.kwargs["msg_type"] == "error"
+
+    async def test_a_silent_workflow_posts_nothing_to_platforms(self) -> None:
+        run = replace(_run(workflow=True), workflow_notify_on_completion=False)
+
+        delivered = await _deliver_run(run, comms_text="Digest ready.", source=None)
+
+        delivered.to_platforms.assert_not_awaited()
+
+    async def test_a_workflow_react_falls_back_to_the_text_ack(self) -> None:
+        delivered = await _deliver_run(_run(workflow=True), comms_text="REACT: 👍", source=None)
+
+        assert delivered.returned == (None, _saved(delivered).message_id)
+        assert delivered.capture.call_args.args[2] == {
+            "outcome": "react",
+            "emoji": "👍",
+            "delivery": "fallback_text",
+        }
+
+
+class TestAPlatformReaction:
+    async def test_a_known_platform_id_attaches_a_native_reaction(self) -> None:
+        delivered = await _deliver_run(
+            replace(_run(), user_message_id="user-msg-1"),
+            comms_text="REACT: 👍",
+            source=ConversationSource.WHATSAPP,
+            platform_id="wamid.123",
+        )
+
+        delivered.lookup.assert_awaited_once_with("conv-1", "user-msg-1", "user-1")
+        delivered.platform.assert_not_awaited()
+        assert delivered.event["platform_reaction"] == "attached"
+
+    async def test_no_platform_id_falls_back_to_a_text_bubble(self) -> None:
+        delivered = await _deliver_run(
+            replace(_run(), user_message_id="user-msg-1"),
+            comms_text="REACT: 👍",
+            source=ConversationSource.WHATSAPP,
+        )
+
+        delivered.reaction.assert_not_awaited()
+        delivered.platform.assert_awaited_once_with(
+            ConversationSource.WHATSAPP, "user-1", "👍", conversation_id="conv-1"
+        )
+        assert delivered.event["platform_reaction"] == "fallback_text"
+
+
+class TestLookupPlatformMessageId:
+    async def test_no_user_message_means_nothing_to_anchor_to(self) -> None:
+        with patch.object(rd, "conversation_repository") as repo:
+            assert await rd._lookup_platform_message_id("conv-1", None, "user-1") is None
+        repo.get_message.assert_not_called()
+
+    async def test_the_answered_messages_platform_id_is_read_for_this_user(self) -> None:
+        message = MessageModel(type="user", response="hi", date="2026-01-01")
+        message.platform_message_id = "wamid.123"
+        with patch.object(rd, "conversation_repository") as repo:
+            repo.get_message = AsyncMock(return_value=message)
+            found = await rd._lookup_platform_message_id("conv-1", "user-msg-1", "user-1")
+
+        assert found == "wamid.123"
+        repo.get_message.assert_awaited_once_with("conv-1", "user-msg-1", user_id="user-1")
+
+    async def test_a_missing_message_has_no_platform_id(self) -> None:
+        with patch.object(rd, "conversation_repository") as repo:
+            repo.get_message = AsyncMock(return_value=None)
+            assert await rd._lookup_platform_message_id("conv-1", "user-msg-1", "user-1") is None
+
+    async def test_a_lookup_failure_is_logged_and_falls_back(self) -> None:
+        async with captured_wide_event() as event:
+            with patch.object(rd, "conversation_repository") as repo:
+                repo.get_message = AsyncMock(side_effect=RuntimeError("mongo down"))
+                found = await rd._lookup_platform_message_id("conv-1", "user-msg-1", "user-1")
+
+        assert found is None
+        assert event["warnings"] == [
+            {
+                "msg": f"{LogTag.AGENT} _lookup_platform_message_id: failed",
+                "error": "mongo down",
+            }
+        ]
+
+
+class TestBroadcastRetry:
+    async def test_a_failed_push_is_retried_once_and_logged(self) -> None:
+        event_out = {"type": "conversation.new_message"}
+        ws = MagicMock()
+        ws.broadcast_to_user = AsyncMock(side_effect=[RuntimeError("socket gone"), None])
+
+        async with captured_wide_event() as event:
+            with (
+                patch.object(rd, "websocket_manager", ws),
+                patch.object(rd, "WEBSOCKET_BROADCAST_RETRY_DELAY_SECONDS", 0),
+            ):
+                await rd._broadcast_message("user-1", event_out)
+
+        assert ws.broadcast_to_user.await_count == 2
+        ws.broadcast_to_user.assert_awaited_with("user-1", event_out)
+        assert event["warnings"] == [
+            {
+                "msg": f"{LogTag.AGENT} _broadcast_message: broadcast attempt failed",
+                "attempt": 1,
+                "user_id": "user-1",
+                "error": "socket gone",
+            }
+        ]
+
+
+class TestWorkflowNotificationIsTraceable:
+    async def test_the_dispatch_log_names_the_message_the_badge_opens(self) -> None:
+        """Operators trace a workflow badge back to its saved message by this id."""
+        with (
+            patch.object(
+                rd, "narrate_executor_result", new_callable=AsyncMock, return_value="Digest ready."
+            ),
+            patch.object(rd, "generate_follow_up_actions", new_callable=AsyncMock, return_value=[]),
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd, "_get_conversation_source", new_callable=AsyncMock, return_value=None),
+            patch.object(rd, "deliver_result_to_platforms", new_callable=AsyncMock),
+            patch(
+                "app.services.workflow.notifications.send_workflow_completion_notification",
+                new_callable=AsyncMock,
+            ) as completion,
+            patch.object(rd, "log") as log_mock,
+        ):
+            _, message_id = await rd.deliver_result(
+                _run(workflow=True), result_text="raw", result_type="final", tool_data=None
+            )
+
+        completion.assert_awaited_once_with(
+            workflow_id="wf-1",
+            workflow_title="Morning digest",
+            conversation_id="conv-1",
+            user_id="user-1",
+        )
+        dispatched = [
+            call.kwargs
+            for call in log_mock.info.call_args_list
+            if "workflow notification dispatched" in call.args[0]
+        ]
+        assert dispatched == [{"workflow_id": "wf-1", "message_id": message_id}]
