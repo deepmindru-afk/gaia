@@ -1483,8 +1483,8 @@ async def execute_workflow_by_id(
     trigger_type = _derive_trigger_type(stamp)
     # The conversation this fire reserved, so the finally can give it back on
     # every exit path. Both stay None until the reservation is actually taken.
-    conversation_id: str | None = None
-    lock_task_id: str | None = None
+    conversation_id: str | None = None  # pragma: no mutate — only read as truthy; "" equals None
+    lock_task_id: str | None = None  # pragma: no mutate — only read as truthy; "" equals None
 
     try:
         workflow = await scheduler.get_task(workflow_id)
@@ -1591,7 +1591,7 @@ async def execute_workflow_by_id(
     finally:
         # Ownership-checked, so the agent path's executor — which adopted this
         # reservation and outlives the task — keeps the lock it now owns.
-        if conversation_id and lock_task_id:
+        if conversation_id and lock_task_id:  # pragma: no mutate — set together, so and/or agree
             await release_lock_if_owned(conversation_id, "", lock_task_id)
         await _reschedule_refill_safe(workflow, workflow_id, batch_key, context)
 
