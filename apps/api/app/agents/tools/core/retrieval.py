@@ -691,13 +691,13 @@ def _deduplicate_and_sort(
     seen: set[str] = set()
     unique_results: list[ScoredToolHit] = []
 
-    r: ScoredToolHit
     for r in results:
         if r["id"] not in seen:
             seen.add(r["id"])
             unique_results.append(r)
     unique_results.sort(key=_hit_score, reverse=True)
-    return [str(r["id"]) for r in unique_results[:limit]]
+    top: list[ScoredToolHit] = unique_results[:limit]
+    return [str(r["id"]) for r in top]
 
 
 def _hit_score(hit: ScoredToolHit) -> float:

@@ -94,6 +94,7 @@ EXTERNAL_TYPEDDICT_PATHS = frozenset(
         "chromadb.api.types.QueryResult",
         "langchain_core.messages.ReasoningContentBlock",
         "langchain_core.messages.content.ReasoningContentBlock",
+        "composio.core.models.tools.ToolExecutionResponse",
     }
 )
 # Collections whose one type argument is the element a loop over them yields.
@@ -242,7 +243,16 @@ def _names_typeddict(annotation: ast.expr, typeddicts: set[str]) -> bool:
     return any(_base_name(node) in typeddicts for node in ast.walk(annotation))
 
 
-_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+# Comprehensions are scopes too (Python 3): a target bound in one never rebinds a sibling's.
+_SCOPES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.Lambda,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
 
 
 def _own_scope_nodes(scope: ast.AST) -> list[ast.AST]:
@@ -312,8 +322,23 @@ def _typeddict_bound_names(nodes: list[ast.AST], typeddicts: set[str]) -> set[st
     return bound
 
 
+def _without_none(annotation: ast.expr) -> ast.expr:
+    """Strip the None arm of ``X | None`` / ``Optional[X]``; anything else is returned as-is."""
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        arms = [
+            arm
+            for arm in (annotation.left, annotation.right)
+            if not (isinstance(arm, ast.Constant) and arm.value is None)
+        ]
+        return arms[0] if len(arms) == 1 else annotation
+    if isinstance(annotation, ast.Subscript) and _base_name(annotation.value) == "Optional":
+        return annotation.slice
+    return annotation
+
+
 def _typeddict_container(annotation: ast.expr, typeddicts: set[str]) -> ContainerKind | None:
     """Classify a collection (``tuple[T, ...]`` included) or mapping annotation whose element is a TypedDict."""
+    annotation = _without_none(annotation)
     if not isinstance(annotation, ast.Subscript):
         return None
     container = _base_name(annotation.value)

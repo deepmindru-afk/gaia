@@ -211,3 +211,51 @@ def test_chromadb_results_are_library_typeddicts(
         "    c = other['ids']\n"
     )
     assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [5]
+
+
+def test_each_comprehension_is_its_own_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
+    source = (
+        "def f(messages, made: list[ToolCall]) -> None:\n"
+        "    raw = [call for m in messages for call in m.tool_calls]\n"
+        "    a = [call.get('name') for call in made]\n"
+        "    b = [call.get('name') for call in raw]\n"
+        "    for call in raw:\n"
+        "        d = call['name']\n"
+        "    c = [call['name'] for call in made]\n"
+    )
+    assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [4, 6]
+
+
+def test_an_optional_typeddict_collection_still_binds_its_loop_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
+    source = (
+        "from typing import Any, Optional, TypedDict\n"
+        "class Turn(TypedDict):\n"
+        "    role: str\n"
+        "def f(history: list[Turn] | None, old: Optional[list[Turn]],\n"
+        "      loose: list[dict[str, Any]] | None) -> None:\n"
+        "    a = [turn.get('role') for turn in history or []]\n"
+        "    b = [turn.get('role') for turn in history]\n"
+        "    c = [turn['role'] for turn in old]\n"
+        "    d = [w['role'] for w in loose]\n"
+    )
+    assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [6, 9]
+
+
+def test_a_composio_execution_response_is_a_library_typeddict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
+    source = (
+        "from composio.core.models.tools import ToolExecutionResponse\n"
+        "def f(response: ToolExecutionResponse, other: dict) -> None:\n"
+        "    a = response.get('successful')\n"
+        "    b = response['error']\n"
+        "    c = other['error']\n"
+    )
+    assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [5]
