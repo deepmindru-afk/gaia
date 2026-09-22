@@ -42,6 +42,7 @@ from app.constants.streaming import WS_EVENT_EXECUTOR_CANCELLED
 from app.core.stream_manager import stream_manager
 from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
+from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.db.repositories.conversations import conversation_repository
 from app.db.repositories.hil import hil_approval_repository
 from app.db.repositories.users import user_repository
@@ -518,6 +519,9 @@ async def hil_world(
             "list_parked_subagents_for_conversation",
             new=approvals.list_parked_subagents_for_conversation,
         ),
+        # The ledger path is off in these worlds, so the ledger holds no rows.
+        patch.object(approval_ledger_repository, "list_open", new=AsyncMock(return_value=[])),
+        patch.object(conversation_repository, "refresh_live_approval_flag", new=AsyncMock()),
         patch.object(user_repository, "get", new=AsyncMock(return_value=stored_user)),
         patch.object(user_repository, "set_hil_tool_override", new=_set_override),
         patch("app.services.hil.bridge.notify_approval_pending", new=AsyncMock()),

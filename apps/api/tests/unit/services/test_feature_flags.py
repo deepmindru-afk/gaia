@@ -11,7 +11,6 @@ from app.services.feature_flags import (
     _coerce_result,
     _get_posthog_client,
     is_code_mode_enabled,
-    is_comms_openui_enabled,
     is_enabled,
     is_hil_ledger_enabled,
 )
@@ -135,13 +134,6 @@ class TestCoerce:
 
 
 class TestFlags:
-    async def test_is_comms_openui_enabled(
-        self, mock_client: MagicMock, evaluated: MagicMock
-    ) -> None:
-        mock_client.get_feature_flag.return_value = False
-        assert await is_comms_openui_enabled("u1") is False
-        mock_client.get_feature_flag.assert_called_once_with("COMMS_OPENUI", "u1")
-
     async def test_is_code_mode_enabled_defaults_off(self, no_client: None) -> None:
         assert await is_code_mode_enabled("u1") is False
 
@@ -250,10 +242,6 @@ class TestCoerceExtended:
 
 
 class TestHelpersWithoutUser:
-    async def test_openui_none_user_is_default(self, evaluated: MagicMock) -> None:
-        assert await is_comms_openui_enabled(None) is True
-        evaluated.assert_not_called()
-
     async def test_code_mode_none_user_is_default(self, evaluated: MagicMock) -> None:
         assert await is_code_mode_enabled(None) is False
         evaluated.assert_not_called()
@@ -289,14 +277,6 @@ class TestClientPassthrough:
 
 
 class TestHelperDelegation:
-    async def test_openui_helper_forwards_flag_and_user(self, evaluated: MagicMock) -> None:
-        with patch(
-            "app.services.feature_flags.is_enabled",
-            return_value=True,
-        ) as enabled:
-            assert await is_comms_openui_enabled("u1") is True
-            enabled.assert_called_once_with(FeatureFlag.COMMS_OPENUI, "u1")
-
     async def test_code_mode_helper_forwards_flag_and_user(self, evaluated: MagicMock) -> None:
         with patch(
             "app.services.feature_flags.is_enabled",

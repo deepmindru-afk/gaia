@@ -19,7 +19,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 import pytest
 
 from app.agents.core.background.executor_channel import ExecutorInbox
-from app.agents.core.background.session import teardown_session, was_executor_spawned
+from app.agents.core.background.session import get_session, teardown_session
 from app.agents.tools import executor_tool
 from app.agents.tools.executor_tool import call_executor, cancel_executor, tools
 from app.constants.agents import AgentTag
@@ -218,7 +218,8 @@ class TestCallExecutorDispatch:
         assert run.user_message_id == "umsg-1"
         assert run.user.user_id == "user-1"
         assert run.kind.value == "live"
-        assert was_executor_spawned("stream-1") is True
+        session = get_session("stream-1")
+        assert session is not None and session.executor_spawned is True
 
     async def test_a_dispatch_with_no_stream_carries_an_empty_stream_id(
         self, fake_redis: fakeredis.aioredis.FakeRedis, spawned_runs: list[dict[str, Any]]

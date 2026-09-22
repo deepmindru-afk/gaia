@@ -24,7 +24,6 @@ from app.agents.core.background.session import (
     release_bg_integration,
     signal_executor_done,
     teardown_session,
-    was_executor_spawned,
 )
 from app.models.user_models import AuthenticatedUser
 
@@ -60,7 +59,6 @@ class TestSessionRegistry:
         teardown_session("s1")
 
         assert get_session("s1") is None
-        assert was_executor_spawned("s1") is False
         assert has_bg_integration("s1", "gmail") is False
 
     def test_teardown_is_idempotent(self) -> None:
@@ -78,10 +76,10 @@ class TestSessionRegistry:
 
 class TestExecutorLifecycleFlags:
     def test_spawned_flag_lifecycle(self) -> None:
-        create_session("s1", RunKind.LIVE)
-        assert was_executor_spawned("s1") is False
+        session = create_session("s1", RunKind.LIVE)
+        assert session.executor_spawned is False
         mark_executor_spawned("s1")
-        assert was_executor_spawned("s1") is True
+        assert session.executor_spawned is True
 
     def test_signal_executor_done_sets_event(self) -> None:
         session = create_session("s1", RunKind.LIVE)
