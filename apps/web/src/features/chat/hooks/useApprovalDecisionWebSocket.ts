@@ -23,24 +23,26 @@ export function useApprovalDecisionWebSocket() {
     const messages =
       useChatStore.getState().messagesByConversation[event.conversation_id] ??
       [];
-    for (const message of messages) {
-      const { entries, changed } = settleApprovalToolData(
-        message.tool_data,
-        event,
-      );
-      if (!changed) continue;
-      const updated = { ...message, tool_data: entries };
-      try {
-        await db.putMessage(updated);
-      } catch (err) {
-        console.error(
-          "[useApprovalDecisionWebSocket] Failed to persist card:",
-          err,
+    // Approval ids are unique, so at most one message carries the card.
+    const updated = messages
+      .map((message) => {
+        const { entries, changed } = settleApprovalToolData(
+          message.tool_data,
+          event,
         );
-      }
-      useChatStore.getState().addOrUpdateMessage(updated);
-      return;
+        return changed ? { ...message, tool_data: entries } : null;
+      })
+      .find((message) => message !== null);
+    if (!updated) return;
+    try {
+      await db.putMessage(updated);
+    } catch (err) {
+      console.error(
+        "[useApprovalDecisionWebSocket] Failed to persist card:",
+        err,
+      );
     }
+    useChatStore.getState().addOrUpdateMessage(updated);
   }, []);
 
   useEffect(() => {
