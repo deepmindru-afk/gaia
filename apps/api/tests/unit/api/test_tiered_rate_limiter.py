@@ -238,7 +238,7 @@ class TestCheckAndIncrement:
 
         # Raises on the first exhausted window, so exactly the day key is read.
         self.limiter.redis.get.assert_awaited_once_with(
-            f"rate_limit:user1:chat_messages:{RateLimitPeriod.DAY}:20260320"
+            f"rate_limit:user1:chat_messages:{RateLimitPeriod.DAY}:20260320", int
         )
         mock_twk.assert_called_once_with(RateLimitPeriod.DAY)
         mock_reset.assert_called_once_with(RateLimitPeriod.DAY)

@@ -143,6 +143,11 @@ PROVIDER_PRIORITY: dict[int, LLMProviderName] = {
 }
 
 
+def _secret_or_none(api_key: str | None) -> SecretStr | None:
+    """Wrap an API key exactly as pydantic coerces one into a SecretStr | None field."""
+    return None if api_key is None else SecretStr(api_key)
+
+
 @cache
 def _sim_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Build the one model used for EVERYTHING under GAIA_SIM_MODE.
@@ -270,7 +275,7 @@ def init_openrouter_llm() -> LanguageModelLike:
             # Output cap; must stay well under the model's shared input+output context
             # window (see OPENROUTER_MAX_OUTPUT_TOKENS) or OpenRouter rejects the request.
             max_tokens=OPENROUTER_MAX_OUTPUT_TOKENS,
-            api_key=settings.OPENROUTER_API_KEY,
+            api_key=_secret_or_none(settings.OPENROUTER_API_KEY),
             # App attribution → OpenRouter rankings/analytics. ChatOpenRouter exposes
             # these as dedicated params (NOT `default_headers`, which it forwards to
             # send_async and crashes on). https://openrouter.ai/docs/app-attribution
@@ -340,7 +345,7 @@ def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatM
             # Unlike the OpenRouter SDK (see without_sdk_retry), the OpenAI
             # SDK honors max_retries=0, so retries stay solely with with_llm_retry.
             max_retries=0,
-            api_key=settings.DEV_LLM_API_KEY,
+            api_key=_secret_or_none(settings.DEV_LLM_API_KEY),
             base_url=settings.DEV_LLM_BASE_URL,
             http_client=httpx.Client(headers=browser_headers),
             http_async_client=httpx.AsyncClient(headers=browser_headers),
@@ -570,7 +575,7 @@ def _build_default_llm(temperature: float) -> ChatOpenRouter:
             streaming=True,
             stream_usage=True,
             max_tokens=OPENROUTER_MAX_OUTPUT_TOKENS,
-            api_key=settings.OPENROUTER_API_KEY,
+            api_key=_secret_or_none(settings.OPENROUTER_API_KEY),
             **_app_attribution(),
             **_provider_order_kwargs(),
         )

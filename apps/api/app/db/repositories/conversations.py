@@ -265,8 +265,7 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
         message_ids: list[str] = []
         for message in messages:
             data = {k: v for k, v in message.model_dump().items() if v is not None}
-            existing = data.get("message_id")
-            message_id = str(existing) if existing is not None else str(ObjectId())
+            message_id = message.message_id if message.message_id is not None else str(ObjectId())
             data["message_id"] = message_id
             message_ids.append(message_id)
             docs.append(data)

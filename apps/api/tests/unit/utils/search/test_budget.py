@@ -24,7 +24,7 @@ class _FakeRedisCache:
         self._raises = raises
         self.redis = _FakeRedisClient()
 
-    async def get(self, key: str) -> str | None:
+    async def get(self, key: str, model: type[object] | None = None) -> str | None:
         if self._raises:
             raise RuntimeError("redis down")
         return self._value

@@ -1,8 +1,10 @@
 """Database indexes for all MongoDB collections, following ESR compound-index ordering."""
 
 import asyncio
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, NotRequired, TypedDict, TypeVar, Unpack, cast
 
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorCollection
 from pymongo.errors import OperationFailure
 
@@ -16,6 +18,44 @@ from shared.py.wide_events import log
 # every `create_index` call in this module actually passes: a single field
 # name, or an ordered list of (field, direction | "text") pairs.
 IndexKeys = str | list[tuple[str, int | str]]
+
+# The index helpers never read a document, so they take a collection of any document type.
+DocumentT = TypeVar("DocumentT", bound=Mapping[str, object])
+
+
+class IndexOptions(TypedDict, total=False):
+    """The create_index options this module passes."""
+
+    name: str
+    unique: bool
+    sparse: bool
+    partialFilterExpression: Mapping[str, object]
+
+
+class _DuplicateShapeGroup(TypedDict):
+    """One $group row of _dedupe_tool_output_shapes: the _ids sharing a (scope, tool_name)."""
+
+    ids: list[ObjectId]
+
+
+class _McpConfigProjection(TypedDict, total=False):
+    server_url: str | None
+
+
+class _ServerUrlBackfillDoc(TypedDict):
+    """The projection _backfill_custom_server_url_keys reads."""
+
+    integration_id: str
+    created_by: NotRequired[str | None]
+    mcp_config: NotRequired[_McpConfigProjection | None]
+
+
+class _SlugBackfillDoc(TypedDict):
+    """The projection _backfill_integration_slugs reads."""
+
+    integration_id: str
+    name: NotRequired[str]
+    category: NotRequired[str]
 
 
 async def create_all_indexes() -> None:
@@ -695,7 +735,7 @@ async def create_playbook_indexes() -> None:
 
 
 async def _dedupe_tool_output_shapes(
-    collection: AsyncIOMotorCollection[dict[str, Any]],
+    collection: AsyncIOMotorCollection[DocumentT],
 ) -> None:
     """Collapse pre-existing (scope, tool_name) duplicates before the unique index build.
 
@@ -714,7 +754,8 @@ async def _dedupe_tool_output_shapes(
         },
         {"$match": {"ids.1": {"$exists": True}}},
     ]
-    async for group in collection.aggregate(pipeline):
+    async for row in collection.aggregate(pipeline):
+        group: _DuplicateShapeGroup = cast(_DuplicateShapeGroup, row)
         losers = group["ids"][1:]
         await collection.delete_many({"_id": {"$in": losers}})
 
@@ -824,7 +865,7 @@ CUSTOM_SERVER_URL_DEDUP_KEYS: IndexKeys = [
     ("created_by", 1),
     ("mcp_config.server_url_normalized", 1),
 ]
-CUSTOM_SERVER_URL_DEDUP_OPTIONS: dict[str, object] = {
+CUSTOM_SERVER_URL_DEDUP_OPTIONS: IndexOptions = {
     "unique": True,
     "name": "custom_url_dedup_unique",
     # $type: string (not $exists) so explicit nulls stay out of the index too —
@@ -837,9 +878,9 @@ CUSTOM_SERVER_URL_DEDUP_OPTIONS: dict[str, object] = {
 
 
 async def _create_index_safe(
-    collection: AsyncIOMotorCollection[dict[str, Any]],
+    collection: AsyncIOMotorCollection[DocumentT],
     keys: IndexKeys,
-    **kwargs: Any,  # noqa: ANN401 -- contract
+    **kwargs: Unpack[IndexOptions],
 ) -> None:
     """
     Create an index safely, handling IndexOptionsConflict gracefully.
@@ -965,12 +1006,15 @@ async def _backfill_custom_server_url_keys() -> None:
                 .sort("created_at", 1)
                 .limit(500)
             )
-            docs = await cursor.to_list(length=500)
+            docs: list[_ServerUrlBackfillDoc] = cast(
+                list[_ServerUrlBackfillDoc], await cursor.to_list(length=500)
+            )
             if not docs:
                 break
 
             for doc in docs:
-                raw = (doc.get("mcp_config") or {}).get("server_url") or ""
+                mcp_config: _McpConfigProjection = doc.get("mcp_config") or {}
+                raw = mcp_config.get("server_url") or ""
                 key = dedup_server_url_key(raw)
                 if not key:
                     continue
@@ -1013,7 +1057,9 @@ async def _backfill_integration_slugs() -> None:
                 {"is_public": True, "slug": {"$exists": False}},
                 {"integration_id": 1, "name": 1, "category": 1},
             )
-            docs = await cursor.to_list(length=500)
+            docs: list[_SlugBackfillDoc] = cast(
+                list[_SlugBackfillDoc], await cursor.to_list(length=500)
+            )
             if not docs:
                 break
 

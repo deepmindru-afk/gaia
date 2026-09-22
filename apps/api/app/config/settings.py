@@ -16,7 +16,7 @@ Add env vars
 from functools import lru_cache
 import os
 import time
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, TypedDict, Unpack
 
 from dotenv import load_dotenv
 from pydantic import computed_field, field_validator
@@ -35,6 +35,12 @@ from shared.py.wide_events import log
 load_dotenv()
 
 
+class SettingsOverrides(TypedDict, total=False):
+    """Field values from_env forces over whatever the environment says."""
+
+    SHOW_MISSING_KEY_WARNINGS: bool
+
+
 class BaseAppSettings(BaseSettings):
     """Base configuration settings for the application."""
 
@@ -50,7 +56,7 @@ class BaseAppSettings(BaseSettings):
 
     # For handling both normal env var loading and dict constructor
     @classmethod
-    def from_env(cls, **kwargs: Any) -> Self:  # noqa: ANN401 -- framework contract
+    def from_env(cls, **kwargs: Unpack[SettingsOverrides]) -> Self:
         """Create settings from environment variables."""
         try:
             return cls(**kwargs)
@@ -86,6 +92,8 @@ class CommonSettings(BaseAppSettings):
     # Where the scripted stub lives when sim mode is on; consumed only by
     # _sim_llm (defaults to SIM_STUB_BASE_URL when unset).
     OPENROUTER_BASE_URL: str | None = None
+    # Every request authenticates as this Mongo user with no WorkOS session.
+    DEV_AUTH_BYPASS_EMAIL: str | None = None
     # Comma-separated OpenRouter provider slugs to PREFER for the default-model
     # lane — fallbacks stay enabled. Set from the per-provider cache-hit table;
     # see _provider_order_kwargs in agents/llm/client.py.
@@ -654,12 +662,8 @@ class DevelopmentSettings(CommonSettings):
     # ----------------------------------------------
     DEBUG_EMAIL_PROCESSING: bool = False
 
-    # Every request authenticates as this Mongo user with no WorkOS session;
-    # get_settings() refuses to start in production when this is set.
-    DEV_AUTH_BYPASS_EMAIL: str | None = None
-
-    # GAIA_SIM_MODE and OPENROUTER_BASE_URL are declared on CommonSettings (the
-    # production import path reads them) — see the note there.
+    # GAIA_SIM_MODE, OPENROUTER_BASE_URL and DEV_AUTH_BYPASS_EMAIL are declared on
+    # CommonSettings (the production import path reads them) — see the note there.
 
     # Default to show warnings in development environment
     SHOW_MISSING_KEY_WARNINGS: bool = True
@@ -726,13 +730,8 @@ def _ensure_infisical_loaded() -> None:
 
 
 @lru_cache(maxsize=1)
-def get_settings() -> Any:  # noqa: ANN401 -- framework contract
-    """Return the cached settings instance for the current environment.
-
-    The return stays Any: narrowing to CommonSettings produced 129 mypy errors
-    plus 4 more from from_env(**kwargs) — fixing that is a settings-model
-    redesign, not a typing fix.
-    """
+def get_settings() -> ProductionSettings | DevelopmentSettings:
+    """Return the cached settings instance for the current environment."""
     log.info(f"{LogTag.STARTUP} Starting settings initialization...")
 
     _ensure_infisical_loaded()

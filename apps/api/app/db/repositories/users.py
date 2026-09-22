@@ -17,6 +17,7 @@ stale last_active_at; nothing reads that field off a cached path.
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import cast
 
 from bson import ObjectId
 
@@ -210,7 +211,8 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
         for doc in docs:
             entry = (doc.platform_links or {}).get(platform)
             if isinstance(entry, dict):
-                platform_user_id = entry.get("id")
+                link: PlatformLinkRecord = cast(PlatformLinkRecord, entry)
+                platform_user_id = link.get("id")
                 if isinstance(platform_user_id, str):
                     ids.append(platform_user_id)
         return ids

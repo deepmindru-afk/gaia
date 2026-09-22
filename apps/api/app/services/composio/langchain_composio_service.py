@@ -1,11 +1,15 @@
 """ComposioLangChain class definition."""
 
 import asyncio
+from dataclasses import dataclass
 from inspect import Parameter, Signature
 import types
 import typing as t
+import uuid
 
+from composio.core.models.tools import ToolExecutionResponse
 from composio.core.provider import AgenticProvider, AgenticProviderExecuteFn
+from composio.core.provider.base import BaseProviderConfig
 from composio.types import Tool
 from composio.utils.pydantic import parse_pydantic_error
 from composio.utils.shared import (
@@ -13,6 +17,7 @@ from composio.utils.shared import (
     json_schema_to_model,
 )
 import composio_client
+from langchain_core.callbacks import Callbacks
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import StructuredTool as BaseStructuredTool
 import pydantic
@@ -24,7 +29,6 @@ from app.utils.integration_checker import request_integration_connection
 from shared.py.wide_events import log, log_context
 
 _python_reserved = {"for", "async", "from", "import", "as", "pass", "continue"}
-_obj_marker = "-_object_-"
 
 # Composio's tool-execute failure for a missing/expired/revoked connected
 # account: error code 1810, name ActionExecute_ConnectedAccountNotFound. It
@@ -42,6 +46,42 @@ _DEAD_ACCOUNT_MESSAGE_MARKERS = (
 # connect prompt. A timeout only abandons the wait — the coroutine keeps running
 # on the loop, so the expiry still lands; the agent just gets the raw error.
 _RECONNECT_PROMPT_TIMEOUT_S = 10.0
+
+
+class _JsonSchema(t.TypedDict, total=False):
+    """The JSON-schema keys this module reads; every other key rides along untouched."""
+
+    type: object
+    properties: dict[str, "_JsonSchema"]
+
+
+@dataclass(frozen=True)
+class _RenamedKeyword:
+    """A schema property renamed off a Python keyword, with the renames inside it."""
+
+    original: str
+    nested: dict[str, "_RenamedKeyword"]
+
+
+class _ComposioErrorBody(t.TypedDict, total=False):
+    error: object
+
+
+class _ComposioErrorDetail(t.TypedDict, total=False):
+    error_code: object
+    code: object
+    name: object
+    type: object
+
+
+class _ToolCallTransport(t.TypedDict, total=False):
+    """The one key the wrapper reads off a tool call's kwargs; the rest are tool arguments."""
+
+    __runnable_config__: object
+
+
+class _RunMetadataView(t.TypedDict, total=False):
+    user_id: str | None
 
 
 def _running_loop_or_none() -> asyncio.AbstractEventLoop | None:
@@ -65,8 +105,11 @@ def _is_dead_account_error(error: composio_client.NotFoundError) -> bool:
     """
     body = error.body
     if isinstance(body, dict):
-        detail = body.get("error") if isinstance(body.get("error"), dict) else body
-        if isinstance(detail, dict):
+        error_body: _ComposioErrorBody = t.cast(_ComposioErrorBody, body)
+        nested = error_body.get("error")
+        raw_detail = nested if isinstance(nested, dict) else body
+        if isinstance(raw_detail, dict):
+            detail: _ComposioErrorDetail = t.cast(_ComposioErrorDetail, raw_detail)
             code = detail.get("error_code", detail.get("code"))
             name = detail.get("name", detail.get("type"))
             if str(code) == _DEAD_ACCOUNT_ERROR_CODE:
@@ -109,58 +152,81 @@ def _clean_reserved_keyword(keyword: str) -> str:
 
 
 def _substitute_reserved_python_keywords(
-    schema: dict[str, t.Any],
-) -> tuple[dict[str, t.Any], dict[str, t.Any]]:
+    schema: _JsonSchema,
+) -> tuple[_JsonSchema, dict[str, _RenamedKeyword]]:
     if "properties" not in schema:
         return schema, {}
 
-    keywords: dict[str, t.Any] = {}
+    keywords: dict[str, _RenamedKeyword] = {}
     for p_name in list(schema["properties"]):
         if p_name not in _python_reserved:
             continue
 
-        _keywords: dict[str, t.Any] = {}
-        p_val = schema["properties"].pop(p_name)
+        nested: dict[str, _RenamedKeyword] = {}
+        p_val: _JsonSchema = schema["properties"].pop(p_name)
         if p_val.get("type") == "object":
-            p_val, _keywords = _substitute_reserved_python_keywords(schema=p_val)
+            p_val, nested = _substitute_reserved_python_keywords(schema=p_val)
 
         p_name_clean = _clean_reserved_keyword(keyword=p_name)
         schema["properties"][p_name_clean] = p_val
-        keywords[p_name_clean] = p_name
-        keywords[f"{p_name_clean}{_obj_marker}"] = _keywords
+        keywords[p_name_clean] = _RenamedKeyword(original=p_name, nested=nested)
 
     return schema, keywords
 
 
 def _reinstate_reserved_python_keywords(
-    request: dict[str, t.Any], keywords: dict[str, t.Any]
-) -> dict[str, t.Any]:
-    for clean_key in sorted(list(keywords), reverse=True):
-        subkeys = None
-        if clean_key.endswith(_obj_marker):
-            subkeys = keywords[clean_key]
-            clean_key, _ = clean_key.split(_obj_marker, maxsplit=1)
-
+    request: dict[str, object], keywords: dict[str, _RenamedKeyword]
+) -> dict[str, object]:
+    for clean_key, renamed in sorted(keywords.items(), reverse=True):
         if clean_key not in request:
             continue
 
-        orginal_value = request.pop(clean_key)
-        if subkeys is not None:
-            orginal_value = _reinstate_reserved_python_keywords(
-                request=orginal_value,
-                keywords=subkeys,
+        original_value = request.pop(clean_key)
+        if renamed.nested:
+            # Only an object-typed property carries nested renames, so its value is a mapping.
+            original_value = _reinstate_reserved_python_keywords(
+                request=t.cast(dict[str, object], original_value),
+                keywords=renamed.nested,
             )
-        request[keywords[clean_key]] = orginal_value
+        request[renamed.original] = original_value
     return request
 
 
 class StructuredTool(BaseStructuredTool):
     """StructuredTool that returns a structured failure instead of raising on invalid args."""
 
-    def run(self, *args: t.Any, **kwargs: t.Any) -> t.Any:  # noqa: ANN401 -- contract
+    def run(
+        self,
+        tool_input: str | dict[str, object],
+        verbose: bool | None = None,
+        start_color: str | None = "green",
+        color: str | None = "green",
+        callbacks: Callbacks = None,
+        *,
+        tags: list[str] | None = None,
+        metadata: dict[str, object] | None = None,
+        run_name: str | None = None,
+        run_id: uuid.UUID | None = None,
+        config: RunnableConfig | None = None,
+        tool_call_id: str | None = None,
+        **kwargs: object,
+    ) -> object:
         """Run the tool, converting argument validation errors into a failure result."""
         try:
-            return super().run(*args, **kwargs)
+            return super().run(
+                tool_input,
+                verbose,
+                start_color,
+                color,
+                callbacks,
+                tags=tags,
+                metadata=metadata,
+                run_name=run_name,
+                run_id=run_id,
+                config=config,
+                tool_call_id=tool_call_id,
+                **kwargs,
+            )
         except pydantic.ValidationError as e:
             return {"successful": False, "error": parse_pydantic_error(e), "data": None}
 
@@ -173,7 +239,7 @@ class LangchainProvider(
 
     runtime = "langchain"
 
-    def __init__(self, **kwargs: t.Any) -> None:  # noqa: ANN401 -- forwards LangChain's arbitrary tool-init bag upstream
+    def __init__(self, **kwargs: t.Unpack[BaseProviderConfig]) -> None:
         super().__init__(**kwargs)
         # Wrapped tool callables are sync (executor thread) and can't await the
         # async expiry transition, so the loop they were built on is captured
@@ -186,7 +252,7 @@ class LangchainProvider(
         toolkit: str | None,
         user_id: str | None,
         reason: str,
-    ) -> dict[str, t.Any]:
+    ) -> dict[str, object]:
         """Reconcile a confirmed dead connected account and ask the user to reconnect.
 
         Marks the integration expired (so the integrations page, the tool registry
@@ -234,7 +300,7 @@ class LangchainProvider(
         return {"successful": False, "error": message or reason, "data": None}
 
     def _run_on_loop(
-        self, coro: t.Coroutine[t.Any, t.Any, str | None], *, timeout: float
+        self, coro: t.Coroutine[object, object, str | None], *, timeout: float
     ) -> str | None:
         """Await a coroutine on the captured loop from this executor thread, bounded."""
         if self._loop is None:
@@ -253,23 +319,28 @@ class LangchainProvider(
         self,
         tool: str,
         description: str,
-        schema_params: dict[str, t.Any],
+        schema_params: _JsonSchema,
         execute_tool: AgenticProviderExecuteFn,
-        keywords: dict[str, t.Any],
+        keywords: dict[str, _RenamedKeyword],
         toolkit: str | None = None,
     ) -> types.FunctionType:
-        def function(**kwargs: t.Any) -> dict[str, t.Any]:  # noqa: ANN401 -- contract
+        def function(**kwargs: object) -> dict[str, object]:
             """Execute the composio action for this tool call."""
 
+            call: _ToolCallTransport = t.cast(_ToolCallTransport, kwargs)
             # 'or {}' handles being called directly without LangChain (no config).
-            runnable_config = kwargs.get("__runnable_config__") or {}
-            metadata = (
-                runnable_config.get("metadata", {}) if isinstance(runnable_config, dict) else {}
-            )
+            runnable_config = call.get("__runnable_config__") or {}
+            metadata: object = {}
+            if isinstance(runnable_config, dict):
+                config: RunnableConfig = t.cast(RunnableConfig, runnable_config)
+                metadata = config.get("metadata", {})
             # user_id is read only for the observability log below; it's None for
             # trigger-option calls (bound at get_tool(user_id=...) time instead).
             # Harmless either way — Composio errors loudly if none reaches execution.
-            user_id = metadata.get("user_id") if isinstance(metadata, dict) else None
+            user_id: str | None = None
+            if isinstance(metadata, dict):
+                run_metadata: _RunMetadataView = t.cast(_RunMetadataView, metadata)
+                user_id = run_metadata.get("user_id")
 
             kwargs = _reinstate_reserved_python_keywords(
                 request=kwargs,
@@ -290,12 +361,13 @@ class LangchainProvider(
 
             # Surface tool invocation outcome for observability.
             try:
-                succeeded = result.get("successful") if isinstance(result, dict) else None
-                err_preview = (
-                    str(result.get("error"))[:200]
-                    if isinstance(result, dict) and succeeded is False
-                    else None
-                )
+                succeeded: bool | None = None
+                err_preview: str | None = None
+                if isinstance(result, dict):
+                    response: ToolExecutionResponse = t.cast(ToolExecutionResponse, result)
+                    succeeded = response.get("successful")
+                    if succeeded is False:
+                        err_preview = str(response.get("error"))[:200]
                 log.set(
                     composio_tool_invocation={
                         "tool": tool,
@@ -334,7 +406,9 @@ class LangchainProvider(
 
             return result
 
-        parameters = get_signature_format_from_schema_params(schema_params=schema_params)
+        parameters = get_signature_format_from_schema_params(
+            schema_params=t.cast(dict[str, object], schema_params)
+        )
 
         parameters.append(
             Parameter(
@@ -370,13 +444,17 @@ class LangchainProvider(
             self._loop = _running_loop_or_none()
 
         # Replace reserved python keywords
-        schema_params, keywords = _substitute_reserved_python_keywords(schema=tool.input_parameters)
+        schema_params, keywords = _substitute_reserved_python_keywords(
+            schema=t.cast(_JsonSchema, tool.input_parameters)
+        )
 
         # The provider's output schema feeds the Returns section of the execute
         # schema docs (schema_docs.py). A shapeless schema (no properties)
         # documents nothing, so it must not render a Returns section at all.
-        output_parameters = (
-            tool.output_parameters if isinstance(tool.output_parameters, dict) else None
+        output_parameters: _JsonSchema | None = (
+            t.cast(_JsonSchema, tool.output_parameters)
+            if isinstance(tool.output_parameters, dict)
+            else None
         )
         metadata = (
             {"output_parameters": output_parameters}
@@ -390,7 +468,7 @@ class LangchainProvider(
                 name=tool.slug,
                 description=tool.description,
                 args_schema=json_schema_to_model(
-                    json_schema=schema_params,
+                    json_schema=t.cast(dict[str, object], schema_params),
                     skip_default=self.skip_default,
                 ),
                 return_schema=True,

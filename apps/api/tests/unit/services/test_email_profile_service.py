@@ -20,6 +20,7 @@ from app.constants.email import (
     PEOPLE_SEARCH_ENDPOINT,
     PEOPLE_SEARCH_READ_MASK,
 )
+from app.models.composio_schemas.google_people import GooglePerson, GooglePersonPhoto
 from app.models.search_models import URLResponse
 from app.services.composio.proxy_client import ProxyRequest
 from app.services.email_profile_service import (
@@ -268,12 +269,14 @@ class TestFetchEmailProfiles:
 class TestPersonToProfile:
     def test_matches_email_and_extracts_fields(self):
         profile = _person_to_profile(
-            {
-                "names": [{"displayName": "Alice Example"}],
-                "emailAddresses": [{"value": "ALICE@example.com "}],
-                "biographies": [{"value": "Works at X"}],
-                "photos": [{"url": "https://x/a.jpg"}],
-            },
+            GooglePerson.model_validate(
+                {
+                    "names": [{"displayName": "Alice Example"}],
+                    "emailAddresses": [{"value": "ALICE@example.com "}],
+                    "biographies": [{"value": "Works at X"}],
+                    "photos": [{"url": "https://x/a.jpg"}],
+                }
+            ),
             EMAIL,
         )
 
@@ -285,32 +288,44 @@ class TestPersonToProfile:
 
     def test_returns_none_when_email_does_not_match(self):
         assert (
-            _person_to_profile(_person(emailAddresses=[{"value": "other@example.com"}]), EMAIL)
+            _person_to_profile(
+                GooglePerson.model_validate(
+                    _person(emailAddresses=[{"value": "other@example.com"}])
+                ),
+                EMAIL,
+            )
             is None
         )
 
     def test_returns_none_without_name_or_photo(self):
-        assert _person_to_profile({"emailAddresses": [{"value": EMAIL}]}, EMAIL) is None
+        assert (
+            _person_to_profile(
+                GooglePerson.model_validate({"emailAddresses": [{"value": EMAIL}]}), EMAIL
+            )
+            is None
+        )
 
     def test_prefers_real_photo_over_monogram(self):
         photos = [
-            {"url": "https://x/monogram.jpg", "default": True},
-            {"url": "https://x/real.jpg"},
+            GooglePersonPhoto(url="https://x/monogram.jpg", default=True),
+            GooglePersonPhoto(url="https://x/real.jpg"),
         ]
 
         assert _pick_photo(photos) == "https://x/real.jpg"
 
     def test_pick_photo_prefers_profile_source(self):
         photos = [
-            {"url": "https://x/real.jpg"},
-            {"url": "https://x/profile.jpg", "metadata": {"source": {"type": "PROFILE"}}},
+            GooglePersonPhoto(url="https://x/real.jpg"),
+            GooglePersonPhoto.model_validate(
+                {"url": "https://x/profile.jpg", "metadata": {"source": {"type": "PROFILE"}}}
+            ),
         ]
 
         assert _pick_photo(photos) == "https://x/profile.jpg"
 
     def test_pick_photo_empty(self):
         assert _pick_photo([]) is None
-        assert _pick_photo([{"default": True, "url": "https://x/m.jpg"}]) is None
+        assert _pick_photo([GooglePersonPhoto(default=True, url="https://x/m.jpg")]) is None
 
 
 class TestMergeProfiles:

@@ -6,7 +6,7 @@ import inspect
 from typing import Any, NotRequired, Protocol, TypedDict, cast
 
 from chromadb.api.models.AsyncCollection import AsyncCollection
-from chromadb.api.types import Where
+from chromadb.api.types import GetResult, Where
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langgraph.store.base import PutOp
 
@@ -75,6 +75,12 @@ class IndexedToolEntry(TypedDict):
     source: NotRequired[str]
     name: NotRequired[str]
     integration_id: NotRequired[str]
+
+
+class IndexedToolMetadata(TypedDict, total=False):
+    """The Chroma metadata key the diff reads back; ChromaStore._upsert_item writes it."""
+
+    tool_hash: str
 
 
 def _namespace_equals(namespace: str) -> Where:
@@ -194,7 +200,7 @@ async def _get_existing_tools_from_chroma(
             else:
                 return existing_tools
 
-        existing_data = (
+        existing_data: GetResult = (
             await collection.get(include=["metadatas"], where=where_filter)
             if where_filter
             else await collection.get(include=["metadatas"])
@@ -202,12 +208,13 @@ async def _get_existing_tools_from_chroma(
         if existing_data and existing_data.get("ids") and existing_data.get("metadatas"):
             for doc_id, metadata in zip(existing_data["ids"], existing_data["metadatas"] or []):
                 if metadata and "::" in doc_id:
+                    tool_metadata: IndexedToolMetadata = cast(IndexedToolMetadata, metadata)
                     parts = doc_id.split("::")
                     namespace = parts[0] if len(parts) > 1 else "default"
 
                     # Use full doc_id as composite key to prevent collisions
                     existing_tools[doc_id] = IndexedToolEntry(
-                        hash=str(metadata.get("tool_hash", "")),
+                        hash=str(tool_metadata.get("tool_hash", "")),
                         namespace=namespace,
                     )
     except Exception as e:
@@ -252,7 +259,7 @@ def _compute_tool_diff(
 
     # Find new or modified tools
     for tool_name, tool_data in current_tools.items():
-        existing = existing_tools.get(tool_name)
+        existing: IndexedToolEntry | None = existing_tools.get(tool_name)
         existing_hash = existing["hash"] if existing else None
         if existing_hash != tool_data["hash"]:
             tools_to_upsert.append((tool_name, tool_data))
@@ -511,7 +518,7 @@ async def delete_tools_by_namespace(namespace: str) -> int:
     collection = await store._get_collection()
 
     # Use ChromaDB metadata filter to avoid a full collection scan.
-    results = await collection.get(where=_namespace_equals(namespace), include=[])
+    results: GetResult = await collection.get(where=_namespace_equals(namespace), include=[])
     ids_to_delete = results.get("ids", [])
     log.set_ns("vector", result_count=len(ids_to_delete))
 

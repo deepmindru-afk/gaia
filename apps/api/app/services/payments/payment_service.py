@@ -3,7 +3,7 @@
 import asyncio
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict, cast
 
 from dodopayments import DodoPayments, NotFoundError
 from dodopayments.types import Subscription
@@ -70,6 +70,12 @@ class CheckoutScanOutcome(StrEnum):
     INCONCLUSIVE = "inconclusive"
 
 
+class _CachedPlanType(TypedDict, total=False):
+    """The record get_cached_plan_type caches under SUBSCRIPTION_PLAN_CACHE_PREFIX."""
+
+    plan_type: str
+
+
 def _is_free_plan(name: str, amount: int) -> bool:
     """Return True for the seeded Free row, which must never reach the frontend.
 
@@ -112,8 +118,8 @@ class DodoPaymentService:
         """Get subscription plans with caching."""
         cache_key = ACTIVE_PLANS_CACHE_KEY if active_only else ALL_PLANS_CACHE_KEY
 
-        # Try cache first
-        cached = await redis_cache.get(cache_key)
+        # Try cache first: the PlanResponse dumps written below.
+        cached = cast("list[dict[str, object]] | None", await redis_cache.get(cache_key))
         if cached:
             try:
                 # Try to create PlanResponse objects from cached data
@@ -122,7 +128,7 @@ class DodoPaymentService:
                     # Ensure dodo_product_id exists in cached data
                     if "dodo_product_id" not in plan_data:
                         plan_data["dodo_product_id"] = ""
-                    plan_responses.append(PlanResponse(**plan_data))
+                    plan_responses.append(PlanResponse.model_validate(plan_data))
                 return [
                     plan for plan in plan_responses if not _is_free_plan(plan.name, plan.amount)
                 ]
@@ -183,6 +189,10 @@ class DodoPaymentService:
 
         # Create hosted checkout session (preferred over deprecated subscriptions.create)
         try:
+            customer: dict[str, str] = {
+                "email": user.email,
+                "name": user.first_name or user.name or "User",
+            }
             params: dict[str, Any] = {
                 "product_cart": [
                     {
@@ -190,10 +200,7 @@ class DodoPaymentService:
                         "quantity": quantity,
                     }
                 ],
-                "customer": {
-                    "email": user.email,
-                    "name": user.first_name or user.name or "User",
-                },
+                "customer": customer,
                 "feature_flags": {
                     # This renders the promo/discount code input on the hosted page
                     "allow_discount_code": True,
@@ -214,7 +221,7 @@ class DodoPaymentService:
                 # used once is offered back as a saved method, so a developer
                 # pays in one click after the first run.
                 params["billing_address"] = dict(DODO_TEST_MODE_BILLING_ADDRESS)
-                params["customer"]["phone_number"] = DODO_TEST_MODE_PHONE_NUMBER
+                customer["phone_number"] = DODO_TEST_MODE_PHONE_NUMBER
                 params["show_saved_payment_methods"] = True
 
             # The Dodo SDK's client is synchronous — run it off the event loop so a
@@ -701,10 +708,12 @@ class DodoPaymentService:
         """
         cache_key = f"{SUBSCRIPTION_PLAN_CACHE_PREFIX}{user_id}"
         cached = await redis_cache.get(cache_key)
-        if isinstance(cached, dict) and cached.get("plan_type"):
-            cached_plan = PlanType(cached["plan_type"])
-            log.set_ns("payment", plan_type=cached_plan.value, plan_source="cache")
-            return cached_plan
+        if isinstance(cached, dict):
+            record: _CachedPlanType = cast(_CachedPlanType, cached)
+            if record.get("plan_type"):
+                cached_plan = PlanType(record["plan_type"])
+                log.set_ns("payment", plan_type=cached_plan.value, plan_source="cache")
+                return cached_plan
 
         plan_raw = (await self.get_user_subscription_status(user_id)).plan_type or PlanType.FREE
         # Pydantic v2 coerces str, Enum fields to plain strings; normalize before calling .value
