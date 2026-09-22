@@ -20,11 +20,11 @@ from langchain_core.runnables.config import var_child_runnable_config
 from pydantic import ValidationError
 import pytest
 
+from app.agents.tools.integrations import calendar_tool
 from app.agents.tools.integrations.calendar_tool import (
     _extract_datetime,
     _format_calendar_for_stream,
     _get_user_timezone,
-    _optional_stream_writer,
     _run_sync,
     register_calendar_custom_tools,
 )
@@ -1751,17 +1751,17 @@ def test_zoneinfo_offset_guard_is_still_needed() -> None:
 
 class TestOptionalStreamWriter:
     def test_returns_none_with_no_runnable_context(self) -> None:
-        assert _optional_stream_writer() is None
+        assert calendar_tool._optional_stream_writer() is None
 
     def test_returns_none_under_dispatch_like_bare_config(self) -> None:
         """Ticket redeem invokes tools via dispatch with a synthesized config that carries no Pregel runtime — this is the shape that crashed."""
         token = var_child_runnable_config.set({"configurable": {"user_id": "u1"}})
         try:
-            assert _optional_stream_writer() is None
+            assert calendar_tool._optional_stream_writer() is None
         finally:
             var_child_runnable_config.reset(token)
 
     def test_returns_writer_inside_a_graph_run(self) -> None:
         sink = MagicMock()
         with patch(f"{MODULE}.get_stream_writer", return_value=sink):
-            assert _optional_stream_writer() is sink
+            assert calendar_tool._optional_stream_writer() is sink
