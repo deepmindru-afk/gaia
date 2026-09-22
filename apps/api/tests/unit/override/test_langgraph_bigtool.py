@@ -952,15 +952,22 @@ class TestBindSessionId:
         llm.bind.assert_not_called()
         assert bound is llm
 
-    @pytest.mark.parametrize("provider", [LLMProviderName.OPENROUTER, LLMProviderName.CUSTOM])
-    def test_a_sticky_provider_gets_the_key(self, provider: LLMProviderName) -> None:
-        # A CUSTOM provider pointed at OpenRouter's own endpoint is still
-        # OpenRouter-wire, so the sticky key binds; the negative (custom aimed at
-        # api.openai.com) is covered in test_llm_client.py.
+    @pytest.mark.parametrize(
+        ("provider", "binds"),
+        [(LLMProviderName.OPENROUTER, True), (LLMProviderName.CUSTOM, False)],
+    )
+    def test_only_openrouter_gets_the_sticky_key(
+        self, provider: LLMProviderName, binds: bool
+    ) -> None:
+        # session_id is an OpenRouter-only routing hint; CUSTOM runs ChatOpenAI where
+        # it is unsupported, so it never binds even on an OpenRouter-wire runnable.
         llm = _openrouter_wire_runnable()
         _bind_session_id(llm, {"provider": provider, "session_id": "conv-1"})
 
-        llm.bind.assert_called_once_with(session_id="conv-1")
+        if binds:
+            llm.bind.assert_called_once_with(session_id="conv-1")
+        else:
+            llm.bind.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent", ["comms_agent", "executor_agent"])

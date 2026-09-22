@@ -250,7 +250,9 @@ class TestPutPreferences:
         )
         assert resp.status_code == 200
         assert resp.json()["mode"] == "always_ask"
-        mock_update.assert_awaited_once_with(USER_ID, mode="always_ask", tool_overrides=None)
+        mock_update.assert_awaited_once_with(
+            USER_ID, mode="always_ask", tool_overrides=None, never_auto_tools=None
+        )
 
     @patch("app.api.v1.endpoints.approvals.update_hil_preferences", new_callable=AsyncMock)
     async def test_tool_overrides_update(self, mock_update: AsyncMock, client: AsyncClient):
@@ -262,7 +264,7 @@ class TestPutPreferences:
         assert resp.status_code == 200
         assert resp.json()["tool_overrides"] == {"email_send": False}
         mock_update.assert_awaited_once_with(
-            USER_ID, mode=None, tool_overrides={"email_send": False}
+            USER_ID, mode=None, tool_overrides={"email_send": False}, never_auto_tools=None
         )
 
     async def test_invalid_mode_is_rejected(self, client: AsyncClient):
