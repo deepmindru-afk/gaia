@@ -1,7 +1,7 @@
 from enum import Enum, StrEnum
 from typing import Any, NotRequired
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
 
 # The channel vocabulary lives in app.constants.chat, a leaf, so
@@ -35,6 +35,17 @@ class ImageData(BaseModel):
     url: str
     prompt: str
     improved_prompt: str | None = None
+
+
+class SavedSubagentGroup(BaseModel):
+    """The parts of a saved subagent_group entry's data a resumed run extends in place."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    subagent_id: str = ""
+    tool_calls: list[dict[str, object]] = Field(default_factory=list)
+    completed_at: str | None = None
+    duration_ms: int | None = None
 
 
 class ToolDataEntry(TypedDict):

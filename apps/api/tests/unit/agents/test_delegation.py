@@ -31,6 +31,7 @@ from app.constants.agents import AgentTag
 from app.constants.hil import SUBAGENT_RESUME_CONFIG_KEY
 from app.db.redis import redis_cache
 from app.models.agent_models import AgentConfigurable, RunningSubagent, SubagentKind
+from app.models.chat_models import MessageModel
 from app.models.hil_models import HILApprovalStatus
 from app.utils import background_tasks
 from tests.unit.services.hil.conftest import make_record
@@ -106,6 +107,10 @@ def client_edges() -> Iterator[SimpleNamespace]:
         patch(f"{MODULE}.deliver_to_executor", new=AsyncMock()) as deliver,
     ):
         conversations.append_message_tool_data = AsyncMock(return_value=True)
+        conversations.extend_subagent_group = AsyncMock(return_value=True)
+        conversations.get_message = AsyncMock(
+            return_value=MessageModel(type="bot", response="", tool_data=[])
+        )
         streams.is_cancelled = AsyncMock(return_value=False)
         yield SimpleNamespace(broadcasts=broadcasts, conversations=conversations, deliver=deliver)
 
@@ -332,6 +337,83 @@ class TestABackgroundRunOwnsItsStream:
         assert saved.args[0] == CONVERSATION
         assert saved.kwargs["message_id"] == "bot-msg-1"
         assert saved.kwargs["entries"], "the run's subagent row must be saved"
+
+    async def test_cards_that_cannot_be_saved_do_not_cost_the_run_its_result(
+        self, redis: Any, client_edges: SimpleNamespace
+    ) -> None:
+        client_edges.conversations.get_message.side_effect = RuntimeError("mongo down")
+        with patch(
+            f"{MODULE}.execute_subagent_stream",
+            new=AsyncMock(return_value=SubagentOutcome(text="the summary")),
+        ):
+            await delegate(_delegation(), background=True, probe_parked=False)
+            await _drain()
+
+        (landed,) = [c.args[2] for c in client_edges.deliver.await_args_list]
+        assert landed.endswith(": the summary")
+        assert not await RunningSubagents(CONVERSATION).holds_thread(THREAD)
+
+
+class TestAResumedRunSavesIntoWhatItsParkSaved:
+    """A resumed run's frames join the parked run's saved row and card; a reload shows one of each."""
+
+    @staticmethod
+    def _saved_turn() -> MessageModel:
+        return MessageModel(
+            type="bot",
+            response="",
+            tool_data=[
+                {
+                    "tool_name": "subagent_group",
+                    "data": {"subagent_id": "row-1", "tool_calls": [{"tool_call_id": "a"}]},
+                },
+                {
+                    "tool_name": "approval_request",
+                    "data": {"approval_id": "appr-1", "status": "approved"},
+                },
+            ],
+        )
+
+    async def test_its_calls_extend_the_saved_row_and_the_card_is_not_saved_twice(
+        self, redis: Any, client_edges: SimpleNamespace
+    ) -> None:
+        client_edges.conversations.get_message.return_value = self._saved_turn()
+
+        async def _resumed(**kwargs: Any) -> SubagentOutcome:
+            writer = kwargs["stream_writer"]
+            writer(
+                {
+                    "tool_data": {
+                        "tool_name": "approval_request",
+                        "tool_category": "hil",
+                        "data": {"approval_id": "appr-1", "status": "approved"},
+                    }
+                }
+            )
+            writer(
+                {
+                    "tool_data": {
+                        "tool_name": "tool_calls_data",
+                        "subagent_id": "row-1",
+                        "data": {"tool_name": "create_flowchart", "tool_call_id": "b"},
+                    }
+                }
+            )
+            return SubagentOutcome(text="drawn")
+
+        with patch(f"{MODULE}.execute_subagent_stream", new=_resumed):
+            assert await delegation.resume_background(
+                _delegation(), {"status": "approved", "approval_id": "appr-1"}
+            )
+            await _drain()
+
+        extended = client_edges.conversations.extend_subagent_group.await_args
+        assert extended.kwargs["message_id"] == "bot-msg-1"
+        group = extended.kwargs["group"]
+        assert group.subagent_id == "row-1"
+        assert [c["tool_call_id"] for c in group.tool_calls] == ["b"]
+        assert group.completed_at is not None
+        client_edges.conversations.append_message_tool_data.assert_not_awaited()
 
 
 class TestABackgroundRunThatParks:

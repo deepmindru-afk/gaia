@@ -66,6 +66,7 @@ from app.services.chat import stream as chat_stream
 from app.services.hil import resolution
 from app.workers.tasks.hil_sweep_tasks import sweep_hil_approvals
 from tests.e2e._harness.background import drain_background_runs, drain_publishes
+from tests.e2e._harness.saved_messages import SavedToolData
 from tests.e2e._harness.transcript import Frame, Transcript
 from tests.e2e.test_agent_chain import StreamingScriptedModel, call, streaming_model
 
@@ -277,6 +278,8 @@ class HilWorld:
     #: cancel path never settles on the stream.
     cancelled_broadcasts: list[dict[str, Any]] = field(default_factory=list)
     overrides_set: list[tuple[str, str, bool | None]] = field(default_factory=list)
+    #: The turn's saved cards, as a reload would read them back.
+    saved: SavedToolData = field(default_factory=SavedToolData)
     delivered: list[tuple[str, str]] = field(default_factory=list)
 
     #: Streams opened by a chat turn, oldest first. More than one when a later
@@ -519,7 +522,15 @@ async def hil_world(
         patch("app.agents.core.nodes.memory_node.memory_engine", memory),
         patch("app.services.chat.stream.save_conversation_async", new=AsyncMock()),
         patch.object(
-            conversation_repository, "append_message_tool_data", new=AsyncMock(return_value=True)
+            conversation_repository,
+            "append_message_tool_data",
+            new=world.saved.append_message_tool_data,
+        ),
+        patch.object(conversation_repository, "get_message", new=world.saved.get_message),
+        patch.object(
+            conversation_repository,
+            "extend_subagent_group",
+            new=world.saved.extend_subagent_group,
         ),
         patch("app.agents.core.background.executor_runner.deliver_result", new=_deliver),
         patch(
@@ -1529,6 +1540,12 @@ class TestABackgroundSpawnsApproval:
                 "): Drew the flowchart." in text for text in self._shown_to_the_executor(model)
             ), "the resumed spawn's result never reached the executor"
             assert any("The flowchart is drawn." in text for text, _type in world.delivered)
+            # What a reload shows: one row for the spawn (both segments' calls) and one card.
+            saved = world.saved.entries()
+            rows = [e for e in saved if e["tool_name"] == "subagent_group"]
+            assert len(rows) == 1
+            assert GATED_CALL_ID in [c.get("tool_call_id") for c in rows[0]["data"]["tool_calls"]]
+            assert len([e for e in saved if e["tool_name"] == APPROVAL_REQUEST_TOOL_NAME]) == 1
 
     async def test_denying_resumes_the_spawn_which_never_runs_the_tool(self) -> None:
         async with self._world() as (world, model):

@@ -47,6 +47,7 @@ from app.models.user_models import AuthenticatedUser
 from app.services.chat import stream as chat_stream
 from tests.e2e._harness.background import drain_background_runs
 from tests.e2e._harness.graph_run import RecordingFakeModel, call, scripted_model
+from tests.e2e._harness.saved_messages import SavedToolData
 from tests.e2e._harness.transcript import UNKNOWN, Transcript
 
 pytestmark = pytest.mark.e2e
@@ -201,9 +202,11 @@ async def run_chain(
     async def _save(**kwargs: Any) -> None:
         run.saved.append(kwargs)
 
-    async def _attach(*_args: Any, **kwargs: Any) -> bool:
+    saved = SavedToolData()
+
+    async def _attach(*args: Any, **kwargs: Any) -> bool:
         run.attached.append(kwargs)
-        return True
+        return await saved.append_message_tool_data(*args, **kwargs)
 
     async def _broadcast(_user_id: str, payload: dict[str, Any]) -> None:
         if payload.get("type") == "executor.stream_started":
@@ -250,6 +253,12 @@ async def run_chain(
         patch("app.agents.core.nodes.memory_node.memory_engine", memory),
         patch("app.services.chat.stream.save_conversation_async", new=_save),
         patch.object(chat_stream.conversation_repository, "append_message_tool_data", new=_attach),
+        patch.object(chat_stream.conversation_repository, "get_message", new=saved.get_message),
+        patch.object(
+            chat_stream.conversation_repository,
+            "extend_subagent_group",
+            new=saved.extend_subagent_group,
+        ),
         patch("app.agents.core.background.executor_runner.deliver_result", new=_deliver),
         patch.object(websocket_manager, "broadcast_to_user", new=_broadcast),
         patch(
@@ -335,16 +344,19 @@ async def run_chain(
         if subagent is not None:
             await providers.areset(SUBAGENT_AGENT)
 
-    # What the client saw: the turn's own stream, then each stream it was told
-    # to follow, in the order it was told.
-    streams = [stream_id, *(str(payload["stream_id"]) for payload in run.announced)]
+    await _read_what_the_client_saw(run)
+    return run
+
+
+async def _read_what_the_client_saw(run: ChainRun) -> None:
+    """Read the turn's own stream, then each stream it was told to follow, in that order."""
+    streams = [run.stream_id, *(str(payload["stream_id"]) for payload in run.announced)]
     chunks: list[str] = []
     for each in streams:
         frames = [chunk async for chunk in stream_manager.subscribe_stream(each)]
         run.by_stream[each] = Transcript.from_sse("".join(frames))
         chunks.extend(frames)
     run.transcript = Transcript.from_sse("".join(chunks))
-    return run
 
 
 # ---------------------------------------------------------------------------
