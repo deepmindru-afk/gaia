@@ -8,6 +8,7 @@ content, not on "the agent was called".
 """
 
 import asyncio
+from collections.abc import Iterator
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from typing import Literal
@@ -36,7 +37,7 @@ from app.models.playbook_models import (
     PlaybookRunStatus,
     ToolStep,
 )
-from app.models.user_models import AuthenticatedUser
+from app.models.user_models import AuthenticatedUser, UserDocument
 from app.models.workflow_execution_models import RecordedCall
 from app.models.workflow_models import (
     PlaybookDiscard,
@@ -70,9 +71,8 @@ MODULE = "app.workers.tasks.workflow_tasks"
 
 
 @pytest.fixture(autouse=True)
-def _onboarded_user():
-    user = MagicMock()
-    user.onboarding = {"completed": True}
+def _onboarded_user() -> Iterator[None]:
+    user = UserDocument.model_validate({"onboarding": {"completed": True}})
     with patch(f"{MODULE}.user_repository.get", AsyncMock(return_value=user)):
         yield
 
@@ -1441,7 +1441,8 @@ class TestTheFireReservesItsConversation:
                 },
             )
 
-        harness.scheduler.handle_recurring_task.assert_awaited_once()
+        assert harness.summary() == OVERLAPPED_SUMMARY
+        harness.scheduler.handle_recurring_task.assert_awaited_once_with(workflow, 1)
 
 
 class TestAFreshPlaybookIsAuditedAgainstItsOwnRun:
@@ -2369,6 +2370,7 @@ class TestARearmFailureAfterAnOverlapNamesTheWorkflow:
 
         await _fire_with_context(harness, SCHEDULE_CONTEXT)
 
+        assert harness.summary() == OVERLAPPED_SUMMARY
         logged = [str(entry.args[0]) for entry in harness.log.error.call_args_list if entry.args]
         assert any("wf_1" in line for line in logged), logged
 
@@ -2669,6 +2671,24 @@ class TestAnAgentFireOverlapsToo:
         await _fire(harness)
 
         assert harness.summary() == OVERLAPPED_AWAITING_APPROVAL_SUMMARY
+        harness.pending_approvals.assert_awaited_once_with("conv_1")
+
+    async def test_an_overlapped_fire_gets_its_own_skipped_row_in_the_workflows_history(
+        self,
+    ) -> None:
+        """Without a row the user sees a workflow that silently stopped producing runs."""
+        workflow = _workflow()
+        harness = _Harness(workflow)
+        harness.acquire = AsyncMock(return_value=False)
+        create = AsyncMock(return_value=harness.execution)
+        harness.extra.append(patch(f"{MODULE}.create_execution", create))
+
+        await _fire(harness)
+
+        create.assert_awaited_once_with(
+            workflow_id="wf_1", user_id="u_1", trigger_type=TriggerType.MANUAL.value
+        )
+        assert harness.complete_execution.await_args.kwargs["execution_id"] == "exec_1"
 
     async def test_the_post_replay_fallback_runs_under_the_fires_own_claim(self) -> None:
         """The fire holds the conversation for its whole duration, so the agent that finishes a stopped replay must not read that claim as somebody else's."""

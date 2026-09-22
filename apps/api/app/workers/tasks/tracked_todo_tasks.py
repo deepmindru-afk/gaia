@@ -451,9 +451,6 @@ async def _execute_via_agent(
         # from messages[-1], not message (query= only feeds memory retrieval).
         # workflow_tasks gets away with messages=[] only via selectedWorkflow.
         messages=[{"role": "user", "content": prompt}],
-        fileIds=[],
-        fileData=[],
-        selectedTool=None,
     )
 
     trigger_context = {
@@ -594,9 +591,6 @@ async def resume_tracked_todo(
             request=MessageRequestWithHistory(
                 message=message,
                 messages=[{"role": "user", "content": message}],
-                fileIds=[],
-                fileData=[],
-                selectedTool=None,
             ),
             conversation_id=conversation_id,
             user=user_data,
