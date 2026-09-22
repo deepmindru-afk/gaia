@@ -11,6 +11,7 @@ once and then lose it — silently, and only in production.
 """
 
 import asyncio
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import fakeredis.aioredis
@@ -26,12 +27,14 @@ from app.agents.core.background.executor_channel import (
 )
 from app.constants.agents import AgentTag
 from app.constants.executor import INBOX_ENTRY_ID
+from app.constants.log_tags import LogTag
 from app.models.agent_models import InboxEntry
 from app.override.langgraph_bigtool.utils import (
     INJECTED_MESSAGES_KEY,
     pop_injected_messages,
 )
 from app.utils.agent_utils import strip_internal_agent_tags
+from tests.helpers import captured_wide_event
 
 CONVERSATION = "conv-1"
 #: A real executor run carries the WRAPPED thread id and the conversation id
@@ -160,6 +163,88 @@ class TestInbox:
         assert entry.tag is AgentTag.EXECUTOR_INTERRUPTED
         assert "Do not" in entry.text or "do not" in entry.text
 
+    async def test_every_pending_entry_is_read_not_just_the_first_few(
+        self, inbox: ExecutorInbox
+    ) -> None:
+        for n in range(4):
+            await inbox.append(f"t{n}", f"message {n}")
+
+        assert [entry.id for entry in await inbox.read()] == ["t0", "t1", "t2", "t3"]
+
+    async def test_an_entry_is_stored_as_canonical_json(
+        self, inbox: ExecutorInbox, redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
+        """Retire removes by exact value, so the stored bytes must not depend on how the dict was built."""
+        await inbox.append("t1", "also check spam")
+
+        assert await redis.lrange(f"executor:inbox:{CONVERSATION}", 0, -1) == [
+            '{"id": "t1", "tag": "user_interjection", "text": "also check spam"}'
+        ]
+
+    async def test_retire_drops_one_copy_of_a_duplicated_entry(self, inbox: ExecutorInbox) -> None:
+        entry = await inbox.append("t1", "also check spam")
+        await inbox.append("t1", "also check spam")
+
+        await inbox.retire(entry)
+
+        assert await inbox.read() == [entry]
+
+    async def test_an_entry_written_before_tags_existed_reads_as_the_user(
+        self, inbox: ExecutorInbox, redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
+        await redis.rpush(f"executor:inbox:{CONVERSATION}", '{"id": "t0", "text": "legacy"}')
+
+        assert await inbox.read() == [
+            InboxEntry(id="t0", text="legacy", tag=AgentTag.USER_INTERJECTION)
+        ]
+
+    async def test_an_unreadable_entry_is_logged_when_dropped(
+        self, inbox: ExecutorInbox, redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
+        await redis.rpush(f"executor:inbox:{CONVERSATION}", "{not json")
+
+        async with captured_wide_event() as event:
+            assert await inbox.read() == []
+
+        assert event["warnings"] == [
+            {"msg": f"{LogTag.AGENT} Discarding unreadable executor inbox entry"}
+        ]
+
+    async def test_a_second_interruption_is_not_mistaken_for_the_first(
+        self, inbox: ExecutorInbox
+    ) -> None:
+        """Each announcement mints fresh ids; a reused id would retire the new pair as already delivered."""
+        await inbox.announce_interruption("search my calendar instead")
+        first = await inbox.read()
+        await inbox.announce_interruption("then check my email")
+
+        result = await drain_inbox_hook(
+            {"messages": [as_interjection(entry) for entry in first]}, CONFIG, None
+        )
+
+        injected = result[INJECTED_MESSAGES_KEY]
+        assert len(injected) == 2
+        assert "then check my email" in injected[1].content
+
+
+class TestWithoutRedis:
+    """With no Redis client the channel reads as empty, never as holding phantom work."""
+
+    @pytest.fixture(autouse=True)
+    def no_client(self) -> Iterator[None]:
+        with patch.object(channel, "redis_cache") as cache:
+            cache.client = None
+            yield
+
+    async def test_nothing_is_pending(self) -> None:
+        inbox = ExecutorInbox(CONVERSATION)
+
+        assert await inbox.count() == 0
+        assert await inbox.read() == []
+
+    async def test_clearing_reports_nothing_removed(self) -> None:
+        assert await ExecutorInbox(CONVERSATION).clear() == 0
+
 
 class TestDecideDrain:
     """The rule itself: what gets injected, and what gets dropped."""
@@ -278,7 +363,12 @@ class TestDrainHook:
         await inbox.append("t1", "also check spam")
         state = {"messages": []}
 
-        assert await drain_inbox_hook(state, {"configurable": {}}, None) is state
+        async with captured_wide_event() as event:
+            assert await drain_inbox_hook(state, {"configurable": {}}, None) is state
+
+        assert event["warnings"] == [
+            {"msg": f"{LogTag.AGENT} drain_inbox_hook: run carries no conversation_id"}
+        ]
 
     async def test_the_wrapped_thread_id_is_not_mistaken_for_the_conversation(
         self, inbox: ExecutorInbox
@@ -292,8 +382,31 @@ class TestDrainHook:
     async def test_a_redis_failure_never_breaks_the_turn(self, inbox: ExecutorInbox) -> None:
         """Reading the inbox is enrichment; failing it must not fail the run."""
         state = {"messages": [HumanMessage(content="find my flight email")]}
-        with patch.object(ExecutorInbox, "read", side_effect=RuntimeError("redis down")):
-            assert await drain_inbox_hook(state, CONFIG, None) is state
+        async with captured_wide_event() as event:
+            with patch.object(ExecutorInbox, "read", side_effect=RuntimeError("redis down")):
+                assert await drain_inbox_hook(state, CONFIG, None) is state
+
+        assert event["errors"] == [
+            {"msg": f"{LogTag.AGENT} drain_inbox_hook failed", "error_type": "RuntimeError"}
+        ]
+
+    async def test_a_state_with_no_messages_yet_still_receives_pending_work(
+        self, inbox: ExecutorInbox
+    ) -> None:
+        await inbox.append("t1", "also check spam")
+
+        result = await drain_inbox_hook({}, CONFIG, None)
+
+        assert [m.additional_kwargs[INBOX_ENTRY_ID] for m in result["messages"]] == ["t1"]
+
+    async def test_the_injected_count_lands_on_the_wide_event(self, inbox: ExecutorInbox) -> None:
+        await inbox.append("t1", "first thing")
+        await inbox.append("t2", "second thing")
+
+        async with captured_wide_event() as event:
+            await drain_inbox_hook({"messages": []}, CONFIG, None)
+
+        assert event["executor_inbox_injected"] == 2
 
     async def test_entries_are_injected_in_the_order_they_arrived(
         self, inbox: ExecutorInbox

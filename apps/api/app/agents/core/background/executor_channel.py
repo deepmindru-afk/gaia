@@ -50,11 +50,7 @@ def decide_drain(entries: list[InboxEntry], messages: list[AnyMessage]) -> Inbox
     retired only once it is visible in the thread, never when merely read, so a
     run that dies between reading and committing loses nothing.
     """
-    committed = {
-        message.additional_kwargs.get(INBOX_ENTRY_ID)
-        for message in messages
-        if getattr(message, "additional_kwargs", None)
-    }
+    committed = {message.additional_kwargs.get(INBOX_ENTRY_ID) for message in messages}
     inject = [entry for entry in entries if entry.id not in committed]
     retire = [entry for entry in entries if entry.id in committed]
     return InboxDrain(inject=inject, retire=retire)
@@ -136,7 +132,6 @@ class ExecutorInbox(RedisInbox):
     default_tag = AgentTag.USER_INTERJECTION
 
     def __init__(self, conversation_id: str) -> None:
-        self.conversation_id = conversation_id
         super().__init__(f"{EXECUTOR_INBOX_PREFIX}{conversation_id}")
 
     async def clear(self) -> int:
@@ -155,7 +150,8 @@ class ExecutorInbox(RedisInbox):
             await client.rename(self._key, detached)
         except ResponseError:
             return 0  # RENAME raises "no such key" only when the inbox is empty
-        async with client.pipeline(transaction=True) as pipe:
+        # Mutating transaction= is equivalent: the detached uuid key has no other writer.
+        async with client.pipeline(transaction=True) as pipe:  # pragma: no mutate
             pipe.llen(detached)
             pipe.delete(detached)
             pending, _ = await pipe.execute()
