@@ -18,6 +18,7 @@ from app.agents.prompts.executor_activation_prompt import (
     _replace_section,
     build_activation_executor_prompt,
 )
+from tests.helpers import captured_wide_event
 
 
 @pytest.fixture(scope="module")
@@ -171,3 +172,67 @@ def test_prompt_is_rewritten_not_merely_copied(activation_prompt: str) -> None:
     assert "CODING WORKSPACE" in activation_prompt
     assert "RESEARCH EFFORT LADDER" in activation_prompt
     assert "YOUR OUTPUT (INTERNAL" in activation_prompt
+
+
+@pytest.mark.unit
+class TestReplaceSection:
+    def test_the_section_runs_from_the_first_start_to_the_next_end(self) -> None:
+        prompt = "x END START a START b END mid END post"
+
+        assert _replace_section(prompt, "START", "END", "X") == "x END XEND mid END post"
+
+    def test_a_missing_start_is_named_in_the_error(self) -> None:
+        with pytest.raises(ActivationPromptAnchorError, match="^section start 'START' not found$"):
+            _replace_section("END only", "START", "END", "x")
+
+    def test_a_missing_end_is_named_in_the_error(self) -> None:
+        with pytest.raises(
+            ActivationPromptAnchorError, match="^section end 'END' not found after 'START'$"
+        ):
+            _replace_section("END before START only", "START", "END", "x")
+
+
+@pytest.mark.unit
+class TestStaleAnchorsAreReported:
+    """A skipped rewrite is invisible in the prompt, so its warning is the only trace."""
+
+    async def test_a_stale_section_is_named_on_the_wide_event(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        start, _, _ = _SECTION_REWRITES[0]
+        monkeypatch.setattr(
+            executor_activation_prompt,
+            "EXECUTOR_AGENT_PROMPT",
+            EXECUTOR_AGENT_PROMPT.replace(start, ""),
+        )
+
+        async with captured_wide_event() as event:
+            build_activation_executor_prompt()
+
+        assert event["warnings"] == [
+            {
+                "msg": "activation_prompt.stale_section_anchor_skipped",
+                "error": f"section start {start!r} not found",
+            }
+        ]
+
+    async def test_a_stale_phrase_is_named_and_the_rest_still_apply(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stale, _ = max(_PHRASE_REWRITES[:-1], key=lambda rewrite: len(rewrite[0]))
+        last_anchor, last_replacement = _PHRASE_REWRITES[-1]
+        monkeypatch.setattr(
+            executor_activation_prompt,
+            "EXECUTOR_AGENT_PROMPT",
+            EXECUTOR_AGENT_PROMPT.replace(stale, ""),
+        )
+
+        async with captured_wide_event() as event:
+            prompt = build_activation_executor_prompt()
+
+        assert len(stale) > 81
+        assert event["warnings"] == [
+            {"msg": "activation_prompt.stale_phrase_anchor_skipped", "anchor": stale[:80]}
+        ]
+        assert last_replacement in prompt
+        assert last_anchor not in prompt

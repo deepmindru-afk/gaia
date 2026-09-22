@@ -20,6 +20,7 @@ from app.agents.llm.lane import AgentRole
 from app.config.settings import settings
 from app.constants.agents import (
     PLAYBOOK_FALLBACK_CONTEXT_KEY,
+    PLAYBOOK_REPLAYED_CALLS_KEY,
     WORKFLOW_LOCK_CONTEXT_KEY,
 )
 from app.constants.llm import DEV_MODEL_OPTIONS
@@ -1172,6 +1173,74 @@ class TestTheLaneTheRunResolves:
         assert build_config.call_args.kwargs["turn"].active_todo_id == "todo-9"
 
 
+class TestTheBackgroundRunsStandingAuthorization:
+    """A scheduled run's human-written workflow and todo text reach the HIL judge as the turn's own words."""
+
+    @staticmethod
+    async def _run(request: MessageRequestWithHistory, trigger: dict[str, object]) -> MagicMock:
+        patches = _common_patches()
+        with (
+            patches["construct"],
+            patches["get_graph"],
+            patches["build_state"],
+            patch(
+                "app.agents.core.agent.build_agent_config",
+                new_callable=AsyncMock,
+                return_value=_fresh_config(),
+            ) as build_config,
+            patches["log"],
+        ):
+            await _core_agent_logic(
+                request=request,
+                conversation_id="conv-1",
+                user=_make_user(),
+                options=AgentRunOptions(trigger_context=trigger),
+            )
+        return build_config
+
+    @pytest.mark.asyncio
+    async def test_the_workflow_card_and_todo_title_authorize_a_background_run(self):
+        request = _make_request(
+            selectedWorkflow=SelectedWorkflowData(
+                id="wf-1", title="Morning brief", description="Summarise my inbox", steps=[]
+            )
+        )
+
+        build_config = await self._run(
+            request, {"execution_mode": "background", "todo_title": "Pay rent"}
+        )
+
+        assert build_config.call_args.kwargs["turn"].user_messages == [
+            *recent_user_messages(request.messages, request.message),
+            "Scheduled workflow: Morning brief. Summarise my inbox",
+            "Tracked todo: Pay rent",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_background_run_with_no_card_or_todo_adds_nothing(self):
+        request = _make_request()
+
+        build_config = await self._run(request, {"execution_mode": "background"})
+
+        assert build_config.call_args.kwargs["turn"].user_messages == recent_user_messages(
+            request.messages, request.message
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_interactive_run_never_gains_schedule_authorization(self):
+        request = _make_request(
+            selectedWorkflow=SelectedWorkflowData(
+                id="wf-1", title="Morning brief", description="Summarise my inbox", steps=[]
+            )
+        )
+
+        build_config = await self._run(request, {"todo_title": "Pay rent"})
+
+        assert build_config.call_args.kwargs["turn"].user_messages == recent_user_messages(
+            request.messages, request.message
+        )
+
+
 class TestTheDevModelSelector:
     """DEV-ONLY: the chat-header model picker.
 
@@ -1305,6 +1374,7 @@ class TestTheWorkflowKeysTheRunStashes:
             "workflow_notify_on_completion": False,
             PLAYBOOK_FALLBACK_CONTEXT_KEY: "hash_drift at step 3",
             WORKFLOW_LOCK_CONTEXT_KEY: ":fire-task-1",
+            PLAYBOOK_REPLAYED_CALLS_KEY: [{"tool_name": "GMAIL_FETCH_EMAILS"}],
         }
         patches = _common_patches()
         with (
@@ -1341,7 +1411,7 @@ class TestTheWorkflowKeysTheRunStashes:
             # call_executor adopts it instead of queueing the run behind it. Read
             # under a different spelling and every workflow run goes to a dead inbox.
             "executor_lock_reservation": ":fire-task-1",
-            "playbook_replayed_calls": None,
+            "playbook_replayed_calls": [{"tool_name": "GMAIL_FETCH_EMAILS"}],
         }
 
     @pytest.mark.asyncio
@@ -1382,6 +1452,35 @@ class TestTheWorkflowKeysTheRunStashes:
             "executor_lock_reservation": None,
             "playbook_replayed_calls": None,
         }
+
+    @pytest.mark.asyncio
+    async def test_a_todo_run_that_is_no_workflow_stashes_no_workflow_keys(self):
+        """A trigger context alone is not a workflow: its result must not route to a workflow-completion notification."""
+        config = _fresh_config()
+        patches = _common_patches()
+        with (
+            patches["construct"],
+            patches["get_graph"],
+            patches["build_state"],
+            patch(
+                "app.agents.core.agent.build_agent_config",
+                new_callable=AsyncMock,
+                return_value=config,
+            ),
+            patches["log"],
+        ):
+            await _core_agent_logic(
+                request=_make_request(),
+                conversation_id="conv-1",
+                user=_make_user(),
+                options=AgentRunOptions(
+                    trigger_context={"execution_mode": "background", "todo_id": "todo-9"}
+                ),
+            )
+
+        configurable = dict(config["configurable"])
+        configurable.pop("dev_executor_model", None)
+        assert configurable == {"thread_id": "conv-1", "user_id": "user-123", "model": "gpt-4o"}
 
 
 class TestTheOptionsEachEntryPointDerives:

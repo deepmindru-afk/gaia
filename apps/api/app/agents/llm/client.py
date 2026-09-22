@@ -42,6 +42,7 @@ from app.constants.llm import (
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_NAME,
+    DEV_LLM_BROWSER_HEADERS,
     DEV_LLM_MAX_OUTPUT_TOKENS,
     HELPER_MAX_OUTPUT_TOKENS,
     LLM_INVOKE_TIMEOUT_SECONDS,
@@ -103,6 +104,7 @@ def without_sdk_retry(llm: _LLMT) -> _LLMT:  # NOSONAR python:S3516
         # Not an OpenRouter-SDK client (e.g. ChatOpenAI on the custom lane):
         # nothing SDK-side to disable, retries are already ours alone.
         return llm
+    # Equivalent to a None retry_config, which the SDK also runs without retrying.
     sdk_config.retry_config = RetryConfig(
         # Any strategy but "backoff" skips the retry path, so the (required)
         # backoff values below are never read.
@@ -111,7 +113,7 @@ def without_sdk_retry(llm: _LLMT) -> _LLMT:  # NOSONAR python:S3516
             initial_interval=0, max_interval=0, exponent=1.0, max_elapsed_time=0
         ),
         retry_connection_errors=False,
-    )
+    )  # pragma: no mutate
     return llm
 
 
@@ -326,12 +328,8 @@ def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatM
     the openrouter SDK requires a system_fingerprint that OpenAI-compatible
     lanes omit, failing every call; the openai SDK tolerates it.
     """
-    # Discounted lanes behind Cloudflare 403 (error 1010) programmatic UAs; a
-    # browser UA on the httpx clients passes. ChatOpenAI takes them directly
+    # ChatOpenAI takes the browser headers on its httpx clients directly
     # (ChatOpenRouter's default_headers path crashes — see init_openrouter_llm).
-    browser_headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-    }
     llm = without_sdk_retry(
         ChatOpenAI(
             model=PROVIDER_MODELS[LLMProviderName.CUSTOM],
@@ -347,8 +345,8 @@ def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatM
             max_retries=0,
             api_key=_secret_or_none(settings.DEV_LLM_API_KEY),
             base_url=settings.DEV_LLM_BASE_URL,
-            http_client=httpx.Client(headers=browser_headers),
-            http_async_client=httpx.AsyncClient(headers=browser_headers),
+            http_client=httpx.Client(headers=DEV_LLM_BROWSER_HEADERS),
+            http_async_client=httpx.AsyncClient(headers=DEV_LLM_BROWSER_HEADERS),
         )
     )
     # Fractional-window middleware resolves the window from the model profile at

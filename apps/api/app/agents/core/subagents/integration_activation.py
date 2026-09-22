@@ -11,7 +11,7 @@ Binding in-turn is the point. Returning only prose would leave the caller to
 spend a whole retrieve_tools round trip rediscovering tools the config names.
 """
 
-from typing import Annotated, cast
+from typing import Annotated
 
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -33,7 +33,7 @@ from app.agents.tools.core.registry import get_tool_registry
 from app.agents.tools.core.retrieval import render_preload_block, split_startup_tools
 from app.agents.workspace.system_docs import integration_skills_block
 from app.constants.log_tags import LogTag
-from app.models.agent_models import AgentConfigurable
+from app.models.agent_models import AgentConfigurable, agent_configurable
 from app.models.subagent_models import Subagent
 from app.services.integration_instructions_service import get_instructions
 from shared.py.wide_events import log
@@ -187,7 +187,8 @@ async def _stamp_activation(
     # Later retrieve_tools discovery searches this namespace too, so the tools
     # beyond the preloaded subset stay reachable from this run.
     if not (bind or preloaded or tool_count):
-        return False
+        # The header reads stamped only when one of these is non-empty.
+        return False  # pragma: no mutate
     conversation_id = configurable.get("conversation_id")
     if not conversation_id:
         log.warning(
@@ -270,7 +271,7 @@ async def activate_integration(
     acting as, the user's standing preferences, and its skills. Act on it
     yourself; `spawn_subagent` inherits it.
     """
-    configurable: AgentConfigurable = cast(AgentConfigurable, config.get("configurable", {}))
+    configurable = agent_configurable(config)
     user_id = configurable.get("user_id")
 
     # Repository-aware resolution: covers the static OAuth/builtin registry AND

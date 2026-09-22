@@ -278,6 +278,12 @@ PAID_COMMS_REASONING: dict[str, Any] = {"effort": "medium"}
 # 402'd as soon as balance dipped, while a 256-token probe still succeeded.
 DEV_LLM_MAX_OUTPUT_TOKENS = 16_000
 
+# Discounted DEV_LLM_* lanes sit behind Cloudflare, which 403s (error 1010)
+# programmatic user agents; a browser UA on the httpx clients passes.
+DEV_LLM_BROWSER_HEADERS: Final[dict[str, str]] = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+}
+
 # OpenRouter app attribution, sent as HTTP-Referer/X-Title/X-OpenRouter-Categories.
 # Development sends a fixed synthetic referer since a localhost FRONTEND_URL
 # lands in the dashboard's "unknown app" bucket.

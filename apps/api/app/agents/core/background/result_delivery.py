@@ -41,6 +41,7 @@ from app.constants.executor import (
 )
 from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
 from app.constants.log_tags import LogTag
+from app.constants.websocket import WEBSOCKET_BROADCAST_RETRY_DELAY_SECONDS
 from app.core.websocket_manager import websocket_manager
 from app.db.repositories.conversations import conversation_repository
 from app.models.agent_models import CommsDirective
@@ -217,7 +218,6 @@ async def deliver_message_to_conversation(
             bot_message=bot_message,
             notification_text=text,
             tool_data=None,
-            follow_up_actions=[],
         )
         delivered = True
         transport = "websocket"
@@ -432,7 +432,8 @@ async def _deliver_to_platform(
 ) -> tuple[bool, str]:
     """Send the update over the conversation's bot platform; returns (delivered, transport)."""
     user_id = run.user.user_id
-    delivered = False
+    # None takes the same branches: every falsy path reassigns it before the return.
+    delivered = False  # pragma: no mutate
     transport = "platform"
     if is_react:
         # Native reaction anchored to the user's message; falls back to the
@@ -483,7 +484,6 @@ async def _broadcast_and_defer_follow_ups(
         bot_message=bot_message,
         notification_text=notification_text,
         tool_data=tool_data,
-        follow_up_actions=[],
     )
     if not is_react:
         _spawn_deferred_follow_ups(
@@ -1101,7 +1101,7 @@ async def _broadcast_bot_message(
     bot_message: MessageModel,
     notification_text: str,
     tool_data: list[ToolDataEntry] | None,
-    follow_up_actions: list[str],
+    follow_up_actions: list[str] | None = None,
 ) -> None:
     """Push the bot message to web/mobile/system clients over the WebSocket."""
     ws_payload: dict[str, Any] = {
@@ -1154,7 +1154,7 @@ async def _broadcast_message(user_id: str, ws_event: dict[str, object]) -> None:
                 error=str(ws_err),
             )
             if attempt == 0:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(WEBSOCKET_BROADCAST_RETRY_DELAY_SECONDS)
 
 
 async def _lookup_platform_message_id(
