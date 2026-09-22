@@ -128,7 +128,7 @@ class AsyncRedisCommands(Protocol):
         ...
 
     async def lrem(self, name: str, count: int, value: str) -> int:
-        """LREM — remove matching elements; ``count=0`` removes every copy."""
+        """LREM — remove matching elements; count=0 removes every copy."""
         ...
 
     async def rpush(self, name: str, *values: str) -> int:

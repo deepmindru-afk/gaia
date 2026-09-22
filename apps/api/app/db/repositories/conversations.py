@@ -393,9 +393,10 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
     async def set_message_approval_status(
         self, conversation_id: str, *, user_id: str, approval_id: str, status: str
     ) -> bool:
-        """Settle a persisted approval_request frame's status wherever it lives in
-        the messages array. Returns whether the frame was there to settle. Does not
-        advance ``updatedAt``."""
+        """Settle a persisted approval_request frame's status wherever it lives in the messages array.
+
+        Returns whether the frame was there to settle. Does not advance updatedAt.
+        """
         update: dict[str, object] = {"messages.$[msg].tool_data.$[entry].data.status": status}
         matched = await self._apply_raw_update_unfetched(
             # The approval must also be in the match: array filters alone pick which
@@ -625,10 +626,9 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
         return {"source": {"$nin": _BOT_SOURCE_VALUES}}
 
     def _active_filter(self, user_id: str) -> dict[str, object]:
-        # Background runs stay out of the sidebar — except while one holds a
-        # live approval, when its card is the only way to reach it. Sourceless
-        # legacy rows match $ne and stay visible (no backfill needed). A null
-        # starred reads as unstarred: several write paths store explicit null.
+        # Background runs stay out of the sidebar unless one holds a live approval
+        # (its card is the only way to reach it). Sourceless legacy rows match $ne
+        # and stay visible; a null starred reads as unstarred.
         return {
             "user_id": user_id,
             "$and": [

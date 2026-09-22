@@ -697,16 +697,12 @@ async def create_playbook_indexes() -> None:
 async def _dedupe_tool_output_shapes(
     collection: AsyncIOMotorCollection[dict[str, Any]],
 ) -> None:
-    """Collapse pre-existing (scope, tool_name) duplicates before the unique
-    index build.
+    """Collapse pre-existing (scope, tool_name) duplicates before the unique index build.
 
-    A database that raced under the pre-index code can already hold duplicate
-    records; MongoDB would then reject the unique index, ``create_all_indexes``
-    would swallow the error, and ``record()``'s retry would run without the
-    guarantee it depends on. Observed shapes are regenerable, so keeping the
-    most-observed record per key and dropping the rest loses nothing real calls
-    will not re-learn. ``$push`` preserves the preceding ``$sort``, so the first
-    id in each group is the highest ``call_count``.
+    A DB that raced under the pre-index code can hold duplicates, which would
+    make the unique index build fail (swallowed) and leave record()'s retry
+    without its guarantee. Observed shapes are regenerable, so keep the
+    most-observed record per key ($push preserves the $sort) and drop the rest.
     """
     pipeline: list[dict[str, Any]] = [
         {"$sort": {"call_count": -1}},
@@ -727,11 +723,9 @@ async def create_tool_output_shapes_indexes() -> None:
     """Create indexes for the tool_output_shapes collection.
 
     Unique on (scope, tool_name): the observed-shape upsert is keyed on this
-    pair, so the unique index is what makes "one record per scoped tool" a
-    property of the data rather than of two first observations' timing — it
-    rejects the loser of a concurrent insert with DuplicateKeyError, which the
-    repository retries into the winner's document. Pre-existing duplicates are
-    collapsed first, so an upgraded DB that already raced can still build it.
+    pair, so the index makes "one record per scoped tool" a property of the
+    data, not of timing — it rejects a concurrent insert's loser with
+    DuplicateKeyError, which record() retries into the winner.
     """
     tool_output_shapes_collection = get_async_collection("tool_output_shapes")
     try:
@@ -751,12 +745,10 @@ async def create_tool_output_shapes_indexes() -> None:
 async def create_approval_ledger_indexes() -> None:
     """Create indexes for the approval_ledger collection.
 
-    Unique on approval_id: the CAS filter keys on it, so the lookup must never
-    scan. Partial unique on (conversation_id, fingerprint) over live states:
-    this index IS the dedup atomicity — concurrent proposes race on the insert
-    and the loser reads the winner's id instead of double-executing on
-    approve-all. (conversation_id, state) serves the OPEN PENDINGS injection;
-    (state, executing_started_at) serves the lazy EXECUTING reconciler.
+    Unique on approval_id (the CAS filter keys on it). Partial unique on
+    (conversation_id, fingerprint) over live states IS the dedup atomicity —
+    the loser of a concurrent propose reads the winner's id. (conversation_id,
+    state) serves OPEN PENDINGS; (state, executing_started_at) the reconciler.
     """
     approval_ledger_collection = get_async_collection("approval_ledger")
     try:

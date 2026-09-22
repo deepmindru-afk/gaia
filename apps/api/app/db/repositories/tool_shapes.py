@@ -1,13 +1,12 @@
-"""Repository for the ``tool_output_shapes`` collection — observed tool shapes.
+"""Repository for the tool_output_shapes collection — observed tool shapes.
 
-Keyed by the business ``(scope, tool_name)`` pair; the incidental Mongo ``_id``
-never surfaces above this boundary. ``scope`` is what keeps a private MCP
-server's shapes invisible to other users (see ResolvedTool.shape_scope).
+Keyed by the business (scope, tool_name) pair; the incidental Mongo _id never
+surfaces above this boundary. scope is what keeps a private MCP server's shapes
+invisible to other users (see ResolvedTool.shape_scope).
 """
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
 
 from pymongo.errors import DuplicateKeyError
 
@@ -27,15 +26,13 @@ class ToolShapesRepository(MongoRepository[ToolOutputShapeDocument, ToolOutputSh
     async def get_shape(self, scope: str, tool_name: str) -> ToolOutputShapeDocument | None:
         return await self._find_one({"scope": scope, "tool_name": tool_name})
 
-    async def record(self, scope: str, tool_name: str, output_schema: dict[str, Any]) -> None:
-        """Store the merged schema for one more observation of ``tool_name``.
+    async def record(self, scope: str, tool_name: str, output_schema: dict[str, object]) -> None:
+        """Store the merged schema for one more observation of the tool.
 
         Two first observations of the same scoped tool can both miss the upsert
-        match and both insert; the unique ``(scope, tool_name)`` index
-        (``app.db.mongodb.indexes``) rejects the loser with ``DuplicateKeyError``,
-        and the retry then matches the winner and merges into it — one document,
-        never a duplicate that would split ``call_count`` and leave ``find_one``
-        picking an arbitrary incomplete schema.
+        and both insert; the unique (scope, tool_name) index rejects the loser
+        with DuplicateKeyError, and the retry merges into the winner — one
+        document, never a duplicate that splits call_count.
         """
         key = {"scope": scope, "tool_name": tool_name}
         update: dict[str, Mapping[str, object]] = {

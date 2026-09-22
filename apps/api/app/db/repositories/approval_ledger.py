@@ -1,6 +1,6 @@
-"""Repository for the executor-free approval ledger (``approval_ledger``).
+"""Repository for the executor-free approval ledger (approval_ledger collection).
 
-One row per gated call envelope. Uncached (``cache_policy = None``): rows are
+One row per gated call envelope. Uncached (cache_policy = None): rows are
 decision state read at low volume, and every transition is a conditional write
 the entity cache could only misrepresent. Rows never expire — a pending row
 leaves only by user decision or agent revoke.
@@ -39,7 +39,7 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         user_id: str = "",
         fingerprint: str,
         tool_name: str,
-        args: dict[str, Any],
+        args: dict[str, object],
         summary: str,
         rationale: str = "",
         preview: str = "",
@@ -89,8 +89,9 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         return approval_id
 
     async def claim_resume(self, approval_id: str) -> bool:
-        """Claim the one resume this approval may trigger. Exactly one winner:
-        a retried tap, a reconnect replay, and a racing worker converge here,
+        """Claim the one resume this approval may trigger; exactly one winner.
+
+        A retried tap, a reconnect replay, and a racing worker converge here,
         and only the winner re-enqueues the owner. A resumed owner that gates
         again registers a fresh approval with its own claim, so no counter is
         needed — every resume costs a new human tap.
@@ -110,12 +111,12 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         decided_by: str | None = None,
         feedback: str | None = None,
     ) -> bool:
-        """Move one row ``expected -> nxt``, exactly once.
+        """Move one row from expected to nxt, exactly once.
 
         The CAS behind every ledger edge: concurrent contenders race on the
         filter and exactly one wins. Bumps the row version for stale clients.
-        A decision stamp (``decided_by`` and/or ``feedback``) rides in the
-        same write as ``decided_at``, so a committed row is never stamp-less.
+        A decision stamp (decided_by and/or feedback) rides in the same write
+        as decided_at, so a committed row is never stamp-less.
         """
         update: dict[str, object] = {"state": str(nxt)}
         if decided_by is not None:
@@ -153,7 +154,7 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
     async def list_stalled_executing(
         self, cutoff: datetime, conversation_id: str | None = None
     ) -> list[ApprovalLedgerDocument]:
-        """EXECUTING rows whose claim predates the cutoff — presumed crashed.
+        """List EXECUTING rows whose claim predates the cutoff (presumed crashed).
 
         Scoped to one conversation when given: the reconciler heals its own
         conversation per decide, and a global scan on every tap scales with
@@ -171,14 +172,14 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         ]
 
     async def get_by_approval_id(self, approval_id: str) -> ApprovalLedgerDocument | None:
-        """One row by its ``ap_`` id, or ``None``."""
+        """Return one row by its ap_ id, or None."""
         raw = await self._raw_collection().find_one({"approval_id": approval_id})
         return ApprovalLedgerDocument.model_validate(raw) if raw else None
 
     async def find_live(
         self, fingerprint: str, conversation_id: str
     ) -> ApprovalLedgerDocument | None:
-        """Newest live (PENDING/APPROVED) row for a fingerprint, or ``None``.
+        """Return the newest live (PENDING/APPROVED) row for a fingerprint, or None.
 
         The state predicate rides in the query so the partial live index
         applies and terminal rows never even load — instead of fetching 50
@@ -221,7 +222,7 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
     async def find_latest_denied(
         self, fingerprint: str, conversation_id: str
     ) -> ApprovalLedgerDocument | None:
-        """Newest DENIED row for reject-memory context, or ``None``."""
+        """Return the newest DENIED row for reject-memory context, or None."""
         raw = await self._raw_collection().find_one(
             {
                 "fingerprint": fingerprint,
