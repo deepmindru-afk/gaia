@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 import pytest
 
 from app.agents.llm.client import (
@@ -27,8 +28,9 @@ from app.agents.llm.client import (
     _sim_llm,
     init_custom_llm,
     init_openrouter_llm,
+    without_sdk_retry,
 )
-from app.constants.llm import LLM_RETRY_MAX_ATTEMPTS
+from app.constants.llm import DEV_LLM_BROWSER_HEADERS, LLM_RETRY_MAX_ATTEMPTS
 
 
 @pytest.fixture(autouse=True)
@@ -61,6 +63,26 @@ class TestLLMRetryBudget:
     def test_the_app_still_retries(self) -> None:
         """Disabling SDK retry must not leave the system with no retry at all."""
         assert LLM_RETRY_MAX_ATTEMPTS > 1
+
+    def test_the_custom_dev_client_pins_zero_sdk_retries(self) -> None:
+        """None is not zero here: ChatOpenAI then leaves the OpenAI SDK's own two retries on."""
+        assert _construct(init_custom_llm).max_retries == 0
+
+    def test_a_model_with_no_sdk_client_passes_through_untouched(self) -> None:
+        llm = GenericFakeChatModel(messages=iter([]))
+
+        assert without_sdk_retry(llm) is llm
+
+
+@pytest.mark.unit
+class TestCustomDevLaneHeaders:
+    """Cloudflare 403s programmatic user agents on the discounted dev lanes."""
+
+    def test_both_http_clients_present_the_browser_user_agent(self) -> None:
+        llm = _construct(init_custom_llm)
+
+        for http in (llm.http_client, llm.http_async_client):
+            assert http.headers["User-Agent"] == DEV_LLM_BROWSER_HEADERS["User-Agent"]
 
 
 def _construct(factory: Callable[[], Any]) -> Any:
