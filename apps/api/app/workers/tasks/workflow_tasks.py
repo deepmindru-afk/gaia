@@ -1742,9 +1742,6 @@ async def execute_workflow_as_chat(
         request = MessageRequestWithHistory(
             message=f"Execute workflow: {workflow.title}",
             messages=[],
-            fileIds=[],
-            fileData=[],
-            selectedTool=None,
             selectedWorkflow=selected_workflow_data,
         )
 
