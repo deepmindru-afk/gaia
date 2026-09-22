@@ -150,7 +150,7 @@ def prior_tool_calls(state: object, exclude_id: str) -> list[PriorCall]:
     ]
     calls = [
         PriorCall(
-            name=call.get("name", ""),
+            name=call["name"],
             args=call.get("args", {}) or {},
             output=outputs.get(call.get("id", ""), ""),
         )
@@ -207,12 +207,12 @@ def _is_ai_message(message: object) -> bool:
     """
     if isinstance(message, dict):
         as_dict: _DictMessage = cast(_DictMessage, message)
-        kind = str(as_dict.get("type") or as_dict.get("role") or "").lower()
-        return kind in ("ai", "assistant")
-    kind = str(getattr(message, "type", "") or "").lower()
+        role = as_dict.get("type") or as_dict.get("role")
+        return isinstance(role, str) and role.lower() in ("ai", "assistant")
+    kind = getattr(message, "type", None)
     if kind:
-        return kind == "ai"
-    return type(message).__name__ in ("AIMessage",)
+        return str(kind).lower() == "ai"
+    return type(message).__name__ == "AIMessage"
 
 
 def _message_text(message: object) -> str:
@@ -268,7 +268,9 @@ def render_prior_calls(calls: list[PriorCall]) -> str:
         if call.output.strip():
             # JSON-encoded like args: a result containing a quote or newline
             # must not break out of its line and read as prompt structure.
-            line += f" => {clip_text(json.dumps(call.output, default=str), HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS + 2)}"
+            line += (
+                f" => {clip_text(json.dumps(call.output), HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS + 2)}"
+            )
         lines.append(line)
     return "\n".join(lines) or "(none)"
 
