@@ -1498,6 +1498,7 @@ class TestDecideLedgerOutcomes:
             hil={"approval_id": "ap_1", "decision": "approve", "tool": "GMAIL_SEND_EMAIL"}
         )
         assert seams.capture.call_args.args[2]["card_age_seconds"] is None
+        seams.settle_frame.assert_called_once_with("stream-1", "ap_1", "approved", None)
         stalled_cutoff, conversation = seams.repo.list_stalled_executing.await_args.args
         assert conversation == "conv-1"
         expected = datetime.now(UTC) - timedelta(minutes=STALLED_EXECUTING_MINUTES)
@@ -1555,6 +1556,7 @@ class TestDecideLedgerOutcomes:
             "conv-1", {"user_id": "u1"}, f"DECISION ap_1=DENIED Send it :: nope{_DENY_TAIL}"
         )
         seams.record_deny.assert_awaited_once_with(row, "nope")
+        seams.lock_holder.assert_awaited_once_with("conv-1")
         seams.settle_frame.assert_called_once_with("stream-1", "ap_1", "denied", "nope")
         seams.persist.assert_awaited_once_with(
             "conv-1", user_id="u1", approval_id="ap_1", status="denied"

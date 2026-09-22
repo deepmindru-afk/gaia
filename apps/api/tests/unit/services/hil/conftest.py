@@ -47,9 +47,10 @@ def resolver_returning(*tools: BaseTool) -> AsyncMock:
     from there alone is what dropped its destructiveHint at the gate.
     """
 
-    async def _resolve(_user_id: str, name: str) -> ResolvedTool | None:
+    async def _resolve(user_id: str, name: str) -> ResolvedTool | None:
+        # Scoped to USER_ID like the live resolver: another identity sees none of them.
         for tool in tools:
-            if tool.name == name:
+            if user_id == USER_ID and tool.name == name:
                 return ResolvedTool(name=name, tool=tool, is_integration=True)
         return None
 

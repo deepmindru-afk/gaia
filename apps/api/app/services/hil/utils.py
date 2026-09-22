@@ -76,23 +76,33 @@ class _TextBlock(TypedDict, total=False):
 # --- reading the request ---------------------------------------------------------------
 
 
-def unpack_tool_call(request: ToolCallRequest) -> GatedCall:
-    """Read the pending call, whether the framework handed it over as a dict or object.
-
-    Execute-proxied calls are unwrapped to their real tool; id stays the proxy
-    call's id, since that is the tool_call a refusal must answer.
-    """
+def raw_tool_call(request: ToolCallRequest) -> GatedCall:
+    """Read the pending call as handed over, dict- or object-shaped, before any unwrapping."""
     tool_call: ToolCall = request.tool_call
     # tool_call is typed ToolCall (a dict), but dataclass fields aren't runtime-
     # validated and some call paths hand over an object with .name/.id/.args.
     # Widen to object so that branch stays a reachable fallback, not dead code.
     if isinstance(cast(object, tool_call), dict):
-        name, args = unwrap_execute_call(tool_call.get("name", ""), tool_call.get("args", {}) or {})
-        return GatedCall(name=name, id=tool_call.get("id", ""), args=args)
-    name, args = unwrap_execute_call(
-        getattr(tool_call, "name", ""), getattr(tool_call, "args", None) or {}
+        return GatedCall(
+            name=tool_call.get("name", ""),
+            id=tool_call.get("id", ""),
+            args=tool_call.get("args", {}) or {},
+        )
+    return GatedCall(
+        name=getattr(tool_call, "name", ""),
+        id=getattr(tool_call, "id", ""),
+        args=getattr(tool_call, "args", None) or {},
     )
-    return GatedCall(name=name, id=getattr(tool_call, "id", ""), args=args)
+
+
+def unpack_tool_call(request: ToolCallRequest) -> GatedCall:
+    """Read the pending call, with an execute-proxied call unwrapped to its real tool.
+
+    The id stays the proxy call's id, since that is the tool_call a refusal must answer.
+    """
+    raw = raw_tool_call(request)
+    name, args = unwrap_execute_call(raw.name, raw.args)
+    return GatedCall(name=name, id=raw.id, args=args)
 
 
 def tool_of(request: ToolCallRequest) -> BaseTool | None:
