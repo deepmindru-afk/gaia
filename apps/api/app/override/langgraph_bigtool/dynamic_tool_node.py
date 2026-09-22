@@ -53,8 +53,7 @@ def format_tool_error(exc: Exception) -> str:
 
 
 def _timeout_error_text(tool_name: str, seconds: float | None) -> str:
-    """``seconds`` is the deadline that fired, or ``None`` when an unbounded
-    (exempt) tool raised a TimeoutError of its own."""
+    """Build the timeout error text; seconds is None when an exempt tool timed out itself."""
     after = f" after {seconds:g}s" if seconds is not None else ""
     return (
         f"Error: TimeoutError: '{tool_name}' timed out{after}. The operation may or "
@@ -63,18 +62,12 @@ def _timeout_error_text(tool_name: str, seconds: float | None) -> str:
 
 
 def _node_timeout_seconds(tool_call: Mapping[str, Any]) -> float | None:
-    """The bound THIS node puts on one call; ``None`` when it applies none.
+    """Return the timeout this node puts on one call; None when it applies none.
 
-    Unwrapped first so a proxied call is judged as its real tool: an exempt
-    orchestration tool stays exempt when it is reached through ``execute``.
-
-    A proxied call gets the backstop window rather than the plain bound.
-    ``dispatch_tool`` bounds the tool itself at the same
-    ``TOOL_EXECUTION_TIMEOUT_SECONDS`` and answers a timeout with a structured
-    error naming the real tool — with two equal deadlines this outer one always
-    won, so that error, its analytics event and its metric were unreachable
-    in-graph. The node stays the backstop for what dispatch does not cover
-    (resolution, which reaches Composio/MCP over the network).
+    Unwrapped first so a proxied call is judged as its real tool. A proxied call
+    gets the backstop window, not the plain bound: dispatch_tool already bounds the
+    tool at the same deadline, so an equal outer bound made its structured error
+    unreachable. The node backstops what dispatch does not cover (resolution).
     """
     name = tool_call.get("name", "")
     real_name, _ = unwrap_execute_call(name, tool_call.get("args") or {})

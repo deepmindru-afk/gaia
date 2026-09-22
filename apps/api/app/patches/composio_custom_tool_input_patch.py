@@ -2,21 +2,13 @@
 # real input validation.
 """Why this patch exists (read before touching).
 
-Two Pydantic model identities exist for every custom tool's input:
-
-* the REAL model from the decorated function's ``request`` annotation
-  (e.g. ``app.models.calendar_models.CreateEventInput``), which
-  ``CustomTool.invoke_trusted`` validates against;
-* a LOOKALIKE rebuilt from JSON schema by ``json_schema_to_pydantic``,
-  which Composio installs as the LangChain tool's ``args_schema``.
-
-LangChain validates the LLM's dicts against the lookalike and hands
-lookalike *instances* down the chain. The real model's ``isinstance`` check
-then rejects them — ``model_type`` error showing a perfectly good instance
-being refused (nested models fail at ``events.0`` and the like). Plain dicts
-validate fine against either class, so coercing everything back to plain data
-at this one boundary fixes every nested-model custom tool on every path
-(direct bind, execute proxy, sandbox), with no per-tool special cases.
+Every custom tool's input has two Pydantic identities: the REAL model from the
+decorated function's request annotation, which CustomTool.invoke_trusted
+validates against, and a LOOKALIKE rebuilt from JSON schema that Composio installs
+as the LangChain tool's args_schema. LangChain hands lookalike instances down the
+chain and the real model's isinstance check then rejects them. Plain dicts
+validate against either class, so coercing everything to plain data at this one
+boundary fixes every nested-model custom tool on every path, with no special cases.
 """
 
 import typing as t
@@ -30,9 +22,8 @@ from shared.py.wide_events import log
 def to_plain_data(obj: t.Any) -> t.Any:  # noqa: ANN401 -- recursive JSON-ish tree, genuinely schemaless
     """Deep-convert lookalike model instances to plain JSON-ish data.
 
-    ``model_dump(mode="json")`` recurses fully, so one call per model is
-    enough; containers recurse element-wise; everything else passes through
-    untouched (plain input takes the identical path — verified by test).
+    model_dump(mode="json") recurses fully, so one call per model is enough;
+    containers recurse element-wise; everything else passes through untouched.
     """
     if isinstance(obj, BaseModel):
         return obj.model_dump(mode="json")
@@ -48,7 +39,7 @@ _applied = False
 
 
 def _coercing_invoke_trusted(self: t.Any, user_id: str, request_kwargs: t.Any) -> t.Any:  # noqa: ANN401 -- mirrors Composio's untyped boundary
-    """``CustomTool.invoke_trusted`` with lookalike instances coerced first."""
+    """Run CustomTool.invoke_trusted with lookalike instances coerced first."""
     return _original_invoke_trusted(self, user_id, to_plain_data(request_kwargs))
 
 
@@ -58,7 +49,7 @@ t.cast(
 
 
 def apply() -> None:
-    """Wrap ``CustomTool.invoke_trusted`` exactly once (idempotent)."""
+    """Wrap CustomTool.invoke_trusted exactly once (idempotent)."""
     global _applied, _original_invoke_trusted
     if _applied:
         return
