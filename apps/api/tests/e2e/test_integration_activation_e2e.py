@@ -45,7 +45,7 @@ def _stub_tool(name: str):
 
 
 def _stub_registry(extra_tools: tuple[str, ...] = ()) -> MagicMock:
-    """A registry whose tool_dict holds the executor's initial tools plus extras.
+    """Build a registry whose tool_dict holds the executor's initial tools plus extras.
 
     The graph injects handoff / activate_integration / todo tools itself, so
     those are left out and overwritten with the real ones.
@@ -75,7 +75,7 @@ def _run_executor(model: BindableToolsFakeModel, registry: MagicMock):
 
 
 def _tool_message_for(result: dict, call_id: str) -> ToolMessage | None:
-    """The ToolMessage answering a specific tool call.
+    """Build the ToolMessage answering a specific tool call.
 
     Matched by tool_call_id, not name: a tool that returns a Command builds its
     ToolMessage by hand without a name (activate_integration does), so name is
@@ -250,13 +250,7 @@ class TestActivationThroughRealExecutorGraph:
         activate_tools.assert_not_awaited()
 
     async def test_handoff_runs_when_the_agent_follows_the_redirect(self) -> None:
-        """The other half of the redirect: handoff must actually work.
-
-        Activation tells the model to use handoff for a per-user integration; if
-        handoff were unbound that instruction would dead-end. This walks the whole
-        chain — activate, get redirected, call handoff — and asserts handoff's
-        own body ran.
-        """
+        """The other half of the redirect: handoff must actually work."""
 
         model = BindableToolsFakeModel(
             responses=[

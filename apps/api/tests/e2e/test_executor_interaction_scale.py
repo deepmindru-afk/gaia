@@ -66,8 +66,8 @@ async def _drive(
 ) -> tuple[dict[str, Any], list[list[Any]]]:
     """Run one turn, appending inbox entries after the given agent steps.
 
-    ``handovers`` maps the 1-based agent-step count to entries appended right
-    after that step's update — the production shape, where ``call_executor``
+    handovers maps the 1-based agent-step count to entries appended right
+    after that step's update — the production shape, where call_executor
     writes from another task mid-astream.
     """
     inbox = ExecutorInbox(conversation)
@@ -239,8 +239,7 @@ class TestConversationIsolation:
 
 class TestTooLateEntries:
     async def test_entry_after_the_last_step_stays_pending(self, inbox) -> None:
-        """Nothing left to drain into: the entry must sit pending, absent from
-        the thread, so finalize carries it instead of losing it."""
+        """Nothing left to drain into: the entry must sit pending, absent from the thread, so finalize carries it instead of losing it."""
         async with executor_graph(["done"]) as graph:
             config = _config()
             async for _mode, payload in graph.astream(
@@ -254,8 +253,7 @@ class TestTooLateEntries:
         assert [e.id for e in await inbox.read()] == ["too-late"]
 
     async def test_an_absorbed_entry_is_retired_not_carried(self, inbox) -> None:
-        """Committed to the thread on an earlier pass, so a later pass retires
-        it — there is nothing left for finalize to carry into a second run."""
+        """Committed to the thread on an earlier pass, so a later pass retires it — there is nothing left for finalize to carry into a second run."""
         async with executor_graph([plan("work"), "done"]) as graph:
             await _drive(graph, "go", {1: [("e-1", "absorbed")]})
 

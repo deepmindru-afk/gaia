@@ -649,10 +649,7 @@ class TestCalendarGetEvent:
 
 class TestCalendarCreateEvent:
     def test_an_event_is_created_immediately_with_no_draft_step(self, tools):
-        """Creation is immediate: the approval card is the confirmation, so
-        there is no draft mode. One stray miss here puts a real event on
-        someone's calendar (and mails every attendee) — or silently drafts
-        what the user approved as a create."""
+        """Creation is immediate: the approval card is the confirmation, so there is no draft mode."""
         tool = tools["GOOGLECALENDAR_CUSTOM_CREATE_EVENT"]
         posted: list[dict[str, Any]] = []
 

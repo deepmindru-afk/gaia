@@ -56,10 +56,7 @@ class TestToolShapesRepository:
 
 
 class TestToolShapesUniqueIndexSurface:
-    """The one-per-(scope, tool) index lives on the real collection, not the
-    ephemeral fixture — recreate it to prove the constraint the record() upsert
-    retry depends on, and that record() converges on a single document rather
-    than duplicating the shape or raising when a concurrent insert wins."""
+    """The one-per-(scope, tool) index lives on the real collection, not the ephemeral fixture — recreate it to prove the constraint the record() upsert retry depends on, and that record() converges on a single document rather than duplicating the shape or raising when a concurrent insert wins."""
 
     async def _create_index(self, raw_collection) -> None:
         # Mirrors app/db/mongodb/indexes.py::create_tool_output_shapes_indexes.
@@ -68,8 +65,7 @@ class TestToolShapesUniqueIndexSurface:
     async def test_pre_existing_duplicates_are_collapsed_before_the_index(
         self, repo, raw_collection
     ):
-        """A DB that raced under the pre-index code already holds duplicates; the
-        unique index must still build. De-dup keeps the most-observed record."""
+        """A DB that raced under the pre-index code already holds duplicates; the unique index must still build."""
         from app.db.mongodb.indexes import _dedupe_tool_output_shapes
 
         tool = _tool()
@@ -122,9 +118,7 @@ class TestToolShapesUniqueIndexSurface:
     async def test_record_retries_the_losing_insert_onto_the_winner(
         self, repo, raw_collection, monkeypatch
     ):
-        """Two first observations race: both miss the match, one inserts, the
-        other's insert collides on the unique index. record() must catch that
-        DuplicateKeyError and retry onto the winner — one document, never a raise."""
+        """Two first observations race: both miss the match, one inserts, the other's insert collides on the unique index."""
         await self._create_index(raw_collection)
         tool = _tool()
         real_update = raw_collection.find_one_and_update

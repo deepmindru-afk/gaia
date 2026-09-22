@@ -335,15 +335,7 @@ class TestWorkflowExecution:
         )
 
     async def test_executor_graph_binds_the_real_subagent_middleware_tool(self):
-        """build_executor_graph must wire the REAL executor middleware stack.
-
-        ``spawn_subagent`` exists only because ``create_executor_middleware``
-        contributes a ``SubagentMiddleware`` whose tools ``create_agent`` binds.
-        Mocking the middleware factory to ``[]`` (as this test used to) hides that
-        wiring completely: the model's ``spawn_subagent`` call then falls through
-        to ``reject_unbound_tools``. Asserting the call is NOT rejected proves the
-        real middleware stack is present and its tool is reachable.
-        """
+        """Build_executor_graph must wire the REAL executor middleware stack."""
         fake_llm = BindableToolsFakeModel(
             responses=[
                 AIMessage(

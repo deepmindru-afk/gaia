@@ -415,17 +415,10 @@ async def drain_resumes() -> None:
 async def drain_background_runs() -> None:
     """Wait out every executor task still in flight, whatever spawned it.
 
-    Two module-level keep-alive sets — the canonical ``spawn_background_task``
-    set (publishes and detached executor runs) and HIL's own resume set — and a run
-    in either can spawn into the other: a resume finalizes, hands the busy lock to
-    a detached task, and that task's own finalize can wake a collection turn.
-    Draining one set once is therefore not enough — this loops until both empty.
-
-    Load-bearing for isolation, not tidiness. The patches installed by
-    :func:`hil_world` are process-wide while they are active, so a run that
-    outlives its own test executes against the NEXT test's approval store and
-    scripted models. That showed up as this file's only flake: the following
-    test's turn produced no approval record at all.
+    Two module-level keep-alive sets (spawn_background_task and HIL's own resume
+    set) can each spawn into the other, so draining one once is not enough — this
+    loops until both empty. Load-bearing for isolation: hil_world's patches are
+    process-wide, so a run that outlives its test corrupts the next test's store.
     """
     while pending := [
         *_tasks_named(STREAM_PUBLISH_TASK_NAME, DETACHED_EXECUTOR_TASK_NAME),

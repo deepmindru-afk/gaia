@@ -44,30 +44,21 @@ _hypothesis_settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 # ---------------------------------------------------------------------------
 
 os.environ["ENV"] = "development"
-# Force the dev auth bypass OFF for the suite: a machine set up for agent-driven
-# e2e has DEV_AUTH_BYPASS_EMAIL in apps/api/.env, which would short-circuit
-# WorkOSAuthMiddleware — including in the tests that exercise that middleware.
-# Force an empty (falsy) value rather than popping: an empty value keeps the
-# prod-guard off, and because the key is now present, load_dotenv(override=False)
-# — called at settings import — will not re-inject a value from the developer's .env.
+# Force the dev auth bypass OFF: a machine set up for agent-driven e2e has
+# DEV_AUTH_BYPASS_EMAIL in .env, which short-circuits WorkOSAuthMiddleware. Empty
+# (not popped) keeps load_dotenv(override=False) from re-injecting the .env value.
 os.environ["DEV_AUTH_BYPASS_EMAIL"] = ""
-# Same problem, same fix, for the other dev overrides that change behaviour
-# rather than carry a secret — the credential fence below never sees them
-# because they are not credential-shaped, and it would run too late anyway:
-# get_settings() is lru_cached and already resolved during collection.
-# DEV_UNLIMITED_RATE_LIMITS lifts the limits the rate-limiter tests assert (11
-# false failures on a machine that sets it); GAIA_SIM_MODE routes every LLM
-# call to the local stub. Both are typed `bool`, so the neutral value must be
-# parseable — "" is a pydantic bool_parsing error, not an "off".
+# Same fix for the dev overrides that change behaviour, not carry a secret:
+# DEV_UNLIMITED_RATE_LIMITS breaks the rate-limit tests, GAIA_SIM_MODE stubs the
+# LLM. Both are typed bool, so the neutral value must parse — "false", not "".
 os.environ["DEV_UNLIMITED_RATE_LIMITS"] = "false"
 os.environ["GAIA_SIM_MODE"] = "false"
 # Code mode mints per-invocation tokens; pin it off so a developer's .env
 # cannot leak execute env into hermetic bash tests. Opt in per test.
 os.environ["ENABLE_CODE_MODE"] = "false"
-# Same leak, opposite pin: the committed default for the OpenUI experiment is
-# ON, and the prompt-contract tests assert the OpenUI variant. A developer
-# running with ENABLE_COMMS_OPENUI=false in .env would otherwise flip the
-# suite's static prompts. Flag-off paths opt in explicitly per test.
+# Same leak, opposite pin: the OpenUI experiment ships ON and the prompt-contract
+# tests assert the OpenUI variant, so a developer's ENABLE_COMMS_OPENUI=false in
+# .env would flip the suite's static prompts. Flag-off paths opt in per test.
 os.environ["ENABLE_COMMS_OPENUI"] = "true"
 os.environ.setdefault(
     "MONGO_DB",

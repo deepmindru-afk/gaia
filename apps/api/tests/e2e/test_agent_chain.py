@@ -237,8 +237,7 @@ async def run_chain(
         register_subagent_providers([SUBAGENT_ID])
 
     async def _resolve_registered_graph(subagent_id: str, user_id: str | None):
-        """Bypass the MCP-only resolve guard: this scenario proves the 3-tier
-        streaming plumbing, not resolution policy (pinned in unit tests)."""
+        """Bypass the MCP-only resolve guard: this scenario proves the 3-tier streaming plumbing, not resolution policy (pinned in unit tests)."""
         """Bypass the MCP-only resolve guard: this scenario proves the 3-tier
         streaming plumbing, not resolution policy (pinned in unit tests)."""
         from app.core.lazy_loader import providers as _providers

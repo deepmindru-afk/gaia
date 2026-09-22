@@ -37,13 +37,12 @@ def plan(*contents: str) -> dict[str, Any]:
 
 
 def _executor_config() -> dict[str, Any]:
-    """The shape a REAL executor run carries.
+    """Return the shape a REAL executor run carries.
 
-    ``thread_id`` is the WRAPPED thread (``executor_<conversation>``) and the
-    conversation is a separate key. Passing the bare conversation id as
-    ``thread_id`` — as this test first did — hides a whole class of bug: the
-    drain keyed on the wrong id builds ``executor:inbox:executor_<conv>``, never
-    matches what ``call_executor`` wrote, and nothing fails except the feature.
+    thread_id is the WRAPPED thread (executor_<conversation>); the conversation
+    is a separate key. Passing the bare conversation id as thread_id hides a
+    class of bug: the drain keyed on the wrong id never matches what
+    call_executor wrote, and nothing fails except the feature.
     """
     return {
         "configurable": {
@@ -68,7 +67,7 @@ async def inbox():
 async def _run_and_interject(graph: Any, inbox: ExecutorInbox, prompt: str) -> dict[str, Any]:
     """Drive one turn, handing work over after the executor's first step.
 
-    Appending between supersteps is what production does — ``call_executor``
+    Appending between supersteps is what production does — call_executor
     writes to the inbox from another task while the graph is mid-astream.
     """
     config = _executor_config()
@@ -97,8 +96,7 @@ class TestMidRunInterjection:
         assert INTERJECTION in second
 
     async def test_it_survives_into_the_thread(self, inbox) -> None:
-        """Not just shown to one model call — committed, so the run still knows
-        it when it comes to answer."""
+        """Not just shown to one model call — committed, so the run still knows it when it comes to answer."""
         async with executor_graph([plan("search email"), "done"]) as graph:
             config = await _run_and_interject(graph, inbox, "find my flight email")
             state = await graph.aget_state(config)
@@ -113,8 +111,7 @@ class TestMidRunInterjection:
         assert INTERJECTION in str(stamped[0].content)
 
     async def test_it_is_not_injected_twice(self, inbox) -> None:
-        """Three model calls, one hand-over: the entry must appear once, or the
-        executor reads the same request again on every later step."""
+        """Three model calls, one hand-over: the entry must appear once, or the executor reads the same request again on every later step."""
         async with executor_graph([plan("search email"), plan("search spam"), "done"]) as graph:
             await _run_and_interject(graph, inbox, "find my flight email")
             calls = scripted_model_of(graph).chat_messages_log
@@ -130,8 +127,7 @@ class TestMidRunInterjection:
         assert await inbox.read() == []
 
     async def test_an_idle_inbox_changes_nothing(self, inbox) -> None:
-        """The hook runs before every executor model call, so it must be inert
-        when there is nothing to deliver."""
+        """The hook runs before every executor model call, so it must be inert when there is nothing to deliver."""
         async with executor_graph([plan("search email"), "done"]) as graph:
             config = _executor_config()
             async for _ in graph.astream(

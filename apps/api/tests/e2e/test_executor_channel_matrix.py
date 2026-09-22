@@ -2,21 +2,16 @@
 
 The unit tests pin the storage mechanics and the first e2e file proves the
 mid-run hand-over works at all. This file is the scenario matrix: every branch
-of the drain decision, every framing shape, every storage edge, and — the point
-the sim-stack run could never prove — exactly WHERE a steered message lands in
-the model's context: after the tool results, at the conversation tail, as a
-``HumanMessage`` the model reads as the user speaking.
+of the drain decision, every framing shape, every storage edge, and exactly
+WHERE a steered message lands in the model's context.
 
 Three layers, fastest first:
 
-* ``TestDecideDrain`` — ``decide_drain`` is pure, so the whole truth table runs
-  with no graph, no Redis, no clock.
-* ``TestInboxStorage`` — the Redis list against fakeredis: ordering, exactness
-  of retire, delivered-marker semantics, malformed rows, absent client.
-* ``TestHookPlacement`` — the real compiled executor graph with a scripted
-  model: the interjection's position in the recorded prompt relative to
-  ``ToolMessage`` results, its survival into the thread, idempotency across
-  many model calls, and the hook's failure modes.
+* TestDecideDrain — decide_drain is pure: the whole truth table, no graph.
+* TestInboxStorage — the Redis list against fakeredis: ordering, retire,
+  delivered markers, malformed rows, absent client.
+* TestHookPlacement — the real compiled graph with a scripted model: the
+  interjection's position, survival, idempotency, failure modes.
 """
 
 from __future__ import annotations
@@ -474,8 +469,7 @@ def _prompt_texts(prompt: list[Any]) -> str:
 
 class TestHookPlacement:
     async def test_interjection_lands_after_tool_results(self, inbox) -> None:
-        """The steered message reads as a follow-up, not a pre-emption: the
-        tool result it responds to is already in context above it."""
+        """The steered message reads as a follow-up, not a pre-emption: the tool result it responds to is already in context above it."""
         async with executor_graph([plan("search email"), "done"]) as graph:
             await _run_with_handover(graph, inbox, "find my flight email")
             calls = scripted_model_of(graph).chat_messages_log
@@ -547,8 +541,7 @@ class TestHookPlacement:
         assert second.index("alpha-note") < second.index("beta-note")
 
     async def test_late_arrival_still_lands_on_next_step(self, inbox) -> None:
-        """Handed over after step two of three: invisible in calls 1-2,
-        present from call 3."""
+        """Handed over after step two of three: invisible in calls 1-2, present from call 3."""
         async with executor_graph([plan("one"), plan("two"), plan("three"), "done"]) as graph:
             config = _executor_config()
             steps = 0
@@ -792,8 +785,7 @@ class TestDrainHookMatrix:
         assert [e.id for e in await inbox.read()] == want_left
 
     async def test_injecting_leaves_the_entry_pending(self, inbox) -> None:
-        """Staging is not committing. The entry stays until a later pass sees it
-        in the thread, so a run that dies at the model call loses nothing."""
+        """Staging is not committing."""
         from app.agents.core.background.executor_channel import drain_inbox_hook
 
         await inbox.append("e-1", "steer")

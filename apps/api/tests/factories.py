@@ -78,7 +78,7 @@ def make_composio_tool(
     slug: str = "GMAIL_FETCH_MESSAGES",
     output_parameters: dict | None = None,
 ) -> Tool:
-    """The minimum Composio tool descriptor `wrap_tool` needs."""
+    """Build the minimum Composio tool descriptor wrap_tool needs."""
     return Tool(
         slug=slug,
         name=slug,

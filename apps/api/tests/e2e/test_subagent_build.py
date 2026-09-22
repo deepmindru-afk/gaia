@@ -65,11 +65,7 @@ class TestScopedToolDict:
         assert "finish_task" in initial
 
     async def test_the_execute_proxy_is_confined_to_this_subagent_s_tools(self, registry):
-        """`execute` resolves names globally, so the unscoped instance would let a
-        Gmail subagent run any registered tool — the guard retrieve_tools returns
-        ("They belong to the main executor") becomes advice it can route around.
-        The proxy in the dict must carry that dict as its scope, and see the todo
-        tools added to it after this call too."""
+        """Execute resolves names globally, so the unscoped instance would let a Gmail subagent run any registered tool — the guard retrieve_tools returns ("They belong to the main executor") becomes advice it can route around."""
         scoped, _ = build_scoped_tool_dict(registry, "gmail", None, True)
         scoped["a_tool_added_later"] = object()
 
