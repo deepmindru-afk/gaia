@@ -165,11 +165,9 @@ async def _verdict(request: ToolCallRequest) -> ToolMessage | _Pending | None:
 
     context = read_gate_context(request)
     if context is None:
-        # AUDIT HOLE, instrumented 2026-09-19: an identity-less call runs with
-        # no gate, no record, no message. If this line ever fires for a real
-        # user-facing run, that run's tool calls are invisible to HIL — the
-        # log below is the only trail. Do not remove until read_gate_context
-        # can fail closed without breaking identity-less system flows.
+        # AUDIT HOLE (instrumented 2026-09-19): an identity-less call runs with no
+        # gate, no record, no message, so its tool calls are invisible to HIL.
+        # Keep until read_gate_context can fail closed without breaking system flows.
         log.warning(
             f"{LogTag.HIL} Gate skipped: no run identity on the call",
             tool_name=call.name,
@@ -213,13 +211,10 @@ async def _decide_ledger(
 ) -> ToolMessage | None:
     """Ledger verdict: register PENDING and return, or clear an auto-aligned call.
 
-    The executor-free path: dedup against live rows, surface reject memory,
-    refuse same-run nag re-issues, otherwise register and hand the model a
-    pending id to work around. ``auto`` policy keeps its intent judge — an
-    aligned call runs with no card on either path, so the flag flip never
-    changes what gets asked. Any failure fails closed (deny), never open.
-
-    Returns ``None`` only for the auto-aligned case (the tool may run).
+    Executor-free path: dedup against live rows, surface reject memory, refuse
+    same-run nag re-issues, else register and hand the model a pending id. Any
+    failure fails closed (deny), never open. Returns None only for the
+    auto-aligned case (the tool may run).
     """
     try:
         declined = await recall_declined_call(context.stream_id, call.name, call.args)
@@ -577,10 +572,10 @@ async def _judge(
 
 
 async def _never_auto_tools(user_id: str) -> frozenset[str]:
-    """The user's deny-rule set, or empty when prefs cannot be read.
+    """Return the user's deny-rule set, or empty when prefs cannot be read.
 
-    Empty-on-failure mirrors ``_auto_history``: prefs were already read for
-    policy resolution, so a blip here skips one refinement, never the call.
+    Empty-on-failure mirrors _auto_history: prefs were already read for policy
+    resolution, so a blip here skips one refinement, never the call.
     """
     try:
         prefs = await get_hil_preferences(user_id)
@@ -682,14 +677,18 @@ async def _invalid_args_message(
     """Fail fast on malformed args before any card exists.
 
     The user must never approve a call the model will have to retry: validate
-    against the exact schema execution uses (``dispatch._validate_args`` — one
-    function, one name, no drift) and answer with the schema error instead of
-    registering. Unresolvable tools and schemaless tools skip — execution
-    validates authoritatively; the gate only pre-filters what it can read.
+    against the exact schema execution uses (dispatch._validate_args) and answer
+    with the schema error instead of registering. Unresolvable and schemaless
+    tools skip — execution validates authoritatively.
     """
     try:
         tool = await gated_tool_object(request, user_id, call.name)
-    except Exception:
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} Pre-validation tool resolve failed; skipping arg check",
+            tool=call.name,
+            error_type=type(e).__name__,
+        )
         return None
     if tool is None:
         return None
@@ -705,7 +704,7 @@ async def _invalid_args_message(
 
 
 def _pending_guidance(approval_id: str, *, background: bool = False) -> str:
-    """What the model can and cannot do about a pending card.
+    """Describe what the model can and cannot do about a pending card.
 
     Shared by the fresh-register and live-dedup branches so the two never
     drift: the card's lifecycle is identical whichever branch produced it.

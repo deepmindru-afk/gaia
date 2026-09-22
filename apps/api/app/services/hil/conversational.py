@@ -1,34 +1,18 @@
 """Resolve pending HIL approvals from a bot user's next chat reply.
 
-BUTTON-LESS CHANNELS ONLY: the caller, _resolve_pending_approval_turn in
-app/services/chat/stream.py, invokes this for messaging-platform bots alone (WhatsApp,
-Telegram, Slack, Discord). Web/mobile/desktop resolve via POST /approvals/{id}/decision
-and never run this classifier — a typed reply is a text-only bot's only approval surface.
+BUTTON-LESS CHANNELS ONLY: the caller (_resolve_pending_approval_turn in
+app/services/chat/stream.py) invokes this for messaging-platform bots alone;
+web/mobile/desktop resolve via POST /approvals/{id}/decision instead.
 
-Single pending approval → approve / deny / unrelated:
-  - approve resolves it and resumes the paused run (runs the tool AS PROPOSED);
-  - deny resolves it as a refusal, carrying any correction/redirect as feedback
-    for the model (the redirect is next-turn context, not executed now);
-  - unrelated abandons it (resumed as a refusal so the run wraps up instead of
-    racing the new turn) and lets the new message run as a normal turn.
+Single pending approval maps to approve (resume, run as proposed), deny (refuse,
+carrying any correction as next-turn feedback), or unrelated (abandon, run the
+new message normally). An approve runs EXACTLY as proposed; a reply that changes
+anything is a deny with the change as feedback.
 
-An 'approve' means run the action EXACTLY as proposed — there is no arg-editing.
-A reply that accepts but changes anything ("yes but cc finance") is a deny with
-the change as feedback, so the agent re-proposes rather than silently running the
-wrong action (enforced by the prompt and by ``_no_arg_edit``).
-
-Several approvals pending → per-item approve / deny /
-leave against the numbered list: "yes" approves all, "no" declines all; a
-selective reply decides only what it names. Unnamed actions are DENIED when the
-reply is exclusive ("just the email") and LEFT pending when it is a non-exclusive
-partial ("approve the email"), so a bot user answering across several messages
-isn't force-declined on the ones they haven't reached. An item left 'leave' stays
-pending for a later reply or the timeout sweep.
-
-Context given to the classifier: the pending action(s) rendered with full
-(bounded) args plus a short window of recent turns — see ``build_action_detail``
-and the caller's ``_recent_history``. It fails safe: an LLM error leaves approvals
-pending, never approves.
+Several pending approvals decide per-item against the numbered list: yes/no
+approve/decline all, a selective reply decides only what it names, unnamed items
+deny on an exclusive reply and stay pending on a partial one. Fails safe: an LLM
+error leaves approvals pending, never approves.
 """
 
 import contextlib
@@ -63,10 +47,9 @@ DecisionAction = Literal["approve", "deny", "unrelated"]
 # Auto-deny reason when the user moves on without answering the approval.
 UNRELATED_FEEDBACK = "The user moved on to a different request; do not perform the action."
 
-# Ground truth for a settled ledger row, in the bot reply's words. Lives here —
-# not result_delivery, which only knows barrier statuses — so the bot path can
-# narrate executed/failed/unknown/revoked without depending on that module.
-# Threading it into the streamed ack is a stream.py follow-up.
+# Ground truth for a settled ledger row in the bot reply's words. Lives here, not
+# result_delivery (which only knows barrier statuses), so the bot path can narrate
+# executed/failed/unknown/revoked without depending on that module.
 LEDGER_OUTCOME_TEXT: dict[LedgerState, str] = {
     LedgerState.APPROVED: "approved by the user; the agent runs it from the ticket",
     LedgerState.DENIED: "denied by the user; the action did NOT run",
@@ -173,7 +156,7 @@ async def _resolve_batch(
 ) -> DecisionAction | None:
     """Apply a per-item classification of message to the pending batch.
 
-    Decisions dispatch through ``resolve_approval`` (barrier) or ``decide_ledger``
+    Decisions dispatch through resolve_approval (barrier) or decide_ledger
     (ledger) one by one; the per-conversation resume slot ensures only the first
     actually re-dispatches the executor — the join round it wakes collects the rest.
     """
@@ -311,8 +294,11 @@ async def _list_pending_ledger(conversation_id: str) -> list[ApprovalLedgerDocum
 async def _safe_resolve_ledger(
     approval_id: str, user_id: str, decision: Literal["approve", "deny"], feedback: str | None
 ) -> LedgerDecision | None:
-    """Apply one ledger decision, tolerating a lost race. Bots carry no row
-    version, so v=None — the PENDING->decided CAS inside decide_ledger still guards."""
+    """Apply one ledger decision, tolerating a lost race.
+
+    Bots carry no row version, so v=None — the PENDING->decided CAS inside
+    decide_ledger still guards.
+    """
     result: LedgerDecision | None = None
     with contextlib.suppress(ApprovalRequestNotFoundError, ApprovalRequestForbiddenError):
         result = await decide_ledger(
@@ -329,8 +315,10 @@ async def _safe_resolve_ledger(
 
 
 async def _abandon_ledger_approvals(conversation_id: str, user_id: str) -> list[str]:
-    """Ledger equivalent of abandon: the user moved on, so deny every pending row
-    with the moved-on feedback. The denial wakes the agent, which wraps up."""
+    """Deny every pending ledger row because the user moved on.
+
+    Denies with the moved-on feedback, which wakes the agent to wrap up.
+    """
     decided: list[str] = []
     for row in await _list_pending_ledger(conversation_id):
         with contextlib.suppress(ApprovalRequestNotFoundError, ApprovalRequestForbiddenError):

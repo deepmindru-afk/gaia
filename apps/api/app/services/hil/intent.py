@@ -70,9 +70,9 @@ class JudgedCall:
 
     Name, description, arguments and summary always travel together — the gate reads
     them off one pending call, and the prompt renders all four — so they are passed as
-    one value rather than four parallel arguments. ``tool_schema`` is the tool's own
+    one value rather than four parallel arguments. tool_schema is the tool's own
     argument contract: an opaque id stops being opaque once the judge sees what it
-    is *for*.
+    is for.
     """
 
     tool_name: str
@@ -110,8 +110,8 @@ class AutoHistory:
 class IntentDecision:
     """The judge's call, plus the why — shown to the user on receipts and refusals.
 
-    Ternary, not boolean: ``accept`` runs the call, ``reject`` refuses it with
-    the reason (no card, no retry), ``ask`` registers the normal approval card.
+    Ternary, not boolean: accept runs the call, reject refuses it with the
+    reason (no card, no retry), ask registers the normal approval card.
     """
 
     outcome: AutoOutcome
@@ -119,7 +119,7 @@ class IntentDecision:
 
     @property
     def aligned(self) -> bool:
-        """Compat: the gate's accept check. New code reads ``outcome``."""
+        """Compat: the gate's accept check. New code reads outcome."""
 
         return self.outcome == "accept"
 
@@ -214,9 +214,12 @@ def history_line(history: AutoHistory, tool_name: str) -> str:
 
 
 class IntentJudge(Protocol):
-    """Decides one auto-mode call. LLM-backed today; a JEV-backed judge
-    implements this Protocol later (JEV answers risk booleans, code keeps the
-    grounding-quote and veto checks) — the gate never changes."""
+    """Decide one auto-mode call.
+
+    LLM-backed today; a JEV-backed judge implements this Protocol later (JEV
+    answers risk booleans, code keeps the grounding-quote and veto checks) — the
+    gate never changes.
+    """
 
     async def decide(
         self,
@@ -241,16 +244,12 @@ async def judge_intent(
     never_auto_tools: frozenset[str] | None = None,
     assistant_turns: list[str] | None = None,
 ) -> IntentDecision:
-    """Whether the user's own words authorize this call. Fails toward asking.
+    """Decide whether the user's own words authorize this call; fails toward asking.
 
-    No user turns means there is nothing to verify against, so it asks without
-    spending a call. A tool on the user's never-auto list also asks without
-    spending a call — the rule IS the decision. The reason travels with the
-    decision: an auto-approved action is shown to the user afterwards as a receipt.
-
-    ``assistant_turns`` is the run's recent assistant prose: context for what a
-    shorthand refers to ("send it" after "your draft to X is ready"), never
-    authorization — only user turns authorize.
+    No user turns and a tool on the never-auto list both ask without spending a
+    call. assistant_turns is recent assistant prose: context for what a shorthand
+    refers to ("send it" after "your draft to X is ready"), never authorization —
+    only user turns authorize.
     """
     turns = [text for text in user_messages if text.strip()]
     if not turns:
@@ -317,7 +316,8 @@ class _LLMIntentJudge:
                 }
             )
         log.info(
-            f"{LogTag.HIL} intent judge : {outcome}",
+            f"{LogTag.HIL} intent judge ruled",
+            outcome=outcome,
             tool_name=call.tool_name,
             aligned=outcome == "accept",
             reason=verdict.reason,
@@ -404,15 +404,12 @@ def ungrounded_targets(
     prior_calls: list[PriorCall],
     known: frozenset[str] | None = None,
 ) -> list[str]:
-    """Target-like arg values with no provenance in the user's words or priors.
+    """Return target-like arg values with no provenance in user words or priors.
 
-    The grounding backstop for judges that produce no authorizing quote (JEV):
-    an email, id, or amount that appears from nowhere blocks auto-accept. Prose
-    bodies are not targets — the choice criteria already judge those. Targets
-    from the user's own approved runs (``known``) are provenance, not novelty.
-    Prior outputs count as provenance only when they identify: a single-result
-    output means the lookup returned the thing (no agent choice); a list means
-    the agent picked from it (that pick needs the user).
+    Grounding backstop for judges with no authorizing quote (JEV): an email, id
+    or amount from nowhere blocks auto-accept. Prose bodies and targets from the
+    user's own approved runs (known) are provenance. A prior output grounds only
+    when it identifies: a single result returned the thing; a list needs the user.
     """
     normalized_user = _normalize(user_text)
     provenance_parts = [f"{call.name} {args_preview(call.args)}" for call in prior_calls]
@@ -433,7 +430,7 @@ def ungrounded_targets(
 
 
 def _local_part(target: str) -> str:
-    """The email local part ("sarah" of "sarah@x.com"), else "".
+    """Return the email local part ("sarah" of "sarah@x.com"), else "".
 
     "Reply yes to Sarah's thread" grounds sarah@x.com: the name matches, only
     the domain was resolved. Equality on the local part — a "bob" in the text
@@ -446,12 +443,10 @@ def _local_part(target: str) -> str:
 def _target_values(args: object) -> list[str]:
     """Collect the arg values that name a target: emails, ids, amounts.
 
-    Datetimes are deliberately NOT targets: "tomorrow at 2pm" never matches
-    its ISO rendering textually, so requiring it would ask on every
-    legitimately-derived time. Free-text fields (body, subject, text...) are
-    not targets either: a short code like "q3" in a body is content the
-    choice criteria judge, not a who/which/how-much. The gate judges prose;
-    it grounds references.
+    Datetimes are NOT targets: an ISO rendering never matches "tomorrow at 2pm"
+    textually, so grounding it would ask on every derived time. Free-text fields
+    (body, subject, text) are not targets either: a code like "q3" in a body is
+    content the choice criteria judge, not a who/which/how-much.
     """
     return _target_values_in(args, ())
 
