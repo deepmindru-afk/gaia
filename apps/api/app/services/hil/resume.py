@@ -21,6 +21,10 @@ from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.models.hil_models import ApprovalLedgerDocument
 from app.services.analytics_service import AnalyticsEvents, capture_event
+from app.services.workflow.execution_service import get_last_run_brief
+from app.services.workflow.queue_service import WorkflowQueueService
+from app.utils.redis_utils import RedisPoolManager
+from app.workers.queue import enqueue_worker_job
 from shared.py.wide_events import log
 
 
@@ -66,8 +70,6 @@ async def record_owner_deny(row: ApprovalLedgerDocument, feedback: str | None) -
     if row.owner_run_type != "todo" or not row.owner_id:
         return
     try:
-        from app.services.tracked_todo_service import tracked_todo_service
-
         what = f" — {feedback!r}" if feedback else ""
         await tracked_todo_service.append_activity_entry(
             todo_id=row.owner_id,
@@ -84,11 +86,11 @@ async def record_owner_deny(row: ApprovalLedgerDocument, feedback: str | None) -
 
 
 async def _resume_todo(row: ApprovalLedgerDocument) -> None:
-    """Resume in the PARKED conversation: the receipt joins the run's own
-    thread instead of a fresh session. The lock/defer machinery stays the
-    arbiter of concurrency, exactly like a scheduled fire."""
-    from app.utils.redis_utils import RedisPoolManager
-    from app.workers.queue import enqueue_worker_job
+    """Resume in the PARKED conversation so the receipt joins the run's own thread.
+
+    The lock/defer machinery stays the arbiter of concurrency, exactly like a
+    scheduled fire.
+    """
 
     pool = await RedisPoolManager.get_pool()
     await enqueue_worker_job(
@@ -115,8 +117,6 @@ async def _resume_workflow(row: ApprovalLedgerDocument) -> None:
     instead of redoing it. The workflow's own conversation shows the whole
     arc: park, approval, continuation.
     """
-    from app.services.workflow.execution_service import get_last_run_brief
-    from app.services.workflow.queue_service import WorkflowQueueService
 
     brief = ""
     try:

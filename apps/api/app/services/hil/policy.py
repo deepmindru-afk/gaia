@@ -78,20 +78,12 @@ def _argument_gate_hit(tool_name: str, args: Mapping[str, Any] | None) -> bool:
 async def gated_tool_object(
     request: ToolCallRequest, user_id: str, tool_name: str
 ) -> BaseTool | None:
-    """The BaseTool classification should read — the REAL tool, not the proxy.
+    """Resolve the real BaseTool a classification should read, not the proxy.
 
-    For a direct call, ``request.tool`` is the tool. For an execute-proxied call
-    the request carries the proxy's object, so the real one is resolved by the
-    unwrapped name through the SAME resolver dispatch uses — registry, then the
-    user's MCP client, then the Composio catalog.
-
-    Resolving from the registry alone was a hole the cutover opened: MCP tools
-    never enter the global registry and a catalog slug enters it only once its
-    toolkit is materialized, so every such call reached ``is_tool_destructive``
-    with no ``destructiveHint`` and an empty description. The LLM then guessed
-    "safe" from the bare name — and that guess is written back to Mongo and to
-    the registry's ``destructive`` flag, so one wrong verdict un-gates the tool
-    permanently.
+    A direct call's request.tool is the tool; an execute-proxied call carries the
+    proxy, so the real one is resolved by unwrapped name through dispatch's own
+    resolver. Registry-only resolution missed MCP tools and un-materialized
+    catalog slugs, letting the classifier guess from a bare name and un-gate it.
     """
     raw_call = request.tool_call
     raw_name = (
@@ -103,12 +95,11 @@ async def gated_tool_object(
 
 
 async def _real_tool(user_id: str, tool_name: str) -> BaseTool | None:
-    """The live tool behind a name, or ``None`` when it cannot be resolved.
+    """Return the live tool behind a name, or None when it cannot be resolved.
 
-    Same resilience contract as ``_stamp_registry``: a resolver failure means
-    "no tool object read", and classification still decides by name and fails
-    closed. It must never take the gate down — ``decide_tool_call`` denies the
-    call outright on any exception.
+    Same resilience contract as _stamp_registry: a resolver failure means "no
+    tool object read", and classification still decides by name and fails closed.
+    decide_tool_call denies the call outright on any exception.
     """
     try:
         resolved = await resolve_tool(user_id, tool_name)
@@ -172,32 +163,10 @@ async def is_gated(
 async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_id: str) -> bool:
     """Return whether another call in this AI message can pause the run.
 
-    If one can, this call cannot simply run and be done with it. The sibling will
-    ``interrupt()``, and LangGraph discards the writes of every task in that step and
-    replays them on resume — so a handler that ran before the pause runs a second time
-    (verified: one send became two). Two callers act on that:
-
-    * **auto mode** does not auto-approve, because a call it approved would run before
-      the pause and then again on the replay. Auto-approval therefore applies only when
-      a call is the turn's only pausing action; several destructive actions in one turn
-      are confirmed together, which is the behaviour worth having anyway.
-    * **an ungated call** remembers its result under its tool_call_id, so the replay
-      reuses it rather than repeating the work (``gate._run_once_across_replays``).
-
-    A sibling pauses in one of two ways. It is **gated**, and pauses at its own gate:
-    siblings arrive as bare tool-call dicts, so each one's tool object is resolved
-    through ``_real_tool`` — the same resolver the pending call's own gate uses, which
-    reaches MCP and unmaterialized catalog tools the registry alone does not — because
-    classifying it must use the same description and MCP ``destructiveHint`` its own
-    gate will use. Classifying without them (a bare name, an empty description) both
-    under-detects the sibling — defeating the double-run guard this exists for — and
-    poisons the registry's name-keyed ``destructive`` flag, since an unclassified tool's
-    verdict is written back there for every later gate check to read.
-
-    Or it is **exempt but pausing** (``HIL_PAUSING_TOOLS``) — ``handoff`` bubbles up its
-    subagent's gate interrupt. It is never gated, so skipping it as exempt would leave
-    exactly the double-run this guard exists to prevent. Checked first, and by name
-    alone, so the common case costs no preference or registry lookup.
+    A sibling that interrupt()s makes LangGraph replay the whole step, so a
+    handler that ran before the pause runs twice. Auto mode never auto-approves
+    alongside a pausing sibling, and ungated calls memoize by tool_call_id. A
+    sibling pauses either gated (via _real_tool) or exempt (HIL_PAUSING_TOOLS).
     """
     # Execute-proxied siblings are unwrapped to their real (name, args) here for
     # the same reason unpack_tool_call unwraps the pending call: the guard must
