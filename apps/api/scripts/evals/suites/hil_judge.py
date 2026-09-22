@@ -31,8 +31,10 @@ from app.constants.hil import HIL_JEV_ACCEPT_LINE, HIL_JEV_REJECT_FLOOR
 # Canonical question + mapping live in app (prompts.py, jev_judge.py) — the
 # suite imports them so editing the judge text IS retuning, and every run
 # journals the questions version it graded.
+from app.services.hil.intent import AutoHistory, JudgedCall
 from app.services.hil.jev_judge import decide_from_verdict
 from app.services.hil.prompts import JEV_QUESTIONS_VERSION
+from app.services.hil.utils import PriorCall
 from scripts.evals.core.cases import load_case_files
 from scripts.evals.core.cost import EvalCostTracker
 from scripts.evals.core.gates import score_gates
@@ -55,10 +57,8 @@ EXTRA = {
 }
 
 
-def _eval_history(setup: Mapping[str, Any]) -> Any:
+def _eval_history(setup: Mapping[str, Any]) -> AutoHistory:
     """AutoHistory from a case's setup block (absent = blank, no signal)."""
-    from app.services.hil.intent import AutoHistory
-
     raw = setup.get("history") or {}
     return AutoHistory(
         approved_recent=int(raw.get("approved_recent", 0)),
@@ -67,13 +67,11 @@ def _eval_history(setup: Mapping[str, Any]) -> Any:
     )
 
 
-def _eval_priors(setup: Mapping[str, Any]) -> list[Any]:
+def _eval_priors(setup: Mapping[str, Any]) -> list[PriorCall]:
     """Prior calls with their outputs: ids minted mid-run live in outputs.
 
     New keys are optional — old cases without them run exactly as before.
     """
-    from app.services.hil.utils import PriorCall
-
     return [
         PriorCall(
             name=str(p.get("tool")),
@@ -84,10 +82,8 @@ def _eval_priors(setup: Mapping[str, Any]) -> list[Any]:
     ]
 
 
-def _eval_call(setup: Mapping[str, Any]) -> Any:
+def _eval_call(setup: Mapping[str, Any]) -> JudgedCall:
     """The pending call, with its schema when the case carries one."""
-    from app.services.hil.intent import JudgedCall
-
     schema = setup.get("tool_schema")
     return JudgedCall(
         tool_name=str(setup.get("tool")),

@@ -67,7 +67,7 @@ class TestDispatchTicketNames:
                 user_id="u1",
                 tool_name="approve",
                 data={"id": "ap_1"},
-                config=self._config(),  # type: ignore[arg-type]
+                config=self._config(),
             )
 
         resolve.assert_not_awaited()
@@ -92,7 +92,7 @@ class TestDispatchTicketNames:
                 user_id="u1",
                 tool_name="revoke",
                 data={"id": "ap_1"},
-                config=self._config(),  # type: ignore[arg-type]
+                config=self._config(),
             )
 
         resolve.assert_not_awaited()
@@ -110,7 +110,7 @@ class TestDispatchTicketNames:
             user_id="u1",
             tool_name="approve",
             data={},
-            config=self._config(),  # type: ignore[arg-type]
+            config=self._config(),
         )
 
         assert result.ok is True
@@ -135,7 +135,7 @@ class TestDispatchTicketNames:
                 user_id="u1",
                 tool_name="approve",
                 data={"id": "ap_1"},
-                config=self._config(),  # type: ignore[arg-type]
+                config=self._config(),
                 integration_only=True,
             )
 
@@ -164,7 +164,7 @@ class TestDispatchTicketNames:
                     user_id="u1",
                     tool_name="approve",
                     data={"id": "ap_1"},
-                    config=self._config(),  # type: ignore[arg-type]
+                    config=self._config(),
                     scoped_tool_names={"GMAIL_SEND_EMAIL"},
                 )
 

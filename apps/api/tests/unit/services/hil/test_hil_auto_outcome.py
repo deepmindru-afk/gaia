@@ -248,7 +248,7 @@ async def test_a_throwing_judge_fails_closed_to_ask() -> None:
             user_messages=["please send the deck to bob now"],
             call=_call(),
             prior_calls=[],
-            judge=_Boom(),  # type: ignore[arg-type]
+            judge=_Boom(),
         )
     assert d.outcome == "ask"
     assert llm.await_count == 0

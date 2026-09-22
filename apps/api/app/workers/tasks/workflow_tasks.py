@@ -1492,10 +1492,6 @@ async def execute_workflow_by_id(
         if not workflow:
             return f"Workflow {workflow_id} not found"
 
-        unpaid = await _skip_unpaid_fire(scheduler, workflow, workflow_id, stamp.trigger_type)
-        if unpaid:
-            return unpaid
-
         # Coalesced trigger events live in Redis keyed by batch_key, not the job
         # payload, so concurrent enqueues dedup to one job. Drained only after the
         # gates below, so a rejected run leaves the buffer intact for a later one.
@@ -1511,7 +1507,11 @@ async def execute_workflow_by_id(
             )
         )
 
-        skipped = await _admit_fire(
+        # The paid gate runs first and short-circuits admission, so an unpaid
+        # fire never claims its scheduled occurrence.
+        skipped = await _skip_unpaid_fire(
+            scheduler, workflow, workflow_id, stamp.trigger_type
+        ) or await _admit_fire(
             workflow, workflow_id, trigger_type, stamp.scheduled_for, actual_fire_utc
         )
         if skipped:
@@ -1567,9 +1567,26 @@ async def execute_workflow_by_id(
         await _record_timed_out_fire(workflow, workflow_id, execution_id, stamp.trigger_type)
         raise
     except Exception as e:
-        # Logged from the fire's own except block, so the wide event carries the
-        # error; _record_run_failure below only does bookkeeping.
-        _log_fire_failure(_unwrapped(e), workflow_id)
+        # Logged here, in the block that caught it, so the wide event carries
+        # the error from the fire's own frame; the helper only does bookkeeping.
+        cause = _unwrapped(e)
+        if isinstance(cause, RateLimitExceededException):
+            # User hit their plan's workflow-execution quota: an expected,
+            # by-design outcome, not a worker failure. WARNING keeps it off the
+            # ARQ failed-task alert.
+            log.warning(
+                f"{LogTag.WORKER} Workflow skipped — rate limit exceeded",
+                workflow_id=workflow_id,
+                error=str(cause),
+                error_type=type(cause).__name__,
+            )
+        else:
+            log.exception(
+                f"{LogTag.WORKER} Error executing workflow",
+                workflow_id=workflow_id,
+                error=str(cause),
+                error_type=type(cause).__name__,
+            )
         return await _record_run_failure(e, workflow, workflow_id, execution_id, stamp.trigger_type)
     finally:
         # Ownership-checked, so the agent path's executor — which adopted this
@@ -1577,28 +1594,6 @@ async def execute_workflow_by_id(
         if conversation_id and lock_task_id:
             await release_lock_if_owned(conversation_id, "", lock_task_id)
         await _reschedule_refill_safe(workflow, workflow_id, batch_key, context)
-
-
-def _log_fire_failure(cause: BaseException, workflow_id: str) -> None:
-    """Log a failed fire at the level its cause deserves.
-
-    A plan-quota rejection is an expected outcome, not a worker failure, so it
-    stays a warning and off the ARQ failed-task alert.
-    """
-    if isinstance(cause, RateLimitExceededException):
-        log.warning(
-            f"{LogTag.WORKER} Workflow skipped — rate limit exceeded",
-            workflow_id=workflow_id,
-            error=str(cause),
-            error_type=type(cause).__name__,
-        )
-        return
-    log.exception(
-        f"{LogTag.WORKER} Error executing workflow",
-        workflow_id=workflow_id,
-        error=str(cause),
-        error_type=type(cause).__name__,
-    )
 
 
 async def _resolve_workflow_user(workflow: Workflow, user_id: str) -> AuthenticatedUser:

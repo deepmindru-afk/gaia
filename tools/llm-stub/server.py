@@ -75,11 +75,13 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "service": "llm-stub"}
 
 
+# evlog-map-disable-next-line wide-event -- standalone dev stub with no wide-event pipeline; nothing emits an event to add to
 @app.get("/control")
 async def get_control() -> dict[str, int]:
     return dict(_state)
 
 
+# evlog-map-disable-next-line wide-event -- standalone dev stub with no wide-event pipeline; nothing emits an event to add to
 @app.post("/control")
 async def set_control(request: Request) -> dict[str, int]:
     body = await request.json()

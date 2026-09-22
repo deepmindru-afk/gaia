@@ -24,8 +24,6 @@ export {
 } from "./approvals";
 export type { ToolFixture } from "./fixtures";
 export { getFixture, TOOL_FIXTURES } from "./fixtures";
-export type { ReactionBadge, ReactionFoldable } from "./reactions";
-export { foldReactionAcks, isReactionAck } from "./reactions";
 export type {
   ChatStreamEvent,
   StreamToolDataEntry,

@@ -81,7 +81,7 @@ def _post(api: str, body: dict[str, Any], user: str, timeout: int) -> str:
         data=json.dumps(body).encode(),
         headers={"content-type": "application/json", "X-Dev-User": user},
     )
-    return urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")  # noqa: S310
+    return urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")  # noqa: S310  # same request, scheme validated above
 
 
 #: How far past a tool_name to look for its arguments. A window rather than a

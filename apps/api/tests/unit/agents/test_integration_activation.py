@@ -133,7 +133,7 @@ def _split_registry(known: set[str], integration_names: set[str]) -> MagicMock:
     return registry
 
 
-def _resolved_tool(name: str):  # type: ignore[no-untyped-def]
+def _resolved_tool(name: str):
     """Build a resolvable fake integration tool with a real renderable schema."""
     from langchain_core.tools import tool as langchain_tool
 

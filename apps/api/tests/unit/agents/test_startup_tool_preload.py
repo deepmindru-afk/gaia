@@ -180,7 +180,7 @@ class TestFactoryDoesNotBindIntegrationTools:
 
         captured: dict = {}
 
-        def _fake_create_agent(**kwargs):  # type: ignore[no-untyped-def]
+        def _fake_create_agent(**kwargs):
             captured.update(kwargs)
             builder = MagicMock()
             builder.compile.return_value = MagicMock()
@@ -263,7 +263,7 @@ class TestPrepareInjectsPreloadDocs:
 
         captured: dict = {}
 
-        async def _fake_build_initial_messages(**kwargs):  # type: ignore[no-untyped-def]
+        async def _fake_build_initial_messages(**kwargs):
             captured.update(kwargs)
             return [kwargs["system_message"]]
 
@@ -344,7 +344,7 @@ class TestPrepareInjectsPreloadDocs:
 
         captured: dict = {}
 
-        async def _fake_build_initial_messages(**kwargs):  # type: ignore[no-untyped-def]
+        async def _fake_build_initial_messages(**kwargs):
             captured.update(kwargs)
             return [kwargs["system_message"]]
 

@@ -1,9 +1,6 @@
 import type { TurnAccumulator } from "@gaia/shared/chat";
-import {
-  applyStreamEvent,
-  createTurnAccumulator,
-  foldReactionAcks,
-} from "@gaia/shared/chat";
+import { applyStreamEvent, createTurnAccumulator } from "@gaia/shared/chat";
+import { foldReactionAcks } from "@gaia/shared/utils";
 import type { FlashListRef } from "@shopify/flash-list";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

@@ -6,11 +6,8 @@ import type {
 
 export type { ImageData, ReplyToMessageData } from "@gaia/shared/api/generated";
 
-import type {
-  ApprovalDecisionPayload,
-  ReactionBadge,
-  ToolDataEntry,
-} from "@gaia/shared/chat";
+import type { ApprovalDecisionPayload, ToolDataEntry } from "@gaia/shared/chat";
+import type { ReactionBadge } from "@gaia/shared/utils";
 import { getAuthToken } from "@/features/auth/utils/auth-storage";
 import { ApiError, apiService } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/constants";

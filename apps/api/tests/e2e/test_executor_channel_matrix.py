@@ -137,7 +137,7 @@ class TestDecideDrain:
 
     def test_message_without_kwargs_is_not_a_commit(self) -> None:
         bare = HumanMessage(content="e-1")
-        bare.additional_kwargs = {}  # type: ignore[assignment]
+        bare.additional_kwargs = {}
         drain = decide_drain([_entry("e-1")], [bare])
         assert [e.id for e in drain.inject] == ["e-1"]
 
