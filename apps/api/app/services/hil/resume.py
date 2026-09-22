@@ -1,26 +1,23 @@
 """Resume driver: wake a background owner parked on a decided approval.
 
 Live runs resume through the executor inbox (ticket redeem). Background runs
-have no live run to wake — their work stopped at the PENDING message — so an
-approval must RE-ENQUEUE the owning unit of work, and a denial must leave a
-visible trace where the owner actually looks:
+have no live run to wake, so an approval must RE-ENQUEUE the owning work and a
+denial must leave a trace where the owner actually looks:
 
-- Tracked todos have no chat. Continuity is the activity log plus a fresh
-  execution: the resume appends the receipt and re-enqueues the todo, whose
-  next execution reads the log and continues. A denial appends the skip.
-- Workflows have their own chat AND a run queue. The resume re-queues the
-  workflow with the receipt in its trigger context, so the run continues with
-  the approval in context and the trace visible in the workflow's conversation.
+- Tracked todos: append the receipt to the activity log and re-enqueue the
+  todo; its next execution reads the log and continues (a denial appends skip).
+- Workflows: re-queue with the receipt in the trigger context, so the run
+  continues with the approval in context and the trace in its conversation.
 
-Every resume costs a fresh human tap (one claim per approval), so no count
-cap is needed — the human is the loop breaker. Everything here is
-best-effort: a resume failure must never fail the tap that approved.
+Every resume costs a fresh human tap, so no count cap is needed. Everything
+here is best-effort: a resume failure must never fail the tap that approved.
 """
 
 from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.models.hil_models import ApprovalLedgerDocument
 from app.services.analytics_service import AnalyticsEvents, capture_event
+from app.services.tracked_todo_service import tracked_todo_service
 from app.services.workflow.execution_service import get_last_run_brief
 from app.services.workflow.queue_service import WorkflowQueueService
 from app.utils.redis_utils import RedisPoolManager
@@ -111,11 +108,9 @@ async def _resume_todo(row: ApprovalLedgerDocument) -> None:
 async def _resume_workflow(row: ApprovalLedgerDocument) -> None:
     """Re-queue the workflow with the receipt in its trigger context.
 
-    A resumed run re-enters through the normal queue (deterministic job id
-    dedups a racing re-fire), carrying the approval receipt plus the prior
-    execution's trace summary so the agent continues past the granted step
-    instead of redoing it. The workflow's own conversation shows the whole
-    arc: park, approval, continuation.
+    Re-enters through the normal queue (deterministic job id dedups a racing
+    re-fire), carrying the approval receipt plus the prior execution's trace so
+    the agent continues past the granted step instead of redoing it.
     """
 
     brief = ""
