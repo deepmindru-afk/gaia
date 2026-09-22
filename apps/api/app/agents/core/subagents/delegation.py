@@ -52,6 +52,7 @@ from app.agents.prompts.delegation_prompts import (
 from app.constants.agents import AgentTag
 from app.constants.hil import SUBAGENT_RESUME_CONFIG_KEY
 from app.constants.log_tags import LogTag
+from app.constants.streaming import DetachedStreamKind
 from app.core.stream_manager import stream_manager
 from app.db.repositories.conversations import conversation_repository
 from app.models.agent_models import (
@@ -366,6 +367,7 @@ async def _execute_on_own_stream(
         user_id=ctx.user_id or "",
         task_id=delegation.subagent_id,
         bot_message_id=_folds_into(delegation),
+        kind=DetachedStreamKind.SUBAGENT,
     )
     ctx.stream_id = stream_id
     ctx.parent_stream_id = parent_stream_id

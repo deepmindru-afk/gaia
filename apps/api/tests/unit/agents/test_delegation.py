@@ -309,6 +309,8 @@ class TestABackgroundRunOwnsItsStream:
         assert announced["stream_id"] == seen["stream_id"] != "parent-stream"
         assert announced["task_id"] == "row-1"
         assert announced["bot_message_id"] == "bot-msg-1"
+        # The client upserts only this run's cards: the turn's own run may still be writing.
+        assert announced["kind"] == "subagent"
         # The gate reads both off the run's configurable: the card goes on this
         # stream, and the approval record gets the recipe that resumes the run.
         assert seen["configurable"]["stream_id"] == seen["stream_id"]

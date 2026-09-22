@@ -480,6 +480,8 @@ class TestPrepareRunFromItem:
             # key to decide between folding into an existing message and opening
             # a fresh placeholder.
             "bot_message_id": None,
+            # An executor run owns its message: the client folds it as the run's own.
+            "kind": "executor",
         }
 
     async def test_an_item_with_no_user_still_prepares_but_announces_nothing(

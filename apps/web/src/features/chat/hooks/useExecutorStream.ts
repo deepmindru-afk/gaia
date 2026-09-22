@@ -1,6 +1,8 @@
 import {
   applyStreamEvent,
+  createOwnToolDataFold,
   createTurnAccumulator,
+  foldOwnToolData,
   parseChatStreamEvent,
   type TurnAccumulator,
 } from "@shared/chat";
@@ -35,10 +37,46 @@ interface ExecutorStreamStartedEvent {
   stream_id: string;
   conversation_id: string;
   task_id: string;
-  /** Set for a HIL resume: the ORIGINAL turn's bot message, which this stream
-   *  continues. Absent for a plain queued run, which gets its own placeholder. */
+  /** The message this stream folds into: for an executor, a HIL resume's
+   *  ORIGINAL turn (absent for a plain queued run, which gets its own
+   *  placeholder); for a background subagent, the turn that dispatched it. */
   bot_message_id?: string | null;
+  /** Mirrors the backend DetachedStreamKind. An executor run owns its message;
+   *  a background subagent only adds its own cards to one another run may still
+   *  be writing. Absent means executor. */
+  kind?: "executor" | "subagent";
 }
+
+/** How one stream's accumulator lands on the message it renders into. */
+interface StreamProjection {
+  project: (current: IMessage, acc: TurnAccumulator) => IMessage;
+  finalize: (
+    current: IMessage,
+    acc: TurnAccumulator,
+    error: string | undefined,
+  ) => IMessage;
+}
+
+/** A background subagent's projection: fold its own cards in, touch nothing else. */
+const subagentProjection = (): StreamProjection => {
+  let fold = createOwnToolDataFold();
+  const project = (current: IMessage, acc: TurnAccumulator): IMessage => {
+    const folded = foldOwnToolData(
+      fold,
+      (current.tool_data as TurnAccumulator["toolData"] | null) ?? [],
+      acc.toolData,
+    );
+    fold = folded.fold;
+    return {
+      ...current,
+      tool_data: folded.toolData as TypedToolDataEntry[],
+      updatedAt: new Date(),
+    };
+  };
+  // The turn's text and status belong to the run that owns the message; a
+  // subagent that fails says so in its own row and in the executor's report.
+  return { project, finalize: (current, acc) => project(current, acc) };
+};
 
 /** Project the shared accumulator onto the placeholder message record.
  *
@@ -64,6 +102,83 @@ const applyAccumulatorToMessage = (
 });
 
 /**
+ * An executor run's projection and its starting accumulator. It REPLACES the
+ * record's fields, so a continued message seeds the accumulator with what it
+ * already has, or its earlier cards and text would be wiped by the first
+ * resumed frame; only once a `response` frame moves the text off that seed is
+ * the text written.
+ */
+const executorProjection = (
+  existing: IMessage | undefined,
+): { projection: StreamProjection; initial: TurnAccumulator } => {
+  const seededContent = existing?.content ?? "";
+  const initial = existing
+    ? {
+        ...createTurnAccumulator(seededContent),
+        toolData: [
+          ...((existing.tool_data as TurnAccumulator["toolData"]) ?? []),
+        ],
+      }
+    : createTurnAccumulator();
+  const hasNewContent = (acc: TurnAccumulator) =>
+    acc.responseText !== seededContent;
+  return {
+    initial,
+    projection: {
+      project: (current, acc) =>
+        applyAccumulatorToMessage(current, acc, hasNewContent(acc)),
+      finalize: (current, acc, error) => ({
+        ...applyAccumulatorToMessage(current, acc, hasNewContent(acc)),
+        status: error ? "failed" : "sent",
+        error: error ?? null,
+      }),
+    },
+  };
+};
+
+/**
+ * Label the background "working" row from a frame. The turn session (no longer
+ * reading) normally drives the loading indicator; a resumed executor streams
+ * here instead, so leaving it unlabelled would freeze it on the pause's
+ * "Resuming" text. A subagent's progress is its own row's, never the turn's.
+ */
+const labelBackgroundProgress = (
+  conversationId: string,
+  parsed: Parameters<typeof loadingLabelForEvent>[0],
+  isSubagent: boolean,
+) => {
+  const label = loadingLabelForEvent(parsed);
+  if (!label) return;
+  const streams = useStreamStore.getState();
+  if (!isSubagent) {
+    streams.setSessionLoadingText(conversationId, label.text, label.toolInfo);
+  }
+  streams.setBackgroundLoading(conversationId, label.text, label.toolInfo);
+};
+
+/**
+ * A placeholder for a run with no message to continue (a plain queued task).
+ * id === task_id so useBgMessageWebSocket can find and replace it when the
+ * final conversation.new_message arrives; persisted so tool cards survive a
+ * refresh before then — an orphan only occurs if the run never finalizes.
+ */
+const openPlaceholder = async (conversationId: string, taskId: string) => {
+  const placeholder: IMessage = {
+    id: taskId,
+    conversationId,
+    content: "",
+    role: "assistant",
+    status: "sending",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    messageId: taskId,
+    tool_data: null,
+  };
+  useChatStore.getState().addOrUpdateMessage(placeholder);
+  await db.putMessage(placeholder);
+};
+
+/**
  * Handle one `executor.stream_started` event: open the SSE connection and fold
  * it into a placeholder message. Takes its two live sets as arguments so the
  * whole run is exercisable without a React renderer.
@@ -78,6 +193,7 @@ export const createExecutorStreamHandler =
     const event = raw as ExecutorStreamStartedEvent;
     const { stream_id, conversation_id, task_id } = event;
     const resumedMessageId = event.bot_message_id ?? null;
+    const isSubagent = event.kind === "subagent";
 
     if (!stream_id || !conversation_id || !task_id) {
       return;
@@ -88,6 +204,25 @@ export const createExecutorStreamHandler =
       // Not the active conversation — skip live streaming, final WS message handles it
       return;
     }
+
+    // A HIL resume continues the original turn's message, and a background
+    // subagent adds to the turn that dispatched it: both stream into THAT record
+    // so the turn keeps one tool accordion.
+    const existing = resumedMessageId
+      ? (
+          useChatStore.getState().messagesByConversation[conversation_id] ?? []
+        ).find((m) => m.id === resumedMessageId)
+      : undefined;
+    if (isSubagent && !existing) {
+      // With that turn not loaded, the subagent's frames are saved onto it
+      // server-side and show on reload.
+      streamLog("lifecycle", "executor-stream:subagent-target-missing", {
+        conversationId: conversation_id,
+        detail: { stream_id, task_id },
+      });
+      return;
+    }
+    const targetId = existing ? resumedMessageId! : task_id;
 
     if (activeStreams.has(stream_id)) {
       // Already streaming this run — ignore a duplicate stream_started.
@@ -106,56 +241,18 @@ export const createExecutorStreamHandler =
       useStreamStore.getState().clearBackgroundLoading(conversation_id);
     }, BACKGROUND_RUN_TIMEOUT_MS);
 
-    // A HIL resume continues the original turn's message: stream into THAT
-    // record so the turn keeps one tool accordion. Only a run with no message
-    // to continue (a plain queued task) opens its own placeholder.
-    const existing = resumedMessageId
-      ? (
-          useChatStore.getState().messagesByConversation[conversation_id] ?? []
-        ).find((m) => m.id === resumedMessageId)
-      : undefined;
-    const targetId = existing ? resumedMessageId! : task_id;
-
     if (!existing) {
-      // Create a placeholder message in the store for live tool progress.
-      // id === task_id so useBgMessageWebSocket can find and remove it when the
-      // final conversation.new_message arrives.
-      const placeholder: IMessage = {
-        id: task_id,
-        conversationId: conversation_id,
-        content: "",
-        role: "assistant",
-        status: "sending",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        messageId: task_id,
-        tool_data: null,
-      };
-      useChatStore.getState().addOrUpdateMessage(placeholder);
-      // Persists the placeholder (keyed by task_id) so tool cards survive a
-      // refresh before conversation.new_message arrives; useBgMessageWebSocket
-      // replaces it by task_id — an orphan only occurs if the run never finalizes.
-      await db.putMessage(placeholder);
+      await openPlaceholder(conversation_id, task_id);
     }
 
     const controller = new AbortController();
     controllers.add(controller);
 
-    // The projection below REPLACES the record's fields, so a continued message
-    // must seed the accumulator with what it already has or its earlier cards
-    // and text would be wiped by the first resumed frame.
-    const seededContent = existing?.content ?? "";
-    let acc = createTurnAccumulator();
-    if (existing) {
-      acc = {
-        ...createTurnAccumulator(seededContent),
-        toolData: [
-          ...((existing.tool_data as TurnAccumulator["toolData"]) ?? []),
-        ],
-      };
-    }
-    // Only once a `response` frame moves the text off its seed may we write it.
-    const hasNewContent = () => acc.responseText !== seededContent;
+    // A subagent folds its own entries in, so it starts from an empty accumulator.
+    const { projection, initial } = isSubagent
+      ? { projection: subagentProjection(), initial: createTurnAccumulator() }
+      : executorProjection(existing);
+    let acc = initial;
 
     // Coalesced IndexedDB persistence: the store update renders live, the
     // throttled DB write is only a refresh-survival snapshot.
@@ -181,7 +278,7 @@ export const createExecutorStreamHandler =
       const current = msgs.find((m) => m.id === targetId);
       // Target momentarily absent — skip this frame, keep the stream alive.
       if (!current) return;
-      const updated = applyAccumulatorToMessage(current, acc, hasNewContent());
+      const updated = projection.project(current, acc);
       state.updateMessageInPlace(updated);
       scheduleWrite(updated);
     };
@@ -201,11 +298,7 @@ export const createExecutorStreamHandler =
       const msgs = state.messagesByConversation[conversation_id] ?? [];
       const current = msgs.find((m) => m.id === targetId);
       if (current) {
-        const finalized: IMessage = {
-          ...applyAccumulatorToMessage(current, acc, hasNewContent()),
-          status: error ? "failed" : "sent",
-          error: error ?? null,
-        };
+        const finalized = projection.finalize(current, acc, error);
         state.updateMessageInPlace(finalized);
         void db.putMessage(finalized);
       }
@@ -246,26 +339,7 @@ export const createExecutorStreamHandler =
               });
               continue;
             }
-            // The turn session (no longer reading) normally drives the loading
-            // indicator; a resumed run streams here instead, so leaving it
-            // unlabelled would freeze it on the pause's "Resuming" text.
-            const label = loadingLabelForEvent(parsed);
-            if (label) {
-              useStreamStore
-                .getState()
-                .setSessionLoadingText(
-                  conversation_id,
-                  label.text,
-                  label.toolInfo,
-                );
-              useStreamStore
-                .getState()
-                .setBackgroundLoading(
-                  conversation_id,
-                  label.text,
-                  label.toolInfo,
-                );
-            }
+            labelBackgroundProgress(conversation_id, parsed, isSubagent);
             acc = applyStreamEvent(acc, parsed);
           }
           flushToStore();

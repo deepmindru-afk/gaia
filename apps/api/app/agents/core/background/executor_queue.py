@@ -28,6 +28,7 @@ from app.agents.core.background.session import (
 )
 from app.constants.cache import EXECUTOR_BUSY_PREFIX, EXECUTOR_BUSY_TTL
 from app.constants.log_tags import LogTag
+from app.constants.streaming import WS_EVENT_EXECUTOR_STREAM_STARTED, DetachedStreamKind
 from app.core.stream_manager import StreamManager
 from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
@@ -313,6 +314,7 @@ async def open_detached_stream(
     user_id: str,
     task_id: str | None,
     bot_message_id: str | None,
+    kind: DetachedStreamKind,
 ) -> StreamSession:
     """Mint a stream a detached run owns and announce it with executor.stream_started.
 
@@ -330,11 +332,12 @@ async def open_detached_stream(
         await websocket_manager.broadcast_to_user(
             user_id,
             {
-                "type": "executor.stream_started",
+                "type": WS_EVENT_EXECUTOR_STREAM_STARTED,
                 "stream_id": stream_id,
                 "conversation_id": conversation_id,
                 "task_id": task_id,
                 "bot_message_id": bot_message_id,
+                "kind": kind.value,
             },
         )
     return session
@@ -397,6 +400,7 @@ async def prepare_run_from_item(
         # this stream into it instead of opening a second placeholder (which
         # would render its own tool accordion).
         bot_message_id=queued_bot_message_id,
+        kind=DetachedStreamKind.EXECUTOR,
     )
     session.executor_spawned = True
 
