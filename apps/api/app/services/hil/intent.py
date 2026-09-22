@@ -507,7 +507,9 @@ def _outcome(verdict: _Verdict, user_text: str, tool_name: str) -> AutoOutcome:
     """
     if verdict.verdict == "reject":
         return "reject"
-    return "accept" if _accept(verdict, user_text, tool_name) else "ask"
+    # NOSONAR justification: _accept returns True on a grounded allow (test_hil_intent's
+    # accept cases pin it); Sonar's cross-function flow analysis wrongly calls it unreachable
+    return "accept" if _accept(verdict, user_text, tool_name) else "ask"  # NOSONAR pythonbugs:S2583
 
 
 def _accept(verdict: _Verdict, user_text: str, tool_name: str) -> bool:
