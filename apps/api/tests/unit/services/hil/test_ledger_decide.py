@@ -77,7 +77,9 @@ class TestDecideLedger:
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
             patch.object(
-                ledger_decide, "_deliver_ticket", new=AsyncMock(side_effect=RuntimeError("redis down"))
+                ledger_decide,
+                "_deliver_ticket",
+                new=AsyncMock(side_effect=RuntimeError("redis down")),
             ),
             patch.object(ledger_decide, "_wake_agent", new=AsyncMock()) as wake,
         ):
@@ -254,9 +256,7 @@ class TestConversationFlagSync:
             patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
             patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
             patch.object(ledger_decide, "capture_event"),
-            patch.object(
-                ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()
-            ) as sync,
+            patch.object(ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()) as sync,
         ):
             await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
 
@@ -272,9 +272,7 @@ class TestConversationFlagSync:
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()),
             patch.object(ledger_decide, "capture_event"),
-            patch.object(
-                ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()
-            ) as sync,
+            patch.object(ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()) as sync,
         ):
             await revoke_ticket(
                 "ap_abc", user_id="u1", conversation_id="conv-1", caller="executor_conv-1"
@@ -294,9 +292,7 @@ class TestConversationFlagSync:
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()),
             patch.object(ledger_decide, "capture_event"),
-            patch.object(
-                ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()
-            ) as sync,
+            patch.object(ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()) as sync,
             pytest.raises(ApprovalRequestForbiddenError),
         ):
             await revoke_ticket(
@@ -478,9 +474,7 @@ class TestRedeemExecution:
         with (
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(ledger_decide, "dispatch_tool", new=AsyncMock(return_value=ok_result)),
-            patch.object(
-                ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()
-            ) as sync,
+            patch.object(ledger_decide, "sync_conversation_approval_flag", new=AsyncMock()) as sync,
         ):
             result = await redeem_approved("ap_abc", **self._redeem_kwargs())
 
@@ -716,9 +710,7 @@ class TestRevokeTicket:
         repo = _repo(_row())
         with (
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
-            patch.object(
-                ledger_decide, "publish_ledger_revocation", new=AsyncMock()
-            ) as tombstone,
+            patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()) as tombstone,
             pytest.raises(ApprovalRequestForbiddenError),
         ):
             await revoke_ticket(
@@ -806,9 +798,7 @@ class TestApproveResumesBackgroundOwner:
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
             patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
-            patch.object(
-                ledger_decide, "resume_owner_after_approval", new=AsyncMock()
-            ) as resume,
+            patch.object(ledger_decide, "resume_owner_after_approval", new=AsyncMock()) as resume,
         ):
             outcome = await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
 
@@ -824,9 +814,7 @@ class TestApproveResumesBackgroundOwner:
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
             patch.object(ledger_decide, "_deliver_ticket", new=AsyncMock()),
-            patch.object(
-                ledger_decide, "resume_owner_after_approval", new=AsyncMock()
-            ) as resume,
+            patch.object(ledger_decide, "resume_owner_after_approval", new=AsyncMock()) as resume,
         ):
             await decide_ledger("ap_abc", user_id="u1", kind="approve", v=3)
 
@@ -842,21 +830,16 @@ class TestApproveResumesBackgroundOwner:
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
             patch.object(ledger_decide, "publish_ledger_decision", new=AsyncMock()),
             patch.object(ledger_decide, "_deliver_verdict", new=AsyncMock()),
-            patch.object(
-                ledger_decide, "resume_owner_after_approval", new=AsyncMock()
-            ) as resume,
-            patch.object(
-                ledger_decide, "record_owner_deny", new=AsyncMock()
-            ) as record,
+            patch.object(ledger_decide, "resume_owner_after_approval", new=AsyncMock()) as resume,
+            patch.object(ledger_decide, "record_owner_deny", new=AsyncMock()) as record,
         ):
-            outcome = await decide_ledger(
-                "ap_abc", user_id="u1", kind="deny", feedback="nope", v=3
-            )
+            outcome = await decide_ledger("ap_abc", user_id="u1", kind="deny", feedback="nope", v=3)
 
         assert outcome.committed is True
         assert outcome.state == LedgerState.DENIED
         resume.assert_not_called()
         record.assert_awaited_once()
+
     async def test_redeem_runs_stored_envelope_and_returns_output(self) -> None:
         """The model supplies no args: the ticket IS the approval_id and the
         envelope runs verbatim."""
@@ -983,8 +966,11 @@ class TestConditionalApproveBecomesDeny:
         assert outcome.committed is True
         assert outcome.state == LedgerState.DENIED
         repo.transition.assert_awaited_once_with(
-            "ap_abc", LedgerState.PENDING, LedgerState.DENIED,
-            decided_by="u1", feedback="cc finance",
+            "ap_abc",
+            LedgerState.PENDING,
+            LedgerState.DENIED,
+            decided_by="u1",
+            feedback="cc finance",
         )
         deliver.assert_not_awaited()
         verdict.assert_awaited_once()
@@ -1084,9 +1070,7 @@ class TestCancelLedgerApprovals:
         repo.get_by_approval_id = AsyncMock(return_value=mine)
         with (
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
-            patch.object(
-                ledger_decide, "publish_ledger_revocation", new=AsyncMock()
-            ) as tombstone,
+            patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()) as tombstone,
         ):
             cancelled = await cancel_ledger_approvals("conv-1", "u1")
 
@@ -1105,9 +1089,7 @@ class TestCancelLedgerApprovals:
         repo.transition = AsyncMock(return_value=False)
         with (
             patch.object(ledger_decide, "approval_ledger_repository", new=repo),
-            patch.object(
-                ledger_decide, "publish_ledger_revocation", new=AsyncMock()
-            ) as tombstone,
+            patch.object(ledger_decide, "publish_ledger_revocation", new=AsyncMock()) as tombstone,
         ):
             cancelled = await cancel_ledger_approvals("conv-1", "u1")
 
@@ -1234,18 +1216,14 @@ class TestReclaimDeadHolder:
     async def test_free_lock_means_proceed(self) -> None:
         from app.services.hil import ledger_decide
 
-        with patch.object(
-            ledger_decide, "get_lock_holder", new=AsyncMock(return_value=None)
-        ):
+        with patch.object(ledger_decide, "get_lock_holder", new=AsyncMock(return_value=None)):
             assert await ledger_decide._reclaim_dead_holder("conv-1") is True
 
     async def test_live_session_means_hold(self) -> None:
         from app.services.hil import ledger_decide
 
         with (
-            patch.object(
-                ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")
-            ),
+            patch.object(ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")),
             patch.object(ledger_decide, "get_session", return_value=MagicMock()),
         ):
             assert await ledger_decide._reclaim_dead_holder("conv-1") is False
@@ -1258,9 +1236,7 @@ class TestReclaimDeadHolder:
 
         client = SimpleNamespace(ttl=AsyncMock(return_value=EXECUTOR_BUSY_TTL - 10))
         with (
-            patch.object(
-                ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")
-            ),
+            patch.object(ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")),
             patch.object(ledger_decide, "get_session", return_value=None),
             patch.object(ledger_decide, "redis_cache", new=SimpleNamespace(client=client)),
             patch.object(
@@ -1279,9 +1255,7 @@ class TestReclaimDeadHolder:
         parked = SimpleNamespace(resume_item={"task": "x"}, subagent_thread_id=None)
         client = SimpleNamespace(ttl=AsyncMock(return_value=100))
         with (
-            patch.object(
-                ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")
-            ),
+            patch.object(ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")),
             patch.object(ledger_decide, "get_session", return_value=None),
             patch.object(ledger_decide, "redis_cache", new=SimpleNamespace(client=client)),
             patch.object(
@@ -1301,9 +1275,7 @@ class TestReclaimDeadHolder:
 
         client = SimpleNamespace(ttl=AsyncMock(return_value=100))
         with (
-            patch.object(
-                ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")
-            ),
+            patch.object(ledger_decide, "get_lock_holder", new=AsyncMock(return_value="s1:t1")),
             patch.object(ledger_decide, "get_session", return_value=None),
             patch.object(ledger_decide, "redis_cache", new=SimpleNamespace(client=client)),
             patch.object(

@@ -333,7 +333,10 @@ class TestLedgerDecisionRouting:
     @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
     @patch("app.api.v1.endpoints.approvals.resolve_approval", new_callable=AsyncMock)
     async def test_single_decision_routes_to_ledger_with_v(
-        self, mock_resolve: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
+        self,
+        mock_resolve: AsyncMock,
+        mock_flag: AsyncMock,
+        mock_decide: AsyncMock,
         client: AsyncClient,
     ):
         from app.models.hil_models import LedgerState
@@ -341,8 +344,10 @@ class TestLedgerDecisionRouting:
 
         mock_flag.return_value = True
         mock_decide.return_value = LedgerDecision(
-            committed=True, approval_id="ap_1",
-            prior_state=LedgerState.PENDING, state=LedgerState.APPROVED,
+            committed=True,
+            approval_id="ap_1",
+            prior_state=LedgerState.PENDING,
+            state=LedgerState.APPROVED,
         )
         resp = await client.post(
             f"{APPROVALS_BASE}/ap_1/decision", json={"decision": "approve", "v": 3}
@@ -350,7 +355,11 @@ class TestLedgerDecisionRouting:
         assert resp.status_code == 200
         assert resp.json() == {"success": True, "reason": None, "status": "approved"}
         mock_decide.assert_awaited_once_with(
-            "ap_1", user_id=USER_ID, kind="approve", feedback=None, v=3,
+            "ap_1",
+            user_id=USER_ID,
+            kind="approve",
+            feedback=None,
+            v=3,
         )
         mock_resolve.assert_not_awaited()
 
@@ -358,7 +367,10 @@ class TestLedgerDecisionRouting:
     @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
     @patch("app.api.v1.endpoints.approvals.resolve_approval", new_callable=AsyncMock)
     async def test_single_decision_stays_on_old_path_when_flag_off(
-        self, mock_resolve: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
+        self,
+        mock_resolve: AsyncMock,
+        mock_flag: AsyncMock,
+        mock_decide: AsyncMock,
         client: AsyncClient,
     ):
         mock_flag.return_value = False
@@ -371,7 +383,10 @@ class TestLedgerDecisionRouting:
     @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
     @patch("app.api.v1.endpoints.approvals.resolve_approvals_batch", new_callable=AsyncMock)
     async def test_batch_decision_routes_each_item_to_ledger(
-        self, mock_batch: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
+        self,
+        mock_batch: AsyncMock,
+        mock_flag: AsyncMock,
+        mock_decide: AsyncMock,
         client: AsyncClient,
     ):
         from app.models.hil_models import LedgerState
@@ -379,17 +394,27 @@ class TestLedgerDecisionRouting:
 
         mock_flag.return_value = True
         mock_decide.side_effect = [
-            LedgerDecision(committed=True, approval_id="ap_1",
-                           prior_state=LedgerState.PENDING, state=LedgerState.APPROVED),
-            LedgerDecision(committed=False, approval_id="ap_2",
-                           prior_state=LedgerState.APPROVED, state=LedgerState.APPROVED),
+            LedgerDecision(
+                committed=True,
+                approval_id="ap_1",
+                prior_state=LedgerState.PENDING,
+                state=LedgerState.APPROVED,
+            ),
+            LedgerDecision(
+                committed=False,
+                approval_id="ap_2",
+                prior_state=LedgerState.APPROVED,
+                state=LedgerState.APPROVED,
+            ),
         ]
         resp = await client.post(
             f"{APPROVALS_BASE}/batch-decision",
-            json={"decisions": [
-                {"approval_id": "ap_1", "decision": "approve", "v": 1},
-                {"approval_id": "ap_2", "decision": "approve", "v": 0},
-            ]},
+            json={
+                "decisions": [
+                    {"approval_id": "ap_1", "decision": "approve", "v": 1},
+                    {"approval_id": "ap_2", "decision": "approve", "v": 0},
+                ]
+            },
         )
         assert resp.status_code == 200
         outcomes = resp.json()["outcomes"]
@@ -408,7 +433,10 @@ class TestLedgerAutoPolicyParity:
     @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
     @patch("app.api.v1.endpoints.approvals.resolve_approval", new_callable=AsyncMock)
     async def test_stale_single_carries_reason_and_status(
-        self, mock_resolve: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
+        self,
+        mock_resolve: AsyncMock,
+        mock_flag: AsyncMock,
+        mock_decide: AsyncMock,
         client: AsyncClient,
     ):
         from app.models.hil_models import LedgerState
@@ -416,8 +444,11 @@ class TestLedgerAutoPolicyParity:
 
         mock_flag.return_value = True
         mock_decide.return_value = LedgerDecision(
-            committed=False, approval_id="ap_1",
-            prior_state=LedgerState.APPROVED, state=LedgerState.APPROVED, stale=True,
+            committed=False,
+            approval_id="ap_1",
+            prior_state=LedgerState.APPROVED,
+            state=LedgerState.APPROVED,
+            stale=True,
         )
         resp = await client.post(
             f"{APPROVALS_BASE}/ap_1/decision", json={"decision": "approve", "v": 0}
@@ -441,8 +472,10 @@ class TestLedgerStaleVersionHonesty:
 
         mock_flag.return_value = True
         mock_decide.return_value = LedgerDecision(
-            committed=False, approval_id="ap_1",
-            prior_state=LedgerState.APPROVED, state=LedgerState.APPROVED,
+            committed=False,
+            approval_id="ap_1",
+            prior_state=LedgerState.APPROVED,
+            state=LedgerState.APPROVED,
         )
         resp = await client.post(
             f"{APPROVALS_BASE}/ap_1/decision", json={"decision": "approve", "v": 0}

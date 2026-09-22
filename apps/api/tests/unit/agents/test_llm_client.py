@@ -39,6 +39,7 @@ from app.agents.llm.client import (
     LLMInvokeOptions,
     ResponseFacts,
     StructuredCallOptions,
+    _aux_structured_runnable,
     _build_default_llm,
     _create_configurable_llm,
     _GenerationIdCallback,
@@ -50,7 +51,6 @@ from app.agents.llm.client import (
     _requested_model,
     _stamp_fallback,
     _with_usage_handler,
-    _aux_structured_runnable,
     ainvoke_llm,
     ainvoke_structured,
     ainvoke_structured_gemini,
@@ -753,9 +753,7 @@ class TestBackgroundStructuredRunnable:
         """A one-shot naming its own model must ask for it — the default must not leak in."""
         mock_helper.return_value.model_kwargs = None
 
-        _aux_structured_runnable(
-            self._Shape, 0.1, None, model_name="google/gemini-3.5-flash-lite"
-        )
+        _aux_structured_runnable(self._Shape, 0.1, None, model_name="google/gemini-3.5-flash-lite")
 
         mock_helper.return_value.model_copy.assert_called_once_with(
             update={"model_name": "google/gemini-3.5-flash-lite"}
@@ -773,9 +771,7 @@ class TestBackgroundStructuredRunnable:
         )
 
     @patch("app.agents.llm.client.get_helper_llm")
-    def test_fallbacks_ride_the_models_array_primary_first(
-        self, mock_helper: MagicMock
-    ) -> None:
+    def test_fallbacks_ride_the_models_array_primary_first(self, mock_helper: MagicMock) -> None:
         """OpenRouter tries `models` in order on transport errors only — the
         primary stays first, and the provider order it already carried survives."""
         mock_helper.return_value.model_kwargs = {"provider": {"order": ["google"]}}

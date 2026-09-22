@@ -366,7 +366,7 @@ class TestBackgroundVisibility:
             for branch in clause["$or"]:
                 good = True
                 for key, cond in branch.items():
-                    value = doc.get(key, None)
+                    value = doc.get(key)
                     if isinstance(cond, dict):
                         if "$ne" in cond and value == cond["$ne"]:
                             good = False
@@ -408,14 +408,10 @@ class TestBackgroundVisibility:
             is True
         )
 
-    async def test_sourceless_legacy_row_stays_visible(
-        self, repo: ConversationRepository
-    ) -> None:
+    async def test_sourceless_legacy_row_stays_visible(self, repo: ConversationRepository) -> None:
         assert self._matches(repo, {"user_id": USER_ID, "starred": False}) is True
 
-    async def test_null_starred_reads_as_unstarred(
-        self, repo: ConversationRepository
-    ) -> None:
+    async def test_null_starred_reads_as_unstarred(self, repo: ConversationRepository) -> None:
         """Several write paths store explicit null: a null-starred background
         row with a live approval must surface, not vanish."""
         assert (
@@ -438,20 +434,15 @@ class TestBackgroundVisibility:
             is False
         )
 
-    async def test_web_conversation_ignores_the_flag(
-        self, repo: ConversationRepository
-    ) -> None:
-        assert (
-            self._matches(
-                repo, {"user_id": USER_ID, "source": "web", "starred": False}
-            )
-            is True
-        )
+    async def test_web_conversation_ignores_the_flag(self, repo: ConversationRepository) -> None:
+        assert self._matches(repo, {"user_id": USER_ID, "source": "web", "starred": False}) is True
 
     async def test_mark_raises_flag_and_stamps_source_only_when_missing(
         self, repo: ConversationRepository, collection: MagicMock
     ) -> None:
-        assert await repo.mark_background_with_live_approval(CONVERSATION_ID, user_id=USER_ID) is True
+        assert (
+            await repo.mark_background_with_live_approval(CONVERSATION_ID, user_id=USER_ID) is True
+        )
 
         first, second = collection.update_one.await_args_list
         assert first.args[1] == {"$set": {"has_live_approval": True}}
@@ -463,7 +454,9 @@ class TestBackgroundVisibility:
     ) -> None:
         _matched(collection, 0)
 
-        assert await repo.mark_background_with_live_approval(CONVERSATION_ID, user_id=USER_ID) is False
+        assert (
+            await repo.mark_background_with_live_approval(CONVERSATION_ID, user_id=USER_ID) is False
+        )
         collection.update_one.assert_awaited_once()
 
     async def test_refresh_rewrites_the_flag(

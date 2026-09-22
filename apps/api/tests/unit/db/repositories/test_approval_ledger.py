@@ -19,7 +19,9 @@ from app.db.repositories.approval_ledger import (
 from app.models.hil_models import LedgerState
 
 
-def _doc(state: str = "pending", approval_id: str = "ap_1", fingerprint: str = "fp") -> dict[str, Any]:
+def _doc(
+    state: str = "pending", approval_id: str = "ap_1", fingerprint: str = "fp"
+) -> dict[str, Any]:
     return {
         "_id": "oid",
         "approval_id": approval_id,

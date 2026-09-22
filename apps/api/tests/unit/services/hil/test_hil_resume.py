@@ -45,9 +45,7 @@ class TestResumeAfterApproval:
             patch(f"{MODULE}._resume_todo", new=AsyncMock()) as resume,
         ):
             repo.claim_resume = AsyncMock(return_value=False)
-            await resume_owner_after_approval(
-                _row(owner_run_type="todo", owner_id="todo-1")
-            )
+            await resume_owner_after_approval(_row(owner_run_type="todo", owner_id="todo-1"))
         resume.assert_not_awaited()
 
     async def test_todo_resume_logs_and_reenqueues(self) -> None:
@@ -55,15 +53,11 @@ class TestResumeAfterApproval:
         from app.services.hil.resume import resume_owner_after_approval
 
         with (
-            patch.object(
-                resume_module, "approval_ledger_repository"
-            ) as repo,
+            patch.object(resume_module, "approval_ledger_repository") as repo,
             patch(f"{MODULE}._resume_todo", new=AsyncMock()) as resume,
         ):
             repo.claim_resume = AsyncMock(return_value=True)
-            await resume_owner_after_approval(
-                _row(owner_run_type="todo", owner_id="todo-1")
-            )
+            await resume_owner_after_approval(_row(owner_run_type="todo", owner_id="todo-1"))
         resume.assert_awaited_once()
 
     async def test_unknown_owner_type_claims_but_runs_nothing(self) -> None:
@@ -72,9 +66,7 @@ class TestResumeAfterApproval:
         with patch(f"{MODULE}.approval_ledger_repository") as repo:
             repo.claim_resume = AsyncMock(return_value=True)
             with patch(f"{MODULE}.log"):
-                await resume_owner_after_approval(
-                    _row(owner_run_type="cron", owner_id="x")
-                )
+                await resume_owner_after_approval(_row(owner_run_type="cron", owner_id="x"))
         repo.claim_resume.assert_awaited_once()
 
     async def test_resume_failure_never_raises(self) -> None:
@@ -88,9 +80,7 @@ class TestResumeAfterApproval:
             ),
         ):
             repo.claim_resume = AsyncMock(return_value=True)
-            await resume_owner_after_approval(
-                _row(owner_run_type="workflow", owner_id="wf-1")
-            )
+            await resume_owner_after_approval(_row(owner_run_type="workflow", owner_id="wf-1"))
 
 
 class TestResumeTodo:
@@ -152,9 +142,7 @@ class TestRecordDeny:
             "app.services.tracked_todo_service.tracked_todo_service",
             service,
         ):
-            await record_owner_deny(
-                _row(owner_run_type="todo", owner_id="todo-3"), "too pricey"
-            )
+            await record_owner_deny(_row(owner_run_type="todo", owner_id="todo-3"), "too pricey")
         entry = service.append_activity_entry.await_args.kwargs["entry"]
         assert "denied" in entry and "too pricey" in entry
 

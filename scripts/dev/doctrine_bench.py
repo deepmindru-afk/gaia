@@ -16,16 +16,16 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import re
 import subprocess
 import sys
-from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts" / "dev"))
 sys.path.insert(0, str(REPO / "apps" / "api"))
 
-from agent_bench import SUBAGENT_TASKS  # noqa: E402
+from agent_bench import SUBAGENT_TASKS
 
 #: (label, expected first action). The integration varies per task; only the
 #: delegation verb is scored strictly, integration match is a bonus signal.
@@ -115,7 +115,9 @@ def main() -> None:
                     total += 1
                     ok = action == EXPECTED_ACTION[variant]
                     correct += ok
-                    print(f"  [{key}] {task[:45]!r} -> {action} {'OK' if ok else 'MISS'}", flush=True)
+                    print(
+                        f"  [{key}] {task[:45]!r} -> {action} {'OK' if ok else 'MISS'}", flush=True
+                    )
             results[key] = {"correct": correct, "total": total}
 
     print("\n=== doctrine score (first-action match) ===")

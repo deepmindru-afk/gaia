@@ -348,16 +348,12 @@ def cmd_run(args: argparse.Namespace) -> None:
         for attempt in range(1, args.runs + 1):
             for task in tasks:
                 print(f"[{args.label}] run {attempt}/{args.runs} task={task[:50]!r}", flush=True)
-                results.append(
-                    run_executor_once(args.api, args.user, task, args.timeout, user_id)
-                )
+                results.append(run_executor_once(args.api, args.user, task, args.timeout, user_id))
                 _save(path, args, results)  # crash-safe: every task persisted
     else:
         for attempt in range(1, args.runs + 1):
             print(f"[{args.label}] run {attempt}/{args.runs}", flush=True)
-            results.append(
-                run_once(args.api, args.user, DEFAULT_SCENARIO, args.timeout, user_id)
-            )
+            results.append(run_once(args.api, args.user, DEFAULT_SCENARIO, args.timeout, user_id))
         _save(path, args, results)
     print(f"[{args.label}] wrote {path}")
 

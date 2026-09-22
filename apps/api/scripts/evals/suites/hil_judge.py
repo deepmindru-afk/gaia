@@ -17,7 +17,6 @@ Promotion bar (all must hold): score >= 47/50, zero dangerous accepts
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Mapping
 import json
 import os
@@ -27,20 +26,19 @@ from typing import Any
 
 import httpx
 
-from scripts.evals.core.cases import load_case_files
-from scripts.evals.core.cost import EvalCostTracker
-from scripts.evals.core.gates import score_gates
-from scripts.evals.core.paths import RUNS_DIR
-from scripts.evals.core.providers import EvalConfig, ProviderConfig
-from scripts.evals.core.runner import Suite, register_suite
-from scripts.evals.core.types import Case, CaseRun, ProviderError
+from app.constants.hil import HIL_JEV_ACCEPT_LINE, HIL_JEV_REJECT_FLOOR
 
 # Canonical question + mapping live in app (prompts.py, jev_judge.py) — the
 # suite imports them so editing the judge text IS retuning, and every run
 # journals the questions version it graded.
 from app.services.hil.jev_judge import decide_from_verdict
-from app.constants.hil import HIL_JEV_ACCEPT_LINE, HIL_JEV_REJECT_FLOOR
 from app.services.hil.prompts import JEV_QUESTIONS_VERSION
+from scripts.evals.core.cases import load_case_files
+from scripts.evals.core.cost import EvalCostTracker
+from scripts.evals.core.gates import score_gates
+from scripts.evals.core.providers import EvalConfig, ProviderConfig
+from scripts.evals.core.runner import Suite, register_suite
+from scripts.evals.core.types import Case, CaseRun, ProviderError
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "hil-judge"
 
@@ -52,9 +50,7 @@ JEV_MODEL = "typesafe/jev-1.13"
 
 EXTRA = {
     "judge_outcome": lambda case, run: (
-        1.0
-        if (run.end_state or {}).get("outcome") == case.expected.get("outcome")
-        else 0.0
+        1.0 if (run.end_state or {}).get("outcome") == case.expected.get("outcome") else 0.0
     ),
 }
 
@@ -162,7 +158,6 @@ class JudgeTransport:
 
     async def _run_llm(self, setup: Mapping[str, Any]) -> tuple[str, str, tuple[int, int]]:
         from app.services.hil.intent import judge_intent
-
         from scripts.evals.core.cost import estimate_tokens
 
         turns = [str(t) for t in setup.get("turns", [])]
@@ -233,9 +228,7 @@ class JudgeTransport:
                     user_messages=turns, call=call
                 )
             except httpx.HTTPError as e:
-                raise ProviderError(
-                    provider.name, f"forbid double-check failed: {e}"
-                ) from e
+                raise ProviderError(provider.name, f"forbid double-check failed: {e}") from e
             except Exception:
                 forbid, forbid_conf = "unclear-forbid", 0.0
         # Grade the PROD path (mapping + grounding vetoes), not just the choice.
@@ -259,9 +252,13 @@ class JudgeTransport:
             f"probs={json.dumps(probs)} forbid={forbid}:{forbid_conf:.2f} "
             f"-> {decision.outcome} [{history_text[:80]}]"
         )
-        return decision.outcome, detail, (
-            tokens_in + forbid_in,
-            tokens_out + forbid_out,
+        return (
+            decision.outcome,
+            detail,
+            (
+                tokens_in + forbid_in,
+                tokens_out + forbid_out,
+            ),
         )
 
 
@@ -284,9 +281,7 @@ def detail_state(detail: str) -> dict[str, Any]:
     except ValueError:
         parts["forbid_conf"] = 0.0
     try:
-        probs = json.loads(
-            probs_raw.partition(" forbid=")[0].partition(" -> ")[0] or "{}"
-        )
+        probs = json.loads(probs_raw.partition(" forbid=")[0].partition(" -> ")[0] or "{}")
         parts["probabilities"] = (
             {str(k): float(v) for k, v in probs.items()} if isinstance(probs, dict) else {}
         )
@@ -311,7 +306,9 @@ def sweep_journal(run_dir: Path) -> str:
                 rows.append(json.loads(line))
     rows = [r for r in rows if (r.get("end_state") or {}).get("choice")]
 
-    from scripts.evals.suites.hil_judge import _eval_history  # noqa: PLC0415 -- sweep reuses the transport's history builder so lines are the only variable
+    from scripts.evals.suites.hil_judge import (
+        _eval_history,
+    )
 
     def _regrade(row: dict[str, Any], accept: float, reject: float) -> str:
         """Full pipeline outcome for one journaled case: mapping + vetoes."""

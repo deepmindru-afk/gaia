@@ -52,9 +52,9 @@ def _coercing_invoke_trusted(self: t.Any, user_id: str, request_kwargs: t.Any) -
     return _original_invoke_trusted(self, user_id, to_plain_data(request_kwargs))
 
 
-t.cast(t.Any, _coercing_invoke_trusted).__gaia_coercing__ = (
-    True  # marker for tests: this wrapper is ours, not Composio's
-)
+t.cast(
+    t.Any, _coercing_invoke_trusted
+).__gaia_coercing__ = True  # marker for tests: this wrapper is ours, not Composio's
 
 
 def apply() -> None:

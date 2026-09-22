@@ -47,16 +47,10 @@ def _fake_mcp_client(integration_tools_map: dict[str, list[Any]]):
     client = MagicMock()
     client._tools = integration_tools_map
     client.find_integration = lambda name: next(
-        (
-            iid
-            for iid, tools in integration_tools_map.items()
-            if any(t.name == name for t in tools)
-        ),
+        (iid for iid, tools in integration_tools_map.items() if any(t.name == name for t in tools)),
         None,
     )
-    client.get_tools = AsyncMock(
-        side_effect=lambda iid: integration_tools_map.get(iid, [])
-    )
+    client.get_tools = AsyncMock(side_effect=lambda iid: integration_tools_map.get(iid, []))
     return client
 
 
@@ -226,9 +220,7 @@ class TestRetrieveToolsCrossUserIsolation:
 
         assert "persons-list" in res_a["response"], "user A's posthog tool should resolve"
         assert "## persons-list" in res_a["response_text"]
-        assert "persons-list" not in res_b["response"], (
-            "user B must NOT see user A's posthog tool"
-        )
+        assert "persons-list" not in res_b["response"], "user B must NOT see user A's posthog tool"
         assert "## persons-list" not in res_b["response_text"], (
             "user B must NOT receive user A's tool schema doc"
         )

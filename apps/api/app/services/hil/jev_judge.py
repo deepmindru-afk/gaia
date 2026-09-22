@@ -11,11 +11,11 @@ constants/hil.py. Both are tuned through the hil-judge calibration suite,
 never by hand here.
 """
 
-import httpx
-
 from collections.abc import Mapping
 from datetime import UTC, datetime
 import re
+
+import httpx
 
 from app.config.settings import settings
 from app.constants.hil import (
@@ -315,7 +315,6 @@ class JevIntentJudge:
             forbid=await self._forbid_verdict(choice, confidence, probs, user_messages, call),
         )
 
-
     async def _forbid_verdict(
         self,
         choice: str,
@@ -416,8 +415,7 @@ def decide_from_verdict(
     if outcome == "reject":
         return IntentDecision(
             "reject",
-            "Auto mode held this off: your messages argue against this "
-            f"{call.tool_name} call.",
+            f"Auto mode held this off: your messages argue against this {call.tool_name} call.",
         )
     if outcome == "accept":
         if _history_blocks(history):
@@ -436,8 +434,7 @@ def decide_from_verdict(
         if missing:
             return IntentDecision(
                 "ask",
-                f"the target ({', '.join(missing[:3])}) doesn't trace to "
-                "your words.",
+                f"the target ({', '.join(missing[:3])}) doesn't trace to your words.",
             )
         return IntentDecision(
             "accept",
@@ -445,6 +442,5 @@ def decide_from_verdict(
         )
     return IntentDecision(
         "ask",
-        f"this {call.tool_name} call may not match your request "
-        f"({choice} {confidence:.2f}).",
+        f"this {call.tool_name} call may not match your request ({choice} {confidence:.2f}).",
     )

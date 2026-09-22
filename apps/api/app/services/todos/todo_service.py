@@ -260,9 +260,7 @@ class TodoService:
             return TodoResponse.from_document(
                 todo,
                 workflow_categories=workflow_categories.get(todo.id, []),
-                pending_approval=(
-                    await _get_pending_approvals_for_todos([todo])
-                ).get(todo.id),
+                pending_approval=(await _get_pending_approvals_for_todos([todo])).get(todo.id),
             )
         pending = await _get_pending_approvals_for_todos([todo])
         return TodoResponse.from_document(todo, pending_approval=pending.get(todo.id))

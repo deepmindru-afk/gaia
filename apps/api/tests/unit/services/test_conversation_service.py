@@ -475,9 +475,7 @@ class TestBatchSyncConversations:
     async def test_flagged_row_reaches_the_client(self, mock_repo, test_user):
         """The sidebar dot reads batch-sync rows: a dropped flag here is a
         missing dot no frontend mapping can recover."""
-        mock_repo.find_updated_since = AsyncMock(
-            return_value=[_document(has_live_approval=True)]
-        )
+        mock_repo.find_updated_since = AsyncMock(return_value=[_document(has_live_approval=True)])
         with patch.object(
             conversation_service.stream_manager,
             "get_resumable_stream_id",
@@ -504,4 +502,3 @@ class TestBatchSyncConversations:
             result = await batch_sync_conversations(request, test_user)
 
         assert result.conversations[0].has_live_approval in (None, False)
-

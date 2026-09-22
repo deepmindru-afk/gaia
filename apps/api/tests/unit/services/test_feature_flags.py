@@ -60,9 +60,7 @@ class TestLiveEvaluation:
         assert mock_client.get_feature_flag.call_count == 2
         mock_client.get_feature_flag.assert_called_with("COMMS_OPENUI", "u1")
 
-    async def test_false_disables(
-        self, mock_client: MagicMock, evaluated: MagicMock
-    ) -> None:
+    async def test_false_disables(self, mock_client: MagicMock, evaluated: MagicMock) -> None:
         mock_client.get_feature_flag.return_value = False
         assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is False
 
@@ -73,9 +71,7 @@ class TestLiveEvaluation:
         assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
         assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1", default=False) is False
 
-    async def test_exception_fails_open(
-        self, mock_client: MagicMock, evaluated: MagicMock
-    ) -> None:
+    async def test_exception_fails_open(self, mock_client: MagicMock, evaluated: MagicMock) -> None:
         mock_client.get_feature_flag.side_effect = TimeoutError("posthog down")
         assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
 
@@ -148,9 +144,7 @@ class TestFlags:
         assert await is_comms_openui_enabled("u1") is False
         mock_client.get_feature_flag.assert_called_once_with("COMMS_OPENUI", "u1")
 
-    async def test_is_code_mode_enabled_defaults_off(
-        self, no_client: None
-    ) -> None:
+    async def test_is_code_mode_enabled_defaults_off(self, no_client: None) -> None:
         assert await is_code_mode_enabled("u1") is False
 
     async def test_is_code_mode_enabled_live(
@@ -160,9 +154,7 @@ class TestFlags:
         assert await is_code_mode_enabled("u1") is True
         mock_client.get_feature_flag.assert_called_once_with("CODE_MODE", "u1")
 
-    async def test_is_hil_ledger_enabled_defaults_off(
-        self, no_client: None
-    ) -> None:
+    async def test_is_hil_ledger_enabled_defaults_off(self, no_client: None) -> None:
         assert await is_hil_ledger_enabled("u1") is False
 
     async def test_is_hil_ledger_enabled_live(
@@ -224,9 +216,7 @@ class TestClientLookup:
 
     def test_registry_key_error_yields_none(self) -> None:
         with (
-            patch(
-                "app.services.feature_flags.providers.is_available", return_value=True
-            ),
+            patch("app.services.feature_flags.providers.is_available", return_value=True),
             patch(
                 "app.services.feature_flags.providers.get",
                 side_effect=KeyError("posthog"),
@@ -294,12 +284,8 @@ class TestClientPassthrough:
     def test_available_provider_returns_its_client(self) -> None:
         sentinel = object()
         with (
-            patch(
-                "app.services.feature_flags.providers.is_available", return_value=True
-            ),
-            patch(
-                "app.services.feature_flags.providers.get", return_value=sentinel
-            ) as get,
+            patch("app.services.feature_flags.providers.is_available", return_value=True),
+            patch("app.services.feature_flags.providers.get", return_value=sentinel) as get,
         ):
             assert _get_posthog_client() is sentinel
             get.assert_called_once_with("posthog")
@@ -314,9 +300,7 @@ class TestHelperDelegation:
             assert await is_comms_openui_enabled("u1") is True
             enabled.assert_called_once_with(FeatureFlag.COMMS_OPENUI, "u1")
 
-    async def test_code_mode_helper_forwards_flag_and_user(
-        self, evaluated: MagicMock
-    ) -> None:
+    async def test_code_mode_helper_forwards_flag_and_user(self, evaluated: MagicMock) -> None:
         with patch(
             "app.services.feature_flags.is_enabled",
             return_value=True,
@@ -423,9 +407,7 @@ class TestLogContract:
                 error_type="RuntimeError",
             )
 
-    async def test_dedupe_clock_is_utc(
-        self, mock_client: MagicMock, evaluated: MagicMock
-    ) -> None:
+    async def test_dedupe_clock_is_utc(self, mock_client: MagicMock, evaluated: MagicMock) -> None:
         from datetime import UTC, datetime as real_datetime
 
         mock_client.get_feature_flag.return_value = None

@@ -80,8 +80,8 @@ class TestGetTodoPending:
 
 class TestListTodosPending:
     async def test_one_query_covers_the_page(self) -> None:
-        from app.services.todos.todo_service import TodoService
         from app.models.todo_models import SearchMode, TodoSearchParams
+        from app.services.todos.todo_service import TodoService
 
         todos = [_todo(id="todo-1"), _todo(id="todo-2")]
         with (

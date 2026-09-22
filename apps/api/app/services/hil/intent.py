@@ -174,9 +174,7 @@ def summarize_history(rows: list[ApprovalLedgerDocument]) -> AutoHistory:
     # hand-built ones are aware, and mixed comparison raises.
     latest = max(
         denies,
-        key=lambda row: row.decided_at.timestamp()
-        if row.decided_at is not None
-        else float("-inf"),
+        key=lambda row: row.decided_at.timestamp() if row.decided_at is not None else float("-inf"),
         default=None,
     )
     return AutoHistory(
@@ -417,9 +415,7 @@ def ungrounded_targets(
     the agent picked from it (that pick needs the user).
     """
     normalized_user = _normalize(user_text)
-    provenance_parts = [
-        f"{call.name} {args_preview(call.args)}" for call in prior_calls
-    ]
+    provenance_parts = [f"{call.name} {args_preview(call.args)}" for call in prior_calls]
     for call in prior_calls:
         if call.output.strip() and _output_identifies(call.output):
             provenance_parts.append(call.output)

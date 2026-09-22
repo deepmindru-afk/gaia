@@ -109,9 +109,7 @@ def _get_posthog_client() -> Any | None:  # noqa: ANN401 -- posthog SDK is untyp
         return None
 
 
-async def is_enabled(
-    flag: FeatureFlag, user_id: str | None, default: bool | None = None
-) -> bool:
+async def is_enabled(flag: FeatureFlag, user_id: str | None, default: bool | None = None) -> bool:
     """Evaluate ``flag`` for ``user_id``, live on every call. No user means
     no evaluation: the default applies with no I/O. The PostHog SDK call is
     sync so it runs in a worker thread. Any failure fails open to the

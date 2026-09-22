@@ -36,7 +36,6 @@ from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus, LedgerState
 from app.services.feature_flags import is_hil_ledger_enabled, is_jev_judge_enabled
-from app.services.hil.jev_judge import JevIntentJudge
 from app.services.hil.approvals_store import approval_id_for, get_approval
 from app.services.hil.bridge import (
     ApprovalOutcome,
@@ -56,6 +55,7 @@ from app.services.hil.intent import (
     judge_intent,
     summarize_history,
 )
+from app.services.hil.jev_judge import JevIntentJudge
 from app.services.hil.policy import (
     GatingPolicy,
     gated_tool_object,
@@ -225,7 +225,11 @@ async def _decide_ledger(
         declined = await recall_declined_call(context.stream_id, call.name, call.args)
         if declined is not None:
             log.info(f"{LogTag.HIL} auto-denying : declined earlier this turn", name=call.name)
-            return _auto_reject_message(call, declined.feedback or "") if declined.auto else _refusal_message(call, declined)
+            return (
+                _auto_reject_message(call, declined.feedback or "")
+                if declined.auto
+                else _refusal_message(call, declined)
+            )
         auto_note = ""
         if policy == "auto":
             integration_name = await _integration_name_for(call.name)
@@ -279,9 +283,7 @@ async def _decide_ledger(
         )
         if denied is not None:
             if denied.proposing_run_id and denied.proposing_run_id == context.stream_id:
-                denied_why = (
-                    f' The user said: {denied.feedback!r}.' if denied.feedback else ""
-                )
+                denied_why = f" The user said: {denied.feedback!r}." if denied.feedback else ""
                 return _tool_message(
                     call,
                     f"REFUSED {denied.approval_id}: the user denied {denied.summary} "
@@ -400,7 +402,9 @@ def read_gate_context(request: ToolCallRequest) -> GateContext | None:
             owner_run_type, owner_id = "workflow", workflow_id
         elif todo_id:
             owner_run_type, owner_id = "todo", todo_id
-    return GateContext(stream_id, user_id, conversation_id, turns, pausable, owner_run_type, owner_id)
+    return GateContext(
+        stream_id, user_id, conversation_id, turns, pausable, owner_run_type, owner_id
+    )
 
 
 async def _decide(
@@ -630,9 +634,7 @@ def _outcome_from_record(record: HILApprovalRecord) -> ApprovalOutcome:
 
 def _auto_reject_message(call: GatedCall, reason: str) -> ToolMessage:
     """Tell the model auto mode declined the call — refused, not asked."""
-    return _tool_message(
-        call, AUTO_REJECT_TEMPLATE.format(tool=call.name, reason=reason), "denied"
-    )
+    return _tool_message(call, AUTO_REJECT_TEMPLATE.format(tool=call.name, reason=reason), "denied")
 
 
 async def _auto_reject(context: GateContext, call: GatedCall, reason: str) -> ToolMessage:
@@ -642,9 +644,7 @@ async def _auto_reject(context: GateContext, call: GatedCall, reason: str) -> To
     retry, never to running it — the refusal itself is the decision.
     """
     try:
-        await remember_declined_call(
-            context.stream_id, call.name, call.args, reason, auto=True
-        )
+        await remember_declined_call(context.stream_id, call.name, call.args, reason, auto=True)
     except Exception as e:
         log.warning(
             f"{LogTag.HIL} decline memory write failed; the retry will re-judge",

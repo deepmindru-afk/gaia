@@ -1,9 +1,9 @@
 """Comprehensive tests for app/helpers/agent_helpers.py."""
 
+import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
-import inspect
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from posthog.ai.langchain import CallbackHandler as PostHogCallbackHandler
@@ -28,9 +28,9 @@ from app.helpers.agent_helpers import (
     _record_interruption_quietly,
     _SilentAccumulators,
     _stamp_langfuse,
+    background_authorization,
     build_agent_config,
     build_initial_state,
-    background_authorization,
     execute_graph_silent,
     execute_graph_streaming,
     get_handoff_metadata,

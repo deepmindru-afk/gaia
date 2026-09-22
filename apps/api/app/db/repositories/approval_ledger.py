@@ -165,11 +165,7 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         }
         if conversation_id is not None:
             query["conversation_id"] = conversation_id
-        cursor = (
-            self._raw_collection()
-            .find(query)
-            .sort("executing_started_at", 1)
-        )
+        cursor = self._raw_collection().find(query).sort("executing_started_at", 1)
         return [
             ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=200)
         ]
@@ -282,8 +278,7 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
             .sort("decided_at", -1)
         )
         return [
-            ApprovalLedgerDocument.model_validate(raw)
-            for raw in await cursor.to_list(length=limit)
+            ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=limit)
         ]
 
 

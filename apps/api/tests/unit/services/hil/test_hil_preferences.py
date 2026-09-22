@@ -101,9 +101,7 @@ class TestWrites:
         )
 
     async def test_never_auto_tools_pass_through_and_read_back(self, user_repo) -> None:
-        user_repo.get.return_value = _user_with(
-            {"mode": "auto", "never_auto_tools": ["wipe_db"]}
-        )
+        user_repo.get.return_value = _user_with({"mode": "auto", "never_auto_tools": ["wipe_db"]})
 
         prefs = await update_hil_preferences(USER_ID, never_auto_tools=["wipe_db"])
 

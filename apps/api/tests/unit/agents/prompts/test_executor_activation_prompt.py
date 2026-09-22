@@ -28,7 +28,7 @@ def activation_prompt() -> str:
 
 class TestNoUnboundToolsTaught:
     def test_handoff_is_taught_only_as_the_per_user_fallback(self, activation_prompt) -> None:
-        """handoff is bound under the flag for per-user MCP, so the prompt may name
+        """Handoff is bound under the flag for per-user MCP, so the prompt may name
         it — but only as that fallback, never as the generic delegation path the
         rewrites replaced with activation."""
         handoff_lines = [

@@ -152,7 +152,7 @@ class TestRecordObservedShape:
         assert value_shape.get("required", []) == ["name"]
 
     async def test_a_stored_map_shape_round_trips_through_the_next_merge(self) -> None:
-        """additionalProperties must survive re-merging: the stored form re-enters
+        """AdditionalProperties must survive re-merging: the stored form re-enters
         genson's dialect, unions with the new observation's value shape, and
         comes back out as additionalProperties — never as literal properties."""
         stored = {

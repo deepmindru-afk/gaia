@@ -46,9 +46,7 @@ def _answer(
                 "type": "choice",
                 "choice": choice,
                 "confidence": confidence,
-                "probabilities": probs
-                if probs is not None
-                else {choice: confidence},
+                "probabilities": probs if probs is not None else {choice: confidence},
             }
         },
         "usage": {"input_tokens": 300, "output_tokens": 20},
@@ -97,26 +95,15 @@ async def _decide(
 
 class TestMapping:
     async def test_confident_authorized_is_accept(self) -> None:
-        assert (
-            map_jev_choice("authorized", 0.9, accept_line=0.5, reject_floor=0.5)
-            == "accept"
-        )
+        assert map_jev_choice("authorized", 0.9, accept_line=0.5, reject_floor=0.5) == "accept"
 
     async def test_below_line_authorized_is_ask_not_accept(self) -> None:
         # Confidence lines are load-bearing: a 0.49 authorized must not run.
-        assert (
-            map_jev_choice("authorized", 0.49, accept_line=0.5, reject_floor=0.5)
-            == "ask"
-        )
+        assert map_jev_choice("authorized", 0.49, accept_line=0.5, reject_floor=0.5) == "ask"
 
     async def test_forbidden_needs_its_own_floor(self) -> None:
-        assert (
-            map_jev_choice("forbidden", 0.4, accept_line=0.5, reject_floor=0.5) == "ask"
-        )
-        assert (
-            map_jev_choice("forbidden", 0.6, accept_line=0.5, reject_floor=0.5)
-            == "reject"
-        )
+        assert map_jev_choice("forbidden", 0.4, accept_line=0.5, reject_floor=0.5) == "ask"
+        assert map_jev_choice("forbidden", 0.6, accept_line=0.5, reject_floor=0.5) == "reject"
 
     async def test_unclear_is_always_ask(self) -> None:
         assert map_jev_choice("unclear", 1.0, accept_line=0.5, reject_floor=0.5) == "ask"
@@ -134,9 +121,7 @@ class TestDecisiveForbidden:
 
     async def test_runaway_forbidden_rejects_below_the_floor(self) -> None:
         assert (
-            decisive_forbidden(
-                "forbidden", {"forbidden": 0.48, "unclear": 0.06, "authorized": 0.0}
-            )
+            decisive_forbidden("forbidden", {"forbidden": 0.48, "unclear": 0.06, "authorized": 0.0})
             is True
         )
 
@@ -152,18 +137,14 @@ class TestDecisiveForbidden:
         # 0.37 margin: the journal band where temporary-boundary asks
         # (bg-boundary, r-hold) sit — the margin must clear them.
         assert (
-            decisive_forbidden(
-                "forbidden", {"forbidden": 0.43, "unclear": 0.06, "authorized": 0.0}
-            )
+            decisive_forbidden("forbidden", {"forbidden": 0.43, "unclear": 0.06, "authorized": 0.0})
             is False
         )
 
     async def test_margin_never_accepts(self) -> None:
         # The accept side keeps its absolute line plus grounding, always.
         assert (
-            decisive_forbidden(
-                "authorized", {"authorized": 0.9, "unclear": 0.05, "forbidden": 0.0}
-            )
+            decisive_forbidden("authorized", {"authorized": 0.9, "unclear": 0.05, "forbidden": 0.0})
             is False
         )
 
@@ -189,10 +170,7 @@ class TestForbidTripwire:
         assert forbid_tripwire(["never pay anyone", "pay $10 now"]) is True
 
     async def test_lift_language_clears_the_tripwire(self) -> None:
-        assert (
-            forbid_tripwire(["don't send anything yet", "actually, go ahead and send"])
-            is False
-        )
+        assert forbid_tripwire(["don't send anything yet", "actually, go ahead and send"]) is False
 
     async def test_clean_history_never_trips(self) -> None:
         assert forbid_tripwire(["draft an email to bob", "looks good, send it"]) is False
@@ -249,9 +227,7 @@ class TestForbidTripwire:
 class TestGrounding:
     async def test_an_address_from_the_users_words_is_grounded(self) -> None:
         assert (
-            ungrounded_targets(
-                {"to": "bob@example.com"}, "draft an email to bob@example.com", []
-            )
+            ungrounded_targets({"to": "bob@example.com"}, "draft an email to bob@example.com", [])
             == []
         )
 
@@ -295,24 +271,15 @@ class TestGrounding:
                 output='[{"event_id": "evt-4"}, {"event_id": "evt-5"}]',
             )
         ]
-        assert ungrounded_targets({"event_id": "evt-4"}, "cancel it", priors) == [
-            "evt-4"
-        ]
+        assert ungrounded_targets({"event_id": "evt-4"}, "cancel it", priors) == ["evt-4"]
 
     async def test_an_unparseable_output_identifies_nothing(self) -> None:
         priors = [PriorCall(name="FIND", args={}, output="two things happened")]
-        assert ungrounded_targets({"event_id": "evt-4"}, "cancel it", priors) == [
-            "evt-4"
-        ]
+        assert ungrounded_targets({"event_id": "evt-4"}, "cancel it", priors) == ["evt-4"]
 
     async def test_a_name_in_words_grounds_its_email(self) -> None:
         # "Sarah's" grounds sarah@x.com; the domain was resolved, not chosen.
-        assert (
-            ungrounded_targets(
-                {"to": "sarah@x.com"}, "reply yes to sarah's thread", []
-            )
-            == []
-        )
+        assert ungrounded_targets({"to": "sarah@x.com"}, "reply yes to sarah's thread", []) == []
 
     async def test_a_name_prefix_never_grounds_a_longer_address(self) -> None:
         # "bob" must not ground bobby@evil.com — equality on the local part.
@@ -403,9 +370,7 @@ class TestFallback:
     async def test_transport_failure_runs_the_fallback_not_an_allow(self) -> None:
         from app.services.hil.intent import IntentDecision
 
-        fallback = AsyncMock(
-            **{"decide.return_value": IntentDecision("ask", "llm says ask")}
-        )
+        fallback = AsyncMock(**{"decide.return_value": IntentDecision("ask", "llm says ask")})
         d = await _decide(ConnectionError("down"), fallback=fallback)
         assert d.outcome == "ask"
         assert d.reason == "llm says ask"
@@ -500,9 +465,7 @@ class TestWire:
                         args={"draft_id": "r1"},
                         tool_schema={"properties": {"draft_id": {"type": "string"}}},
                     ),
-                    prior_calls=[
-                        PriorCall(name="CREATE", args={}, output='{"draft_id": "r1"}')
-                    ],
+                    prior_calls=[PriorCall(name="CREATE", args={}, output='{"draft_id": "r1"}')],
                     history=AutoHistory(),
                     assistant_turns=["your draft is ready"],
                 )

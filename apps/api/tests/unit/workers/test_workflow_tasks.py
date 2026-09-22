@@ -2445,7 +2445,9 @@ class TestTheChatRunsTriggerTurnIsBuiltExactly:
         wf.description = "Daily morning workflow"
         wf.prompt = "Run the morning briefing"
         wf.notify_on_completion = True
-        wf.steps = [WorkflowStep(id="s1", title="Step 1", description="Check mail", category="comms")]
+        wf.steps = [
+            WorkflowStep(id="s1", title="Step 1", description="Check mail", category="comms")
+        ]
         return wf
 
     async def _run(self, workflow, add_messages, reset_threads, log_seam):

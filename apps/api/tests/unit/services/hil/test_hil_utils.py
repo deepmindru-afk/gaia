@@ -323,7 +323,8 @@ class TestToolSchema:
         assert "to" in render_tool_schema(schema)
 
     def test_a_zero_arg_tool_reads_as_no_schema(self) -> None:
-        from .conftest import make_tool
         from app.services.hil.utils import tool_schema
+
+        from .conftest import make_tool
 
         assert tool_schema(make_tool()) is None

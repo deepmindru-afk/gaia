@@ -67,9 +67,10 @@ class TestByteIdentityWithTheOldLiterals:
 
     def test_emoji_ack_frame(self):
         ack = {"emoji": "😎", "reacts_to_message_id": "umsg-1"}
-        assert emoji_ack_frame(
-            emoji=ack["emoji"], reacts_to_message_id=ack["reacts_to_message_id"]
-        ) == f"data: {json.dumps({'emoji_ack': ack})}\n\n"
+        assert (
+            emoji_ack_frame(emoji=ack["emoji"], reacts_to_message_id=ack["reacts_to_message_id"])
+            == f"data: {json.dumps({'emoji_ack': ack})}\n\n"
+        )
 
     def test_error_frame_for_a_refusal_code(self):
         error_code = "not_authenticated"

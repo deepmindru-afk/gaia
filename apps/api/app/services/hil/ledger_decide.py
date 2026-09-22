@@ -67,11 +67,11 @@ from app.services.hil.bridge import (
     settle_session_approval_frame,
     sync_conversation_approval_flag,
 )
-from app.services.hil.resume import record_owner_deny, resume_owner_after_approval
 from app.services.hil.resolution import (
     ApprovalRequestForbiddenError,
     ApprovalRequestNotFoundError,
 )
+from app.services.hil.resume import record_owner_deny, resume_owner_after_approval
 from app.services.hil.utils import GatedCall
 from shared.py.wide_events import log
 

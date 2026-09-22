@@ -160,9 +160,7 @@ async def test_unreadable_prefs_do_not_take_the_judge_down() -> None:
     context = gate.read_gate_context(request)
     assert context is not None
     with (
-        patch.object(
-            gate, "get_hil_preferences", new=AsyncMock(side_effect=RuntimeError("down"))
-        ),
+        patch.object(gate, "get_hil_preferences", new=AsyncMock(side_effect=RuntimeError("down"))),
         patch.object(
             gate,
             "judge_intent",
@@ -214,14 +212,10 @@ async def test_auto_reject_registers_no_card_and_arms_decline_memory() -> None:
         ),
         patch(
             "app.services.hil.gate._judge",
-            new=AsyncMock(
-                return_value=IntentDecision(outcome="reject", reason="stop spamming")
-            ),
+            new=AsyncMock(return_value=IntentDecision(outcome="reject", reason="stop spamming")),
         ),
         patch("app.services.hil.gate.publish_ledger_request", new=AsyncMock()) as pub,
-        patch(
-            "app.services.hil.gate.remember_declined_call", new=AsyncMock()
-        ) as remember,
+        patch("app.services.hil.gate.remember_declined_call", new=AsyncMock()) as remember,
         patch("app.services.hil.gate.interrupt") as intr,
     ):
         result = await gate.decide_tool_call(_auto_request())
@@ -276,13 +270,9 @@ async def test_ask_carries_auto_mode_reason_to_card_and_model() -> None:
         ),
         patch(
             "app.services.hil.gate._judge",
-            new=AsyncMock(
-                return_value=IntentDecision(outcome="ask", reason="vague scope")
-            ),
+            new=AsyncMock(return_value=IntentDecision(outcome="ask", reason="vague scope")),
         ),
-        patch(
-            "app.services.hil.gate.publish_ledger_request", new=AsyncMock()
-        ) as pub,
+        patch("app.services.hil.gate.publish_ledger_request", new=AsyncMock()) as pub,
         patch("app.services.hil.gate.interrupt") as intr,
     ):
         result = await gate.decide_tool_call(_auto_request())
@@ -297,15 +287,12 @@ async def test_ask_carries_auto_mode_reason_to_card_and_model() -> None:
 
 
 async def test_remembered_auto_reject_refuses_a_retry_without_rejudge_or_card() -> None:
+    from app.models.hil_models import HILApprovalStatus
     from app.services.hil import gate
     from app.services.hil.bridge import ApprovalOutcome
-    from app.services.hil.intent import IntentDecision
-    from app.models.hil_models import HILApprovalStatus
 
     ledger = _auto_ledger()
-    declined = ApprovalOutcome(
-        status=HILApprovalStatus.DENIED, feedback="stop spamming", auto=True
-    )
+    declined = ApprovalOutcome(status=HILApprovalStatus.DENIED, feedback="stop spamming", auto=True)
     with (
         patch("app.services.hil.gate.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
         patch("app.services.hil.gate.resolve_policy", new=AsyncMock(return_value="auto")),

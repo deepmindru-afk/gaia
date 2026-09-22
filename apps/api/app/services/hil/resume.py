@@ -72,10 +72,7 @@ async def record_owner_deny(row: ApprovalLedgerDocument, feedback: str | None) -
         await tracked_todo_service.append_activity_entry(
             todo_id=row.owner_id,
             user_id=row.user_id,
-            entry=(
-                f"Approval {row.approval_id} denied{what}: "
-                f"skipped {row.summary}."
-            ),
+            entry=(f"Approval {row.approval_id} denied{what}: skipped {row.summary}."),
         )
     except Exception as e:
         log.warning(

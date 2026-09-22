@@ -239,7 +239,9 @@ class TestExemptSiblingsThatPauseSuppressAutoApproval:
             patch(f"{GATE}.remember_declined_call", new=AsyncMock()),
             patch(
                 f"{GATE}.judge_intent",
-                new=AsyncMock(return_value=IntentDecision(outcome="accept", reason="you said send it")),
+                new=AsyncMock(
+                    return_value=IntentDecision(outcome="accept", reason="you said send it")
+                ),
             ) as judge,
             patch(f"{GATE}.interrupt", side_effect=GraphInterrupt(())) as interrupt,
         ):
@@ -354,7 +356,9 @@ class TestAPendingRecordParksInsteadOfRunning:
             judge = stack.enter_context(
                 patch(
                     f"{GATE}.judge_intent",
-                    new=AsyncMock(return_value=IntentDecision(outcome="accept", reason="you said send it")),
+                    new=AsyncMock(
+                        return_value=IntentDecision(outcome="accept", reason="you said send it")
+                    ),
                 )
             )
             with pytest.raises(GraphInterrupt):

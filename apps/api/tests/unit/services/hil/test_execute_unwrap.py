@@ -94,7 +94,7 @@ class TestUnpackUnwrapsExecute:
 
 class TestPolicyUnwrapsExecute:
     async def test_argument_gated_tool_through_execute_still_asks(self) -> None:
-        """disconnect via the proxy must ask even in always_allow mode."""
+        """Disconnect via the proxy must ask even in always_allow mode."""
         request = execute_request("manage_linked_account", {"action": "disconnect"})
         with (
             patch(

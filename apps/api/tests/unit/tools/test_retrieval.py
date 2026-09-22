@@ -49,9 +49,7 @@ class TestGetUserContext:
                 return_value={"gmail": None},
             ),
         ):
-            ns, connected = await _get_user_context(
-                "user1", "general", include_subagents=True
-            )
+            ns, connected = await _get_user_context("user1", "general", include_subagents=True)
         assert "general" in ns
         assert "gmail" in ns
         # gmail is not a platform integration -> treated as custom -> connected
@@ -68,9 +66,7 @@ class TestGetUserContext:
                 side_effect=RuntimeError("db fail"),
             ),
         ):
-            ns, connected = await _get_user_context(
-                "user1", "myspace", include_subagents=True
-            )
+            ns, connected = await _get_user_context("user1", "myspace", include_subagents=True)
         # Falls back to seeded defaults — non-platform tool spaces are NOT seeded
         assert "general" in ns
         assert "myspace" not in ns
@@ -93,9 +89,7 @@ class TestGetUserContext:
                 return_value={"slack": slack_subagent.name},
             ),
         ):
-            ns, connected = await _get_user_context(
-                "user1", "general", include_subagents=True
-            )
+            ns, connected = await _get_user_context("user1", "general", include_subagents=True)
         assert "slack" in connected
 
 
@@ -726,7 +720,9 @@ class TestActivatedNamespaceDiscovery:
             ),
         ):
             fn = retrieval.get_retrieve_tools_function(tool_space="general")
-            result = await fn(store=store, config=config, query="list pull requests", exact_tool_names=[])
+            result = await fn(
+                store=store, config=config, query="list pull requests", exact_tool_names=[]
+            )
 
         assert ("github",) in seen
         assert "GITHUB_LIST_PULL_REQUESTS" in result["response"]
@@ -923,9 +919,7 @@ class TestActivatedNamespaceTools:
         item = self._delegated_hit("my-mcp", namespace=("subagents",))
         item.value = {"name": "My MCP", "source": "custom"}
         registry = MagicMock()
-        result = _process_chroma_search_result(
-            [item], set(), registry, include_subagents=True
-        )
+        result = _process_chroma_search_result([item], set(), registry, include_subagents=True)
         assert [r["id"] for r in result] == ["subagent:my-mcp (My MCP)"]
 
     def test_stale_provider_doc_in_subagents_namespace_dropped(self):
@@ -937,9 +931,7 @@ class TestActivatedNamespaceTools:
         item = self._delegated_hit("github", namespace=("subagents",))
         item.value = {"name": "GitHub", "source": "provider"}
         registry = MagicMock()
-        result = _process_chroma_search_result(
-            [item], {"github"}, registry, include_subagents=True
-        )
+        result = _process_chroma_search_result([item], {"github"}, registry, include_subagents=True)
         assert result == []
 
     def test_static_mcp_pointer_in_subagents_namespace_survives(self):
@@ -950,9 +942,7 @@ class TestActivatedNamespaceTools:
         item = self._delegated_hit("subagent:notes", namespace=("subagents",))
         item.value = {"name": "Notes", "source": "mcp", "integration_id": "notes"}
         registry = MagicMock()
-        result = _process_chroma_search_result(
-            [item], set(), registry, include_subagents=True
-        )
+        result = _process_chroma_search_result([item], set(), registry, include_subagents=True)
         assert [r["id"] for r in result] == ["subagent:subagent:notes (Notes)"]
 
     def test_legacy_pointer_without_source_is_treated_as_mcp(self):
@@ -963,9 +953,7 @@ class TestActivatedNamespaceTools:
         item = self._delegated_hit("subagent:notes", namespace=("subagents",))
         item.value = {"name": "Notes"}
         registry = MagicMock()
-        result = _process_chroma_search_result(
-            [item], set(), registry, include_subagents=True
-        )
+        result = _process_chroma_search_result([item], set(), registry, include_subagents=True)
         assert [r["id"] for r in result] == ["subagent:subagent:notes (Notes)"]
 
     @pytest.mark.asyncio
@@ -976,7 +964,5 @@ class TestActivatedNamespaceTools:
 
         registry = MagicMock()
         public = [{"integration_id": "linear", "name": "Linear", "relevance_score": 0.7}]
-        processed = await _process_search_results(
-            [public], set(), registry, include_subagents=True
-        )
+        processed = await _process_search_results([public], set(), registry, include_subagents=True)
         assert [r["id"] for r in processed] == ["integration:linear (Linear)"]

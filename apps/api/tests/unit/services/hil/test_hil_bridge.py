@@ -354,9 +354,7 @@ class TestDeclineMemory:
             STREAM_ID, "send_email", {"to": "bob@example.com"}, "stop spamming", auto=True
         )
 
-        outcome = await recall_declined_call(
-            STREAM_ID, "send_email", {"to": "bob@example.com"}
-        )
+        outcome = await recall_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"})
 
         assert outcome is not None
         assert outcome.auto is True
@@ -365,9 +363,7 @@ class TestDeclineMemory:
     async def test_a_user_decline_still_reads_as_user_made(self) -> None:
         await remember_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"}, "no")
 
-        outcome = await recall_declined_call(
-            STREAM_ID, "send_email", {"to": "bob@example.com"}
-        )
+        outcome = await recall_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"})
 
         assert outcome is not None
         assert outcome.auto is False

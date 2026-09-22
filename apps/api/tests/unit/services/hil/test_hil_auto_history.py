@@ -104,9 +104,5 @@ async def test_no_history_is_no_signal_and_leaves_an_allowed_call_accepted() -> 
 async def test_a_single_deny_blocks_accept_until_an_approval_lands() -> None:
     # Boundary: 0 approved vs 1 denied is a deny pattern, not a blank slate.
     assert (await _judge(AutoHistory(denied_recent=1))).outcome == "ask"
-    assert (
-        await _judge(AutoHistory(approved_recent=1, denied_recent=1))
-    ).outcome == "ask"
-    assert (
-        await _judge(AutoHistory(approved_recent=2, denied_recent=1))
-    ).outcome == "accept"
+    assert (await _judge(AutoHistory(approved_recent=1, denied_recent=1))).outcome == "ask"
+    assert (await _judge(AutoHistory(approved_recent=2, denied_recent=1))).outcome == "accept"

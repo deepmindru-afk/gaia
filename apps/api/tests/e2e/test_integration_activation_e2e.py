@@ -212,7 +212,6 @@ class TestActivationThroughRealExecutorGraph:
         assert "is not bound" in sent.text, sent.text
 
     async def test_per_user_mcp_is_routed_to_handoff(self) -> None:
-
         model = BindableToolsFakeModel(
             responses=[
                 AIMessage(
