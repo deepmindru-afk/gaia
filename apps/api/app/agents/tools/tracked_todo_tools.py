@@ -841,7 +841,7 @@ async def update_tracked_todo_canvas(
         str,
         "How to apply the update: 'replace' overwrites the whole canvas, "
         "'append' adds to the end of it.",
-    ] = "replace",
+    ] = "replace",  # pragma: no mutate — mode is strip().lower()-normalized before any use
 ) -> str:
     """Update a tracked todo's working-memory canvas.
 

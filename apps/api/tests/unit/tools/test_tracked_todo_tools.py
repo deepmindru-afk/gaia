@@ -596,6 +596,28 @@ class TestUpdateTrackedTodoCanvas:
         write.assert_awaited_once_with("t1", "user-1", "existing\nmore")
         assert "mode: append" in result
 
+    async def test_append_reads_the_callers_canvas_and_keeps_a_leading_newline(self):
+        read = AsyncMock(return_value="existing")
+        with (
+            patch("app.agents.tools.tracked_todo_tools.read_canvas", new=read),
+            patch(
+                "app.agents.tools.tracked_todo_tools.write_canvas",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as write,
+        ):
+            await update_tracked_todo_canvas.coroutine(
+                config=_config(), todo_id="t1", content="\nmore", mode="append"
+            )
+        read.assert_awaited_once_with("t1", "user-1")
+        write.assert_awaited_once_with("t1", "user-1", "existing\nmore")
+
+    async def test_a_config_without_metadata_returns_the_no_user_error(self):
+        result = await update_tracked_todo_canvas.coroutine(
+            config={"configurable": {}}, todo_id="t1", content="x"
+        )
+        assert "user_id not found" in result
+
     async def test_append_is_case_insensitive(self):
         with (
             patch(
