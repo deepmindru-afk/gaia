@@ -469,14 +469,9 @@ async def execute_subagent_stream(
             # build_agent_config returns an AgentRunnableConfig, but run_config may be
             # rebuilt above as a dict spread, which mypy widens back to a plain dict.
             config=cast(RunnableConfig, run_config),
-            # Persist checkpoints only when this executor/subagent run exits, not
-            # after every step (langgraph's default durability="async"). The
-            # executor/subagent path is a single logical unit of work whose
-            # intermediate steps never need to survive a mid-run crash — only the
-            # final state must be durable so the next turn on the same thread
-            # resumes with full context. This collapses O(steps) checkpoint writes
-            # per run to one, cutting Postgres checkpoint churn. The comms graph
-            # driver keeps "async" (its mid-run checkpoints are needed).
+            # Persist checkpoints only on run exit (this path is one unit of work),
+            # collapsing O(steps) writes to one. The comms graph driver keeps
+            # "async" — its mid-run checkpoints are needed.
             durability="exit",
         ):
             # Check for cancellation
@@ -494,10 +489,9 @@ async def execute_subagent_stream(
             # langgraph's own overload return type does not express.
             stream_mode, payload = cast(tuple[str, Any], event)
 
-            # Targeted cancel from the executor, checked once per superstep (updates)
-            # rather than per token: one redis read per reasoning step, and cancel
-            # takes effect at the next step boundary. Returns a clean cancelled result
-            # so the executor learns it stopped; the executor and siblings keep running.
+            # Targeted cancel from the executor, checked once per superstep (one
+            # redis read per reasoning step). Returns a clean cancelled result so
+            # the executor learns it stopped; the executor and siblings keep running.
             if (
                 stream_mode == "updates"
                 and ctx.stream_id
@@ -570,7 +564,7 @@ def _snapshot_messages(snapshot: StateSnapshot) -> list[AnyMessage]:
 
 
 async def thread_messages(ctx: SubagentExecutionContext) -> list[AnyMessage]:
-    """What this run's thread holds right now, read back from its checkpoint.
+    """Read back what this run's thread holds right now, from its checkpoint.
 
     The authoritative record of what actually reached the model: a run that died
     mid-call committed nothing, and only the checkpoint can tell that apart from
@@ -794,10 +788,9 @@ async def prepare_executor_execution(
         user_name=configurable.get("user_name"),
     )
 
-    # When comms provides a known tool_category, hint the executor to go
-    # straight to activate_integration(...) and skip the ChromaDB discovery
-    # call. This only removes one redundant round-trip where comms already
-    # knows the category.
+    # When comms provides a known tool_category, hint the executor to go straight
+    # to activate_integration(...) and skip the ChromaDB discovery call — removes
+    # one redundant round-trip where comms already knows the category.
     enhanced_task = task
     tool_category = configurable.get("tool_category")
     selected_tool = configurable.get("selected_tool")

@@ -1,10 +1,10 @@
 """Per-conversation record of in-context activated integrations.
 
-``activate_integration`` stamps the integrations it loads; ``retrieve_tools``
-discovery reads the set and searches those namespaces too, so tools beyond
-the preloaded subset are actually discoverable from the activating run.
-Without this, activation's "use retrieve_tools for the rest" points at a dead
-end: discovery otherwise searches only the caller's own tool space.
+activate_integration stamps the integrations it loads; retrieve_tools discovery
+reads the set and searches those namespaces too, so tools beyond the preloaded
+subset are discoverable from the activating run. Without this, activation's "use
+retrieve_tools for the rest" points at a dead end: discovery otherwise searches
+only the caller's own tool space.
 
 Storage only — namespace mapping lives with the reader. Stamped solely on the
 successful-activation path (which gates on the connection check), so a member

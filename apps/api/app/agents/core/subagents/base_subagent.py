@@ -56,16 +56,10 @@ def resolve_declared_tools(
 ) -> list[str]:
     """Return the declared tools that actually resolved, warning about any that did not.
 
-    A subagent's ``auto_bind_tools`` / ``extra_initial_tools`` are a promise that
-    those tools are available before its first model call — bound, or preloaded
-    as schema docs for ``execute`` when they are integration tools. Filtering out names the
-    registry never produced is correct — binding a non-existent tool would fail
-    the build — but a name that goes missing is always an upstream fault (a
-    provider category that never registered, a renamed slug), never a normal
-    outcome. Left silent, a Gmail subagent builds with none of its Gmail tools,
-    reports healthy, and can do nothing.
-
-    Declaring nothing is normal and says nothing.
+    A subagent's auto_bind_tools / extra_initial_tools promise those tools are
+    available before its first model call. A missing name is always an upstream
+    fault (an unregistered category, a renamed slug), never normal — left silent,
+    a Gmail subagent builds with no Gmail tools, reports healthy, and does nothing.
     """
     if not declared:
         return []
@@ -121,10 +115,9 @@ def build_scoped_tool_dict(
         # module was removed when subagents moved to the E2B sandbox.
         scoped_tool_dict[search_memory.name] = search_memory
         scoped_tool_dict[read.name] = read
-        # Built against THIS dict for the same reason the execute proxy below is:
-        # bash mints the code-mode token, and a sandbox script calling
-        # `from gaia import execute` must be held to the same tool space as a
-        # direct execute call — otherwise the confinement is one line to escape.
+        # Built against THIS dict like the execute proxy below: bash mints the
+        # code-mode token, and a sandbox `from gaia import execute` must be held to
+        # the same tool space, or the confinement is one line to escape.
         scoped_bash = build_bash_tool(scoped_tool_dict)
         scoped_tool_dict[scoped_bash.name] = scoped_bash
         # Resolvable for every subagent (retrieve-on-demand); gmail additionally
@@ -139,12 +132,9 @@ def build_scoped_tool_dict(
         # own integration the moment it hears one (its instructions are already in
         # context, so it can rewrite the full block without a separate read).
         scoped_tool_dict[update_integration_instructions.name] = update_integration_instructions
-        # The execute proxy: retrieve_tools returns schema docs (not bindings)
-        # for integration tools beyond the auto-bound set, and this is what
-        # runs them. Built against THIS dict so the proxy honors the same tool
-        # space retrieve_tools binds against — otherwise a subagent could run
-        # any registered tool by name. get_tool_schema is the depth behind a
-        # doc's Returns pointer (read-only metadata).
+        # The execute proxy runs integration tools retrieve_tools returned as
+        # schema docs. Built against THIS dict so it honors the same tool space
+        # retrieve_tools binds against — otherwise a subagent runs any tool by name.
         scoped_execute = build_execute_tool(scoped_tool_dict)
         scoped_tool_dict[scoped_execute.name] = scoped_execute
         initial_tool_ids.append(scoped_execute.name)
@@ -186,31 +176,12 @@ class SubAgentFactory:
         llm: LanguageModelLike,
         config: SubAgentToolConfig | None = None,
     ) -> CompiledStateGraph:
-        """Create a specialized sub-agent graph for a specific provider with tool registry.
+        """Create a specialized subagent graph for one provider, wired to the tool registry.
 
-        Args:
-            provider: Provider name (gmail, notion, twitter, linkedin, calendar)
-            llm: Language model to use
-            tool_space: Tool space to use for retrieval (e.g., "gmail_delegated", "general")
-            use_direct_tools: If True, bind all tools directly without retrieve_tools
-            disable_retrieve_tools: If True, disable retrieve_tools mechanism entirely
-            auto_bind_tools: Startup tools, available before the first
-                model call. Internal names bind into `initial`; integration
-                names preload as schema docs in context and run via execute
-                (use_direct_tools graphs additionally bind their whole space
-                wholesale). Reduces latency for frequently-used tools.
-            include_finish_task: When True (default), the subagent gets the
-                `finish_task` tool to signal completion. When False, it
-                terminates with a normal AIMessage that the streaming layer
-                captures as the final answer. Use False for answer-only
-                subagents (e.g. documentation fetchers) where finish_task adds
-                latency without value.
-            source_label: Human-readable name for the provider, streamed with
-                todo_progress events so the frontend shows the integration's
-                name instead of its raw id (provider).
-
-        Returns:
-            Compiled LangGraph agent with tool registry, retrieval, and checkpointer
+        auto_bind_tools are available before the first model call (internal names
+        bind, integration names preload as schema docs). With include_finish_task
+        False the subagent ends on a normal AIMessage instead of a finish_task
+        signal — used for answer-only subagents like documentation fetchers.
         """
         cfg = config or SubAgentToolConfig()
         tool_space = cfg.tool_space
@@ -266,17 +237,9 @@ class SubAgentFactory:
 
         valid_auto_bind: list[str] | None = None
         preload_names: list[str] = []
-        # Config-declared startup tools (SubAgentConfig.auto_bind_tools /
-        # extra_initial_tools): local/general tools this subagent always needs
-        # bound up front — for the agent AND the chunk-reader children it
-        # spawns. E.g. gmail declares query_json/grep so triage mines an
-        # offloaded inbox directly instead of falling back to read-whole-file
-        # + bash. Kept per-integration in config (not branched on provider) so
-        # it scales to any subagent that offloads.
-        #
-        # Integration tools among them never bind: they preload as schema docs
-        # in the run's context (injected at handoff) and run via execute, so
-        # only the internal remainder reaches initial binding below.
+        # Config-declared startup tools (auto_bind_tools / extra_initial_tools) bind
+        # up front. Integration tools among them never bind — they preload as schema
+        # docs and run via execute, so only the internal remainder binds.
         declared_startup = [
             *resolve_declared_tools(
                 cfg.auto_bind_tools, scoped_tool_dict, provider=provider, kind="auto_bind"
@@ -290,9 +253,8 @@ class SubAgentFactory:
         ]
         if declared_startup:
             # Per-user MCP tools live in cfg.mcp_tools, not in any registry the
-            # classifier can see — name them explicitly so they classify as
-            # preloaded rather than falling through to binding. Partitioned
-            # against the registry already held (no second fetch).
+            # classifier sees — name them explicitly so they classify as preloaded
+            # rather than falling through to binding.
             mcp_names = {t.name for t in cfg.mcp_tools} if cfg.mcp_tools else set()
             bind_now, preload_names = partition_startup_tools(
                 tool_registry, declared_startup, mcp_names

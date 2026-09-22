@@ -1,16 +1,14 @@
 """Canonical integration manifest (historically the "subagent registry").
 
-Single source of truth for "what integrations exist". Combines:
-- OAuth integrations whose `subagent_config.has_subagent` is True (adapted
-  via `_from_oauth`).
-- `BUILTIN_SUBAGENTS` (registered directly, no OAuth).
+Single source of truth for "what integrations exist". Combines OAuth
+integrations whose subagent_config.has_subagent is True (adapted via _from_oauth)
+and BUILTIN_SUBAGENTS (registered directly, no OAuth).
 
-Integrations activate in-context via `activate_integration` (only per-user
-MCP integrations still run as subagent graphs); the manifest backs
-activation, tool-space mapping, connect cards, and skill targets. All of
-that goes through `all_subagents()` and `get_subagent_by_id()` here. OAuth
-integration code continues to iterate `OAUTH_INTEGRATIONS` directly and
-never sees builtins.
+Integrations activate in-context via activate_integration (only per-user MCP
+integrations still run as subagent graphs); the manifest backs activation,
+tool-space mapping, connect cards, and skill targets, all through all_subagents()
+and get_subagent_by_id(). OAuth integration code continues to iterate
+OAUTH_INTEGRATIONS directly and never sees builtins.
 """
 
 from functools import cache
@@ -71,50 +69,34 @@ def get_subagent_by_id(subagent_id: str) -> Subagent | None:
 def _third_party_name_matchers() -> tuple[tuple[Subagent, re.Pattern[str]], ...]:
     """One whole-word matcher per third-party provider, over its name and its id.
 
-    Internal subagents are deliberately absent as *matches*: "todos" and
-    "skills" are ordinary words that appear in task prose constantly, and a
-    generic noun cannot mislead anyone about which product holds their data.
-    ``short_name`` is excluded for the same reason — Google Tasks' short name
-    is literally "tasks".
-
-    Cached with `all_subagents()`; call `_third_party_name_matchers.cache_clear()`
-    alongside it if a test injects a fake subagent.
+    Internal subagents and short_name are excluded: "todos", "skills", and Google
+    Tasks' "tasks" are ordinary words that appear in task prose constantly. Cached
+    with all_subagents(); clear both together if a test injects a fake subagent.
     """
     matchers: list[tuple[Subagent, re.Pattern[str]]] = []
     for sa in all_subagents():
         if sa.managed_by == "internal":
             continue
-        # Sorted only so the compiled pattern is stable across runs (set order
-        # is not). Alternation ORDER cannot change whether the pattern matches:
-        # the engine backtracks to the next alternative when a boundary lookaround
-        # fails, and the only consumer reads `pattern.search(text)` as a boolean,
-        # never the matched text.
+        # Sorted only so the compiled pattern is stable across runs (set order is
+        # not); alternation order cannot change whether it matches, and the only
+        # consumer reads pattern.search(text) as a boolean, never the matched text.
         alternation = "|".join(re.escape(label) for label in sorted({sa.name, sa.id}))
         matchers.append((sa, re.compile(rf"(?<![\w-])(?:{alternation})(?![\w-])", re.IGNORECASE)))
     return tuple(matchers)
 
 
-#: Provider ids that are also ordinary English words: "slack" (verb/noun),
-#: "linear" (adjective), "notion" (noun). A lowercase occurrence ("cut some
-#: slack", "linear progress", "the notion that") is far more likely prose than
-#: a product mention, while a capitalized one ("unlike Notion", "post it to
-#: Slack") reads as the product — so for these ids foreign_provider_named_in
-#: only flags when the matched text carries an uppercase letter. Chose this
-#: over requiring tool-style (ALLCAPS/underscore) mentions because comparative
-#: tasks name products in normal Title case ("migrate Trello cards, unlike
-#: Notion"), which a tool-style rule would miss. Every other provider flags on
-#: any whole-word match.
+# Provider ids that are also ordinary English words: a lowercase occurrence reads
+# as prose, a capitalized one as the product, so foreign_provider_named_in flags
+# these only on a capitalized mention. Every other provider flags on any match.
 _COMMON_WORD_PROVIDER_IDS: frozenset[str] = frozenset({"slack", "linear", "notion"})
 
 
 def foreign_provider_named_in(text: str, target_id: str) -> Subagent | None:
-    """The third-party provider ``text`` names that is not ``target_id``, if any.
+    """Return the third-party provider text names that is not target_id, if any.
 
-    A task routed to one subagent while naming another produces a result that
-    credits the named product with work it never did — the reason eight GAIA
-    todos reached the user as "8 tasks created (Todoist)".
-
-    Ids in _COMMON_WORD_PROVIDER_IDS only flag on a capitalized mention.
+    A task routed to one subagent while naming another credits the named product
+    with work it never did (eight GAIA todos once reached the user as "8 tasks
+    created (Todoist)"). Ids in _COMMON_WORD_PROVIDER_IDS flag only when capitalized.
     """
     for sa, pattern in _third_party_name_matchers():
         if sa.id == target_id:

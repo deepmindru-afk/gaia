@@ -1,15 +1,14 @@
 """Integration activation — pull an integration into the caller's own context.
 
-`activate_integration(integration_id)` gives the caller everything the
-integration's own subagent used to get at startup, without the second graph:
-its tools registered AND the most-used ones bound in this same turn, its
-operating prompt, which account the user is on it, their standing instructions,
-and its skills. Execution stays with the caller — no worker graph, no handoff.
-`spawn_subagent` inherits the bound tools when work needs isolating.
+activate_integration(integration_id) gives the caller everything the
+integration's own subagent used to get at startup, without the second graph: its
+tools registered AND the most-used ones bound in this same turn, its operating
+prompt, the active account, standing instructions, and its skills. Execution
+stays with the caller — no worker graph, no handoff; spawn_subagent inherits the
+bound tools when work needs isolating.
 
 Binding in-turn is the point. Returning only prose would leave the caller to
-spend a whole `retrieve_tools` round trip rediscovering tools the integration's
-config already names.
+spend a whole retrieve_tools round trip rediscovering tools the config names.
 """
 
 from typing import Annotated, Any, cast
@@ -41,8 +40,7 @@ from shared.py.wide_events import log
 
 
 def _requires_per_user_tokens(subagent: Subagent) -> bool:
-    """Tools that live only in a per-user MCP session, never in the global
-    registry — so activation can never make them bindable."""
+    """Whether the subagent's tools live only in a per-user MCP session, never bindable."""
     return bool(
         subagent.managed_by == "mcp" and subagent.mcp_config and subagent.mcp_config.requires_auth
     )
@@ -51,16 +49,12 @@ def _requires_per_user_tokens(subagent: Subagent) -> bool:
 async def _activate_tools(
     subagent: Subagent, user_id: str | None = None
 ) -> tuple[int, list[str], list[str], str]:
-    """Register the integration's tools; return ``(total, bind, preloaded, docs)``.
+    """Register the integration's tools; return (total, bind, preloaded, docs).
 
-    ``bind`` is the integration's ``auto_bind_tools`` + ``extra_initial_tools``
-    minus execute-routed tools: internal helpers bound now via
-    ``selected_tool_ids``. ``preloaded`` are the integration tools held back
-    from binding, with their schema docs in ``docs`` for the reply — run via
-    ``execute``, exactly as the integration's own subagent gets them (bound
-    helpers + preloaded schemas in context). ``docs`` is ``""`` when nothing
-    preloaded or nothing rendered; names that render no docs are reported, not
-    silently kept.
+    bind is auto_bind_tools + extra_initial_tools minus execute-routed tools;
+    preloaded are integration tools held back from binding, with their schema docs
+    in docs for the reply (run via execute). docs is "" when nothing preloaded or
+    rendered; names that render no docs are reported, not silently kept.
     """
     category_name = await register_integration_tools(subagent)
     tool_registry = await get_tool_registry()
@@ -105,11 +99,9 @@ async def _activation_context(integration_id: str, user_id: str | None) -> str:
     try:
         static_prompt = await build_subagent_system_prompt(integration_id=integration_id)
         if static_prompt:
-            # The notes below were written for this integration's worker graph
-            # (a delegated subagent): left bare they misidentify the reader —
-            # "complete the delegated task", "call finish_task", "report to the
-            # parent" — so reframe them for the actual reader, the executor
-            # acting with these tools in its own turn.
+            # The notes were written for this integration's worker graph, so left
+            # bare they misidentify the reader; reframe them for the actual reader,
+            # the executor acting with these tools in its own turn.
             sections.append(
                 f"## {integration_id}: how it works\n"
                 "The notes below describe this integration's tools, conventions, "
@@ -173,10 +165,10 @@ def _handoff_redirect(integration_id: str) -> str:
 
 
 def _reply(tool_call_id: str, text: str, bind: list[str] | None = None) -> Command[Any]:
-    """The tool's result, plus any tools it bound in the same turn.
+    """Build the tool's result, binding any tools it names in the same turn.
 
-    ``selected_tool_ids`` has an append reducer, so listing names here adds them
-    to what the model can call on its very next step — no discovery round trip.
+    selected_tool_ids has an append reducer, so listing names here adds them to
+    what the model can call on its very next step — no discovery round trip.
     """
     update: dict[str, Any] = {"messages": [ToolMessage(content=text, tool_call_id=tool_call_id)]}
     if bind:
@@ -210,10 +202,9 @@ async def activate_integration(
         log.warning(f"{LogTag.AGENT} Activation requested for unknown integration")
         return _reply(tool_call_id, f"Unknown integration '{integration_id}'.")
 
-    # Custom MCP (a CustomMcpSubagent, not a registry Subagent) and auth-required
-    # MCP both issue their tools per user, so they never enter the global registry
-    # and cannot be bound in-context. handoff builds their per-user graph — route
-    # there instead of dead-ending.
+    # Custom MCP and auth-required MCP issue their tools per user, so they never
+    # enter the global registry and cannot be bound in-context; route to handoff,
+    # which builds their per-user graph, instead of dead-ending.
     if isinstance(resolved, CustomMcpSubagent) or _requires_per_user_tokens(resolved):
         log.set(activation={"integration": integration_id, "routed_to_handoff": True})
         return _reply(tool_call_id, _handoff_redirect(integration_id))
@@ -257,9 +248,8 @@ async def activate_integration(
             )
 
     # Tool schemas live in exactly one place: the trailing schemas section
-    # (rendered by render_preload_block under its own header) — the same
-    # last-position rule as handoff seeding, which appends them to the end of
-    # the static system message. Never interleaved with the context sections.
+    # (render_preload_block, its own header) — the same last-position rule as
+    # handoff seeding. Never interleaved with the context sections.
     header_parts = [f"Integration '{integration_id}' is now active with {tool_count} tools."]
     if bind:
         header_parts.append(
@@ -285,10 +275,9 @@ async def activate_integration(
             f"built from those schemas. {search_guidance}"
         )
     elif not bind:
-        # Nothing registered under this integration (total == 0): pointing at
-        # retrieve_tools would send the model after tools that do not exist.
-        # Without a stamp the namespace is not query-searchable either, so say
-        # which retrieve path actually works instead of the blanket pointer.
+        # Nothing registered (total == 0): pointing at retrieve_tools would chase
+        # tools that do not exist, and the namespace is not query-searchable
+        # without a stamp — say which retrieve path works instead.
         if not tool_count and not preloaded:
             header_parts.append(
                 "It registered no tools of its own — everything it offers is in "

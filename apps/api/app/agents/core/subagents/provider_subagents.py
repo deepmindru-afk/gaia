@@ -48,13 +48,11 @@ class SubagentUnavailableError(Exception):
 
 
 async def register_composio_subagent_tools(subagent: Subagent, tool_registry: ToolRegistry) -> str:
-    """Put a Composio subagent's toolkit in the registry, once per process; return
-    the toolkit name.
+    """Put a Composio subagent's toolkit in the registry once per process; return its name.
 
-    The tool space is empty until this runs — a worker that never handed off
-    to this subagent found no GMAIL tool three minutes after restart. Landing
-    here without composio_config means managed_by="composio" was misdeclared,
-    so fail loudly rather than produce a tool-less agent.
+    The tool space is empty until this runs. Landing here without composio_config
+    means managed_by="composio" was misdeclared, so fail loudly rather than
+    produce a tool-less agent.
     """
     integration = get_integration_by_id(subagent.id)
     if integration is None or integration.composio_config is None:
@@ -77,15 +75,10 @@ async def register_composio_subagent_tools(subagent: Subagent, tool_registry: To
 async def register_integration_tools(subagent: Subagent) -> str | None:
     """Load an integration's tools into the global registry, and name their category.
 
-    The single place an integration's tools become bindable. ``create_subagent``
-    calls it to stock a provider graph; ``activate_integration`` calls it to make
-    the same tools retrievable by whoever is already running. Returns the registry
-    category holding them, or None for integrations with no category of their own
-    (internal ones ride on core tools registered at startup).
-
-    Auth-required MCP integrations are not registrable: their tools are per-user
-    and live only inside MCPClient, so they raise here — build a per-user graph
-    with ``create_subagent_for_user`` instead.
+    The single place an integration's tools become bindable. Returns the registry
+    category holding them, or None for integrations with no category of their own.
+    Auth-required MCP integrations raise here (tools are per-user, inside MCPClient)
+    — build a per-user graph with create_subagent_for_user instead.
     """
     config = subagent.config
     tool_registry = await get_tool_registry()
@@ -124,17 +117,9 @@ async def register_integration_tools(subagent: Subagent) -> str | None:
 
 
 async def create_subagent(subagent: Subagent) -> CompiledStateGraph:
-    """
-    Create a provider subagent graph on-demand.
-    Registers provider tools to registry if not already present.
+    """Create a provider subagent graph on-demand, registering its tools if absent.
 
-    Note: For auth-required MCP integrations, use create_subagent_for_user instead.
-
-    Args:
-        subagent: The Subagent to materialize a graph for
-
-    Returns:
-        Compiled subagent graph
+    For auth-required MCP integrations, use create_subagent_for_user instead.
     """
     config = subagent.config
     await register_integration_tools(subagent)
