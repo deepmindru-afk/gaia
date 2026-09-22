@@ -6,9 +6,14 @@ looks. Everything is best-effort and claim-guarded — a resume failure must
 never fail the tap.
 """
 
+from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from app.constants.log_tags import LogTag
 from app.models.hil_models import LedgerState
 from app.services.analytics_service import AnalyticsEvents
 from app.services.hil import resume as resume_module
@@ -187,3 +192,181 @@ class TestResumedEvent:
             AnalyticsEvents.HIL_RESUMED,
             {"approval_id": "ap_bg1", "owner_run_type": "workflow"},
         )
+
+
+@dataclass
+class ResumeSeams:
+    """The resume driver's seams, each answering only for the parked row's own ids."""
+
+    claim: AsyncMock
+    log: MagicMock
+    pool: MagicMock
+    enqueue: AsyncMock
+    brief: AsyncMock
+    queue_workflow: AsyncMock
+    append_activity: AsyncMock
+
+
+@pytest.fixture
+def seams() -> Iterator[ResumeSeams]:
+    pool = MagicMock()
+
+    async def _claim(approval_id: str) -> bool:
+        return approval_id == "ap_bg1"
+
+    async def _brief(workflow_id: str, user_id: str) -> str:
+        return "last run drafted the briefing" if (workflow_id, user_id) == ("wf-7", "u1") else ""
+
+    todos = MagicMock()
+    todos.append_activity_entry = AsyncMock(return_value=True)
+    with (
+        patch(f"{MODULE}.approval_ledger_repository") as repo,
+        patch(f"{MODULE}.log") as log,
+        patch(f"{MODULE}.RedisPoolManager.get_pool", new=AsyncMock(return_value=pool)),
+        patch(f"{MODULE}.enqueue_worker_job", new=AsyncMock()) as enqueue,
+        patch(f"{MODULE}.get_last_run_brief", new=AsyncMock(side_effect=_brief)) as brief,
+        patch(
+            f"{MODULE}.WorkflowQueueService.queue_workflow_execution", new=AsyncMock()
+        ) as queue_workflow,
+        patch(f"{MODULE}.tracked_todo_service", new=todos),
+        patch(f"{MODULE}.capture_event"),
+    ):
+        repo.claim_resume = AsyncMock(side_effect=_claim)
+        yield ResumeSeams(
+            claim=repo.claim_resume,
+            log=log,
+            pool=pool,
+            enqueue=enqueue,
+            brief=brief,
+            queue_workflow=queue_workflow,
+            append_activity=todos.append_activity_entry,
+        )
+
+
+class TestResumeRouting:
+    @pytest.mark.parametrize(
+        "owner", [{"owner_run_type": "todo"}, {"owner_id": "todo-1"}], ids=["no-id", "no-type"]
+    )
+    async def test_half_an_owner_resumes_nothing(
+        self, seams: ResumeSeams, owner: dict[str, str]
+    ) -> None:
+        await resume_owner_after_approval(_row(**owner))
+
+        seams.claim.assert_not_awaited()
+
+    async def test_a_todo_owner_is_reenqueued_into_its_parked_conversation(
+        self, seams: ResumeSeams
+    ) -> None:
+        await resume_owner_after_approval(_row(owner_run_type="todo", owner_id="todo-9"))
+
+        seams.claim.assert_awaited_once_with("ap_bg1")
+        seams.enqueue.assert_awaited_once_with(
+            seams.pool, "resume_tracked_todo", "todo-9", "conv-bg", "ap_bg1", "Send briefing"
+        )
+        seams.queue_workflow.assert_not_awaited()
+
+    async def test_a_workflow_owner_is_requeued_with_its_receipt_and_last_brief(
+        self, seams: ResumeSeams
+    ) -> None:
+        await resume_owner_after_approval(_row(owner_run_type="workflow", owner_id="wf-7"))
+
+        seams.queue_workflow.assert_awaited_once_with(
+            "wf-7",
+            "u1",
+            {
+                "resume_from_approval": "ap_bg1",
+                "approval_summary": "Send briefing",
+                "approval_result": "granted",
+                "prior_run_brief": "last run drafted the briefing",
+            },
+        )
+        seams.enqueue.assert_not_awaited()
+
+    async def test_a_missing_brief_is_reported_and_the_resume_goes_on(
+        self, seams: ResumeSeams
+    ) -> None:
+        seams.brief.side_effect = RuntimeError("mongo down")
+
+        await resume_owner_after_approval(_row(owner_run_type="workflow", owner_id="wf-7"))
+
+        assert seams.queue_workflow.await_args.args[2]["prior_run_brief"] == ""
+        assert _warned(seams.log) == {
+            f"{LogTag.HIL} last-run brief unavailable; resuming without it": {
+                "approval_id": "ap_bg1",
+                "error": "mongo down",
+                "error_type": "RuntimeError",
+            }
+        }
+
+    async def test_a_failed_claim_is_reported_and_resumes_nothing(self, seams: ResumeSeams) -> None:
+        seams.claim.side_effect = ConnectionError("mongo down")
+
+        await resume_owner_after_approval(_row(owner_run_type="todo", owner_id="todo-9"))
+
+        seams.enqueue.assert_not_awaited()
+        assert _warned(seams.log) == {
+            f"{LogTag.HIL} resume claim failed; skipping resume": {
+                "approval_id": "ap_bg1",
+                "error": "mongo down",
+                "error_type": "ConnectionError",
+            }
+        }
+
+    async def test_an_unknown_owner_is_reported(self, seams: ResumeSeams) -> None:
+        await resume_owner_after_approval(_row(owner_run_type="cron", owner_id="x"))
+
+        assert _warned(seams.log) == {
+            f"{LogTag.HIL} unknown resume owner; skipping": {
+                "approval_id": "ap_bg1",
+                "owner_run_type": "cron",
+            }
+        }
+
+    async def test_a_failed_resume_is_reported_with_its_owner(self, seams: ResumeSeams) -> None:
+        seams.enqueue.side_effect = RuntimeError("redis down")
+
+        await resume_owner_after_approval(_row(owner_run_type="todo", owner_id="todo-9"))
+
+        assert _warned(seams.log) == {
+            f"{LogTag.HIL} owner resume failed; the approval itself stands": {
+                "approval_id": "ap_bg1",
+                "owner_run_type": "todo",
+                "owner_id": "todo-9",
+                "error": "redis down",
+                "error_type": "RuntimeError",
+            }
+        }
+
+
+class TestDenyTrace:
+    @pytest.mark.parametrize(
+        ("feedback", "entry"),
+        [
+            ("too pricey", "Approval ap_bg1 denied — 'too pricey': skipped Send briefing."),
+            (None, "Approval ap_bg1 denied: skipped Send briefing."),
+        ],
+        ids=["with-words", "bare"],
+    )
+    async def test_a_todo_deny_is_logged_on_that_todo(
+        self, seams: ResumeSeams, feedback: str | None, entry: str
+    ) -> None:
+        await record_owner_deny(_row(owner_run_type="todo", owner_id="todo-3"), feedback)
+
+        seams.append_activity.assert_awaited_once_with(todo_id="todo-3", user_id="u1", entry=entry)
+
+    async def test_a_failed_trace_is_reported(self, seams: ResumeSeams) -> None:
+        seams.append_activity.side_effect = RuntimeError("mongo down")
+
+        await record_owner_deny(_row(owner_run_type="todo", owner_id="todo-3"), None)
+
+        assert _warned(seams.log) == {
+            f"{LogTag.HIL} deny trace failed": {
+                "approval_id": "ap_bg1",
+                "error": "mongo down",
+                "error_type": "RuntimeError",
+            }
+        }
+
+
+def _warned(log: MagicMock) -> dict[str, dict[str, object]]:
+    return {c.args[0]: c.kwargs for c in log.warning.call_args_list}
