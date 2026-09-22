@@ -539,11 +539,9 @@ async def resume_tracked_todo(
 ) -> str:
     """Continue a parked execution in its OWN conversation after an approval.
 
-    Fresh executions mint a random conversation per run, but a resume must
-    inherit the parked run's thread — its reasoning, partial tool results, and
-    checkpoint live there, and activity.md carries only a shadow of them.
-    Reusing the conversation is the deliberate exception to the fresh-uuid
-    rule: resumes are human-gated and rare, so no accumulation problem.
+    A resume must inherit the parked run's thread — its reasoning, partial tool
+    results, and checkpoint live there. Reusing the conversation is the deliberate
+    exception to the fresh-uuid rule: resumes are human-gated and rare.
     """
     log.set(todo_id=todo_id, approval_id=approval_id)
     pool = await RedisPoolManager.get_pool()

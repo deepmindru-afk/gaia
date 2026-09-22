@@ -678,10 +678,9 @@ REPLAY_FLAGGED_SUMMARY = (
 OVERLAPPED_SUMMARY = (
     "Skipped: a previous run of this workflow was still going, and that run delivered the result"
 )
-#: The same skip, when the run it collided with is parked on an approval. Without
-#: this the record blames "a run still going" for a schedule the user themselves
-#: can restart, and an hourly workflow can sit out the whole approval window
-#: saying nothing about why.
+# The same skip when the collided run is parked on an approval — otherwise the
+# record blames "a run still going" for something the user can restart, and an
+# hourly workflow sits out the whole approval window saying nothing.
 OVERLAPPED_AWAITING_APPROVAL_SUMMARY = (
     "Skipped: the previous run of this workflow is waiting for you to answer its approval"
 )
@@ -1188,16 +1187,10 @@ async def _admit_fire(
 async def _reserve_conversation(workflow: Workflow, workflow_id: str) -> tuple[str, str]:
     """Claim this workflow's conversation for the whole fire, or drop the fire.
 
-    A workflow owns ONE conversation across all its runs and both run paths end
-    up on that conversation's executor, so the fire takes its busy lock up front:
-    atomically, and before it charges a quota unit or drains a trigger batch, so
-    an overlapped fire spends nothing and swallows nothing. Reading the lock
-    instead of taking it would leave the window open — the agent path does not
-    reach ``call_executor`` until a whole comms model call later, and two fires
-    arriving inside that window would both find it free.
-
-    Returns the conversation and the task id the reservation was stamped with;
-    raises :class:`WorkflowFireOverlapped` when another run already holds it.
+    A workflow owns ONE conversation, so the fire takes its busy lock up front —
+    atomically and before charging quota or draining a trigger batch, so an
+    overlapped fire spends nothing. Returns the conversation and the reservation's
+    task id; raises WorkflowFireOverlapped when another run already holds it.
     """
     conversation_id = await get_or_create_workflow_conversation(
         workflow_id=workflow.id,
@@ -1262,12 +1255,9 @@ async def _run_and_record_success(
     # in config.configurable). Applies to replay-fallback runs too.
     log.set(workflow=WorkflowContext(id=workflow_id, execution_id=execution_id))
 
-    # Replay the workflow's playbook when it still describes this workflow,
-    # otherwise run the agent. A replay that stops partway hands the rest of
-    # the run to the agent, carrying what it already did so the agent does
-    # not repeat a side effect. The agent path delivers its own result from
-    # the background delivery path (gated by workflow_id); a trusted replay
-    # delivers inside _finish_after_replay.
+    # Replay the playbook when it still describes this workflow, else run the
+    # agent (a partial replay hands the rest over, carrying what it did). Agent
+    # path delivers from the background path; a replay via _finish_after_replay.
     conversation_id, trace, summary = await _run_workflow(
         workflow, workflow_id, context or {}, reservation
     )
@@ -1370,12 +1360,9 @@ async def _record_overlapped_fire(
     workflow_id: str,
     trigger_type: str,
 ) -> str:
-    # This fire never ran: it found the workflow's conversation already claimed
-    # by another run of the same workflow and dropped out before charging a
-    # quota unit or draining its trigger batch. That run delivers the result, so
-    # this is recorded honestly and the user is told nothing — except when the
-    # run holding the conversation is parked on an approval, which is the one
-    # overlap the user can clear themselves and so the one worth naming.
+    # This fire never ran: the conversation was already claimed by another run, so
+    # it dropped out before charging quota. The user is told nothing — except when
+    # the holding run is parked on an approval, the one overlap they can clear.
     awaiting_approval = bool(await list_pending_for_conversation(overlapped.conversation_id))
     log.set_ns(
         "workflow",
@@ -1391,9 +1378,8 @@ async def _record_overlapped_fire(
         lock_holder=overlapped.holder,
         holder_awaiting_approval=awaiting_approval,
     )
-    # Minted here rather than reused: the overlap is caught before the fire has
-    # a record, because it is caught before the fire spends anything. The skip
-    # still belongs in the workflow's history — without a row the user sees a
+    # Minted here rather than reused: the overlap is caught before the fire has a
+    # record. The skip still belongs in history — without a row the user sees a
     # scheduled workflow that simply stopped producing runs.
     execution = await create_execution(
         workflow_id=workflow_id,
@@ -1518,19 +1504,14 @@ async def execute_workflow_by_id(
         if skipped:
             return skipped
 
-        # Claimed before the cost wall, the quota charge and the batch drain: a
-        # fire that overlaps an in-flight run must not spend the user's quota on
-        # a run that never happens, and must not consume trigger events the run
-        # it collided with has already drained its own copy of — those events
-        # are read-and-deleted, so a fire that takes them and then drops out
-        # loses them for good.
+        # Claimed before the cost wall, quota charge and batch drain: a fire that
+        # overlaps an in-flight run must not spend quota on a run that never
+        # happens, nor consume read-and-deleted trigger events it would then lose.
         conversation_id, lock_task_id = await _reserve_conversation(workflow, workflow_id)
 
-        # Cost wall BEFORE any execution record or LLM work: when the user's
-        # daily budget is spent the run is skipped cleanly (no confusing
-        # "failed" row) and the except branch below sends the budget-specific
-        # notification + re-arms the next occurrence, so a recurring workflow
-        # resumes after the budget resets.
+        # Cost wall BEFORE any execution record or LLM work: a spent daily budget
+        # skips the run cleanly (no "failed" row); the except branch notifies and
+        # re-arms the next occurrence so a recurring workflow resumes after reset.
         await enforce_daily_cost_budget(
             workflow.user_id,
             feature_key="trigger_workflow_executions",
@@ -1654,17 +1635,10 @@ async def execute_workflow_as_playbook(
 ) -> tuple[str, PlaybookRunResult]:
     """Replay the workflow's playbook in its conversation.
 
-    Returns the conversation id and the replay's own report. A stopped replay is
-    NOT an exception: it comes back with ``ok=False`` so the caller can hand the
-    rest of the run to the agent knowing exactly what already happened. The
-    turn itself is written by the caller once the outcome is recorded, because
-    how the text is labelled depends on that outcome.
-
-    The replay runs under the reservation its fire took on this conversation
-    (see :func:`_reserve_conversation`), the same busy lock ``call_executor``
-    takes for an agentic run — so two fires of one workflow can never replay at
-    once, and a replay can never run alongside an agentic run of the same
-    workflow.
+    Returns the conversation id and the replay's report. A stopped replay is not
+    an exception — it comes back with ok=False so the caller can hand the rest to
+    the agent. Runs under the reservation its fire took (see _reserve_conversation),
+    the same busy lock call_executor takes, so replays never overlap.
     """
     user_id = user.user_id
     user_data = await _resolve_workflow_user(workflow, user_id)
@@ -1697,25 +1671,10 @@ async def execute_workflow_as_chat(
 ) -> tuple[str, list[RecordedCall]]:
     """Run a workflow as a silent chat turn; return its conversation id and trace.
 
-    The workflow is fed to the agent exactly like an interactive chat turn (same
-    ``call_agent_silent`` entry, same ``selectedWorkflow`` awareness). Comms
-    delegates the whole workflow to the executor, which runs every step and
-    synthesizes one result. That result is delivered as the workflow-completion
-    notification from the background executor path (gated by ``workflow_id`` in
-    the trigger context), so this function only kicks off the run and persists
-    the trigger message; it does not build or send the result here.
-
-    The run's tool calls come back as the trace so the caller can persist them on
-    the execution record — the next run reads that instead of replaying this one
-    out of the conversation's checkpoints, which is why they are reset below.
-
-    The turn runs under the reservation its fire took on this conversation (see
-    :func:`_reserve_conversation`), which the executor this run dispatches adopts
-    rather than queues behind. Without that reservation a second fire arriving
-    during the comms model call would find the lock free, run too, and have its
-    dispatch absorbed by the first run's inbox — recorded as a clean success
-    whose trace holds none of the work and whose completion notification never
-    fires.
+    Fed to the agent like an interactive turn; the executor runs every step and
+    the background path delivers the result, so this only kicks off the run and
+    persists the trigger message. Tool calls come back as the trace. Runs under
+    the fire's reservation (see _reserve_conversation), which the executor adopts.
     """
 
     # Avoid circular import
