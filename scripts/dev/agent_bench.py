@@ -104,7 +104,7 @@ def _tool_calls(raw: str) -> list[tuple[str, str]]:
 
 
 def _redundant(calls: list[tuple[str, str]]) -> int:
-    """Calls that repeat an identical (name, args) pair already made this turn."""
+    """Count calls that repeat an identical (name, args) pair already made this turn."""
     seen: set[tuple[str, str]] = set()
     dupes = 0
     for call in calls:
@@ -138,8 +138,10 @@ def _load_api_env() -> None:
 
 
 def _resolve_user_id(api: str, user: str, timeout: int) -> str | None:
-    """Id of the dev user, so token attribution can exclude other worktrees'
-    traces sharing the LangSmith project. /dev/users is find-or-create."""
+    """Return the dev user's id so token attribution can exclude other worktrees.
+
+    Other worktrees' traces share the LangSmith project. /dev/users is find-or-create.
+    """
     try:
         base = api.split("/api/v1/")[0]
         raw = _post(base + "/api/v1/dev/users", {"email": user}, user, timeout)
@@ -180,6 +182,7 @@ def _tokens_between(start: datetime, end: datetime, user_id: str | None = None) 
             capture_output=True,
             text=True,
             timeout=60,
+            check=False,
         )
         if out.returncode == 0 and out.stdout.strip():
             try:

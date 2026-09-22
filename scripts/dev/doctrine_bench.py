@@ -61,6 +61,7 @@ def run_once(model: str, message: str, timeout: int) -> tuple[str, dict]:
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return "__TIMEOUT__", {}
