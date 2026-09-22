@@ -96,11 +96,13 @@ describe("useApprovalDecisionWebSocket", () => {
     renderHook(() => useApprovalDecisionWebSocket());
     await handler()({
       type: "hil_approval_decided",
-      conversation_id: "conv-1",
-      approval_id: "ap_1",
-      status: "approved",
-      feedback: null,
-      version: 1,
+      data: {
+        conversation_id: "conv-1",
+        approval_id: "ap_1",
+        status: "approved",
+        feedback: null,
+        version: 1,
+      },
     });
     const msgs = useChatStore.getState().messagesByConversation["conv-1"] ?? [];
     const entries = (msgs[0]?.tool_data ?? []) as {
@@ -120,43 +122,53 @@ describe("useApprovalDecisionWebSocket", () => {
     const h = handler();
     await h({
       type: "hil_approval_decided",
-      conversation_id: "conv-1",
-      approval_id: "ap_2",
-      status: "revoked",
-      feedback: null,
-      version: 2,
+      data: {
+        conversation_id: "conv-1",
+        approval_id: "ap_2",
+        status: "revoked",
+        feedback: null,
+        version: 2,
+      },
     });
     await h({
       type: "hil_approval_decided",
-      conversation_id: "conv-1",
-      approval_id: "ap_nope",
-      status: "approved",
-      feedback: null,
-      version: 1,
+      data: {
+        conversation_id: "conv-1",
+        approval_id: "ap_nope",
+        status: "approved",
+        feedback: null,
+        version: 1,
+      },
     });
     await h({
       type: "hil_approval_decided",
-      conversation_id: "conv-1",
-      approval_id: "ap_1",
-      status: "executing",
-      feedback: null,
-      version: 1,
+      data: {
+        conversation_id: "conv-1",
+        approval_id: "ap_1",
+        status: "executing",
+        feedback: null,
+        version: 1,
+      },
     });
     await h({
       type: "hil_approval_decided",
-      conversation_id: "conv-1",
-      approval_id: "ap_3",
-      status: "executed",
-      feedback: null,
-      version: 2,
+      data: {
+        conversation_id: "conv-1",
+        approval_id: "ap_3",
+        status: "executed",
+        feedback: null,
+        version: 2,
+      },
     });
     await h({
       type: "hil_approval_decided",
-      conversation_id: "conv-1",
-      approval_id: "ap_4",
-      status: "unknown",
-      feedback: null,
-      version: 3,
+      data: {
+        conversation_id: "conv-1",
+        approval_id: "ap_4",
+        status: "unknown",
+        feedback: null,
+        version: 3,
+      },
     });
     const msgs = useChatStore.getState().messagesByConversation["conv-1"] ?? [];
     const entries = (msgs[0]?.tool_data ?? []) as {

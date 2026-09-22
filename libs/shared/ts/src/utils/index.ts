@@ -1,3 +1,11 @@
+export type { ApprovalSettlement } from "./approvalSettle";
+export {
+  isKnownApprovalStatus,
+  parseApprovalDecidedEvent,
+  settleApprovalToolData,
+  statusAfterDecision,
+  TERMINAL_APPROVAL_STATUSES,
+} from "./approvalSettle";
 export type { JwtPayload, TokenStorage } from "./auth";
 export { isTokenExpired, parseJwt, shouldRefreshToken } from "./auth";
 export type { DueChipTone } from "./dateUtils";

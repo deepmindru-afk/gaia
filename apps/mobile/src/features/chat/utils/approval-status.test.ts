@@ -6,8 +6,6 @@ import {
   APPROVAL_RESOLVED_META,
   applyApprovalDecisionToMessages,
   approvalOutcomeText,
-  parseApprovalDecidedEvent,
-  TERMINAL_APPROVAL_STATUSES,
 } from "./approval-status";
 
 function card(
@@ -113,43 +111,6 @@ describe("approvalOutcomeText — libs fallback", () => {
   });
 });
 
-describe("parseApprovalDecidedEvent", () => {
-  it("parses the top-level web payload shape", () => {
-    expect(
-      parseApprovalDecidedEvent({
-        type: "hil_approval_decided",
-        conversation_id: "conv-1",
-        approval_id: "ap_1",
-        status: "approved",
-        feedback: null,
-      }),
-    ).toEqual({
-      conversation_id: "conv-1",
-      approval_id: "ap_1",
-      status: "approved",
-      feedback: null,
-    });
-  });
-
-  it("rejects unknown statuses and missing ids", () => {
-    expect(
-      parseApprovalDecidedEvent({
-        type: "hil_approval_decided",
-        conversation_id: "conv-1",
-        approval_id: "ap_1",
-        status: "executing",
-      }),
-    ).toBeNull();
-    expect(
-      parseApprovalDecidedEvent({
-        type: "hil_approval_decided",
-        conversation_id: "conv-1",
-        status: "approved",
-      }),
-    ).toBeNull();
-  });
-});
-
 describe("applyApprovalDecisionToMessages — hil_approval_decided settle", () => {
   it("flips the matching card and leaves siblings alone", () => {
     const messages = [
@@ -207,18 +168,5 @@ describe("applyApprovalDecisionToMessages — hil_approval_decided settle", () =
     );
     expect(changed).toBe(false);
     expect(next).toBe(messages);
-  });
-
-  it("TERMINAL_APPROVAL_STATUSES includes the ledger states", () => {
-    for (const s of [
-      "approved",
-      "denied",
-      "revoked",
-      "executed",
-      "failed",
-      "unknown",
-    ] as const) {
-      expect(TERMINAL_APPROVAL_STATUSES).toContain(s);
-    }
   });
 });

@@ -4,6 +4,7 @@ import type {
   ApprovalScope,
   ApprovalStatus,
 } from "@gaia/shared/chat";
+import { statusAfterDecision } from "@gaia/shared/utils";
 import * as Haptics from "expo-haptics";
 import { Button, Chip } from "heroui-native";
 import { useRef, useState } from "react";
@@ -20,7 +21,6 @@ import { chatApi } from "@/features/chat/api/chat-api";
 import {
   APPROVAL_RESOLVED_META,
   approvalOutcomeText,
-  isKnownApprovalStatus,
 } from "@/features/chat/utils/approval-status";
 import { flattenArgsPreview } from "@/features/chat/utils/args-preview";
 
@@ -104,8 +104,20 @@ function ArgsPreview({ args }: { args: Record<string, unknown> }) {
   );
 }
 
-export function ApprovalRequestCard({ data }: ApprovalRequestCardProps) {
+export function ApprovalRequestCard({
+  data: incoming,
+}: ApprovalRequestCardProps) {
   const [submitting, setSubmitting] = useState<ApprovalDecision | null>(null);
+  // The decision response settles the card on its own: the resolved frame is
+  // best-effort and may never arrive. A real frame outranks it (executed/failed).
+  const [settled, setSettled] = useState<Pick<
+    ApprovalRequestData,
+    "status" | "feedback"
+  > | null>(null);
+  const data: ApprovalRequestData =
+    incoming.status === "pending" && settled
+      ? { ...incoming, ...settled }
+      : incoming;
   const [denyOpen, setDenyOpen] = useState(false);
   const [feedback, setFeedback] = useState("");
   // A stale-v tap committed nothing; the next submit omits v so the ledger CAS,
@@ -120,9 +132,7 @@ export function ApprovalRequestCard({ data }: ApprovalRequestCardProps) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSubmitting(decision);
     try {
-      // The resolved frame replaces this card in place over the stream
-      // (upsertApprovalToolData). A 410 refreshes via not_found below; reaching
-      // the catch means the submit genuinely failed.
+      // Reaching the catch means the submit genuinely failed.
       const outcome = await chatApi.postApprovalDecision(data.approval_id, {
         decision,
         feedback: feedback.trim() || undefined,
@@ -131,18 +141,8 @@ export function ApprovalRequestCard({ data }: ApprovalRequestCardProps) {
           ? undefined
           : (data.ledger_version ?? undefined),
       });
-      if (!outcome.success) {
-        // A resolved verdict leaves the card disabled for the resolved frame;
-        // pending (stale-v conflict) and unknown keep the re-enable/retry path.
-        const status = outcome.status ?? null;
-        if (
-          status !== null &&
-          status !== "pending" &&
-          status !== "unknown" &&
-          isKnownApprovalStatus(status)
-        ) {
-          return;
-        }
+      const status = statusAfterDecision(decision, outcome);
+      if (status === null) {
         versionConflict.current = true;
         setSubmitting(null);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -150,7 +150,15 @@ export function ApprovalRequestCard({ data }: ApprovalRequestCardProps) {
           "Approval moved",
           "That approval already moved — tap again to confirm.",
         );
+        return;
       }
+      setSettled({
+        status,
+        feedback:
+          outcome.success && decision === "deny"
+            ? feedback.trim() || null
+            : null,
+      });
     } catch {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert(

@@ -14,6 +14,7 @@ import type {
   ApprovalStatus,
 } from "@shared/chat";
 import { formatApprovalAge, RECONFIRM_AGE_SECONDS } from "@shared/chat";
+import { statusAfterDecision } from "@shared/utils";
 import { useMemo, useRef, useState } from "react";
 import { ShieldAlertIcon } from "@/components/shared/icons";
 import { chatApi } from "@/features/chat/api/chatApi";
@@ -35,17 +36,6 @@ interface ApprovalRequestSectionProps {
 
 // Statuses a stale tap settles to locally (the real verdict, not the tap);
 // `pending`/`unknown` keep the retry toast, `executing` is a ledger transient.
-const STALE_SETTLED_STATUSES: ReadonlySet<string> = new Set<string>([
-  "approved",
-  "denied",
-  "auto_approved",
-  "timeout",
-  "abandoned",
-  "revoked",
-  "executed",
-  "failed",
-]);
-
 function ArgsPreview({ args }: { args: Record<string, unknown> }) {
   const { rows, omitted } = useMemo(() => flattenArgsPreview(args), [args]);
   if (rows.length === 0) return null;
@@ -118,28 +108,20 @@ export default function ApprovalRequestSection({
           ? undefined
           : (data.ledger_version ?? undefined),
       });
-      if (!outcome.success) {
-        // Stale tap: settle locally when the server names a settled state,
-        // otherwise drop the version so the next tap hits the CAS directly.
-        if (outcome.status && STALE_SETTLED_STATUSES.has(outcome.status)) {
-          markApprovalDecided(conversationId);
-          onDecided(outcome.status as ApprovalStatus, attachedFeedback);
-        } else {
-          versionConflict.current = true;
-          setSubmitting(null);
-          setPhase("idle");
-          toast.error("That approval already moved — tap again to confirm");
-        }
+      // Settle locally: the resolved frame (websocket broadcast or reload) flips
+      // the card to the real outcome — executed, failed, unknown. Reaching the
+      // catch means the submit genuinely failed.
+      const settled = statusAfterDecision(decision, outcome);
+      if (settled === null) {
+        // Stale version: drop it so the next tap hits the CAS directly.
+        versionConflict.current = true;
+        setSubmitting(null);
+        setPhase("idle");
+        toast.error("That approval already moved — tap again to confirm");
         return;
       }
-      // Settle locally: the resolved frame (websocket broadcast or reload) flips
-      // the card to the real outcome — executed, failed, unknown. A 410 refreshes
-      // via not_found above; reaching the catch means the submit genuinely failed.
       markApprovalDecided(conversationId);
-      onDecided(
-        decision === "approve" ? "approved" : "denied",
-        attachedFeedback,
-      );
+      onDecided(settled, attachedFeedback);
     } catch {
       toast.error("Couldn't submit your decision — please try again");
       setSubmitting(null);

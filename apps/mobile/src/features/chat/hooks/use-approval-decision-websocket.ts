@@ -1,3 +1,4 @@
+import { parseApprovalDecidedEvent } from "@gaia/shared/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { chatDb } from "@/lib/db/chatDb";
@@ -5,10 +6,7 @@ import { wsManager } from "@/lib/websocket-client";
 import { useChatStore } from "@/stores/chat-store";
 import type { Message } from "../api/chat-api";
 import { chatKeys } from "../api/queries";
-import {
-  applyApprovalDecisionToMessages,
-  parseApprovalDecidedEvent,
-} from "../utils/approval-status";
+import { applyApprovalDecisionToMessages } from "../utils/approval-status";
 
 /**
  * Subscribe to `hil_approval_decided` and settle the matching open card,

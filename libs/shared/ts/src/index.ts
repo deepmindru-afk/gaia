@@ -380,6 +380,7 @@ export {
   WorkflowStatus,
 } from "./types";
 export type {
+  ApprovalSettlement,
   ContentSegment,
   DueChipTone,
   IntegrationConnectionState,
@@ -427,6 +428,7 @@ export {
   getTriggerLabel,
   INTEGRATION_STATE_ORDER,
   integrationConnectionState,
+  isKnownApprovalStatus,
   isOverdue,
   isReactionAck,
   isTokenExpired,
@@ -435,14 +437,18 @@ export {
   normalizeOpenUICode,
   OPENUI_SAMPLES,
   PLAYFUL_THINKING_MESSAGES,
+  parseApprovalDecidedEvent,
   parseCronToHuman,
   parseJwt,
   parseOpenUISegments,
   parseQuickAdd,
   parseRelativeDateLabel,
   parseThinkingFromText,
+  settleApprovalToolData,
   shouldRefreshToken,
   splitMessageByBreaks,
+  statusAfterDecision,
+  TERMINAL_APPROVAL_STATUSES,
   truncateText,
 } from "./utils";
 export type {

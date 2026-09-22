@@ -1,12 +1,7 @@
-import type {
-  ApprovalRequestData,
-  ApprovalStatus,
-  ToolDataEntry,
-} from "@gaia/shared/chat";
-import {
-  APPROVAL_REQUEST_TOOL_NAME,
-  approvalOutcomeLabel,
-} from "@gaia/shared/chat";
+import type { ApprovalRequestData, ApprovalStatus } from "@gaia/shared/chat";
+import { approvalOutcomeLabel } from "@gaia/shared/chat";
+import type { ApprovalSettlement } from "@gaia/shared/utils";
+import { settleApprovalToolData } from "@gaia/shared/utils";
 import type { Message } from "@/features/chat/api/chat-api";
 
 export interface ApprovalMeta {
@@ -56,38 +51,9 @@ export const APPROVAL_CHIP_META: Record<
   revoked: { label: "Withdrawn", color: "#71717a" },
 };
 
-/** Statuses the backend publishes over `hil_approval_decided`. */
-export const TERMINAL_APPROVAL_STATUSES: ApprovalStatus[] = [
-  "approved",
-  "denied",
-  "revoked",
-  "executed",
-  "failed",
-  "unknown",
-];
-
-const KNOWN_STATUSES: ReadonlySet<string> = new Set<string>([
-  "pending",
-  "approved",
-  "denied",
-  "timeout",
-  "abandoned",
-  "auto_approved",
-  "revoked",
-  "executed",
-  "failed",
-  "unknown",
-]);
-
-export function isKnownApprovalStatus(
-  status: string,
-): status is ApprovalStatus {
-  return KNOWN_STATUSES.has(status);
-}
-
 /**
  * One-line outcome for a settled card. Shared `approvalOutcomeLabel` returns
- * "" for executed/failed/unknown (libs is read-only from mobile), so fall
+ * "" for executed/failed/unknown, so fall
  * back to per-status copy here — preferring explicit feedback when present.
  */
 export function approvalOutcomeText(data: ApprovalRequestData): string {
@@ -107,71 +73,6 @@ export function approvalOutcomeText(data: ApprovalRequestData): string {
   }
 }
 
-export interface ApprovalDecidedEvent {
-  conversation_id: string;
-  approval_id: string;
-  status: ApprovalStatus;
-  feedback: string | null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-/**
- * Parse a raw `hil_approval_decided` frame. Accepts the top-level web shape
- * (`{conversation_id, approval_id, status, feedback}`) and a nested
- * `{data: {...}}` variant. Returns null for unknown statuses/ids — the
- * ledger row stays truth.
- */
-export function parseApprovalDecidedEvent(
-  raw: unknown,
-): ApprovalDecidedEvent | null {
-  if (!isRecord(raw)) return null;
-  const payload = isRecord(raw.data) ? raw.data : raw;
-  const conversation_id = payload.conversation_id;
-  const approval_id = payload.approval_id;
-  const status = payload.status;
-  if (typeof conversation_id !== "string" || conversation_id === "") {
-    return null;
-  }
-  if (typeof approval_id !== "string" || approval_id === "") return null;
-  if (typeof status !== "string") return null;
-  if (!(TERMINAL_APPROVAL_STATUSES as string[]).includes(status)) return null;
-  const feedback = payload.feedback;
-  return {
-    conversation_id,
-    approval_id,
-    status: status as ApprovalStatus,
-    feedback: typeof feedback === "string" && feedback !== "" ? feedback : null,
-  };
-}
-
-function applyToToolData(
-  toolData: ToolDataEntry[] | undefined,
-  approval_id: string,
-  status: ApprovalStatus,
-  feedback: string | null,
-): { toolData: ToolDataEntry[] | undefined; changed: boolean } {
-  if (!toolData) return { toolData, changed: false };
-  let changed = false;
-  const next = toolData.map((entry) => {
-    if (entry.tool_name !== APPROVAL_REQUEST_TOOL_NAME) return entry;
-    const data = entry.data as Partial<ApprovalRequestData> | null;
-    if (!data || data.approval_id !== approval_id) return entry;
-    changed = true;
-    return {
-      ...entry,
-      data: {
-        ...(data as ApprovalRequestData),
-        status,
-        feedback: feedback ?? data.feedback ?? null,
-      },
-    };
-  });
-  return { toolData: changed ? next : toolData, changed };
-}
-
 /**
  * Flip the stored card matching `approval_id` to its terminal status.
  * Pure — operates on a Message snapshot, never mutates the input. Returns
@@ -180,19 +81,17 @@ function applyToToolData(
  */
 export function applyApprovalDecisionToMessages(
   messages: Message[],
-  event: ApprovalDecidedEvent,
+  event: ApprovalSettlement,
 ): { messages: Message[]; changed: boolean } {
   let changed = false;
   const next = messages.map((message) => {
-    const { toolData, changed: entryChanged } = applyToToolData(
+    const { entries, changed: entryChanged } = settleApprovalToolData(
       message.toolData,
-      event.approval_id,
-      event.status,
-      event.feedback,
+      event,
     );
     if (!entryChanged) return message;
     changed = true;
-    return { ...message, toolData };
+    return { ...message, toolData: entries };
   });
   return { messages: changed ? next : messages, changed };
 }
