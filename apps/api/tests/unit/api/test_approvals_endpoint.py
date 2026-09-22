@@ -326,8 +326,10 @@ class TestSetToolOverride:
 
 
 class TestLedgerDecisionRouting:
-    """Flag on routes both decision endpoints to decide_ledger; flag off keeps
-    the interrupt-barrier path. Same URLs, same status codes, one truth."""
+    """Flag on routes both decision endpoints to decide_ledger; flag off keeps the interrupt-barrier path.
+
+    Same URLs, same status codes, one truth.
+    """
 
     @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
     @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
@@ -426,8 +428,7 @@ class TestLedgerDecisionRouting:
 
 
 class TestLedgerAutoPolicyParity:
-    """Auto-aligned calls run cardless on both paths: the flag flip must never
-    change what gets asked."""
+    """Auto-aligned calls run cardless on both paths: the flag flip must never change what gets asked."""
 
     @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
     @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
@@ -459,8 +460,7 @@ class TestLedgerAutoPolicyParity:
 
 
 class TestLedgerStaleVersionHonesty:
-    """A stale-v tap must not report success: the client refreshes the row
-    instead of believing its tap committed."""
+    """A stale-v tap must not report success: the client refreshes the row instead of believing its tap committed."""
 
     @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
     @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)

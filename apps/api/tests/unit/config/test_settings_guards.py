@@ -190,10 +190,7 @@ def test_development_allows_http_dodo_base_url(monkeypatch):
 
 
 def test_short_sandbox_execute_secret_refuses_to_boot():
-    """A sandbox execute token names whose tools the host runs, and nothing else
-    binds that claim — a guessable signing secret means running any user's tools.
-    The 32-char minimum was documented in three places and enforced in none, so a
-    deployment could set a short one and start clean."""
+    """A sandbox execute token names whose tools the host runs, and nothing else binds that claim — a guessable signing secret means running any user's tools."""
     with pytest.raises(ValidationError, match="at least 32 characters"):
         _prod_settings(SANDBOX_EXECUTE_TOKEN_SECRET="dev")
 
@@ -211,10 +208,7 @@ def test_unset_sandbox_execute_secret_stays_valid():
 
 
 def test_a_blank_sandbox_execute_secret_reads_as_unset():
-    """`KEY=` with nothing after it is how a templated compose/Infisical/k8s env
-    renders an unfilled optional secret — the same shape .env.example uses for
-    every other one. Rejecting it took the whole API down at import time over one
-    blank line, instead of leaving code mode off."""
+    """KEY= with nothing after it is how a templated compose/Infisical/k8s env renders an unfilled optional secret — the same shape .env.example uses for every other one."""
     assert _prod_settings(SANDBOX_EXECUTE_TOKEN_SECRET="").SANDBOX_EXECUTE_TOKEN_SECRET is None
 
 

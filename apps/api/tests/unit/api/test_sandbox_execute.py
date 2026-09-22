@@ -70,10 +70,7 @@ class TestSandboxExecuteRoute:
         assert kwargs["config"]["configurable"]["user_id"] == "u1"
 
     async def test_a_scoped_token_cannot_reach_another_agents_tools(self) -> None:
-        """The bypass this closes: a subagent refused SLACK_SEND_MESSAGE by its own
-        `execute` ran it from a sandbox script instead, because the route dispatched
-        every token as if it were the executor's. Real dispatch, mocked resolver —
-        the confinement has to hold in the code that runs the tool, not in a mock."""
+        """The bypass this closes: a subagent refused SLACK_SEND_MESSAGE by its own execute ran it from a sandbox script instead, because the route dispatched every token as if it were the executor's."""
         token = mint_execute_token(
             "u1", "run-1", scoped_tool_names=["GMAIL_SEND_EMAIL"], ttl_seconds=60
         )

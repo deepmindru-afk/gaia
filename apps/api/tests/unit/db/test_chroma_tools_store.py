@@ -428,8 +428,7 @@ class TestBuildPutOperations:
         assert ops[0].value["description"] == "sub desc"
 
     def test_upsert_subagent_tool_persists_pointer_fields(self):
-        """source/name/integration_id must reach the PutOp value: retrieval
-        tells static ("mcp") from custom ("custom") pointers by them."""
+        """Source/name/integration_id must reach the PutOp value: retrieval tells static ("mcp") from custom ("custom") pointers by them."""
         to_upsert = [
             (
                 "subagents::subagent:notes",

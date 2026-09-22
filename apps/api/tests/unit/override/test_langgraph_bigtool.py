@@ -1775,9 +1775,7 @@ class TestAfterModelResultMerge:
         }
 
     def test_injected_messages_are_committed_ahead_of_the_response(self) -> None:
-        """A pre-model hook cannot commit; it stages, and this node commits.
-        The order matters: the thread has to read as the user speaking and the
-        model answering, not the reverse."""
+        """A pre-model hook cannot commit; it stages, and this node commits."""
         interjection = HumanMessage("also check spam")
         response = AIMessage("on it")
 

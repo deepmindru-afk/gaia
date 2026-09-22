@@ -412,8 +412,7 @@ class TestBackgroundVisibility:
         assert self._matches(repo, {"user_id": USER_ID, "starred": False}) is True
 
     async def test_null_starred_reads_as_unstarred(self, repo: ConversationRepository) -> None:
-        """Several write paths store explicit null: a null-starred background
-        row with a live approval must surface, not vanish."""
+        """Several write paths store explicit null: a null-starred background row with a live approval must surface, not vanish."""
         assert (
             self._matches(
                 repo,

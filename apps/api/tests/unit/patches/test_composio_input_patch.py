@@ -1,10 +1,10 @@
 """CustomTool input coercion: LangChain-side lookalike instances must validate.
 
 Composio builds the LangChain tool's args_schema by regenerating Pydantic
-models from JSON schema (``json_schema_to_pydantic``), so the instances
-LangChain hands to ``invoke_trusted`` are NOT instances of our real input
-models. The real model's ``isinstance`` check then rejects them with a
-``model_type`` error that shows a perfectly good instance being refused.
+models from JSON schema (json_schema_to_pydantic), so the instances
+LangChain hands to invoke_trusted are NOT instances of our real input
+models. The real model's isinstance check then rejects them with a
+model_type error that shows a perfectly good instance being refused.
 Coercing to plain data before the real validation fixes every nested-model
 custom tool at the one boundary where the identities collide.
 """
@@ -16,7 +16,7 @@ import pytest
 
 
 def _lookalike_of(model: type) -> type:
-    """A same-shaped model built the way Composio rebuilds ours from schema."""
+    """Build a same-shaped model the way Composio rebuilds ours from schema."""
     from composio.utils import shared
 
     rebuilt = shared.json_schema_to_pydantic_type(model.model_json_schema())
@@ -91,8 +91,7 @@ class TestInvokeTrustedWrapper:
         )
 
     def test_lookalike_kwargs_execute_end_to_end(self) -> None:
-        """The wrapper coerces before the real validation: a rebuilt instance
-        nested in kwargs runs the function instead of raising model_type."""
+        """The wrapper coerces before the real validation: a rebuilt instance nested in kwargs runs the function instead of raising model_type."""
         from pydantic import ValidationError
 
         from app.models.calendar_models import CreateEventInput, SingleEventInput

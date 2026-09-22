@@ -112,11 +112,7 @@ class TestTimeoutGuard:
     async def test_bash_is_allowed_to_outlive_the_generic_bound(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """Bash carries its own deadline all the way down to e2b's server-side
-        command timeout, and advertises up to 300s to the model. Cutting it at the
-        generic 120 killed long commands the tool said it would run — and in code
-        mode it killed the bash call before the host could answer an in-flight
-        execute() with its own structured error."""
+        """Bash carries its own deadline all the way down to e2b's server-side command timeout, and advertises up to 300s to the model."""
         monkeypatch.setattr(
             "app.override.langgraph_bigtool.dynamic_tool_node.TOOL_EXECUTION_TIMEOUT_SECONDS",
             0.01,
@@ -132,11 +128,7 @@ class TestTimeoutGuard:
     async def test_a_proxied_call_comes_back_with_dispatchs_structured_timeout(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """dispatch_tool's timeout error names the REAL tool and tells the model a
-        retry can duplicate the action; this node's text is generic. Both bounds
-        were the same 120s and this one is armed first, so it always won the race:
-        the structured error — and the analytics event and metric that ride with
-        it — could not fire for any in-graph call."""
+        """Dispatch_tool's timeout error names the REAL tool and tells the model a retry can duplicate the action; this node's text is generic."""
         monkeypatch.setattr(f"{DISPATCH}.TOOL_EXECUTION_TIMEOUT_SECONDS", 0.02)
         monkeypatch.setattr(f"{NODE}.TOOL_EXECUTION_TIMEOUT_SECONDS", 0.02)
         monkeypatch.setattr(f"{NODE}.TOOL_TIMEOUT_BACKSTOP_BUFFER_SECONDS", 0.3)

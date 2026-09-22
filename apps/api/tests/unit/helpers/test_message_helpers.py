@@ -48,10 +48,9 @@ class TestCreateSystemMessage:
         assert isinstance(web_a, SystemMessage)
         assert web_a.content == web_b.content
         assert web_a.content != whatsapp.content
-        # Output-format addenda should be inline in the static per-channel
-        # prompt — web has OpenUI, text-only has platform restrictions. Assert
-        # on the addendum marker, not the fence literal: the base prompt names
-        # :::openui in prose either way.
+        # Output-format addenda are inline in the static per-channel prompt (web
+        # has OpenUI, text-only has platform restrictions). Assert on the addendum
+        # marker, not the fence literal: the base prompt names :::openui either way.
         assert "---OpenUI Lang (Rich UI Components)---" in web_a.content
         assert "Platform Context" in whatsapp.content
 

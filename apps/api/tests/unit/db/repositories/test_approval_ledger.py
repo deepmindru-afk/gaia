@@ -1,8 +1,8 @@
-"""Hermetic unit tests for ``ApprovalLedgerRepository``.
+"""Hermetic unit tests for ApprovalLedgerRepository.
 
 Real-Mongo proof belongs in the contracts tier; this tier pins the exact
 filters and update documents handed to the driver — especially the CAS filter
-(``state == expected``), which is the whole safety story, and the live-only
+(state == expected), which is the whole safety story, and the live-only
 dedup scope (terminal fingerprints must re-register fresh).
 """
 

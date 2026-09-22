@@ -945,10 +945,9 @@ class TestBackgroundAuthorization:
         assert out[1] == "Scheduled workflow: Morning briefing. Emails my calendar and top emails"
 
     def test_generated_content_never_authorizes(self) -> None:
-        # Steps and execution prompts may be LLM-generated (GeneratedStep),
-        # so the function does not even accept them — only human-written
-        # display fields travel. A generated step naming a recipient grounds
-        # nothing.
+        # Steps and execution prompts may be LLM-generated (GeneratedStep), so the
+        # function does not even accept them — only human-written display fields
+        # travel. A generated step naming a recipient grounds nothing.
         params = set(inspect.signature(background_authorization).parameters)
         assert "workflow_steps" not in params
         assert "workflow_prompt" not in params

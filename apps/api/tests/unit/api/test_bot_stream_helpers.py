@@ -235,9 +235,8 @@ class TestBotStreamPayloadFrame:
 
     async def test_emoji_ack_is_forwarded_so_bots_take_back_the_directive(self):
         # Regression: the parse-at-boundary refactor moved translation onto
-        # BotWebStreamPayload, which had no emoji_ack field — the ack was
-        # dropped (extra="ignore") and bots showed the raw `REACT: <emoji>`
-        # text the shared streamer can only take back on this frame.
+        # BotWebStreamPayload, which had no emoji_ack field, so the ack was dropped
+        # (extra="ignore") and bots showed the raw REACT: <emoji> text.
         data = {"emoji_ack": {"emoji": "😎", "reacts_to_message_id": "umsg-1"}}
         frame, stop = await _bot_stream_payload_frame(
             BotWebStreamPayload.model_validate(data), "user-1"

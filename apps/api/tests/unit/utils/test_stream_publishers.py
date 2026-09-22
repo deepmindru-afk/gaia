@@ -14,8 +14,7 @@ class TestOptionalStreamWriter:
         assert optional_stream_writer() is None
 
     def test_returns_none_under_dispatch_like_bare_config(self) -> None:
-        """Ticket redeem invokes tools via dispatch with a synthesized config
-        that carries no Pregel runtime — this is the shape that crashed."""
+        """Ticket redeem invokes tools via dispatch with a synthesized config that carries no Pregel runtime — this is the shape that crashed."""
         token = var_child_runnable_config.set({"configurable": {"user_id": "u1"}})
         try:
             assert optional_stream_writer() is None
