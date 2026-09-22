@@ -339,6 +339,8 @@ JEV_PAGES_READ = 12
 # A compound task is split into at most this many ordered parts before the first decision.
 JEV_PLAN_MAX_STEPS = 6
 JEV_TEXT_HELPER_RECENT_ACTIONS = 6
+# The closing answer sees the run's actions, so it reports only what was actually done.
+JEV_CLOSING_ANSWER_ACTIONS = 60
 JEV_TEXT_VALUE_MAX_CHARS = 2000
 # The closing answer covers every part of a task; a typed value's cap is far too small for it.
 JEV_SUMMARY_MAX_CHARS = 6000

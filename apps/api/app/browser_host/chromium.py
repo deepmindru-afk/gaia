@@ -30,6 +30,7 @@ import uuid
 from browser_use.browser.profile import CHROME_DEFAULT_ARGS
 import httpx
 from playwright.sync_api import StorageState, StorageStateCookie, sync_playwright
+import psutil
 
 from app.browser_host.cdp_mux import CdpMux, CdpTransport
 from app.browser_host.memory import memory_usage_mb
@@ -68,6 +69,7 @@ _CDP_CALL_TIMEOUT_SECONDS = 20.0
 _CDP_HEALTH_TIMEOUT_SECONDS = 5.0
 # How often the idle reaper wakes to sweep for dead/idle contexts.
 _REAPER_INTERVAL_SECONDS = 15.0
+_BYTES_PER_MB = 1024 * 1024
 # How often a create rechecks memory while backing off under pressure.
 _ADMISSION_POLL_SECONDS = 0.25
 # Above the soft watermark the reaper shortens the idle TTL by this factor (down to
@@ -162,13 +164,18 @@ def _headless_shell_beside(chromium: Path) -> Path | None:
 
 
 def _resolve_chromium_path() -> str:
-    """Resolve the browser binary: Playwright's headless shell.
+    """Resolve the browser binary: CHROMIUM_BIN when set, else Playwright's headless shell.
 
     The shell build drops the browser-UI layer: at the same Chrome revision with
     three contexts open, 702 MB versus 1419 MB. Falls back to the full browser
     when the shell is absent. Playwright's resolver uses its sync API, which
     refuses to run inside a running event loop, so call this in a worker thread.
     """
+    if settings.CHROMIUM_BIN:
+        configured = Path(settings.CHROMIUM_BIN)
+        if not configured.is_file():
+            raise RuntimeError(f"CHROMIUM_BIN is set but is not a file: {configured}")
+        return str(configured)
     with sync_playwright() as p:
         full = Path(p.chromium.executable_path)
     shell = _headless_shell_beside(full)
@@ -806,6 +813,7 @@ class ChromiumHost:
                     await self._recover_crash()
                     continue
                 await self._reap_idle()
+                await self._recycle_if_bloated()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # a bad sweep must not kill the reaper
@@ -813,6 +821,45 @@ class ChromiumHost:
                     f"{LogTag.BROWSER} browser host reaper sweep failed",
                     error_type=type(exc).__name__,
                 )
+
+    def engine_rss_mb(self) -> float | None:
+        """Resident memory of the engine process and its children, or None when it is not running."""
+        if self._proc is None or self._proc.returncode is not None:
+            return None
+        try:
+            root = psutil.Process(self._proc.pid)
+            total = root.memory_info().rss
+            for child in root.children(recursive=True):
+                try:
+                    total += child.memory_info().rss
+                except psutil.Error:
+                    continue
+        except psutil.Error:
+            return None
+        return total / _BYTES_PER_MB
+
+    async def _recycle_if_bloated(self) -> None:
+        """Relaunch an idle engine whose memory has outgrown BROWSER_ENGINE_RECYCLE_MB.
+
+        A long-lived engine keeps memory from every context it has disposed and
+        slows with it; with no session open a relaunch costs nobody anything.
+        """
+        limit = settings.BROWSER_ENGINE_RECYCLE_MB
+        if limit is None or self._sessions:
+            return
+        rss = self.engine_rss_mb()
+        if rss is None or rss <= limit:
+            return
+        async with self._recover_lock:
+            if self._stopping.is_set() or self._sessions:
+                return
+            log.warning(
+                f"{LogTag.BROWSER} browser engine recycled ({round(rss)} MB idle, over the "
+                f"{limit} MB recycle limit)",
+                browser={"operation": "recycle", "rss_mb": round(rss), "limit_mb": limit},
+            )
+            await self._shutdown_chromium()
+            await self._launch()
 
     async def _reap_idle(self) -> None:
         ttl = float(settings.BROWSER_HOST_IDLE_TTL_SECONDS)

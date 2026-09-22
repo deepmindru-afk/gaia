@@ -39,6 +39,16 @@ _NON_TEXT_INPUT_TYPES = frozenset(
     {"button", "submit", "reset", "checkbox", "radio", "file", "hidden", "image", "range", "color"}
 )
 _TEXT_ROLES = frozenset({"textbox", "searchbox", "combobox"})
+#: Table structure that only ever wraps the control a click is meant for.
+_TABLE_STRUCTURE = frozenset({"table", "tbody", "thead", "tfoot", "tr", "td", "th"})
+#: Attributes that make a wrapper a control in its own right.
+_ACTS_ON_ITS_OWN = ("href", "onclick", "role", "tabindex", "contenteditable")
+
+
+def _acts_on_its_own(attributes: dict[str, str]) -> bool:
+    return any(name in attributes for name in _ACTS_ON_ITS_OWN)
+
+
 _ROLE_BY_TAG = {"a": "link", "button": "button", "select": "combobox", "textarea": "textbox"}
 _ROLE_BY_INPUT_TYPE = {"checkbox": "checkbox", "radio": "radio", "search": "searchbox"}
 
@@ -285,6 +295,12 @@ def _element(
         attributes: dict[str, str] = getattr(node, "attributes", None) or {}
         attrs = _DomAttributes.model_validate(attributes)
         tag = (getattr(node, "node_name", "") or "").lower()
+        if tag in _TABLE_STRUCTURE and not _acts_on_its_own(attributes):
+            # A row or cell Browser-Use flags as interactive on a listing (Hacker
+            # News marks every story row) carries the story's title, so Jev clicked
+            # the row and nothing happened, forty times; the link inside it is the
+            # target, and it is listed on its own.
+            return None
         ax = getattr(node, "ax_node", None)
         properties = _ax_properties(ax)
         label = _label(node, ax, attributes)

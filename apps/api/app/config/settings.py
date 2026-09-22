@@ -259,6 +259,16 @@ class CommonSettings(BaseAppSettings):
     # Path to the Obscura binary; required when BROWSER_ENGINE=obscura (the gaia
     # image sets it via ENV). Missing it fails the host launch loud, no fallback.
     OBSCURA_BIN: str | None = None
+    # Once no session is open and the engine process tree holds more than this,
+    # the host relaunches the engine. Measured 2026-09-22: Obscura kept ~50 MB
+    # per disposed context (601 MB -> 1325 MB over 15 sessions), and an
+    # eleven-hour process answered a full-document read in 57 s where a fresh
+    # one took 0.8 s. None disables the recycle.
+    BROWSER_ENGINE_RECYCLE_MB: int | None = 1500
+    # Path to a Chromium/Chrome binary for BROWSER_ENGINE=chromium. Unset, the
+    # host resolves Playwright's headless shell (its download can be
+    # unreachable from a dev box); set, that binary is used as is.
+    CHROMIUM_BIN: str | None = None
     # Port Obscura's CDP server binds. Fixed (not ephemeral) because Obscura only
     # publishes its /json/version — and thus its ws endpoint — at a port we name.
     OBSCURA_PORT: int = 9222

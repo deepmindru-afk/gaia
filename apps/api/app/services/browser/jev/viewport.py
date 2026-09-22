@@ -84,20 +84,32 @@ _MEASURE_HANDLES_JS = """function(...elements) {
 # url and title ride along, because the state summary's pair can disagree.
 _SCREEN_JS = r"""(limit) => {
   const w = window.innerWidth, h = window.innerHeight;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const onScreen = (r) => r.bottom > 0 && r.top < h && r.right > 0 && r.left < w;
+  // Walk elements and prune whole subtrees that lie off screen: a text node's
+  // own rect is asked for only under an element that is (partly) on screen, so
+  // a long article costs hundreds of layout reads, not one per text node.
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
+      if (typeof node.checkVisibility === 'function'
+          && !node.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) return NodeFilter.FILTER_REJECT;
+      const r = node.getBoundingClientRect();
+      // A box with no size (inline wrappers, display: contents) says nothing
+      // about where its children are; descend without judging it.
+      if ((r.width || r.height) && !onScreen(r)) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_SKIP;
+    },
+  });
   const lines = [];
   let total = 0;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = (node.nodeValue || '').replace(/\s+/g, ' ').trim();
     const parent = node.parentElement;
     if (!text || !parent) continue;
-    if (typeof parent.checkVisibility === 'function'
-        && !parent.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) continue;
     const range = document.createRange();
     range.selectNodeContents(node);
     const rect = range.getBoundingClientRect();
-    if (!rect.width || !rect.height) continue;
-    if (rect.bottom <= 0 || rect.top >= h || rect.right <= 0 || rect.left >= w) continue;
+    if (!rect.width || !rect.height || !onScreen(rect)) continue;
     // A label the page cut short ("The Road to Little...") carries its full text in title.
     const stem = text.replace(/(\.\.\.|\u2026)$/, '').trim();
     const holder = stem !== text ? parent.closest('[title]') : null;

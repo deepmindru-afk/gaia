@@ -31,6 +31,7 @@ from app.constants.browser import (
     BROWSER_GUIDANCE_PAGE_TEXT_MAX_CHARS,
     BROWSER_GUIDANCE_RECENT_ACTIONS,
     BROWSER_RUN_BLOCKED_SUMMARY,
+    JEV_CLOSING_ANSWER_ACTIONS,
     JEV_DONE_REASK_BUDGET,
     JEV_MIN_DONE_CONFIDENCE,
     JEV_PLAN_MAX_STEPS,
@@ -544,6 +545,7 @@ class JevChatModel:
             observation,
             None,
             seen_text=self._seen_text.all_text,
+            whole_history=True,
         )
         summary = answer.text.strip() if answer else None
         if summary and len(summary) > JEV_SUMMARY_MAX_CHARS:
@@ -682,8 +684,15 @@ class JevChatModel:
         observation: JevObservation,
         field: JevElement | None,
         seen_text: str | None = None,
+        *,
+        whole_history: bool = False,
     ) -> T | None:
-        """Goal, field, page and recent actions in; one small JSON value out."""
+        """Goal, field, page and recent actions in; one small JSON value out.
+
+        whole_history hands over every action of the run, not the recent few:
+        the closing answer reports what was done, and it can only know that
+        from the actions themselves, never from the task's wording.
+        """
         context: dict[str, object] = {
             "goal": goal,
             "field": {"label": field.label, "role": field.role, "value": field.value}
@@ -691,8 +700,12 @@ class JevChatModel:
             else None,
             "page": {"title": observation.title, "url": observation.url, "text": observation.text},
             "recent_actions": [
-                {"action": h.action, "text": h.text}
-                for h in self._history[-JEV_TEXT_HELPER_RECENT_ACTIONS:]
+                {"action": h.action, "text": h.text, "page_changed": h.page_changed}
+                for h in (
+                    self._history[-JEV_CLOSING_ANSWER_ACTIONS:]
+                    if whole_history
+                    else self._history[-JEV_TEXT_HELPER_RECENT_ACTIONS:]
+                )
             ],
             "latest_note": self._latest_note(),
             # What is already done, so a URL or a closing answer is written for
@@ -829,21 +842,29 @@ class JevChatModel:
         if pages <= self._pages_judged or self._plan is None:
             return False
         self._pages_judged = pages
-        # pages_read (titles and urls) is in the context already; the pages' full
-        # text is not what a "has every item been opened" judgement needs.
-        verdict = await self._structured(_PartDone, PART_DONE, goal, observation, None)
-        # A "done" is only as good as its evidence: every page it cites must be
-        # one the run actually read, and not the part's own listing. The writer
-        # once declared three stories opened from the front page alone.
+        # pages_read (titles and urls) and every action are in the context; the
+        # pages' full text is not what a "was every requirement met" judgement needs.
+        verdict = await self._structured(
+            _PartDone, PART_DONE, goal, observation, None, whole_history=True
+        )
+        # A "done" is only as good as its evidence: every entry must be a page the
+        # run actually read (not the part's own listing) or an action it actually
+        # took. The writer once declared three stories opened from the front page
+        # alone, and a radio button chosen that was never clicked.
         read = {page_key(page["url"]) for page in self._seen_text.pages}
         listing = page_key(self._plan[self._plan_index].url)
-        evidence = [page_key(url) for url in (verdict.evidence if verdict else [])]
-        cited = [url for url in evidence if url in read and url != listing]
-        done = bool(verdict and verdict.done and cited)
-        if verdict and verdict.done and not cited:
+        taken = {entry.action for entry in self._history}
+        evidence = [item.strip() for item in (verdict.evidence if verdict else []) if item.strip()]
+        unverified = [
+            item
+            for item in evidence
+            if item not in taken and (page_key(item) not in read or page_key(item) == listing)
+        ]
+        done = bool(verdict and verdict.done and evidence and not unverified)
+        if verdict and verdict.done and not done:
             log.info(
-                f"{LogTag.BROWSER} Jev part claimed done without evidence in pages read "
-                f"(cited {evidence[:4]})",
+                f"{LogTag.BROWSER} Jev part claimed done on evidence the run does not hold "
+                f"(unverified {unverified[:4]}, cited {len(evidence)})",
                 step=self._steps,
                 part=self._plan_index + 1,
             )
