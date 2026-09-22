@@ -24,7 +24,7 @@ from uuid import uuid4
 
 import fakeredis.aioredis
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
-from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langgraph.store.memory import InMemoryStore
 import pytest
@@ -137,6 +137,8 @@ class ChainRun:
     delivered: list[tuple[str, str]] = field(default_factory=list)
     #: The executor tier's scripted model — every prompt each of its runs was shown.
     executor_model: StreamingScriptedModel | None = None
+    #: The handed-off subagent's scripted model, when the chain reaches one.
+    subagent_model: StreamingScriptedModel | None = None
 
     def attached_entries(self) -> list[dict[str, Any]]:
         return [entry for call_ in self.attached for entry in call_["entries"]]
@@ -257,10 +259,11 @@ async def run_chain(
         ),
     ]
     if subagent is not None:
+        run.subagent_model = streaming_model(subagent)
         patches.append(
             patch(
                 "app.agents.core.subagents.provider_subagents.init_llm",
-                return_value=streaming_model(subagent),
+                return_value=run.subagent_model,
             )
         )
         patches.append(
@@ -687,12 +690,17 @@ class TestIntegrationToolThroughTheChain:
         )
 
         assert "retrieve_tools" not in run.transcript.tool_names()
-        # Positively, not "no rejection appeared": `result_for` returns None when
-        # nothing came back at all, and `not in (… or "")` reads that silence as
-        # success — so the suppression of every tool_output would satisfy it.
-        result = run.transcript.result_for("fetch_webpages")
-        assert result is not None, "the bound tool produced no result at all"
-        assert "The executor is GAIA's worker tier." in result
+        # Read off the subagent's own next prompt, not the comms stream: the
+        # detached subagent's output frames may land after that turn closed.
+        assert run.subagent_model is not None
+        results = [
+            str(message.content)
+            for prompt in run.subagent_model.prompts
+            for message in prompt
+            if isinstance(message, ToolMessage) and message.name == "fetch_webpages"
+        ]
+        assert results, "the bound tool produced no result at all"
+        assert "The executor is GAIA's worker tier." in results[0]
 
     async def test_the_tools_progress_events_reach_the_users_stream(self) -> None:
         """Progress events cross the subagent driver, the executor driver and Redis — three hops that only exist in composition."""

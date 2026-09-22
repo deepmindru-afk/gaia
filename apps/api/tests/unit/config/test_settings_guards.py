@@ -7,7 +7,7 @@ must forward the base-URL override only in development.
 
 from types import SimpleNamespace
 
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 import pytest
 
 from app.agents.llm import client
@@ -282,7 +282,8 @@ def test_init_custom_llm_wires_every_kwarg_and_profile(monkeypatch):
     assert captured["model"] == "deepseek-v4-flash"
     assert captured["temperature"] == DEFAULT_LLM_TEMPERATURE
     assert str(captured["base_url"]) == "http://localhost:9999/v1"
-    assert str(captured["api_key"]) == "sk-dev"
+    api_key = captured["api_key"]
+    assert isinstance(api_key, SecretStr) and api_key.get_secret_value() == "sk-dev"
     # ChatOpenAI aliases max_tokens to max_completion_tokens at construction
     # (still sent as max_tokens on the wire) — assert what is passed.
     assert captured["max_completion_tokens"] == DEV_LLM_MAX_OUTPUT_TOKENS
