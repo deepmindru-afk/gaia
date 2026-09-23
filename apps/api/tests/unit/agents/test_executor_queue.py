@@ -12,6 +12,8 @@ encoding bug this file pins: a lock written through the JSON-encoding wrapper
 comes back quoted, so the run that wrote it reads its own lock as FOREIGN.
 """
 
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -26,6 +28,7 @@ from app.agents.core.background.executor_queue import (
     LockClaim,
     LockState,
     adopt_lock,
+    break_holder_lock,
     build_lock_value,
     build_run_item,
     extend_lock_if_owned,
@@ -78,6 +81,28 @@ def stream_side():
 
 def _no_redis() -> Any:
     return patch.object(eq, "redis_cache", SimpleNamespace(client=None))
+
+
+def _racing_pipeline(
+    client: fakeredis.aioredis.FakeRedis, winner: str
+) -> Callable[[], AbstractAsyncContextManager[Any]]:
+    """Build a pipeline whose watched read is followed by another run writing the lock."""
+    real_pipeline = client.pipeline
+
+    @asynccontextmanager
+    async def _pipeline() -> AsyncIterator[Any]:
+        async with real_pipeline() as pipe:
+            read = pipe.get
+
+            async def _read_then_lose_the_race(key: str) -> Any:
+                seen = await read(key)
+                await client.set(key, winner)
+                return seen
+
+            with patch.object(pipe, "get", new=_read_then_lose_the_race):
+                yield pipe
+
+    return _pipeline
 
 
 def _identity(**overrides: Any) -> RunIdentity:
@@ -187,6 +212,18 @@ class TestAdoptingAReservation:
 
         assert await redis.ttl(BUSY_KEY) == EXECUTOR_BUSY_TTL
 
+    async def test_a_run_that_writes_between_the_read_and_the_set_keeps_the_lock(
+        self, redis
+    ) -> None:
+        reserved = build_lock_value(None, "fire-1")
+        await try_acquire_lock(BUSY_KEY, reserved)
+
+        with patch.object(redis, "pipeline", new=_racing_pipeline(redis, "other:t9")):
+            adopted = await adopt_lock(CONVERSATION, reserved, build_lock_value("s1", "t1"))
+
+        assert adopted is False
+        assert await redis.get(BUSY_KEY) == "other:t9"
+
 
 class TestLockOwnership:
     """The ownership contract behind safe finalize handoffs.
@@ -280,6 +317,14 @@ class TestWithoutRedis:
     async def test_extend_reports_that_it_did_not_re_arm(self) -> None:
         with _no_redis():
             assert await extend_lock_if_owned(CONVERSATION, "s1", "t1", 900) is False
+
+    async def test_adopting_a_reservation_allows_execution(self) -> None:
+        with _no_redis():
+            assert await adopt_lock(CONVERSATION, "fire-1", "s1:t1") is True
+
+    async def test_breaking_a_holders_lock_reports_it_is_not_gone(self) -> None:
+        with _no_redis():
+            assert await break_holder_lock(CONVERSATION, "s1:t1") is False
 
     async def test_preparing_a_run_yields_nothing(self, stream_side) -> None:
         with _no_redis():
@@ -429,6 +474,15 @@ class TestPrepareRunFromItem:
         assert prepared is not None
         assert await redis.get(BUSY_KEY) == build_lock_value(prepared.run.stream_id, "task-7")
         assert await redis.ttl(BUSY_KEY) == EXECUTOR_BUSY_TTL
+
+    async def test_a_run_without_a_task_id_owns_the_lock_it_took(self, redis, stream_side) -> None:
+        item = _item(identity=_identity(task_id=None))
+
+        prepared = await prepare_run_from_item(CONVERSATION, item, claim=LockClaim.ACQUIRE)
+
+        assert prepared is not None
+        state = await get_lock_state(CONVERSATION, prepared.run.stream_id, prepared.run.task_id)
+        assert state is LockState.OURS
 
     async def test_takes_the_lock_over_from_the_run_that_is_gone(self, redis, stream_side) -> None:
         await redis.set(BUSY_KEY, build_lock_value("dead-stream", "task-0"))
@@ -595,20 +649,23 @@ class TestRunItemCarriesWorkflowExecution:
 
 class TestBreakHolderLock:
     async def test_deletes_only_on_value_match(self, redis) -> None:
-        from app.agents.core.background.executor_queue import break_holder_lock
-
         await redis.set(BUSY_KEY, "s1:t1", ex=99)
         assert await break_holder_lock(CONVERSATION, "s1:t1") is True
         assert await redis.get(BUSY_KEY) is None
 
     async def test_mismatched_value_is_never_stolen(self, redis) -> None:
-        from app.agents.core.background.executor_queue import break_holder_lock
-
         await redis.set(BUSY_KEY, "s1:t1", ex=99)
         assert await break_holder_lock(CONVERSATION, "s2:t9") is False
         assert await redis.get(BUSY_KEY) == "s1:t1"
 
     async def test_missing_key_is_false(self, redis) -> None:
-        from app.agents.core.background.executor_queue import break_holder_lock
-
         assert await break_holder_lock(CONVERSATION, "s:t") is False
+
+    async def test_a_run_that_re_acquires_before_the_delete_keeps_its_lock(self, redis) -> None:
+        await redis.set(BUSY_KEY, "s1:t1", ex=99)
+
+        with patch.object(redis, "pipeline", new=_racing_pipeline(redis, "s2:t2")):
+            broken = await break_holder_lock(CONVERSATION, "s1:t1")
+
+        assert broken is False
+        assert await redis.get(BUSY_KEY) == "s2:t2"

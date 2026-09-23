@@ -322,7 +322,8 @@ async def open_detached_stream(
     frames for persistence, and the client folds the stream into bot_message_id's
     message when given, else into a placeholder keyed by task_id.
     """
-    session = create_session(stream_id, RunKind.QUEUED)
+    # Equivalent under mutation: session.kind is only read as `is RunKind.LIVE` (hil/bridge).
+    session = create_session(stream_id, RunKind.QUEUED)  # pragma: no mutate
     await StreamManager.start_stream(
         stream_id=stream_id,
         conversation_id=conversation_id,
