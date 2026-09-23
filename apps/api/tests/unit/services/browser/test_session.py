@@ -280,7 +280,6 @@ async def test_a_run_whose_login_takeover_completed_saves_its_state(
     session_mod.save_storage_state.assert_awaited_once_with("u1", "x.com", returned_state)
 
 
-@pytest.mark.regression
 async def test_a_sign_in_is_saved_for_the_site_it_happened_on_whatever_the_run_started_on(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

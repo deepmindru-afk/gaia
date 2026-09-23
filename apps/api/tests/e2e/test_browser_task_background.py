@@ -251,7 +251,6 @@ async def test_a_handoff_note_reaches_the_run_and_the_policy_deciding_it() -> No
     assert "The table is booked for 7pm on Friday." in joined
 
 
-@pytest.mark.regression
 async def test_a_chat_redirect_makes_the_changed_instruction_lead_the_executors_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -351,7 +350,6 @@ async def test_a_blocked_run_is_unstuck_by_the_executor_that_started_it() -> Non
     )
 
 
-@pytest.mark.regression
 async def test_guidance_after_a_note_never_asks_the_user_for_the_step_they_declined() -> None:
     """Regression: the note was resolved, the next step blocked, and the guidance sent the run back to the login, which then timed out blaming the user."""
     from app.constants.browser import HandoffDecision, HandoffStatus

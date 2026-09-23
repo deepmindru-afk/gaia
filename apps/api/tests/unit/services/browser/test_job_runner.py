@@ -178,7 +178,6 @@ def test_a_mid_run_instruction_change_is_what_the_assistant_is_told_to_answer() 
     assert "not carried out" in out.lower()
 
 
-@pytest.mark.regression
 @pytest.mark.parametrize(
     "status,success",
     [(BrowserSessionStatus.COMPLETED, True), (BrowserSessionStatus.FAILED, False)],
@@ -199,7 +198,6 @@ def test_the_changed_instruction_leads_the_text_the_assistant_reads(
     assert note in out.splitlines()[0]
 
 
-@pytest.mark.regression
 def test_a_failed_run_never_blames_the_user_for_the_step_they_cancelled() -> None:
     """Regression: the timeout copy said "you never finished signing in" after the note had said to skip the login."""
     result = _result(BrowserSessionStatus.FAILED, False, "Nobody finished the step in time.")
@@ -659,7 +657,6 @@ async def test_a_crash_inside_the_run_is_one_failed_card_on_the_feed(
     )
 
 
-@pytest.mark.regression
 async def test_a_crash_with_an_empty_str_exception_still_reads_as_a_sentence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

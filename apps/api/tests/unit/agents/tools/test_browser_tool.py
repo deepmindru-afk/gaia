@@ -370,7 +370,6 @@ async def test_a_turn_with_no_user_request_leaves_the_task_alone(
     assert recorder.request.task == "book a table"
 
 
-@pytest.mark.regression
 async def test_a_task_that_names_one_page_starts_there_so_its_saved_login_is_used(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

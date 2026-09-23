@@ -20,7 +20,6 @@ def _request(**extra: object) -> AgentGuidanceRequest:
     )
 
 
-@pytest.mark.regression
 def test_the_changed_instruction_is_stated_before_the_task_it_overrides() -> None:
     """Regression: guidance was written against the original task, so it sent the run back to the login the user had cancelled."""
     note = "skip the upvote, just tell me the title of the top post"
@@ -31,7 +30,6 @@ def test_the_changed_instruction_is_stated_before_the_task_it_overrides() -> Non
     assert message.index(note) < message.index("Upvote the top post on r/python")
 
 
-@pytest.mark.regression
 def test_the_guidance_is_told_never_to_send_the_run_back_to_a_declined_step() -> None:
     message = guidance_message(_request(user_notes=["skip the upvote, just tell me the title"]))
 

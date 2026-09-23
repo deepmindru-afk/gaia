@@ -276,7 +276,6 @@ class TestCancelResolution:
 class TestRedirectResolution:
     """A reply that declines the paused step but says what to do instead resumes the run."""
 
-    @pytest.mark.regression
     async def test_redirect_resolves_then_runs_the_normal_turn(
         self, published: list[str], persist: AsyncMock
     ) -> None:

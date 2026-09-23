@@ -26,7 +26,8 @@ from app.constants.memory import MemoryKind
 from app.db.redis import redis_cache
 from app.helpers.agent_helpers import AgentIdentity, AgentTurn, build_agent_config
 from app.memory import retrieval
-from app.models.agent_models import AgentConfigurable, agent_configurable
+from app.models import agent_models
+from app.models.agent_models import AgentConfigurable
 from app.models.memory_db_models import MemoryRecord
 from app.models.message_models import MessageDict
 from tests._harness.context_chain import message_in_slot, text_of
@@ -139,7 +140,7 @@ async def _run_turn(stores: MemoryStores, request: str, task: str) -> str:
             ),
             turn=AgentTurn(user_request=request),
         )
-        configurable: AgentConfigurable = {**agent_configurable(comms_config)}
+        configurable: AgentConfigurable = {**agent_models.agent_configurable(comms_config)}
         brief = compose_executor_brief(task, ["done"], verbatim_request=request)
         ctx, error = await prepare_executor_execution(brief, configurable)
 

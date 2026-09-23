@@ -1333,7 +1333,6 @@ async def test_screenshot_is_uploaded_under_the_session_and_step(
     assert upload.await_args.args == (b"fake", "s1", 4)
 
 
-@pytest.mark.regression
 async def test_a_step_captured_before_a_switch_is_uploaded_under_the_session_it_was_on(
     patch_browser, monkeypatch
 ) -> None:
@@ -2313,7 +2312,6 @@ async def test_a_run_whose_fallback_engine_fails_too_ends_there_without_a_second
     )
 
 
-@pytest.mark.regression
 async def test_a_run_finished_on_the_fallback_bills_the_tokens_both_engines_spent(
     monkeypatch,
 ) -> None:
@@ -2447,7 +2445,6 @@ def _two_engine_runner(
 _GAVE_OUT = _History(done=False, successful=False, result=None)
 
 
-@pytest.mark.regression
 async def test_a_run_that_moves_engines_numbers_its_steps_on_from_where_the_primary_stopped(
     two_engines, monkeypatch
 ) -> None:
@@ -2485,7 +2482,6 @@ async def test_a_run_that_moves_engines_numbers_its_steps_on_from_where_the_prim
     )
 
 
-@pytest.mark.regression
 @pytest.mark.parametrize("cause", ["engine_failed", "page_blocked"])
 async def test_a_run_that_moves_engines_tells_the_user_once(
     two_engines, monkeypatch, cause

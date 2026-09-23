@@ -619,7 +619,6 @@ async def _start_on(monkeypatch: pytest.MonkeyPatch, user_agent: str) -> AsyncMo
 
 
 @pytest.mark.unit
-@pytest.mark.regression
 async def test_a_headless_chromium_goes_out_as_plain_chrome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

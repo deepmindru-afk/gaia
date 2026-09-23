@@ -9,7 +9,7 @@ I/O boundaries (MongoDB, Redis).
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,8 +22,8 @@ import pytest
 from app.api.v1.endpoints.bot import require_bot_api_key, router as bot_router
 from app.api.v1.middleware.logging import LoggingMiddleware
 from app.config.settings import settings
+from app.constants import error_codes
 from app.constants.auth import JWT_ALGORITHM
-from app.constants.error_codes import BOT_ACCOUNT_NOT_LINKED, BOT_API_KEY_INVALID
 from app.core.bot_auth_middleware import BotAuthMiddleware
 from app.core.exception_handlers import register_exception_handlers
 from app.db.repositories.users import user_repository
@@ -33,7 +33,7 @@ from app.services.bot_token_service import (
     create_bot_session_token,
     verify_bot_session_token,
 )
-from shared.py.logging import hash_log_identifier
+import shared.py.logging as shared_logging
 
 # ---------------------------------------------------------------------------
 # Test constants
@@ -666,7 +666,7 @@ class TestBotEndpointResetSession:
             )
 
         assert response.status_code == 401
-        assert response.json()["code"] == BOT_ACCOUNT_NOT_LINKED
+        assert response.json()["code"] == error_codes.BOT_ACCOUNT_NOT_LINKED
 
 
 @pytest.mark.integration
@@ -864,17 +864,19 @@ class TestBotRefusalWideEvent:
     """A refused bot request's wide event says which account and why, through the real stack."""
 
     @pytest.fixture
-    def logged_bot_app(self) -> Iterator[FastAPI]:
+    def logged_bot_app(self) -> FastAPI:
         app = FastAPI()
         register_exception_handlers(app)
         app.include_router(bot_router, prefix="/api/v1/bot")
         app.add_middleware(BotAuthMiddleware)
         app.add_middleware(LoggingMiddleware)
-        with patch.object(settings, "BOT_LOG_HASH_SECRET", TEST_LOG_HASH_SECRET):
-            yield app
+        return app
 
     async def _post_reset(self, app: FastAPI, api_key: str) -> tuple[int, dict, dict]:
-        with patch("app.api.v1.middleware.logging.request_logger") as request_logger:
+        with (
+            patch.object(settings, "BOT_LOG_HASH_SECRET", TEST_LOG_HASH_SECRET),
+            patch("app.api.v1.middleware.logging.request_logger") as request_logger,
+        ):
             transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.post(
@@ -900,11 +902,11 @@ class TestBotRefusalWideEvent:
         status, body, event = await self._post_reset(logged_bot_app, TEST_BOT_API_KEY)
 
         assert status == 401
-        assert body["code"] == BOT_ACCOUNT_NOT_LINKED
+        assert body["code"] == error_codes.BOT_ACCOUNT_NOT_LINKED
         assert event["reason"] == "account_not_linked"
         assert event["outcome"] == "failed"
         assert event["platform"] == "telegram"
-        assert event["user_hash"] == hash_log_identifier(
+        assert event["user_hash"] == shared_logging.hash_log_identifier(
             TEST_PLATFORM_USER_ID, TEST_LOG_HASH_SECRET
         )
         assert TEST_PLATFORM_USER_ID not in json.dumps(event, default=str)
@@ -919,7 +921,7 @@ class TestBotRefusalWideEvent:
         status, body, event = await self._post_reset(logged_bot_app, "not-the-key")
 
         assert status == 401
-        assert body["code"] == BOT_API_KEY_INVALID
+        assert body["code"] == error_codes.BOT_API_KEY_INVALID
         assert event["reason"] == "bot_api_key_invalid"
         assert event["platform"] == "telegram"
         mock_platform_lookup.assert_not_awaited()

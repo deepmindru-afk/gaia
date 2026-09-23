@@ -1133,7 +1133,6 @@ async def test_an_agent_note_guides_the_goal_without_replacing_the_users_task(
     assert "Task, which still stands: Fly Zurich to London" in goal
 
 
-@pytest.mark.regression
 async def test_an_agent_note_after_a_user_note_still_keeps_the_handoffs_off_the_table(
     flights_state,
 ) -> None:
@@ -1157,7 +1156,6 @@ async def test_an_agent_note_after_a_user_note_still_keeps_the_handoffs_off_the_
         assert "SOLVE_CAPTCHA" not in offered
 
 
-@pytest.mark.regression
 async def test_the_goal_leads_with_the_user_note_and_still_carries_the_agents_guidance(
     flights_state,
 ) -> None:
@@ -1183,7 +1181,6 @@ async def test_the_goal_leads_with_the_user_note_and_still_carries_the_agents_gu
     assert "Original task: Fly Zurich to London" in goal
 
 
-@pytest.mark.regression
 async def test_the_guidance_request_carries_what_the_user_changed_mid_run(flights_state) -> None:
     """Regression: the executor guided toward the original task because nothing told it the user had changed it."""
     model, _, _ = _guided_model(
@@ -1391,7 +1388,6 @@ async def test_a_run_whose_engine_failed_resumes_on_the_fallback_at_the_page_it_
 _QUESTIONS_URL = "https://stackoverflow.com/questions"
 
 
-@pytest.mark.regression
 async def test_a_list_that_replaces_a_wall_on_the_same_url_is_judged_and_answers_the_task(
     monkeypatch,
 ) -> None:
@@ -1690,7 +1686,6 @@ async def test_go_back_returns_to_the_page_this_browser_came_from(flights_state)
     assert _action(result.completion) == {"go_back": {}}
 
 
-@pytest.mark.regression
 async def test_the_first_page_after_the_engine_switch_offers_no_go_back(flights_state) -> None:
     """Regression: GO_BACK from the fallback's first page landed on about:blank, and the run ended there."""
     model, gateway, _, session = _model(flights_state, [("CLICK", "4"), ("SCROLL_DOWN", None)])
@@ -1707,7 +1702,6 @@ async def test_the_first_page_after_the_engine_switch_offers_no_go_back(flights_
     assert "GO_BACK" not in gateway.requests[-1].questions["operation"].criteria
 
 
-@pytest.mark.regression
 async def test_the_first_page_a_run_opened_from_the_blank_tab_offers_no_go_back(
     flights_state,
 ) -> None:
@@ -1954,7 +1948,6 @@ def _on_part(gateway: ScriptedGateway) -> str:
     return next(part for part in ("1 of 2", "2 of 2") if f"CURRENT PART ({part})" in goal)
 
 
-@pytest.mark.regression
 async def test_facts_the_parts_own_listing_shows_are_evidence_for_it() -> None:
     """Regression: citations of the part's start page were refused, so the run wandered HN for 80 steps."""
     writer = _evidence_writer(
@@ -2005,7 +1998,6 @@ async def test_the_listing_never_proves_a_page_was_opened_from_it(citation) -> N
     assert _on_part(gateway) == "1 of 2"
 
 
-@pytest.mark.regression
 @pytest.mark.parametrize(
     "source",
     [
@@ -2054,7 +2046,6 @@ async def test_an_action_the_run_never_took_is_not_evidence() -> None:
     assert "done" not in action, action
 
 
-@pytest.mark.regression
 async def test_a_page_is_never_evidence_of_an_action() -> None:
     """The judge once called a login "handed to the user" on its first step, citing only the login page."""
     writer = _evidence_writer(
@@ -2074,7 +2065,6 @@ async def test_a_page_is_never_evidence_of_an_action() -> None:
     assert "done" not in action, action
 
 
-@pytest.mark.regression
 async def test_the_judge_is_told_the_page_the_part_started_on() -> None:
     """A login part's goal said "go to the login page"; the judge cited it as a page opened, and the finished login stayed "not done"."""
     judged: list[dict[str, Any]] = []
@@ -2091,7 +2081,6 @@ async def test_the_judge_is_told_the_page_the_part_started_on() -> None:
     assert judged and all(context["start_page"] == _HN for context in judged)
 
 
-@pytest.mark.regression
 async def test_a_part_is_not_done_while_a_requirement_it_named_has_no_evidence() -> None:
     """Regression: a login part was judged done on step one while still waiting on the handoff."""
     writer = _evidence_writer(
@@ -2112,7 +2101,6 @@ async def test_a_part_is_not_done_while_a_requirement_it_named_has_no_evidence()
     assert "done" not in action, action
 
 
-@pytest.mark.regression
 async def test_what_the_part_judge_found_missing_is_what_jev_is_told_to_do_next() -> None:
     """Regression: a part stayed "not done" for 37 steps because Jev never heard the judge's gap."""
     helper = FakeTextModel()

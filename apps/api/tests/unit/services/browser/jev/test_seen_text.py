@@ -74,7 +74,6 @@ def test_a_page_counts_as_read_to_the_end_only_once_its_bottom_was_on_screen() -
     assert memory.pages[0]["read"] == "to the end"
 
 
-@pytest.mark.regression
 def test_a_new_document_on_the_same_url_is_not_read_to_the_end_until_its_own_bottom_shows() -> None:
     """Regression: a wall's bottom counted as the bottom of the list that replaced it."""
     memory = SeenText()
@@ -87,7 +86,6 @@ def test_a_new_document_on_the_same_url_is_not_read_to_the_end_until_its_own_bot
     ]
 
 
-@pytest.mark.regression
 def test_the_last_page_of_a_long_research_run_still_reaches_the_closing_answer() -> None:
     """Regression: HN pages read first spent the budget, so the final Wikipedia article was dropped."""
     memory = SeenText()
