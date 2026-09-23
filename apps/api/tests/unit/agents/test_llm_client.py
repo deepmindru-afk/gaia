@@ -1906,7 +1906,7 @@ class TestAinvokeStructured:
             )
             await ainvoke_structured(self._Schema, "q", label="judge")
 
-        assert sent == [{"enabled": False}, None]
+        assert sent == [dict(REASONING_DISABLED), None]
 
     async def test_the_label_and_config_reach_the_invoke(self) -> None:
         """Label names the call in the COGS event and config carries the user attribution; losing either drops it."""

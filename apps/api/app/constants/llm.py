@@ -269,9 +269,10 @@ class OpenRouterReasoning(TypedDict, total=False):
     exclude: bool
 
 
-# enabled=False, not a low effort: several deepseek-v4-flash upstreams still
-# reasoned for thousands of tokens at effort "minimal" or "low" (measured).
-REASONING_DISABLED: Final[OpenRouterReasoning] = {"enabled": False}
+# effort "none": deepseek-v4-flash reasoned at "minimal" and "low", and at
+# enabled=False too (111-167 tokens on a short prompt, its 8000 cap on a part
+# judgement); "none" measured 0. tests/model_onboarding/test_reasoning_off.py.
+REASONING_DISABLED: Final[OpenRouterReasoning] = {"effort": "none"}
 
 # Output cap for the env-defined custom dev provider, well under the model's
 # 65,536 ceiling: these cheap lanes RESERVE max_tokens per request, so a 64k cap
