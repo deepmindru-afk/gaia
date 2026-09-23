@@ -8,6 +8,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,48 +69,15 @@ func parseFlags() options {
 // ---- robot (JSON) mode: no TUI, flags in, structured JSON out ----
 
 func runRobot(o options) result {
-	browsers := DetectBrowsers()
-	if len(browsers) == 0 {
-		return result{Error: "no supported browser found"}
-	}
-	if o.browser == "" && o.list {
-		return result{OK: true, Browsers: browserNames(browsers)}
-	}
-	b, err := pickBrowserByName(browsers, o.browser)
+	pick := flagPicker{o}
+	logins, err := readLogins(DetectBrowsers(), pick)
 	if err != nil {
-		return result{Error: err.Error(), Browsers: browserNames(browsers)}
-	}
-	profiles := ListProfiles(b)
-	if len(profiles) == 0 {
-		return result{Error: fmt.Sprintf("no profiles with cookies found for %s", b.Name)}
-	}
-	p, err := pickProfileByName(profiles, o.profile)
-	if err != nil {
-		// In list mode an ambiguous profile isn't fatal: hand back the profiles
-		// so the caller can pick one and re-run with --profile.
-		if o.list {
-			return result{OK: true, Profiles: profiles}
-		}
-		return result{Error: err.Error(), Profiles: profiles}
-	}
-	cookies, err := ExtractCookies(b, p)
-	if err != nil {
-		return result{Error: err.Error()}
+		return robotFailure(o, err)
 	}
 	if o.list {
-		return result{OK: true, Profiles: profiles, Sessions: summarizeSites(cookies)}
+		return result{OK: true, Profiles: logins.profiles, Sessions: summarizeSites(logins.cookies)}
 	}
-	if o.sites != "" {
-		cookies = filterBySites(cookies, splitCSV(o.sites))
-	}
-	if len(cookies) == 0 {
-		return result{Error: "no cookies matched the selected sites"}
-	}
-	token, err := resolveToken(o)
-	if err != nil {
-		return result{Error: err.Error()}
-	}
-	resp, err := Upload(o.api, token, b.Name, cookies)
+	resp, err := syncLogins(o, logins, pick)
 	if err != nil {
 		return result{Error: err.Error()}
 	}
@@ -119,55 +87,61 @@ func runRobot(o options) result {
 	}
 }
 
+// robotFailure reports err with the choices it left open; in --list mode a
+// choice the flags left open is the listing asked for, not a failure.
+func robotFailure(o options, err error) result {
+	var choice *choiceError
+	if !errors.As(err, &choice) {
+		return result{Error: err.Error()}
+	}
+	r := result{Error: err.Error(), Browsers: browserNames(choice.browsers), Profiles: choice.profiles}
+	if o.list && (errors.Is(err, errBrowserUnnamed) || choice.profiles != nil) {
+		r.OK, r.Error = true, ""
+	}
+	return r
+}
+
+// flagPicker picks from --browser, --profile and --sites, and never prompts.
+type flagPicker struct{ o options }
+
+func (f flagPicker) browser(browsers []Browser) (Browser, error) {
+	if f.o.list && f.o.browser == "" {
+		return Browser{}, errBrowserUnnamed
+	}
+	return pickBrowserByName(browsers, f.o.browser)
+}
+
+func (f flagPicker) profile(profiles []Profile) (Profile, error) {
+	return pickProfileByName(profiles, f.o.profile)
+}
+
+func (flagPicker) reading(Browser) {}
+
+// sites is every available site unless --sites names some.
+func (f flagPicker) sites(available []HostSummary) ([]string, error) {
+	if f.o.sites != "" {
+		return splitCSV(f.o.sites), nil
+	}
+	out := make([]string, len(available))
+	for i, s := range available {
+		out[i] = s.Site
+	}
+	return out, nil
+}
+
 // ---- interactive mode: huh Select + filterable MultiSelect ----
 
 func runInteractive(o options) error {
-	browsers := DetectBrowsers()
-	if len(browsers) == 0 {
-		return fmt.Errorf("no supported browser found under your profile directory")
-	}
-
-	b, err := selectBrowser(browsers)
+	pick := promptPicker{}
+	logins, err := readLogins(DetectBrowsers(), pick)
 	if err != nil {
 		return err
 	}
-	profiles := ListProfiles(b)
-	if len(profiles) == 0 {
-		return fmt.Errorf("no profiles with cookies found in %s", b.Name)
-	}
-	p, err := selectProfile(profiles)
-	if err != nil {
-		return err
-	}
-	if b.Family == familyChromium {
-		fmt.Printf("Reading %s — approve the keychain prompt to continue…\n", b.Name)
-	} else {
-		fmt.Printf("Reading %s…\n", b.Name) // Firefox cookies are plaintext: no prompt
-	}
-	cookies, err := ExtractCookies(b, p)
-	if err != nil {
-		return err
-	}
-	sites := summarizeSites(cookies)
-	if len(sites) == 0 {
-		return fmt.Errorf("no decryptable logins found in %s", b.Name)
-	}
-
-	picked, err := selectSites(sites)
-	if err != nil {
-		return err
-	}
-	if len(picked) == 0 {
+	resp, err := syncLogins(o, logins, pick)
+	if errors.Is(err, errNothingPicked) {
 		fmt.Println("Nothing selected — done.")
 		return nil
 	}
-	cookies = filterBySites(cookies, picked)
-
-	token, err := resolveToken(o)
-	if err != nil {
-		return err
-	}
-	resp, err := Upload(o.api, token, b.Name, cookies)
 	if err != nil {
 		return err
 	}
@@ -175,7 +149,18 @@ func runInteractive(o options) error {
 	return nil
 }
 
-func selectBrowser(browsers []Browser) (Browser, error) {
+// promptPicker asks the user at each choice.
+type promptPicker struct{}
+
+func (promptPicker) reading(b Browser) {
+	if b.Family == familyChromium {
+		fmt.Printf("Reading %s — approve the keychain prompt to continue…\n", b.Name)
+	} else {
+		fmt.Printf("Reading %s…\n", b.Name) // Firefox cookies are plaintext: no prompt
+	}
+}
+
+func (promptPicker) browser(browsers []Browser) (Browser, error) {
 	if len(browsers) == 1 {
 		return browsers[0], nil
 	}
@@ -193,7 +178,7 @@ func selectBrowser(browsers []Browser) (Browser, error) {
 	return pickBrowserByName(browsers, choice)
 }
 
-func selectProfile(profiles []Profile) (Profile, error) {
+func (promptPicker) profile(profiles []Profile) (Profile, error) {
 	if len(profiles) == 1 {
 		return profiles[0], nil
 	}
@@ -216,7 +201,7 @@ func selectProfile(profiles []Profile) (Profile, error) {
 	return Profile{}, fmt.Errorf("selected profile not found")
 }
 
-func selectSites(sites []HostSummary) ([]string, error) {
+func (promptPicker) sites(sites []HostSummary) ([]string, error) {
 	options := make([]huh.Option[string], len(sites))
 	for i, s := range sites {
 		label := fmt.Sprintf("%s  (%d cookies)", s.Site, s.Cookies)
