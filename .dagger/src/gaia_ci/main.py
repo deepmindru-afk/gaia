@@ -152,6 +152,9 @@ class GaiaCi:
                 include=[
                     "**/package.json",
                     "**/pyproject.toml",
+                    # uv run re-creates a venv built on another interpreter, with
+                    # default groups only; sync must see the same pin it will.
+                    "**/.python-version",
                     "libs/**",
                     # pnpm.patchedDependencies in the root package.json points here;
                     # --frozen-lockfile reads the patch files during install, so they
