@@ -66,12 +66,9 @@ _ONE_REPLY_SECONDS = 2.0
 def _one_final_message(outcome: RunOutcome) -> str:
     """Assert the run's outcome reached the user exactly once and return it.
 
-    With the executor joined on the run, the comms agent voices the outcome in
-    its own words; unjoined, the worker sends the run's own result line. Either
-    way it is the one reply after the run's own progress lines: the streamed
-    acknowledgement before the run starts and the step captions, stall notes and
-    handoff prompt during it are not outcomes. A reply the bot delivers as two
-    messages within a breath is one reply.
+    Joined, comms voices it; unjoined, the worker sends the result line. The ack,
+    step captions, stall notes and handoff prompt are not outcomes, and a reply
+    delivered as two messages within a breath counts once.
     """
     events = outcome.transcript.events
     said = [i for i, e in enumerate(events) if e.get("type") == "inbound"]

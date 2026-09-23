@@ -47,18 +47,15 @@ class BrowserHostSettings(BaseSettings):
     # Path to the Obscura binary; required when BROWSER_ENGINE=obscura (the gaia
     # image sets it via ENV). Missing it fails the host launch loud, no fallback.
     OBSCURA_BIN: str | None = None
-    # Obscura's Page.navigate blocks until the page has loaded or this many
-    # seconds have passed, and past it the page's remaining scripts are never
-    # run (Chrome keeps loading). Measured 2026-09-22 on a 70 KB/s link: one
-    # 353 KB stylesheet took 25 s, so a 30 s deadline left jQuery pages inert.
+    # Page.navigate blocks until load or this deadline; past it the page's
+    # remaining scripts never run. On a 70 KB/s link one 353 KB stylesheet took
+    # 25 s, so a 30 s deadline left jQuery pages inert (measured 2026-09-22).
     OBSCURA_NAV_TIMEOUT_SECONDS: int = 90
     # How long Obscura gives a page's script phase before it stops running them.
     OBSCURA_SCRIPT_DEADLINE_SECONDS: int = 60
-    # Once no session is open and the engine process tree holds more than this,
-    # the host relaunches the engine. Measured 2026-09-22: Obscura kept ~50 MB
-    # per disposed context (601 MB -> 1325 MB over 15 sessions), and an
-    # eleven-hour process answered a full-document read in 57 s where a fresh
-    # one took 0.8 s. None disables the recycle.
+    # An idle engine tree over this many MB is relaunched; None disables it.
+    # Obscura keeps ~50 MB per disposed context, and an 11-hour process took 57 s
+    # for a document read a fresh one did in 0.8 s (measured 2026-09-22).
     BROWSER_ENGINE_RECYCLE_MB: int | None = 1500
     # Path to a Chromium/Chrome binary for BROWSER_ENGINE=chromium. Unset, the
     # host resolves Playwright's headless shell (its download can be

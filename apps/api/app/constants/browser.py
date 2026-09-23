@@ -325,10 +325,9 @@ BROWSER_ENGINE_FALLBACK_NOTE = (
     "That page didn't work in the fast browser, continuing in a full one."
 )
 
-# Engine watchdog: while a run is on the primary engine, its host is asked this
-# often whether the engine still answers, and this many unanswered reads in a row
-# end the run there. A SIGSTOPped engine otherwise took ~285 s to notice
-# (Browser-Use's 15 s click timeout, then two 120 s state reads).
+# Engine watchdog: the primary engine's liveness is read this often, and this
+# many unanswered reads in a row end the run there. Without it a SIGSTOPped
+# engine took ~285 s to notice (a 15 s click timeout, then two 120 s state reads).
 BROWSER_ENGINE_WATCH_INTERVAL_SECONDS = 10.0
 BROWSER_ENGINE_WATCH_STRIKES = 2
 # How long a run cut short by the watchdog may take to unwind before the switch
@@ -358,18 +357,15 @@ BROWSER_USER_WORDS_MAX_CHARS = 1000
 JEV_MAX_ELEMENTS = 100
 
 JEV_GATEWAY_TIMEOUT_SECONDS = 8.0
-# One writer call (a typed value, a URL, a part judgement, the closing answer).
-# One writer call's budget, and when a second identical request is sent if the
-# first has not answered (the first answer wins). Measured 2026-09-23: p50 3 s,
-# p90 17 s, max 59 s; the slow tail is one upstream provider, and waiting a
-# 30 s timeout out before retrying cost a form-fill run 50 s on one call.
+# One writer call's budget, and when an identical hedge request is sent if the
+# first has not answered (first answer wins). Measured 2026-09-23: p50 3 s,
+# p90 17 s, max 59 s, the slow tail from one upstream provider.
 JEV_TEXT_TIMEOUT_SECONDS = 30.0
 JEV_TEXT_HEDGE_SECONDS = 8.0
 JEV_CLOSING_ANSWER_HEDGE_SECONDS = 30.0
-# The closing answer carries every page read and every action of the run, and
-# the run's whole value rides on it: a 13-minute research task once ended as
-# "could not write the closing answer" when this call timed out at 60 s on a
-# slow link. It gets a longer budget and a second attempt.
+# The closing answer carries every page read and action of the run, so it gets
+# a longer budget and a second attempt: at 60 s a 13-minute research task once
+# ended without one on a slow link.
 JEV_CLOSING_ANSWER_TIMEOUT_SECONDS = 150.0
 JEV_GATEWAY_MAX_ATTEMPTS = 3
 
@@ -402,10 +398,9 @@ JEV_MIN_DONE_CONFIDENCE = 0.6
 # How many sub-floor DONEs one run may re-ask, in total rather than in a row:
 # a single re-ask let the very next DONE (p=0.52) through and it shipped.
 JEV_DONE_REASK_BUDGET = 2
-# How long each WAIT in a row on one page actually waits. Browser-Use's wait
-# action sleeps one second less than asked (it budgets that for the model
-# call), so a wait of 1 slept nothing and three of them let a run declare a
-# page done four seconds after the click that started its five-second loader.
+# How long each WAIT in a row on one page waits. Browser-Use sleeps one second
+# less than asked, so a wait of 1 slept nothing and three of them declared a page
+# done 4 s after the click that started its 5 s loader.
 JEV_WAIT_SECONDS = (3, 6, 10)
 
 

@@ -296,10 +296,9 @@ def _element(
         attrs = _DomAttributes.model_validate(attributes)
         tag = (getattr(node, "node_name", "") or "").lower()
         if tag in _TABLE_STRUCTURE and not _acts_on_its_own(attributes):
-            # A row or cell Browser-Use flags as interactive on a listing (Hacker
-            # News marks every story row) carries the story's title, so Jev clicked
-            # the row and nothing happened, forty times; the link inside it is the
-            # target, and it is listed on its own.
+            # Listings flag whole rows as interactive (Hacker News story rows), and
+            # Jev clicked such a row forty times to no effect; the link inside it
+            # is the target and is listed on its own.
             return None
         ax = getattr(node, "ax_node", None)
         properties = _ax_properties(ax)

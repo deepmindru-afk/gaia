@@ -328,10 +328,9 @@ async def _run_chat_stream(
         if is_new_conversation and user_id and body.fileData:
             await _wait_for_artifact_forwarder(forwarder_subscribed, stream_id)
             await FileService.seed_uploads(body.fileData, user_id, conversation_id)
-        # Same idea for a paused browser task: a chat reply ("I paid, continue" /
-        # "stop") resolves its live-view handoff — the text-channel equivalent of
-        # the card's Continue/Cancel buttons, working on web and bots alike.
-        # Always falls through to the normal turn: comms voices the ack itself.
+        # A chat reply ("I paid, continue" / "stop") resolves a paused browser task's
+        # handoff like the card's Continue/Cancel, on web and bots alike. Always
+        # falls through to the normal turn: comms voices the ack itself.
         await _resolve_pending_browser_handoff_turn(body, user, conversation_id, stream_id, state)
 
         # Starts only after the conversation row exists (_publish_init_chunk);
@@ -550,11 +549,9 @@ async def _resolve_pending_browser_handoff_turn(
 ) -> bool:
     """Resolve a paused browser task's handoff from the user's chat reply.
 
-    Records the resolution into the thread and always runs the normal turn,
-    so comms voices the ack with full context instead of a canned line. The
-    paused task resumes on its own stream. Returns False in every case; True
-    is gone with the short-circuit. Only None/unrelated (nothing pending or
-    addressed) skips the recording.
+    Records the resolution into the thread (skipped when nothing is pending or
+    addressed) and returns False always, so the normal turn voices the ack. The
+    paused task resumes on its own stream.
     """
     user_id = user.user_id
     message = user_message_content_from(body)

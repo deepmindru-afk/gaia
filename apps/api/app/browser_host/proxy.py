@@ -111,11 +111,9 @@ def _refusal_reason(message: dict[str, Any]) -> str | None:
 async def _refused_private_target(message: dict[str, Any]) -> str | None:
     """Why this navigation must not reach Chromium: its host resolves to a non-public address.
 
-    Resolved right before the command is forwarded, so DNS rebinding cannot slip
-    an address past an earlier check. The first line of SSRF defence for a
-    model- or user-supplied URL; the deployment egress firewall stays the second,
-    because in-page redirects and subresources never pass through this proxy.
-    There is no switch to disable this guard: private targets are always refused.
+    Resolved right before forwarding, so DNS rebinding cannot slip past an earlier
+    check. Always on; the egress firewall stays the second line, since in-page
+    redirects and subresources never pass through this proxy.
     """
     url = _navigation_url(message)
     if url is None or urlsplit(url).scheme.lower() not in _ALLOWED_NAVIGATION_SCHEMES:
@@ -199,9 +197,13 @@ async def run_cdp_proxy(host: ChromiumHost, session: HostSession, client_ws: Web
             reason = _refusal_reason(message) or await _refused_private_target(message)
             if reason is not None:
                 log.warning(
-                    f"{LogTag.BROWSER} browser cdp command refused ({message.get('method')}: {reason})",
+                    f"{LogTag.BROWSER} browser cdp command refused",
                     error_type="RefusedCdpCommand",
-                    browser={"session_id": session.session_id, "reason": reason},
+                    browser={
+                        "session_id": session.session_id,
+                        "method": message.get("method"),
+                        "reason": reason,
+                    },
                 )
                 refused_id = message.get("id")
                 await client_ws.send_text(

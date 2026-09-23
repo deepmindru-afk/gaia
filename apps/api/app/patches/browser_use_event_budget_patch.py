@@ -27,11 +27,9 @@ from app.config.settings import settings
 
 # The state read carries the screenshot, so its budget has to sit above it.
 _SCREENSHOT_SECONDS = 60.0
-# Obscura lays out a 30k-node page (a long Wikipedia article) in one ~50s pass
-# on the page's thread, and every CDP command queues behind it. The pass runs
-# once per such page and the page then answers in under a second, so a state
-# read that waits it out succeeds where a shorter budget fails the step twice
-# and ends the run (measured 2026-09-22: 57-62s stalls on the Transformer article).
+# Obscura lays out a 30k-node page in one ~50s pass that every CDP command queues
+# behind, once per page; waiting it out beats failing the step twice and ending
+# the run (measured 2026-09-22: 57-62s stalls on a long Wikipedia article).
 _STATE_READ_SECONDS = 120.0
 # Obscura answers Page.navigate only once the page has loaded or its own
 # deadline has passed (OBSCURA_NAV_TIMEOUT_SECONDS); a shorter budget here

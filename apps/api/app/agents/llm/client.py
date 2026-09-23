@@ -1392,11 +1392,9 @@ def _structured_tool_runnable(llm: BaseChatModel, schema: type[_StructuredT]) ->
     :func:_parse_structured_reply sees the provider's arguments exactly as sent.
     """
     tool = convert_to_openai_tool(schema)
-    # A forced tool makes Baidu/Together grammar-decode the arguments, and the model's
-    # unescaped quote then ends the string as valid JSON: 27 of 43 closing answers cut
-    # on Baidu forced, 0 of 28 offered (deepseek-v4-flash replay).
-    # An explicit streaming=False also holds under a streaming callback (astream_events,
-    # a graph's messages mode), which would otherwise re-route to the lenient parse.
+    # Forced tools get grammar-decoded on Baidu/Together, cutting at an unescaped quote:
+    # 27 of 43 closing answers cut forced, 0 of 28 offered (deepseek-v4-flash replay).
+    # streaming=False also holds under astream_events, avoiding the lenient parse.
     bound = llm.model_copy(update={"streaming": False}).bind_tools(
         [schema],
         tool_choice="auto",

@@ -374,12 +374,7 @@ async def test_a_turn_with_no_user_request_leaves_the_task_alone(
 async def test_a_task_that_names_one_page_starts_there_so_its_saved_login_is_used(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression: a task with its URL only in its words opened unseeded.
-
-    The saved login is looked up by the start URL; the executor gave none, so a
-    signed-in /secure bounced to the login page, and a login completed there was
-    saved under no site at all.
-    """
+    """Regression: with no start URL, a signed-in /secure bounced to login and its login saved nowhere."""
     recorder = _install(monkeypatch)
 
     await browser_task.ainvoke(

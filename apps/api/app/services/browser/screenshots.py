@@ -95,9 +95,7 @@ async def publish_step_screenshot(png: bytes, conversation_id: str, index: int) 
     return f"{base}/{key}"
 
 
-def _log_published(
-    index: int, size_bytes: int, backend: str, ok: bool, started: float
-) -> None:
+def _log_published(index: int, size_bytes: int, backend: str, ok: bool, started: float) -> None:
     """One real-time line per step frame, and its numbers on the wide event."""
     upload_ms = round((perf_counter() - started) * 1000)
     log.set_ns(
@@ -107,8 +105,7 @@ def _log_published(
         screenshot_upload_ms=upload_ms,
     )
     log.info(
-        f"{LogTag.BROWSER} Browser screenshot published (step {index}, {backend}, "
-        f"{size_bytes}B in {upload_ms}ms)",
+        f"{LogTag.BROWSER} Browser screenshot published",
         step_index=index,
         backend=backend,
         size_bytes=size_bytes,

@@ -55,8 +55,9 @@ async def run_watched(
             unwind_started = perf_counter()
             await asyncio.wait({run}, timeout=BROWSER_ENGINE_WATCH_CANCEL_GRACE_SECONDS)
             log.info(
-                f"{LogTag.BROWSER} Browser run unwound in "
-                f"{round((perf_counter() - unwind_started) * 1000)}ms",
+                f"{LogTag.BROWSER} Browser run unwound",
+                browser={"session_id": session.session_id, "operation": "engine_watch"},
+                duration_ms=round((perf_counter() - unwind_started) * 1000),
             )
             if not run.done():
                 log.warning(
@@ -85,7 +86,7 @@ async def _watch(
             continue
         strikes += 1
         log.warning(
-            f"{LogTag.BROWSER} Browser engine did not answer the watchdog ({failure})",
+            f"{LogTag.BROWSER} Browser engine did not answer the watchdog",
             browser={"session_id": session.session_id, "operation": "engine_watch"},
             engine_failure=failure.value,
             strikes=strikes,

@@ -36,10 +36,9 @@ def build_browser_llm(user_id: str | None = None) -> BaseChatModel:
 def _build_text_model() -> BaseChatModel:
     from browser_use import ChatOpenAI  # noqa: PLC0415 -- heavy optional dep
 
-    # The completion budget covers the model's reasoning tokens too: at 1024 a
-    # plan answer was cut off mid-string after the thinking spent the budget, so
-    # the cap stays generous and the reasoning effort stays minimal, which
-    # answered a URL prompt in 1.3-2.1s with every reply valid (measured 2026-09-22).
+    # The cap covers reasoning tokens too: at 1024 a plan answer was cut mid-string.
+    # Minimal effort answered a URL prompt in 1.3-2.1s, every reply valid
+    # (measured 2026-09-22).
     return ChatOpenAI(
         model=settings.BROWSER_USE_JEV_TEXT_MODEL,
         api_key=settings.OPENROUTER_API_KEY,

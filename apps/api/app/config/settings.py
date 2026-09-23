@@ -199,9 +199,7 @@ class CommonSettings(BaseAppSettings):
         return max(CRAWL4AI_MIN_MAX_BROWSERS, parsed)
 
     # --- Browser-Use (autonomous browser automation) ---
-    # Always on: the tool is part of the product in every environment.
-    # A host that cannot be reached fails loudly at task time instead of
-    # the tool reporting itself unavailable up front.
+    # Always on in every environment; an unreachable host fails loudly at task time.
 
     # Strips thinking/evaluation_previous_goal/next_goal/plan from step output.
     # On by default: measured ~26% fewer prompt tokens, per-step cost roughly
@@ -263,11 +261,10 @@ class CommonSettings(BaseAppSettings):
     # One long-lived Chromium, one isolated context per session, proxied over
     # CDP with an authenticated screencast live view. Reached internally by
     # service name; override locally to http://localhost:8930.
-    # A second browser host running Chromium, for pages the primary engine could
-    # not get past: a run about to end blocked retries that page there once.
-    # Unset, runs end blocked as before. That host runs with BROWSER_ENGINE=
-    # chromium, a small BROWSER_HOST_MAX_SESSIONS, and its OWN address as its
-    # BROWSER_HOST_URL (a host builds the CDP/live URLs it hands out from it).
+
+    # A second Chromium host: a run about to end blocked retries that page there once.
+    # It needs BROWSER_ENGINE=chromium, few BROWSER_HOST_MAX_SESSIONS, and its OWN
+    # address as BROWSER_HOST_URL, since a host builds its CDP/live URLs from it.
     BROWSER_FALLBACK_HOST_URL: str | None = None
     # Base port for the dedicated Obscura the crawl4ai engine drives, distinct
     # from OBSCURA_PORT so the two never collide; the manager probes upward from

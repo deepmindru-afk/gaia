@@ -316,7 +316,7 @@ class BrowserTaskRunner:
 
     def _fall_back_after_engine_failure(self, jev: JevChatModel, failure: EngineFailure) -> None:
         log.warning(
-            f"{LogTag.BROWSER} Browser engine failed under the run ({failure})",
+            f"{LogTag.BROWSER} Browser engine failed under the run",
             browser={"session_id": self._session.session_id, "operation": "engine_failure"},
             engine_failure=failure.value,
         )
@@ -332,9 +332,12 @@ class BrowserTaskRunner:
             # Jev's first step there reopens that page; a run with no page yet starts over.
             self._config = replace(self._config, start_url=None)
         log.info(
-            f"{LogTag.BROWSER} Browser run moving to the fallback engine for "
-            f"{(url or 'the start of the task')[:120]}",
-            browser={"session_id": self._session.session_id, "operation": "engine_fallback"},
+            f"{LogTag.BROWSER} Browser run moving to the fallback engine",
+            browser={
+                "session_id": self._session.session_id,
+                "operation": "engine_fallback",
+                "resume_url": url[:120] if url is not None else None,
+            },
         )
         log.set_ns("browser", primary_session_id=self._session.session_id)
         self._session = await route.open_session(url)
@@ -528,8 +531,7 @@ class BrowserTaskRunner:
             )
             emit_ms = round((perf_counter() - emit_t0) * 1000)
             log.info(
-                f"{LogTag.BROWSER} step timing (step={frame.index} "
-                f"since_prev={frame.since_prev_ms}ms screenshot={screenshot_ms}ms emit={emit_ms}ms)",
+                f"{LogTag.BROWSER} step timing",
                 step=frame.index,
                 since_prev_ms=frame.since_prev_ms,
                 screenshot_ms=screenshot_ms,
@@ -580,11 +582,9 @@ class BrowserTaskRunner:
     async def _record_usage(self, usage: list[RunUsage]) -> None:
         """Price and record the run's LLM spend into GAIA's usage pipeline.
 
-        One record_llm_call per billed model, re-priced through GAIA's own
-        catalog rather than Browser-Use's pricing data, so the Jev spend is
-        charged to the budget like any other tool-driven model call. When the
-        gateway reported its own per-decision cost for the whole run (Vercel
-        does; OpenRouter does not), that actual number wins over the table.
+        One record_llm_call per billed model, priced from GAIA's catalog rather
+        than Browser-Use's. A gateway-reported cost for the whole run (Vercel
+        reports one, OpenRouter does not) wins over the table.
         """
         for entry in usage:
             await record_llm_call(

@@ -934,8 +934,7 @@ class ChromiumHost:
             if self._stopping.is_set() or self._sessions:
                 return
             log.warning(
-                f"{LogTag.BROWSER} browser engine recycled ({round(rss)} MB idle, over the "
-                f"{limit} MB recycle limit)",
+                f"{LogTag.BROWSER} browser engine recycled over its idle memory limit",
                 browser={"operation": "recycle", "rss_mb": round(rss), "limit_mb": limit},
             )
             await self._shutdown_chromium()

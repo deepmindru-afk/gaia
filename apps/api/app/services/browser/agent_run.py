@@ -255,9 +255,8 @@ class BrowserAgentRun:
             # engine that stopped answering) ends the run with its reason instead
             # of Browser-Use's default of narrowing the action space to `done`.
             "max_failures": 2,
-            # One decision here is a state read (which can wait out the engine's
-            # layout pass, see browser_use_event_budget_patch), a part judgement
-            # by the writer, Jev and possibly a typed value; Browser-Use's 75s
+            # One decision is a state read (may wait out the layout pass), a writer
+            # part judgement, Jev and maybe a typed value; Browser-Use's 75s
             # default cut such a step off as a failure.
             "llm_timeout": 180,
             "max_actions_per_step": self._config.max_actions_per_step,
@@ -388,8 +387,8 @@ class BrowserAgentRun:
         framed, self._framed = self._framed, False
         if self._step_started_at:
             log.info(
-                f"{LogTag.BROWSER} Browser step actions executed "
-                f"({round((perf_counter() - self._step_started_at) * 1000)}ms)",
+                f"{LogTag.BROWSER} Browser step actions executed",
+                duration_ms=round((perf_counter() - self._step_started_at) * 1000),
             )
             self._step_started_at = 0.0
         if not framed and any(getattr(result, "error", None) for result in results):

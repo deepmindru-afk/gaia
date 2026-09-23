@@ -89,12 +89,7 @@ def test_a_new_document_on_the_same_url_is_not_read_to_the_end_until_its_own_bot
 
 @pytest.mark.regression
 def test_the_last_page_of_a_long_research_run_still_reaches_the_closing_answer() -> None:
-    """Regression: the pages read first spent the whole budget.
-
-    A two-site run read the Hacker News front page and three articles, then the
-    Wikipedia article; its lines were dropped at the cap, and the closing answer
-    said the article "does not state who introduced the Transformer".
-    """
+    """Regression: HN pages read first spent the budget, so the final Wikipedia article was dropped."""
     memory = SeenText()
     memory.record("https://news.ycombinator.com/", _lines("story", 60, 80))
     for article in (

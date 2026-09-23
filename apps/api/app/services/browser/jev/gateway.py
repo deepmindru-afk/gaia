@@ -152,12 +152,12 @@ class JevGatewayClient:
                 response = await self._client.post(self._url, json=body, headers=self._headers)
             except httpx.HTTPError as exc:
                 log.warning(
-                    f"{LogTag.BROWSER} Jev gateway request failed ({self.provider} "
-                    f"attempt {attempt + 1}/{JEV_GATEWAY_MAX_ATTEMPTS}, {request_bytes}B, "
-                    f"{_elapsed_ms(attempt_started)}ms: {type(exc).__name__})",
+                    f"{LogTag.BROWSER} Jev gateway request failed",
                     provider=self.provider,
                     attempt=attempt + 1,
+                    max_attempts=JEV_GATEWAY_MAX_ATTEMPTS,
                     request_bytes=request_bytes,
+                    latency_ms=_elapsed_ms(attempt_started),
                     error_type=type(exc).__name__,
                 )
                 raise JevGatewayError(
@@ -165,12 +165,12 @@ class JevGatewayClient:
                 ) from exc
             if response.is_error:
                 log.warning(
-                    f"{LogTag.BROWSER} Jev gateway refused ({self.provider} HTTP "
-                    f"{response.status_code}, attempt {attempt + 1}/{JEV_GATEWAY_MAX_ATTEMPTS}, "
-                    f"{request_bytes}B, {_elapsed_ms(attempt_started)}ms: {_error_message(response)})",
+                    f"{LogTag.BROWSER} Jev gateway refused",
                     provider=self.provider,
                     status_code=response.status_code,
+                    error=_error_message(response),
                     attempt=attempt + 1,
+                    max_attempts=JEV_GATEWAY_MAX_ATTEMPTS,
                     request_bytes=request_bytes,
                     latency_ms=_elapsed_ms(attempt_started),
                 )
@@ -213,11 +213,11 @@ class JevFailoverClient:
             return await self.primary.evaluate(request)
         except JevGatewayError as exc:
             log.warning(
-                f"{LogTag.BROWSER} Jev decision failed over "
-                f"({self.primary.provider} -> {self.fallback.provider}: {exc})",
+                f"{LogTag.BROWSER} Jev decision failed over",
                 provider=self.primary.provider,
                 fallback_provider=self.fallback.provider,
                 error_type=type(exc).__name__,
+                error=str(exc),
             )
             return await self.fallback.evaluate(request)
 

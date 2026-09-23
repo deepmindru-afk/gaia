@@ -623,10 +623,7 @@ async def _start_on(monkeypatch: pytest.MonkeyPatch, user_agent: str) -> AsyncMo
 async def test_a_headless_chromium_goes_out_as_plain_chrome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The fallback engine sent "HeadlessChrome/153" in every User-Agent, a bot flag to any site.
-
-    DuckDuckGo answered the battery's search with a CAPTCHA the run could only hand to the user.
-    """
+    """Regression: "HeadlessChrome/153" in the User-Agent made DuckDuckGo answer with a CAPTCHA."""
     spawn = await _start_on(monkeypatch, _HEADLESS_UA)
 
     argv = [str(arg) for arg in spawn.call_args.args]
