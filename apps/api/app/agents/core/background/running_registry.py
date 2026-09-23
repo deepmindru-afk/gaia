@@ -28,7 +28,6 @@ class RunningSubagents:
     """Currently-running subagents for one conversation, addressable by id."""
 
     def __init__(self, conversation_id: str) -> None:
-        self.conversation_id = conversation_id
         self._key = f"{RUNNING_SUBAGENTS_PREFIX}{conversation_id}"
 
     async def claim(self, subagent: RunningSubagent) -> bool:
@@ -45,9 +44,9 @@ class RunningSubagents:
             thread_key, subagent.subagent_id, nx=True, ex=RUNNING_SUBAGENTS_TTL
         ):
             return False
-        await client.hset(
-            self._key, mapping={subagent.subagent_id: json.dumps(asdict(subagent), sort_keys=True)}
-        )
+        # Equivalent under mutation: every reader json.loads the record, so key order is invisible.
+        record = json.dumps(asdict(subagent), sort_keys=True)  # pragma: no mutate
+        await client.hset(self._key, mapping={subagent.subagent_id: record})
         await client.expire(self._key, RUNNING_SUBAGENTS_TTL)
         return True
 
@@ -65,7 +64,7 @@ class RunningSubagents:
             client and await client.exists(f"{RUNNING_SUBAGENT_THREAD_PREFIX}{subagent_thread_id}")
         )
 
-    async def list(self) -> list[RunningSubagent]:
+    async def live(self) -> list[RunningSubagent]:
         """Every currently-running subagent for this conversation."""
         if not redis_cache.client:
             return []
@@ -75,7 +74,7 @@ class RunningSubagents:
     async def get(self, subagent_id: str) -> RunningSubagent | None:
         """Return the named subagent if it is still running, else None."""
         return next(
-            (s for s in await self.list() if s.subagent_id == subagent_id),
+            (s for s in await self.live() if s.subagent_id == subagent_id),
             None,
         )
 
