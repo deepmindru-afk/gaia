@@ -24,6 +24,7 @@ from langchain_core.runnables import (
     RunnableBinding,
     RunnableConfig,
     RunnableLambda,
+    RunnableSequence,
 )
 from langchain_openrouter import ChatOpenRouter
 from pydantic import BaseModel, SecretStr
@@ -60,7 +61,11 @@ from app.agents.llm.client import (
     invoke_llm,
     register_llm_providers,
 )
-from app.agents.llm.exceptions import LLM_FALLBACK_EXCEPTIONS, LLMNotConfiguredError
+from app.agents.llm.exceptions import (
+    LLM_FALLBACK_EXCEPTIONS,
+    LLMNotConfiguredError,
+    MalformedStructuredOutputError,
+)
 from app.constants.llm import (
     AUX_MODEL_NAME,
     DEFAULT_GEMINI_MODEL_NAME,
@@ -764,11 +769,16 @@ class TestBackgroundStructuredRunnable:
     class _Shape(BaseModel):
         text: str
 
+    @patch("app.agents.llm.client._structured_tool_runnable")
     @patch("app.agents.llm.client._build_custom_llm")
     @patch("app.agents.llm.client._sim_llm")
     @patch("app.agents.llm.client.settings")
     def test_sim_mode_wins_over_the_custom_endpoint(
-        self, mock_settings: MagicMock, mock_sim_llm: MagicMock, mock_build_custom: MagicMock
+        self,
+        mock_settings: MagicMock,
+        mock_sim_llm: MagicMock,
+        mock_build_custom: MagicMock,
+        mock_structured_tool: MagicMock,
     ) -> None:
         """A sim run with DEV_LLM_* set must land on the scripted stub, like every other factory, not the real custom endpoint."""
         mock_settings.GAIA_SIM_MODE = True
@@ -779,14 +789,19 @@ class TestBackgroundStructuredRunnable:
 
         mock_build_custom.assert_not_called()
         mock_sim_llm.assert_called_once_with(0.3)
-        mock_sim_llm.return_value.with_structured_output.assert_called_once_with(self._Shape)
-        assert runnable is mock_sim_llm.return_value.with_structured_output.return_value
+        mock_structured_tool.assert_called_once_with(mock_sim_llm.return_value, self._Shape)
+        assert runnable is mock_structured_tool.return_value
 
+    @patch("app.agents.llm.client._structured_tool_runnable")
     @patch("app.agents.llm.client._aux_structured_runnable")
     @patch("app.agents.llm.client._build_custom_llm")
     @patch("app.agents.llm.client.settings")
     def test_outside_sim_mode_the_custom_endpoint_is_used_when_configured(
-        self, mock_settings: MagicMock, mock_build_custom: MagicMock, mock_aux: MagicMock
+        self,
+        mock_settings: MagicMock,
+        mock_build_custom: MagicMock,
+        mock_aux: MagicMock,
+        mock_structured_tool: MagicMock,
     ) -> None:
         mock_settings.GAIA_SIM_MODE = False
         mock_settings.DEV_DEFAULT_MODEL = LLMProviderName.CUSTOM
@@ -803,8 +818,8 @@ class TestBackgroundStructuredRunnable:
         bounded.assert_called_once_with(update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS})
         # The caller's schema is what the endpoint is asked to fill; a runnable
         # bound to anything else parses the one model call of the whole replay.
-        bounded.return_value.with_structured_output.assert_called_once_with(self._Shape)
-        assert runnable is bounded.return_value.with_structured_output.return_value
+        mock_structured_tool.assert_called_once_with(bounded.return_value, self._Shape)
+        assert runnable is mock_structured_tool.return_value
 
     @patch("app.agents.llm.client._aux_structured_runnable")
     @patch("app.agents.llm.client._build_custom_llm")
@@ -1307,6 +1322,7 @@ class TestMemoryLaneProviderSelection:
         }
 
     @patch("app.agents.llm.client.get_memory_llm")
+    @patch("app.agents.llm.client._structured_tool_runnable")
     @patch("app.agents.llm.client.get_helper_llm")
     @patch("app.agents.llm.client.memory_lane_available", return_value=True)
     @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=True)
@@ -1315,15 +1331,14 @@ class TestMemoryLaneProviderSelection:
         mock_aux_available: MagicMock,
         mock_available: MagicMock,
         mock_helper: MagicMock,
+        mock_structured_tool: MagicMock,
         mock_memory_llm: MagicMock,
     ) -> None:
         failing = NonCallableMagicMock()
         failing.with_retry = MagicMock(return_value=failing)
         failing.bind = MagicMock(return_value=failing)
         failing.ainvoke = AsyncMock(side_effect=ConnectionError("aux down"))
-        mock_helper.return_value.model_copy.return_value.with_structured_output.return_value = (
-            failing
-        )
+        mock_structured_tool.return_value = failing
 
         gemini = NonCallableMagicMock()
         gemini.with_retry = MagicMock(return_value=gemini)
@@ -1843,12 +1858,14 @@ class TestAinvokeStructured:
         """Built from get_helper_llm (8k output cap) then re-pointed at AUX_MODEL_NAME (its own cache namespace) — losing either wastes 64k or misplaces the cache."""
         structured = MagicMock(name="structured_runnable")
         aux = MagicMock(name="aux_model")
-        aux.with_structured_output = MagicMock(return_value=structured)
         helper = MagicMock()
         helper.model_copy = MagicMock(return_value=aux)
 
         with (
             patch("app.agents.llm.client.get_helper_llm", return_value=helper) as mock_helper,
+            patch(
+                "app.agents.llm.client._structured_tool_runnable", return_value=structured
+            ) as mock_structured_tool,
             patch(
                 "app.agents.llm.client.ainvoke_llm",
                 new=AsyncMock(return_value=self._Schema(answer="42")),
@@ -1863,7 +1880,7 @@ class TestAinvokeStructured:
 
         assert mock_helper.call_args.kwargs["temperature"] == 0.3
         assert helper.model_copy.call_args.kwargs["update"] == {"model_name": AUX_MODEL_NAME}
-        assert aux.with_structured_output.call_args.args[0] is self._Schema
+        assert mock_structured_tool.call_args.args == (aux, self._Schema)
         assert mock_invoke.call_args.args[0] is structured
         assert result.answer == "42"
 
@@ -1911,18 +1928,15 @@ class TestAinvokeStructured:
         assert mock_invoke.call_args.kwargs["options"].timeout == 12.0
 
     async def test_the_aux_lane_runs_on_its_own_sticky_session(self) -> None:
-        """The session id must be suffixed and bound after with_structured_output, since bind_tools drops the outer binding's kwargs if bound before."""
+        """The session id must be suffixed and bound after bind_tools, which drops the outer binding's kwargs if bound before."""
         bound = MagicMock(name="bound_runnable")
         structured = MagicMock(name="structured_runnable")
         structured.bind = MagicMock(return_value=bound)
-        aux = MagicMock(name="aux_model")
-        aux.with_structured_output = MagicMock(return_value=structured)
-        helper = MagicMock()
-        helper.model_copy = MagicMock(return_value=aux)
         config = RunnableConfig(configurable={"session_id": "conv-1"})
 
         with (
-            patch("app.agents.llm.client.get_helper_llm", return_value=helper),
+            patch("app.agents.llm.client.get_helper_llm"),
+            patch("app.agents.llm.client._structured_tool_runnable", return_value=structured),
             patch(
                 "app.agents.llm.client.ainvoke_llm",
                 new=AsyncMock(return_value=self._Schema(answer="ok")),
@@ -1932,6 +1946,147 @@ class TestAinvokeStructured:
 
         assert structured.bind.call_args.kwargs == {"session_id": "conv-1-aux"}
         assert mock_invoke.call_args.args[0] is bound
+
+
+class _Closing(BaseModel):
+    text: str
+    achieved: bool
+
+
+def _provider_replies_with(arguments: str, finish_reason: str = "tool_calls") -> Any:
+    """Patch ChatOpenRouter's wire so both its streamed and unstreamed paths return one raw tool call.
+
+    The raw arguments string is what the provider sent; everything after it
+    (chunk merging, JSON parsing, schema validation) is the real code under test.
+    """
+    from langchain_core.messages import AIMessageChunk
+    from langchain_core.messages.tool import tool_call_chunk
+    from langchain_core.outputs import ChatGenerationChunk, ChatResult
+    from langchain_openrouter.chat_models import _convert_dict_to_message
+
+    name = _Closing.__name__
+
+    async def _astream(self: Any, *args: Any, **kwargs: Any) -> Any:
+        # Two deltas, split mid-string the way a provider streams arguments.
+        cut = len(arguments) // 2
+        for index, part in enumerate((arguments[:cut], arguments[cut:])):
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[
+                        tool_call_chunk(
+                            name=name if index == 0 else None,
+                            args=part,
+                            id="call-1" if index == 0 else None,
+                            index=0,
+                        )
+                    ],
+                ),
+                generation_info={"finish_reason": finish_reason} if index == 1 else None,
+            )
+
+    async def _agenerate(self: Any, *args: Any, **kwargs: Any) -> ChatResult:
+        message = _convert_dict_to_message(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": name, "arguments": arguments},
+                    }
+                ],
+            }
+        )
+        return ChatResult(
+            generations=[
+                ChatGeneration(message=message, generation_info={"finish_reason": finish_reason})
+            ]
+        )
+
+    return patch.multiple(ChatOpenRouter, _astream=_astream, _agenerate=_agenerate)
+
+
+class TestStructuredReplyParsing:
+    """A structured reply is the provider's whole answer or an error, never a shortened one.
+
+    Seen live on the browser loop's closing answer: a provider's reply arrived
+    as two JSON objects glued together, and the lenient partial-JSON parse kept
+    the first, whose text stopped where the model had opened a quote.
+    """
+
+    @staticmethod
+    def _aux_runnable() -> Runnable:
+        helper = ChatOpenRouter(
+            model="test/model",
+            api_key=SecretStr("sk-test"),
+            streaming=True,
+            max_tokens=HELPER_MAX_OUTPUT_TOKENS,
+        )
+        with patch(f"{_CLIENT}.get_helper_llm", return_value=helper):
+            return client_module._aux_structured_runnable(_Closing, 0.0, None)
+
+    async def test_a_well_formed_reply_is_returned_whole(self) -> None:
+        raw = '{"text": "The first question is: \\"Why does \\\\\\"foo\\\\\\" print?\\"", "achieved": true}'
+        with _provider_replies_with(raw):
+            result = await self._aux_runnable().ainvoke("prompt")
+
+        assert result == _Closing(
+            text='The first question is: "Why does \\"foo\\" print?"', achieved=True
+        )
+
+    async def test_two_glued_objects_raise_instead_of_keeping_the_first(self) -> None:
+        # Verbatim shape of a captured Baidu reply (streamed, forced tool choice).
+        raw = (
+            '{"achieved": true, "text": "The first question listed is: "}'
+            '{"achieved": true, "text": "The first question listed is: \'Why d'
+        )
+        with _provider_replies_with(raw), pytest.raises(MalformedStructuredOutputError):
+            await self._aux_runnable().ainvoke("prompt")
+
+    async def test_glued_objects_raise_even_under_a_streaming_callback(self) -> None:
+        """A caller streaming events (a graph in messages mode) must not re-route the call through the lenient streamed parse."""
+        raw = '{"achieved": true, "text": "is: "}{"achieved": true, "text": "is: \'Why d'
+        with _provider_replies_with(raw), pytest.raises(MalformedStructuredOutputError):
+            async for _ in self._aux_runnable().astream_events("prompt", version="v2"):
+                pass
+
+    async def test_arguments_cut_off_mid_string_raise(self) -> None:
+        raw = '{"achieved": true, "text": "The page title is \\"Newest Quest'
+        with _provider_replies_with(raw), pytest.raises(MalformedStructuredOutputError):
+            await self._aux_runnable().ainvoke("prompt")
+
+    async def test_a_reply_stopped_by_the_output_cap_raises(self) -> None:
+        """Valid-looking JSON is still not the whole answer when the provider says it hit max_tokens."""
+        raw = '{"achieved": true, "text": "The page title is"}'
+        with (
+            _provider_replies_with(raw, finish_reason="length"),
+            pytest.raises(MalformedStructuredOutputError),
+        ):
+            await self._aux_runnable().ainvoke("prompt")
+
+    async def test_arguments_that_miss_the_schema_raise(self) -> None:
+        with (
+            _provider_replies_with('{"achieved": true}'),
+            pytest.raises(MalformedStructuredOutputError),
+        ):
+            await self._aux_runnable().ainvoke("prompt")
+
+    def test_a_malformed_reply_is_re_asked_by_the_lane(self) -> None:
+        """Sampling another reply is the remedy, so the lane's retry must cover it."""
+        assert issubclass(MalformedStructuredOutputError, LLM_RETRYABLE_EXCEPTIONS)
+
+    def test_the_tool_is_offered_not_forced(self) -> None:
+        """A forced tool lets Baidu/Together end the string at the model's unescaped quote."""
+        runnable = self._aux_runnable()
+        assert isinstance(runnable, RunnableSequence)
+        binding = runnable.first
+        assert isinstance(binding, RunnableBinding)
+        assert binding.kwargs["tool_choice"] == "auto"
+        assert isinstance(binding.bound, ChatOpenRouter)
+        assert binding.bound.model_name == AUX_MODEL_NAME
+        assert binding.bound.max_tokens == HELPER_MAX_OUTPUT_TOKENS
 
 
 class TestStampFallback:

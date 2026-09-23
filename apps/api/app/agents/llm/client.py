@@ -11,24 +11,27 @@ from langchain_core.language_models import LanguageModelInput, LanguageModelLike
 from langchain_core.language_models.chat_models import (
     BaseChatModel,
 )
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import LLMResult
 from langchain_core.runnables import (
     Runnable,
     RunnableBinding,
     RunnableConfig,
+    RunnableLambda,
     RunnableSequence,
 )
 from langchain_core.runnables.utils import ConfigurableField
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openrouter import ChatOpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from app.agents.llm.exceptions import (
     LLM_FALLBACK_EXCEPTIONS,
     LLM_RETRYABLE_EXCEPTIONS,
     LLMNotConfiguredError,
+    MalformedStructuredOutputError,
 )
 from app.agents.llm.types import LLMFallback, LLMProvider, ProviderLLM
 from app.config.settings import settings
@@ -1208,6 +1211,64 @@ async def _record_auxiliary_usage(
         )
 
 
+def _parse_structured_reply(message: BaseMessage, schema: type[_StructuredT]) -> _StructuredT:
+    """Return the schema filled from the reply's one tool call; raise MalformedStructuredOutputError otherwise.
+
+    Needs an unstreamed reply: its arguments went through json.loads, while a
+    streamed one went through partial-JSON repair, which keeps whatever prefix parses.
+    """
+    name = convert_to_openai_tool(schema)["function"]["name"]
+    if not isinstance(message, AIMessage):
+        raise MalformedStructuredOutputError(
+            f"{name}: expected an AI reply, got {type(message).__name__}"
+        )
+    if message.response_metadata.get("finish_reason") == "length":
+        raise MalformedStructuredOutputError(f"{name}: reply stopped at the output cap")
+    if message.invalid_tool_calls:
+        raw = str(message.invalid_tool_calls[0].get("args"))
+        raise MalformedStructuredOutputError(
+            f"{name}: tool-call arguments are not valid JSON: {raw[:300]!r}", llm_output=raw
+        )
+    calls = [call for call in message.tool_calls if call["name"] == name]
+    if not calls:
+        raise MalformedStructuredOutputError(
+            f"{name}: reply made no {name} tool call (content: {str(message.content)[:200]!r})",
+            llm_output=str(message.content),
+        )
+    try:
+        return schema.model_validate(calls[0]["args"])
+    except ValidationError as error:
+        raise MalformedStructuredOutputError(
+            f"{name}: tool-call arguments do not fit the schema: {error}"
+        ) from error
+
+
+def _structured_tool_runnable(llm: BaseChatModel, schema: type[_StructuredT]) -> Runnable:
+    """Build the one-tool structured runnable every OpenRouter-wire one-shot runs on.
+
+    Not with_structured_output: it forces the tool by name, and it parses streamed
+    arguments leniently. The tool is offered (auto) and the call unstreamed, so
+    :func:_parse_structured_reply sees the provider's arguments exactly as sent.
+    """
+    tool = convert_to_openai_tool(schema)
+    # A forced tool makes Baidu/Together grammar-decode the arguments, and the model's
+    # unescaped quote then ends the string as valid JSON: 27 of 43 closing answers cut
+    # on Baidu forced, 0 of 28 offered (deepseek-v4-flash replay).
+    # An explicit streaming=False also holds under a streaming callback (astream_events,
+    # a graph's messages mode), which would otherwise re-route to the lenient parse.
+    bound = llm.model_copy(update={"streaming": False}).bind_tools(
+        [schema],
+        tool_choice="auto",
+        ls_structured_output_format={
+            "kwargs": {"method": "function_calling", "tool_choice": "auto"},
+            "schema": tool,
+        },
+    )
+    return bound | RunnableLambda(
+        lambda message: _parse_structured_reply(message, schema), name=tool["function"]["name"]
+    )
+
+
 def _aux_structured_runnable(
     schema: type[_StructuredT], temperature: float, config: RunnableConfig | None
 ) -> Runnable:
@@ -1217,14 +1278,13 @@ def _aux_structured_runnable(
     sticky-routing session.
     """
     # The alias must be set via model_copy, NOT .bind(model=...):
-    # with_structured_output rebuilds via bind_tools, which drops a bound
-    # alias — every aux call then served DEFAULT_MODEL_NAME (measured).
-    structured = (
-        get_helper_llm(temperature=temperature)
-        .model_copy(update={"model_name": AUX_MODEL_NAME})
-        .with_structured_output(schema)
+    # bind_tools rebuilds the binding, which drops a bound alias — every aux
+    # call then served DEFAULT_MODEL_NAME (measured).
+    structured = _structured_tool_runnable(
+        get_helper_llm(temperature=temperature).model_copy(update={"model_name": AUX_MODEL_NAME}),
+        schema,
     )
-    # Bound AFTER with_structured_output (which drops outer bindings). Aux
+    # Bound AFTER bind_tools (which drops outer bindings). Aux
     # one-shots get their OWN suffixed sticky session — sharing the
     # conversation's session_id re-pinned its provider (measured: rotation dips).
     session_id = _sticky_session_id(config, auxiliary=True)
@@ -1247,7 +1307,7 @@ def background_structured_runnable(
     wins over the custom endpoint, as in every other factory here.
     """
     if settings.GAIA_SIM_MODE:
-        return _sim_llm(temperature).with_structured_output(schema)
+        return _structured_tool_runnable(_sim_llm(temperature), schema)
     if settings.DEV_DEFAULT_MODEL == LLMProviderName.CUSTOM and settings.DEV_LLM_BASE_URL:
         # Bounded like the helper lane. Unbounded, a replay's narration ran to
         # the endpoint's 64k output cap, took 257 seconds, and cut off
@@ -1255,7 +1315,7 @@ def background_structured_runnable(
         bounded = _build_custom_llm(temperature).model_copy(
             update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS}
         )
-        return bounded.with_structured_output(schema)
+        return _structured_tool_runnable(bounded, schema)
     return _aux_structured_runnable(schema, temperature, config)
 
 
