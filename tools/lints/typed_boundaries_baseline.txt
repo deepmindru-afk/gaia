@@ -13,7 +13,6 @@
 # warns instead). Past the date it fails again: fix it, or renew the deferral
 # with a fresh reason. --update keeps the field.
 apps/api/app/agents/context/assemble.py	TB002
-apps/api/app/agents/core/background/executor_capture.py	TB002
 apps/api/app/agents/core/background/redis_writer.py	TB001
 apps/api/app/agents/core/background/redis_writer.py	TB002
 apps/api/app/agents/core/integration_capabilities.py	TB001
@@ -274,7 +273,6 @@ apps/api/app/services/workflow/playbook/runner.py	TB001
 apps/api/app/services/workflow/playbook/runner.py	TB002
 apps/api/app/services/workflow/playbook/scripted_model.py	TB001
 apps/api/app/services/workflow/queue_service.py	TB001
-apps/api/app/services/workflow/run_trace.py	TB002
 apps/api/app/services/workflow/scheduler.py	TB001
 apps/api/app/services/workflow/scheduler.py	TB002
 apps/api/app/services/workflow/subagent_output.py	TB001

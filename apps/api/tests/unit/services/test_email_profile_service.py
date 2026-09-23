@@ -5,15 +5,19 @@ merge field-wise in priority order; results are cached per (user, email).
 """
 
 from collections.abc import Awaitable, Callable
+import hashlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
+import respx
 
 from app.constants.email import (
     DOMAIN_FAVICON_URL_TEMPLATE,
     EMAIL_PROFILE_CACHE_KEY_TEMPLATE,
     GOOGLE_CONTACTS_SOURCE_NAME,
+    GRAVATAR_PROFILE_URL_TEMPLATE,
     GRAVATAR_SOURCE_NAME,
     OTHER_CONTACTS_READ_MASK,
     OTHER_CONTACTS_SEARCH_ENDPOINT,
@@ -26,6 +30,7 @@ from app.models.search_models import URLResponse
 from app.services.composio.proxy_client import ProxyRequest
 from app.services.email_profile_service import (
     _domain_favicon_profile,
+    _fetch_gravatar_profile,
     _merge_profiles,
     _person_to_profile,
     _pick_photo,
@@ -413,3 +418,59 @@ class TestDomainFaviconProfile:
 
         assert profile is not None
         assert profile.favicon == DOMAIN_FAVICON_URL_TEMPLATE.format(domain="acme-corp.com")
+
+
+_GRAVATAR_URL = GRAVATAR_PROFILE_URL_TEMPLATE.format(
+    email_hash=hashlib.sha256(EMAIL.encode("utf-8")).hexdigest()
+)
+
+
+class TestFetchGravatarProfile:
+    @respx.mock
+    async def test_a_public_profile_maps_onto_the_preview_fields(self) -> None:
+        respx.get(_GRAVATAR_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "entry": [
+                        {
+                            "displayName": "Alice G",
+                            "name": {"formatted": "Alice Gravatar"},
+                            "aboutMe": "Builds things",
+                            "thumbnailUrl": "https://gravatar.example/a.jpg",
+                        }
+                    ]
+                },
+            )
+        )
+
+        profile = await _fetch_gravatar_profile(EMAIL)
+
+        assert profile is not None
+        assert profile.title == "Alice G"
+        assert profile.description == "Builds things"
+        assert profile.favicon == "https://gravatar.example/a.jpg"
+        assert profile.website_name == GRAVATAR_SOURCE_NAME
+
+    @respx.mock
+    async def test_without_a_display_name_the_formatted_name_is_the_title(self) -> None:
+        respx.get(_GRAVATAR_URL).mock(
+            return_value=httpx.Response(200, json={"entry": [{"name": {"formatted": "Alice G"}}]})
+        )
+
+        profile = await _fetch_gravatar_profile(EMAIL)
+
+        assert profile is not None
+        assert profile.title == "Alice G"
+
+    @respx.mock
+    async def test_an_email_without_a_gravatar_has_no_profile(self) -> None:
+        respx.get(_GRAVATAR_URL).mock(return_value=httpx.Response(404))
+
+        assert await _fetch_gravatar_profile(EMAIL) is None
+
+    @respx.mock
+    async def test_a_profile_with_no_entries_has_no_profile(self) -> None:
+        respx.get(_GRAVATAR_URL).mock(return_value=httpx.Response(200, json={"entry": []}))
+
+        assert await _fetch_gravatar_profile(EMAIL) is None
