@@ -37,7 +37,7 @@ import type { TranscriptRecorder } from "./transcript";
  * Port 0: the OS picks a free one. Nothing calls the harness's health server,
  * and a fixed port made a second concurrent sender (a "stop" sent mid-run)
  * die on EADDRINUSE while its outbound consumer kept taking the first run's
- * replies.
+ * replies. The runner clears `BOT_SERVER_PORT`, which would override it.
  */
 const HARNESS_SERVER_PORT = 0;
 
@@ -67,8 +67,20 @@ export class HarnessAdapter extends BaseBotAdapter {
   private readonly adapterLogger: BotLogger;
   private nextMessageId = 1;
 
-  constructor(emulation: PlatformEmulation, transcript: TranscriptRecorder) {
+  protected override readonly consumesOutbound: boolean;
+
+  /**
+   * consumesOutbound is false for a message sent into a conversation another
+   * harness process is already consuming for: RabbitMQ would split that
+   * process's deliveries between the two.
+   */
+  constructor(
+    emulation: PlatformEmulation,
+    transcript: TranscriptRecorder,
+    { consumesOutbound = true }: { consumesOutbound?: boolean } = {},
+  ) {
     super();
+    this.consumesOutbound = consumesOutbound;
     this.platform = emulation.platform;
     this.emulation = emulation;
     this.transcript = transcript;

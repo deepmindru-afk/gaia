@@ -81,6 +81,13 @@ export abstract class BaseBotAdapter {
    */
   protected abstract readonly defaultServerPort: number;
 
+  /**
+   * Whether this process consumes the platform's outbound queue. Every bot does;
+   * the harness sending a second message as the same user mid-run must not, or
+   * it takes a share of the deliveries meant for the process already consuming.
+   */
+  protected readonly consumesOutbound: boolean = true;
+
   /** GAIA API client shared across all command handlers. */
   protected gaia!: GaiaClient;
 
@@ -234,7 +241,7 @@ export abstract class BaseBotAdapter {
     const url = this.config.rabbitmqUrl;
     // loadConfig() already warned (config_optional_missing / RABBITMQ_URL) on
     // this same boot event — saying it twice does not make it truer.
-    if (!url) return;
+    if (!url || !this.consumesOutbound) return;
     this._outboundConsumer = new OutboundConsumer(
       this.platform,
       url,

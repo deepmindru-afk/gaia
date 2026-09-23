@@ -134,11 +134,17 @@ async function bootAdapter(
   platform: PlatformName,
   apiUrl: string,
   transcript: TranscriptRecorder,
+  consumesOutbound = true,
 ): Promise<HarnessAdapter> {
   // Set first so the bot config loader (dotenv does not override existing env)
   // points the real GaiaClient at the same API the dev endpoints used.
   process.env.GAIA_API_URL = apiUrl;
-  const adapter = new HarnessAdapter(resolveEmulation(platform), transcript);
+  // A dev shell's BOT_SERVER_PORT is the real bot's port; the harness serves on
+  // a free one so two senders (and the real bot) never collide.
+  delete process.env.BOT_SERVER_PORT;
+  const adapter = new HarnessAdapter(resolveEmulation(platform), transcript, {
+    consumesOutbound,
+  });
   try {
     await adapter.boot([]);
   } catch (error: unknown) {
@@ -170,11 +176,26 @@ export async function sendOneShot(params: {
   channelId?: string;
   /** See {@link settle} — 0 (the default) shuts down as soon as the stream ends. */
   settleMs?: number;
+  /** False for a message into a conversation another sender already consumes for. */
+  consumesOutbound?: boolean;
 }): Promise<SendResult> {
-  const { apiUrl, emulate, email, message, channelId, settleMs = 0 } = params;
+  const {
+    apiUrl,
+    emulate,
+    email,
+    message,
+    channelId,
+    settleMs = 0,
+    consumesOutbound = true,
+  } = params;
   const user = await linkDevUser(apiUrl, email, emulate);
   const transcript = new TranscriptRecorder(emulate);
-  const adapter = await bootAdapter(emulate, apiUrl, transcript);
+  const adapter = await bootAdapter(
+    emulate,
+    apiUrl,
+    transcript,
+    consumesOutbound,
+  );
   const cutShort = terminationRequested();
   try {
     await Promise.race([
