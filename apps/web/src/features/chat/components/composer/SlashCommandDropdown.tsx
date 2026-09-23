@@ -6,7 +6,10 @@ import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { handleSlashCommandKey } from "@/features/chat/hooks/useSlashCommandDropdownState";
+import {
+  buildCategories,
+  handleSlashCommandKey,
+} from "@/features/chat/hooks/useSlashCommandDropdownState";
 import {
   useScrollSelectedToolIntoView,
   useSlashCommandItems,
@@ -295,10 +298,7 @@ const SlashCommandDropdown: React.FC<SlashCommandDropdownProps> = ({
     if (externalCategories && externalCategories.length > 0) {
       return externalCategories;
     }
-    const uniqueCategories = Array.from(
-      new Set(matches.map((match) => match.tool.category)),
-    );
-    return ["all", ...uniqueCategories.toSorted()];
+    return buildCategories(matches);
   }, [matches, externalCategories]);
 
   const {

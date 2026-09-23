@@ -145,10 +145,7 @@ export default memo(function TodoItem({
           <WorkflowCategoryIcons categories={todo.workflow_categories} />
         )}
 
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="flex h-full min-h-full justify-center items-center self-center group-hover:opacity-100 opacity-0 transition"
-        >
+        <div className="flex h-full min-h-full justify-center items-center self-center group-hover:opacity-100 opacity-0 transition">
           <ChevronRight width={20} height={20} className="text-zinc-400" />
         </div>
       </div>
