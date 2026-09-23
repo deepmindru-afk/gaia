@@ -31,22 +31,32 @@ async def relay_job_events(job_id: str, stream_id: str) -> None:
         settings.BROWSER_USE_TASK_TIMEOUT_SECONDS + settings.BROWSER_USE_HANDOFF_TIMEOUT_SECONDS
     )
     deadline = monotonic() + budget
+    log.set(browser={"job_id": job_id})
     try:
         while monotonic() < deadline:
             if await stream_manager.is_cancelled(stream_id):
+                log.set_ns("browser", relay_end="turn_cancelled")
                 return
             for entry_id, payload in await read_job_events(
                 job_id, cursor, BROWSER_JOB_RELAY_BLOCK_MS
             ):
                 cursor = entry_id
                 if payload == JOB_TERMINAL_FRAME:
+                    log.set_ns("browser", relay_end="job_finished")
                     return
                 writer(payload)
+        # The run may still be going (a long handoff): its later cards reach no one live.
+        log.warning(
+            f"{LogTag.BROWSER} Browser job relay gave up before the job finished",
+            browser={"job_id": job_id},
+            budget_seconds=budget,
+        )
     except Exception as exc:
         # The relay is fire-and-forget beside the turn: a crash here costs the
         # remaining cards, and must never cost the turn itself.
         log.error(
             f"{LogTag.BROWSER} Browser job relay stopped",
             error_type=type(exc).__name__,
+            error=str(exc),
             browser={"job_id": job_id},
         )

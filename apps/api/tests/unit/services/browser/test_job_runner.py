@@ -15,6 +15,7 @@ import pytest
 
 from app.constants.browser import (
     BROWSER_TASK_EVENT,
+    BrowserRunFailure,
     BrowserSessionStatus,
     HandoffStatus,
     SensitiveCategory,
@@ -38,6 +39,7 @@ from app.services.browser.fingerprint import current_fingerprint_seed, seed_for_
 from app.services.browser.runner import BrowserRunConfig, BrowserRunnerCallbacks
 from app.services.browser.session import BrowserHostSession
 from app.services.browser.tasks import BrowserTaskRecord
+from shared.py.wide_events import log, wide_task
 
 pytestmark = pytest.mark.unit
 
@@ -485,7 +487,9 @@ async def test_llm_unavailable_ends_the_run_with_a_failed_card(
     assert h.cards == [_failed_card("no API key for 'google'")]
     assert h.session_kwargs == {}
     fake_log.warning.assert_called_once_with(
-        f"{LogTag.BROWSER} Browser LLM unavailable", error_type="BrowserUnavailableError"
+        f"{LogTag.BROWSER} Browser LLM unavailable",
+        error_type="BrowserUnavailableError",
+        error="no API key for 'google'",
     )
 
 
@@ -515,12 +519,111 @@ async def test_session_unavailable_emits_failed_card_and_explains(
     assert out == _failed_message("host is down")
     assert h.cards == [_failed_card("host is down")]
     fake_log.warning.assert_called_once_with(
-        f"{LogTag.BROWSER} Browser session unavailable", error_type="BrowserUnavailableError"
+        f"{LogTag.BROWSER} Browser session unavailable",
+        error_type="BrowserUnavailableError",
+        error="host is down",
     )
     # UI runs have no bot_delivery, so emitting the failed card above must not
     # touch it — the closure's initial value must be `None`, not a falsy
     # sentinel a snapshot could be handed to and blow up against.
     fake_log.error.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# execute_browser_job — the run's wide event says why it did not succeed
+# ---------------------------------------------------------------------------
+
+
+async def _run_event(h: Harness, request: BrowserJobRequest) -> dict[str, Any]:
+    """Run the job inside the worker's boundary and return its wide event as the body left it."""
+    async with wide_task("run_browser_job"):
+        await _run(h, request)
+        return dict(log.get())
+
+
+async def _crash(h: Harness) -> BrowserResultSnapshot:
+    raise RuntimeError("the page exploded")
+
+
+@pytest.mark.parametrize(
+    ("install", "reason"),
+    [
+        (
+            {"session_error": BrowserConcurrencyLimit("Too many browser tasks already running.")},
+            BrowserRunFailure.HOST_AT_CAPACITY,
+        ),
+        (
+            {"session_error": BrowserUnavailableError("host is down")},
+            BrowserRunFailure.HOST_UNAVAILABLE,
+        ),
+        ({"run_body": _crash}, BrowserRunFailure.RUN_CRASHED),
+        (
+            {"result": _result(BrowserSessionStatus.FAILED, False, "No such button.", steps=4)},
+            BrowserRunFailure.GOAL_NOT_ACHIEVED,
+        ),
+    ],
+)
+async def test_a_run_that_did_not_succeed_is_a_failed_event_with_its_typed_reason(
+    monkeypatch: pytest.MonkeyPatch, install: dict[str, Any], reason: BrowserRunFailure
+) -> None:
+    h = _install(monkeypatch, **install)
+
+    event = await _run_event(h, _bot_request())
+
+    assert event["outcome"] == "failed"
+    assert event["reason"] == reason
+
+
+async def test_an_unusable_model_is_an_llm_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _install(monkeypatch)
+    monkeypatch.setattr(
+        jr, "build_browser_llm", MagicMock(side_effect=BrowserUnavailableError("no key"))
+    )
+
+    event = await _run_event(h, _request())
+
+    assert event["outcome"] == "failed"
+    assert event["reason"] == BrowserRunFailure.LLM_ERROR
+
+
+async def test_a_finished_run_records_its_status_steps_and_engine_on_the_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = _install(monkeypatch, result=_result(BrowserSessionStatus.COMPLETED, True, "Done", steps=3))
+
+    event = await _run_event(h, _request())
+
+    assert "reason" not in event
+    assert event["browser"] | {"run_ms": 0} == event["browser"] | {
+        "session_id": "sess-1",
+        "status": "completed",
+        "success": True,
+        "steps": 3,
+        "engine_fallback": False,
+        "run_ms": 0,
+    }
+
+
+async def test_a_users_handoff_records_its_kind_category_and_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _handoff(h: Harness) -> BrowserResultSnapshot:
+        await h.request_handoff(
+            HandoffRequest(reason="sign in", category=SensitiveCategory.CREDENTIALS)
+        )
+        return _result(BrowserSessionStatus.COMPLETED, True, "Done")
+
+    h = _install(
+        monkeypatch,
+        run_body=_handoff,
+        handoff_outcome=HandoffOutcome(status=HandoffStatus.TIMEOUT),
+    )
+
+    event = await _run_event(h, _request())
+
+    assert event["browser"]["handoff_kind"] == "user"
+    assert event["browser"]["handoff_category"] == "credentials"
+    assert event["browser"]["handoff_result"] == "timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -1159,6 +1262,7 @@ async def test_failed_mirror_is_logged_with_the_snapshot_that_failed(
     assert error_call.args == (f"{LogTag.BROWSER} Bot delivery failed; continuing browser task",)
     assert error_call.kwargs == {
         "error_type": "RuntimeError",
+        "error": "rabbitmq down",
         "browser": {"snapshot_type": "BrowserStepSnapshot"},
     }
 

@@ -19,6 +19,7 @@ from app.constants.browser import (
     BROWSER_JOB_CRASHED_SUMMARY,
     BROWSER_TASK_EVENT,
     BROWSER_TOOL_CATEGORY,
+    BrowserRunFailure,
     BrowserSessionStatus,
     HandoffKind,
     HandoffStatus,
@@ -54,6 +55,7 @@ from app.services.browser.job_events import publish_job_event
 from app.services.browser.jobs import job_cancel_requested, joiner_lease_held, put_job_state
 from app.services.browser.llm import build_browser_llm
 from app.services.browser.replay import create_replay_link
+from app.services.browser.run_failure import record_run_result
 from app.services.browser.runner import (
     BrowserRunConfig,
     BrowserRunnerCallbacks,
@@ -293,6 +295,7 @@ async def _deliver_snapshot_to_bot(
         log.error(
             f"{LogTag.BROWSER} Bot delivery failed; continuing browser task",
             error_type=type(exc).__name__,
+            error=str(exc),
             browser={"snapshot_type": type(snapshot).__name__},
         )
 
@@ -397,6 +400,12 @@ async def _run_handoff(
     finally:
         for watcher in watchers:
             watcher.cancel()
+    log.set_ns(
+        "browser",
+        handoff_kind=HandoffKind.USER.value,
+        handoff_category=req.category.value,
+        handoff_result=outcome.status.value,
+    )
     if outcome.status == HandoffStatus.COMPLETED and req.category == SensitiveCategory.CREDENTIALS:
         session.mark_authenticated()
     await emit(_handoff_snapshot(handoff_id, req, session, outcome.status))
@@ -430,9 +439,11 @@ async def _run_guidance(
     )
     await put_guidance_request(job_id, PendingAgentGuidance(handoff_id=handoff_id, request=request))
     try:
-        return await await_handoff(handoff_id, BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS)
+        outcome = await await_handoff(handoff_id, BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS)
     finally:
         await clear_guidance_request(job_id)
+    log.set_ns("browser", guidance_result=outcome.status.value)
+    return outcome
 
 
 async def persist_run_outcome(
@@ -524,7 +535,12 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
     try:
         llm = build_browser_llm(user_id=request.user_id)
     except BrowserUnavailableError as exc:
-        log.warning(f"{LogTag.BROWSER} Browser LLM unavailable", error_type=type(exc).__name__)
+        log.warning(
+            f"{LogTag.BROWSER} Browser LLM unavailable",
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        log.fail(BrowserRunFailure.LLM_ERROR)
         return await _terminal_failure(emitter, str(exc))
 
     # Pin this run's canvas/audio fingerprint to the user, so the same person
@@ -602,6 +618,11 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
             )
             run_t0 = perf_counter()
             result = await runner.run(full_task)
+            record_run_result(
+                result,
+                engine_fallback=runner.used_fallback,
+                run_ms=round((perf_counter() - run_t0) * 1000),
+            )
             await persist_run_outcome(
                 request,
                 session_id=runner.session.session_id,
@@ -612,11 +633,19 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
             )
             return result
     except BrowserConcurrencyLimit as exc:
+        log.warning(f"{LogTag.BROWSER} Browser host at capacity", error=str(exc))
+        log.fail(BrowserRunFailure.HOST_AT_CAPACITY)
         return await _terminal_failure(emitter, str(exc), session_id)
     except BrowserUnavailableError as exc:
-        log.warning(f"{LogTag.BROWSER} Browser session unavailable", error_type=type(exc).__name__)
+        log.warning(
+            f"{LogTag.BROWSER} Browser session unavailable",
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        log.fail(BrowserRunFailure.HOST_UNAVAILABLE)
         return await _terminal_failure(emitter, str(exc), session_id)
     except asyncio.CancelledError:
+        log.fail(BrowserRunFailure.CANCELLED)
         # Nobody holds a tool call to hear this; without it the card stays RUNNING forever.
         await asyncio.shield(
             _terminal_failure(
@@ -632,6 +661,7 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
             browser={"job_id": request.job_id},
             exc_info=True,
         )
+        log.fail(BrowserRunFailure.RUN_CRASHED)
         return await _terminal_failure(emitter, BROWSER_JOB_CRASHED_SUMMARY, session_id)
     finally:
         reset_fingerprint_seed(seed_token)

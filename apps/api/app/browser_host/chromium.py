@@ -41,6 +41,7 @@ from app.constants.browser import (
     BROWSER_VIEWPORT_HEIGHT,
     BROWSER_VIEWPORT_WIDTH,
     BrowserEngine,
+    HostAdmissionRefusal,
 )
 from app.constants.log_tags import LogTag
 from app.services.browser.storage_state_types import LocalStorageEntry, OriginState
@@ -106,7 +107,25 @@ class HostSession:
 
 
 class AtCapacityError(RuntimeError):
-    """Raised when the host already holds BROWSER_HOST_MAX_SESSIONS contexts."""
+    """Raised when admission turns a session away: the session ceiling or the memory watermark."""
+
+    def __init__(
+        self,
+        gate: HostAdmissionRefusal,
+        *,
+        used_mb: float,
+        limit_mb: float,
+        projected_mb: float,
+        sessions: int,
+        pending: int,
+    ) -> None:
+        super().__init__(f"at capacity ({gate})")
+        self.gate = gate
+        self.used_mb = used_mb
+        self.limit_mb = limit_mb
+        self.projected_mb = projected_mb
+        self.sessions = sessions
+        self.pending = pending
 
 
 class SessionNotFoundError(KeyError):
@@ -544,13 +563,23 @@ class ChromiumHost:
             estimate = self._estimate_session_cost_mb()
             hard_mb = limit * browser_host_settings.BROWSER_HOST_MEMORY_HIGH_WATERMARK
             async with self._lock:
-                over_ceiling = ceiling > 0 and len(self._sessions) + self._pending_slots >= ceiling
-                projected = used + (self._pending_slots + 1) * estimate
+                sessions, pending = len(self._sessions), self._pending_slots
+                over_ceiling = ceiling > 0 and sessions + pending >= ceiling
+                projected = used + (pending + 1) * estimate
                 if not over_ceiling and projected <= hard_mb:
                     self._pending_slots += 1
                     return
             if time.monotonic() >= deadline:
-                raise AtCapacityError
+                raise AtCapacityError(
+                    HostAdmissionRefusal.SESSION_CEILING
+                    if over_ceiling
+                    else HostAdmissionRefusal.MEMORY,
+                    used_mb=used,
+                    limit_mb=limit,
+                    projected_mb=projected,
+                    sessions=sessions,
+                    pending=pending,
+                )
             await asyncio.sleep(_ADMISSION_POLL_SECONDS)
 
     async def _close_session_connection(self, session: HostSession) -> None:

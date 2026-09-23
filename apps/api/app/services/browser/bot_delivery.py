@@ -13,6 +13,7 @@ from app.constants.browser import (
     SensitiveCategory,
 )
 from app.constants.general import NEW_MESSAGE_BREAKER
+from app.constants.log_tags import LogTag
 from app.models.chat_models import ConversationSource
 from app.schemas.browser import (
     BrowserAction,
@@ -23,7 +24,12 @@ from app.schemas.browser import (
 )
 from app.services.browser.captions import caption_from_action_list
 from app.services.browser.live_view import create_live_view_link
-from app.services.outbound_delivery import publish_outbound_message, publish_outbound_photo
+from app.services.outbound_delivery import (
+    OutboundResult,
+    publish_outbound_message,
+    publish_outbound_photo,
+)
+from shared.py.wide_events import log
 
 
 class BotProgressDelivery:
@@ -131,7 +137,14 @@ class BotProgressDelivery:
 
     async def note(self, message: str) -> None:
         """Send one plain message to the user."""
-        await publish_outbound_message(self._platform, self._user_id, [message])
+        result = await publish_outbound_message(self._platform, self._user_id, [message])
+        if result is not OutboundResult.PUBLISHED:
+            log.warning(
+                f"{LogTag.BROWSER} Browser progress not sent to the bot",
+                outbound_result=result,
+                platform=self._platform,
+                user_id=self._user_id,
+            )
 
 
 def _is_blank_tab(url: str | None) -> bool:

@@ -33,6 +33,7 @@ from app.browser_host.chromium import (
     cdp_call,
 )
 from app.config.browser_host_settings import browser_host_settings
+from app.constants.browser import HostAdmissionRefusal
 from tests.unit.browser_host.conftest import FakeMux, install_mux, make_host, make_session
 
 
@@ -102,8 +103,10 @@ async def test_reserve_slot_counts_in_flight_creates_toward_capacity(
 
     # Neither in-flight create has landed in `_sessions` yet, but both slots
     # are reserved — a third caller must be rejected.
-    with pytest.raises(AtCapacityError):
+    with pytest.raises(AtCapacityError) as refused:
         await host.create_context(None)
+    assert refused.value.gate is HostAdmissionRefusal.SESSION_CEILING
+    assert refused.value.pending == 2
 
     await _cancel(task1, task2)
 

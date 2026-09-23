@@ -84,6 +84,11 @@ async def resolve_handoff_from_message(
     try:
         await resolve_handoff(handoff_id, kind, user_id, message=note)
     except BrowserHandoffNotOwned:
+        log.warning(
+            f"{LogTag.BROWSER} Handoff reply ignored: the handoff belongs to another user",
+            browser={"handoff_id": handoff_id},
+            user_id=user_id,
+        )
         return None
     return decision.action
 

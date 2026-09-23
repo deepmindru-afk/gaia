@@ -115,11 +115,20 @@ async def resolve_handoff(
     """
     record = await get_handoff(handoff_id)
     if record is None:
+        log.warning(
+            f"{LogTag.BROWSER} Handoff decision dropped: no such handoff, or it expired",
+            handoff_id=handoff_id,
+        )
         return None
     if record.user_id != user_id:
         raise BrowserHandoffNotOwned("Not authorized to resolve this handoff")
 
     if record.status != HandoffStatus.PENDING:
+        log.info(
+            f"{LogTag.BROWSER} Handoff decision late: already settled",
+            handoff_id=handoff_id,
+            status=record.status.value,
+        )
         return record.status
 
     new_status = (
@@ -186,6 +195,11 @@ async def await_handoff(handoff_id: str, timeout_seconds: int) -> HandoffOutcome
     if record.status != HandoffStatus.PENDING:
         return HandoffOutcome(status=record.status, message=record.message)
     if await _settle(handoff_id, record, HandoffStatus.TIMEOUT, None) is HandoffStatus.TIMEOUT:
+        log.warning(
+            f"{LogTag.BROWSER} Handoff timed out with no decision",
+            handoff_id=handoff_id,
+            timeout_seconds=timeout_seconds,
+        )
         return HandoffOutcome(status=HandoffStatus.TIMEOUT)
     # A decision landed on the deadline; it, and its note, are the outcome.
     decided = await get_handoff(handoff_id)

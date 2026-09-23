@@ -14,8 +14,8 @@ started/stopped by the app lifespan.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 import secrets
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
@@ -26,8 +26,9 @@ from app.browser_host.chromium import AtCapacityError, ChromiumHost, SessionNotF
 from app.browser_host.proxy import run_cdp_proxy
 from app.browser_host.screencast import run_live_view
 from app.config.browser_host_settings import browser_host_settings
+from app.constants.browser import HostRequestFailure
 from app.constants.log_tags import LogTag
-from shared.py.wide_events import log
+from shared.py.wide_events import log, log_context
 
 # WebSocket close code for "session unknown or dead" (application 4xxx range).
 _WS_AUTH_FAILED = 4401
@@ -126,7 +127,13 @@ def _key_valid(candidate: str | None) -> bool:
 
 def _require_host_key(request: Request) -> None:
     if not _key_valid(request.headers.get("X-Host-Key")):
+        log.fail(HostRequestFailure.INVALID_HOST_KEY)
         raise HTTPException(status_code=401, detail="missing or invalid host key")
+
+
+def _session_not_found() -> HTTPException:
+    log.fail(HostRequestFailure.SESSION_NOT_FOUND)
+    return HTTPException(status_code=404, detail="session not found")
 
 
 _ALLOWED_WS_ORIGIN_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -185,6 +192,27 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=_lifespan)
 
+# Polled by the orchestrator; a degraded engine is logged by healthz itself.
+_UNLOGGED_PATHS = frozenset({"/healthz"})
+
+
+@app.middleware("http")
+async def _request_wide_event(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """One wide event per host request: its route, status, engine and, when refused, why."""
+    if request.url.path in _UNLOGGED_PATHS:
+        return await call_next(request)
+    async with log_context(
+        "browser_host_request",
+        method=request.method,
+        path=request.url.path,
+        engine=browser_host_settings.BROWSER_ENGINE.value,
+    ):
+        response = await call_next(request)
+        log.set(status_code=response.status_code)
+        return response
+
 
 @app.post("/sessions")
 async def create_session(request: Request, payload: CreateSessionRequest) -> CreateSessionResponse:
@@ -194,7 +222,16 @@ async def create_session(request: Request, payload: CreateSessionRequest) -> Cre
     try:
         session = await _host.create_context(payload.storage_state)
     except AtCapacityError as exc:
-        log.warning(f"{LogTag.BROWSER} browser host at capacity")
+        admission = {
+            "admission": exc.gate.value,
+            "used_mb": exc.used_mb,
+            "limit_mb": exc.limit_mb,
+            "projected_mb": exc.projected_mb,
+            "sessions": exc.sessions,
+            "pending": exc.pending,
+        }
+        log.warning(f"{LogTag.BROWSER} browser host at capacity", browser=admission)
+        log.fail(HostRequestFailure.AT_CAPACITY, browser=admission)
         raise HTTPException(status_code=429, detail="at_capacity") from exc
     return CreateSessionResponse(
         session_id=session.session_id,
@@ -212,7 +249,7 @@ async def delete_session(request: Request, session_id: str) -> DeleteSessionResp
     try:
         storage_state = await _host.dispose_context(session_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="session not found") from exc
+        raise _session_not_found() from exc
     return DeleteSessionResponse(storage_state=storage_state)
 
 
@@ -227,7 +264,7 @@ async def touch_session(request: Request, session_id: str) -> TouchSessionRespon
     _require_host_key(request)
     log.set(browser={"session_id": session_id, "operation": "touch"})
     if _host.get(session_id) is None:
-        raise HTTPException(status_code=404, detail="session not found")
+        raise _session_not_found()
     _host.touch(session_id)
     return TouchSessionResponse(session_id=session_id)
 
@@ -240,7 +277,7 @@ async def get_session(request: Request, session_id: str) -> SessionInfoResponse:
     try:
         info = await _host.session_info(session_id)
     except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="session not found") from exc
+        raise _session_not_found() from exc
     return SessionInfoResponse.model_validate(info)
 
 
@@ -255,31 +292,45 @@ async def healthz(request: Request, response: Response) -> HealthResponse:
     return health
 
 
+def _ws_wide_event(operation: str, session_id: str) -> AbstractAsyncContextManager[object]:
+    """One wide event per websocket, emitted when it closes: which session, and why it was refused."""
+    boundary: AbstractAsyncContextManager[object] = log_context(
+        "browser_host_ws",
+        engine=browser_host_settings.BROWSER_ENGINE.value,
+        browser={"operation": operation, "session_id": session_id},
+    )
+    return boundary
+
+
 @app.websocket("/cdp/{session_id}")
 async def cdp_endpoint(websocket: WebSocket, session_id: str) -> None:
     """CDP websocket endpoint for one context, proxied through the filter."""
-    if not _ws_authorized(websocket):
-        await websocket.close(code=_WS_AUTH_FAILED)
-        return
-    log.set(browser={"operation": "cdp_ws", "session_id": session_id})
-    session = _host.get(session_id)
-    if session is None or session.dead:
-        await websocket.close(code=_WS_SESSION_GONE)
-        return
-    await websocket.accept()
-    await run_cdp_proxy(_host, session, websocket)
+    async with _ws_wide_event("cdp_ws", session_id):
+        if not _ws_authorized(websocket):
+            log.fail(HostRequestFailure.INVALID_HOST_KEY)
+            await websocket.close(code=_WS_AUTH_FAILED)
+            return
+        session = _host.get(session_id)
+        if session is None or session.dead:
+            log.fail(HostRequestFailure.SESSION_NOT_FOUND)
+            await websocket.close(code=_WS_SESSION_GONE)
+            return
+        await websocket.accept()
+        await run_cdp_proxy(_host, session, websocket)
 
 
 @app.websocket("/live/{session_id}")
 async def live_endpoint(websocket: WebSocket, session_id: str) -> None:
     """Screencast + input websocket for one session's live view."""
-    if not _ws_authorized(websocket):
-        await websocket.close(code=_WS_AUTH_FAILED)
-        return
-    log.set(browser={"operation": "live_ws", "session_id": session_id})
-    session = _host.get(session_id)
-    if session is None or session.dead:
-        await websocket.close(code=_WS_SESSION_GONE)
-        return
-    await websocket.accept()
-    await run_live_view(_host, session, websocket)
+    async with _ws_wide_event("live_ws", session_id):
+        if not _ws_authorized(websocket):
+            log.fail(HostRequestFailure.INVALID_HOST_KEY)
+            await websocket.close(code=_WS_AUTH_FAILED)
+            return
+        session = _host.get(session_id)
+        if session is None or session.dead:
+            log.fail(HostRequestFailure.SESSION_NOT_FOUND)
+            await websocket.close(code=_WS_SESSION_GONE)
+            return
+        await websocket.accept()
+        await run_live_view(_host, session, websocket)

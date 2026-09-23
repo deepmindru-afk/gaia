@@ -16,6 +16,7 @@ import pytest
 
 from app.browser_host import server as server_mod
 from app.browser_host.chromium import AtCapacityError, SessionNotFoundError
+from app.constants.browser import HostAdmissionRefusal
 from app.constants.log_tags import LogTag
 
 SESSION = MagicMock(session_id="s1", context_id="ctx-1")
@@ -77,12 +78,59 @@ def test_create_session_returns_derived_ws_urls(client) -> None:
     assert body["context_id"] == "ctx-1"
 
 
+def _at_capacity(gate: HostAdmissionRefusal) -> AtCapacityError:
+    return AtCapacityError(
+        gate, used_mb=900.0, limit_mb=1000.0, projected_mb=1100.0, sessions=3, pending=1
+    )
+
+
 def test_create_session_at_capacity_429(client) -> None:
     _, host = client
-    host.create_context.side_effect = AtCapacityError()
+    host.create_context.side_effect = _at_capacity(HostAdmissionRefusal.MEMORY)
     resp = client[0].post("/sessions", json={"storage_state": None})
     assert resp.status_code == 429
     assert resp.json() == {"detail": "at_capacity"}
+
+
+def _request_event(loguru: MagicMock) -> dict[str, object]:
+    """Return the wide event the boundary handed to loguru."""
+    event: dict[str, object] = loguru.bind.call_args.kwargs
+    return event
+
+
+def test_a_refused_create_is_a_failed_request_event_naming_the_gate(client) -> None:
+    _, host = client
+    host.create_context.side_effect = _at_capacity(HostAdmissionRefusal.MEMORY)
+    with patch("shared.py.wide_events._loguru") as loguru:
+        resp = client[0].post("/sessions", json={"storage_state": None})
+
+    event = _request_event(loguru)
+    assert resp.status_code == 429
+    assert event["outcome"] == "failed"
+    assert event["reason"] == "at_capacity"
+    assert event["status_code"] == 429
+    assert event["engine"] == server_mod.browser_host_settings.BROWSER_ENGINE.value
+    assert event["browser"] == {
+        "operation": "create",
+        "admission": "memory",
+        "used_mb": 900.0,
+        "limit_mb": 1000.0,
+        "projected_mb": 1100.0,
+        "sessions": 3,
+        "pending": 1,
+    }
+
+
+def test_a_request_for_a_gone_session_is_a_failed_request_event(client) -> None:
+    _, host = client
+    host.dispose_context.side_effect = SessionNotFoundError()
+    with patch("shared.py.wide_events._loguru") as loguru:
+        resp = client[0].delete("/sessions/ghost")
+
+    event = _request_event(loguru)
+    assert resp.status_code == 404
+    assert event["reason"] == "session_not_found"
+    assert event["browser"] == {"session_id": "ghost", "operation": "delete"}
 
 
 def test_delete_session_returns_storage_state(client) -> None:
@@ -118,7 +166,7 @@ def test_touch_session_stamps_the_wide_event_with_session_and_operation(client) 
         resp = client[0].post("/sessions/s1/touch")
 
     assert resp.status_code == 200
-    mock_log.set.assert_called_once_with(browser={"session_id": "s1", "operation": "touch"})
+    mock_log.set.assert_any_call(browser={"session_id": "s1", "operation": "touch"})
 
 
 def test_touch_unknown_session_404_and_never_touches(client) -> None:
@@ -401,7 +449,7 @@ def test_get_unknown_session_404_body(client) -> None:
 
 def test_create_session_at_capacity_body(client) -> None:
     _, host = client
-    host.create_context.side_effect = AtCapacityError()
+    host.create_context.side_effect = _at_capacity(HostAdmissionRefusal.SESSION_CEILING)
     resp = client[0].post("/sessions", json={"storage_state": None})
     assert resp.status_code == 429
     assert resp.json() == {"detail": "at_capacity"}
@@ -792,16 +840,26 @@ def test_create_session_sets_exact_log_context(client) -> None:
     with patch.object(server_mod, "log") as mock_log:
         resp = client[0].post("/sessions", json={"storage_state": None})
     assert resp.status_code == 200
-    mock_log.set.assert_called_once_with(browser={"operation": "create"})
+    mock_log.set.assert_any_call(browser={"operation": "create"})
 
 
 def test_create_session_at_capacity_logs_exact_warning(client) -> None:
     _, host = client
-    host.create_context.side_effect = AtCapacityError()
+    host.create_context.side_effect = _at_capacity(HostAdmissionRefusal.SESSION_CEILING)
     with patch.object(server_mod, "log") as mock_log:
         resp = client[0].post("/sessions", json={"storage_state": None})
     assert resp.status_code == 429
-    mock_log.warning.assert_called_once_with(f"{LogTag.BROWSER} browser host at capacity")
+    mock_log.warning.assert_called_once_with(
+        f"{LogTag.BROWSER} browser host at capacity",
+        browser={
+            "admission": "session_ceiling",
+            "used_mb": 900.0,
+            "limit_mb": 1000.0,
+            "projected_mb": 1100.0,
+            "sessions": 3,
+            "pending": 1,
+        },
+    )
 
 
 def test_delete_session_sets_exact_log_context(client) -> None:
@@ -810,9 +868,7 @@ def test_delete_session_sets_exact_log_context(client) -> None:
     with patch.object(server_mod, "log") as mock_log:
         resp = client[0].delete("/sessions/exact-id-123")
     assert resp.status_code == 200
-    mock_log.set.assert_called_once_with(
-        browser={"session_id": "exact-id-123", "operation": "delete"}
-    )
+    mock_log.set.assert_any_call(browser={"session_id": "exact-id-123", "operation": "delete"})
 
 
 def test_get_session_sets_exact_log_context(client) -> None:
@@ -821,7 +877,7 @@ def test_get_session_sets_exact_log_context(client) -> None:
     with patch.object(server_mod, "log") as mock_log:
         resp = client[0].get("/sessions/exact-id-123")
     assert resp.status_code == 200
-    mock_log.set.assert_called_once_with(browser={"session_id": "exact-id-123", "operation": "get"})
+    mock_log.set.assert_any_call(browser={"session_id": "exact-id-123", "operation": "get"})
 
 
 def test_healthz_sets_exact_log_context(client) -> None:
@@ -839,23 +895,21 @@ def test_healthz_sets_exact_log_context(client) -> None:
     mock_log.set.assert_called_once_with(browser={"operation": "healthz", "session_id": ""})
 
 
-def test_cdp_endpoint_sets_exact_log_context(client) -> None:
-    _, host = client
-    with patch.object(server_mod, "log") as mock_log:
+def test_cdp_endpoint_for_a_gone_session_is_a_failed_ws_event(client) -> None:
+    with patch("shared.py.wide_events._loguru") as loguru:
         with pytest.raises(WebSocketDisconnect):
             with client[0].websocket_connect("/cdp/exact-id-123"):
                 pass
-    mock_log.set.assert_called_once_with(
-        browser={"operation": "cdp_ws", "session_id": "exact-id-123"}
-    )
+    event = _request_event(loguru)
+    assert event["browser"] == {"operation": "cdp_ws", "session_id": "exact-id-123"}
+    assert event["reason"] == "session_not_found"
 
 
-def test_live_endpoint_sets_exact_log_context(client) -> None:
-    _, host = client
-    with patch.object(server_mod, "log") as mock_log:
+def test_live_endpoint_for_a_gone_session_is_a_failed_ws_event(client) -> None:
+    with patch("shared.py.wide_events._loguru") as loguru:
         with pytest.raises(WebSocketDisconnect):
             with client[0].websocket_connect("/live/exact-id-123"):
                 pass
-    mock_log.set.assert_called_once_with(
-        browser={"operation": "live_ws", "session_id": "exact-id-123"}
-    )
+    event = _request_event(loguru)
+    assert event["browser"] == {"operation": "live_ws", "session_id": "exact-id-123"}
+    assert event["reason"] == "session_not_found"

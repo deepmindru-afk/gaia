@@ -413,3 +413,44 @@ BROWSER_JOB_RELAY_BLOCK_MS = 1000
 
 # The ARQ function name, shared by the enqueue site and the worker registration.
 BROWSER_JOB_TASK = "run_browser_job"
+
+
+# ---------------------------------------------------------------------------
+# Observability: the reason codes a run's and a host request's wide event carry.
+# ---------------------------------------------------------------------------
+
+
+class BrowserRunFailure(StrEnum):
+    """Why a browser run did not succeed; the worker event's reason field."""
+
+    BLOCKED = "blocked"
+    NEVER_OPENED = "never_opened"
+    GOAL_NOT_ACHIEVED = "goal_not_achieved"
+    HANDOFF_TIMEOUT = "handoff_timeout"
+    CANCELLED = "cancelled"
+    TASK_TIMEOUT = "task_timeout"
+    ENGINE_CRASH = "engine_crash"
+    LLM_ERROR = "llm_error"
+    HOST_UNAVAILABLE = "host_unavailable"
+    HOST_AT_CAPACITY = "host_at_capacity"
+    RUN_CRASHED = "run_crashed"
+
+
+# Why a run moved to the fallback engine when its engine did not fail: a page it
+# could not pass. The engine-failure reasons are EngineFailure's values.
+BROWSER_FALLBACK_PAGE_BLOCKED = "page_blocked"
+
+
+class HostRequestFailure(StrEnum):
+    """Why the browser host refused a request; its request event's reason field."""
+
+    INVALID_HOST_KEY = "invalid_host_key"
+    SESSION_NOT_FOUND = "session_not_found"
+    AT_CAPACITY = "at_capacity"
+
+
+class HostAdmissionRefusal(StrEnum):
+    """Which admission gate turned a session create away."""
+
+    SESSION_CEILING = "session_ceiling"
+    MEMORY = "memory"

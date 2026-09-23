@@ -159,11 +159,16 @@ async def browser_task(
         try:
             assert_safe_url_shape(start_url)
         except ValueError as exc:
+            log.warning(
+                f"{LogTag.BROWSER} Browser task refused: start URL is not a public http(s) site",
+                error=str(exc),
+            )
             return f"I can't open {start_url}: {exc}. Only public http(s) sites are reachable."
 
     job_id = uuid.uuid4().hex
     holder = await claim_conversation_slot(params.conversation_id, job_id)
     if holder is not None:
+        log.set_ns("browser", refused="slot_held", slot_holder=holder)
         return (
             f"A browser task is already running in this conversation (job {holder}). "
             "Call wait_for_browser_task() to collect it before starting another."
@@ -176,6 +181,7 @@ async def browser_task(
         await release_conversation_slot(params.conversation_id, job_id)
         return "I couldn't start the browser task right now. Try again in a moment."
 
+    log.set_ns("browser", job_id=job_id)
     if params.stream_id:
         spawn_logged_task("browser_job_relay", relay_job_events(job_id, params.stream_id))
     return (
@@ -199,6 +205,7 @@ async def _enqueue(request: BrowserJobRequest) -> bool:
         log.error(
             f"{LogTag.BROWSER} Could not enqueue the browser job",
             error_type=type(exc).__name__,
+            error=str(exc),
             browser={"job_id": request.job_id},
         )
         return False
@@ -275,6 +282,7 @@ async def _poll_job(
             )
             return _JoinOutcome(agent_result_message(_DEAD_WORKER_RESULT))
         if waited >= timeout:
+            log.set_ns("browser", job_id=job_id, join="timed_out_still_running")
             return _JoinOutcome(
                 "The browser task is still running; it will be delivered to the user "
                 "when it finishes."
@@ -353,5 +361,9 @@ async def _resolve_guidance(
     status = await resolve_handoff(handoff_id, decision, user_id, message)
     await clear_guidance_request(job_id)
     if status is None:
+        log.warning(
+            f"{LogTag.BROWSER} Guidance arrived after the browser task stopped waiting",
+            browser={"job_id": job_id, "handoff_id": handoff_id},
+        )
         return "The browser task stopped waiting for guidance; call wait_for_browser_task()."
     return confirmation

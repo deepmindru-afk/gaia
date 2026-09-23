@@ -48,7 +48,15 @@ async def run_browser_job(
     hand-off: a live joiner speaks the result, otherwise this delivers it.
     """
     request = BrowserJobRequest.model_validate(payload)
-    log.set(browser={"job_id": request.job_id, "conversation_id": request.conversation_id})
+    log.set(
+        user={"id": request.user_id},
+        platform=request.conversation_source.value if request.conversation_source else None,
+        browser={
+            "job_id": request.job_id,
+            "conversation_id": request.conversation_id,
+            "source_category": request.source_category,
+        },
+    )
     # Nobody heartbeats the enqueuer's slot lease until here, so a long queue wait
     # can have outlived it. Re-take it before the run, or the run holds no slot at
     # all: its release is a no-op and a joiner reads a RUNNING job as dead.
@@ -98,6 +106,7 @@ async def _deliver_if_unjoined(request: BrowserJobRequest, agent_message: str) -
         if await joiner_lease_held(request.job_id):
             was_held = True
         elif was_held:
+            log.set_ns("browser", delivered_by="joiner")
             return
         await asyncio.sleep(BROWSER_JOB_POLL_INTERVAL_SECONDS)
         waited += BROWSER_JOB_POLL_INTERVAL_SECONDS
@@ -115,7 +124,12 @@ async def _deliver(request: BrowserJobRequest, agent_message: str) -> None:
         return
     text = await narrate_executor_result(agent_message, "result", request.conversation_id, user)
     if not text:
+        log.warning(
+            f"{LogTag.BROWSER} Browser job result undelivered: the narration was empty",
+            browser={"job_id": request.job_id},
+        )
         return
+    log.set_ns("browser", delivered_by="worker")
     await deliver_message_to_conversation(
         conversation_id=request.conversation_id,
         user=user,

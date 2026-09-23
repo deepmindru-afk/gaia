@@ -27,6 +27,7 @@ from pydantic_core import CoreSchema, core_schema
 from app.agents.llm.client import StructuredCallOptions, ainvoke_structured, silent_metered_config
 from app.config.settings import settings
 from app.constants.browser import (
+    BROWSER_FALLBACK_PAGE_BLOCKED,
     BROWSER_GUIDANCE_MAX_ELEMENTS,
     BROWSER_GUIDANCE_PAGE_TEXT_MAX_CHARS,
     BROWSER_GUIDANCE_RECENT_ACTIONS,
@@ -44,6 +45,7 @@ from app.constants.browser import (
     JEV_TEXT_VALUE_MAX_CHARS,
     JEV_WAIT_SECONDS,
     BrowserHandoffAction,
+    BrowserRunFailure,
     JevNoteSource,
     JevOperation,
     SensitiveCategory,
@@ -469,6 +471,7 @@ class JevChatModel:
             log.warning(
                 f"{LogTag.BROWSER} Jev decision rejected ({exc})", error_type=type(exc).__name__
             )
+            log.set_ns("browser", llm_error=type(exc).__name__)
             self._remember("WAIT", "error", str(exc))
             fallback = _idle_action(output_format)
             return ChatInvokeCompletion(
@@ -637,9 +640,12 @@ class JevChatModel:
             # page the primary engine renders wrongly is not a page with no way
             # forward. A site that does not resolve is not an engine problem.
             self.fallback_url = observation.url
+            log.set_ns("browser", fallback_reason=BROWSER_FALLBACK_PAGE_BLOCKED)
             return {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}, None
         action = BrowserHandoffAction.REQUEST_AGENT_GUIDANCE
         if action not in registered or not await self._may_ask_for_guidance():
+            blocked = BrowserRunFailure.NEVER_OPENED if unopened else BrowserRunFailure.BLOCKED
+            log.set_ns("browser", blocked=blocked.value)
             if unopened:
                 # A site that never loaded is what blocked the run; "no way
                 # forward on this page" would describe a blank tab instead.

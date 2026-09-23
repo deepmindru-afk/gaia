@@ -26,6 +26,7 @@ from app.constants.browser import (
     BROWSER_TASK_FAILED_PREFIX,
     HANDOFF_AUTORESOLVED_NOTE,
     MAX_HANDOFFS_PER_TASK,
+    BrowserRunFailure,
     BrowserSessionStatus,
     HandoffStatus,
     SensitiveCategory,
@@ -203,6 +204,7 @@ class BrowserTaskRunner:
                 return await self._finish_from_handoff()
             except TimeoutError:
                 self._agent_run.stop()
+                log.fail(BrowserRunFailure.TASK_TIMEOUT)
                 return await self._finish(
                     BrowserSessionStatus.FAILED,
                     False,
@@ -222,8 +224,10 @@ class BrowserTaskRunner:
                 log.error(
                     f"{LogTag.BROWSER} Browser agent failed unexpectedly",
                     error_type=type(exc).__name__,
+                    error=str(exc),
                     browser={"session_id": self._session.session_id},
                 )
+                log.fail(BrowserRunFailure.RUN_CRASHED)
                 return await self._finish(
                     BrowserSessionStatus.FAILED,
                     False,
@@ -368,6 +372,7 @@ class BrowserTaskRunner:
         # The executor that gave up writes the closing reply itself; its reason is
         # model prose, and clipped onto the card it once read as internal reasoning.
         self._blocked_summary = BROWSER_RUN_BLOCKED_SUMMARY
+        log.set_ns("browser", blocked=BrowserRunFailure.BLOCKED.value)
         log.info(f"{LogTag.BROWSER} Browser guidance ended the run", status=outcome.status.value)
         raise BrowserHandoffCancelled(outcome.status.value)
 

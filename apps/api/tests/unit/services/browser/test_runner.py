@@ -1636,6 +1636,7 @@ async def test_an_unexpected_failure_is_logged_with_its_type_and_session(
     logger.error.assert_called_once_with(
         f"{LogTag.BROWSER} Browser agent failed unexpectedly",
         error_type="RuntimeError",
+        error="LLM provider exploded",
         browser={"session_id": "s1"},
     )
 
