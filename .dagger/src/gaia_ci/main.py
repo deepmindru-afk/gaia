@@ -382,8 +382,10 @@ class GaiaCi:
             .with_env_variable("POSTGRES_PASSWORD", "gaia")
             .with_env_variable("POSTGRES_DB", "gaia_test")
             .with_exposed_port(5432)
-            .as_service(
-                args=[
+            # Default args, not as_service(args=...): dagger.json pins no engineVersion,
+            # so the module runs on the compat API where asService takes no arguments.
+            .with_default_args(
+                [
                     "postgres",
                     "-c",
                     "max_connections=300",
@@ -393,9 +395,9 @@ class GaiaCi:
                     "synchronous_commit=off",
                     "-c",
                     "full_page_writes=off",
-                ],
-                use_entrypoint=True,
+                ]
             )
+            .as_service()
         )
 
     @function
@@ -405,9 +407,10 @@ class GaiaCi:
             dag.container()
             .from_(_REDIS_IMAGE)
             .with_exposed_port(6379)
-            .as_service(
-                args=["redis-server", "--databases", "32", "--save", "", "--appendonly", "no"]
+            .with_default_args(
+                ["redis-server", "--databases", "32", "--save", "", "--appendonly", "no"]
             )
+            .as_service()
         )
 
     @function
