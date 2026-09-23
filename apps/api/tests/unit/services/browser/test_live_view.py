@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services.browser import live_view
+from app.services.browser import links, live_view
 
 
 @pytest.mark.unit
@@ -21,8 +21,8 @@ async def test_create_live_view_link_mints_code_with_session_and_user_in_order(
 ):
     mint = AsyncMock(return_value="Xk3p9qR2mN4t")
     monkeypatch.setattr(live_view, "mint_live_code", mint)
-    monkeypatch.setattr(live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io")
+    monkeypatch.setattr(links.settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
+    monkeypatch.setattr(links.settings, "HOST", "https://api.heygaia.io")
 
     await live_view.create_live_view_link("sess-abc", "user-1")
 
@@ -33,8 +33,8 @@ async def test_create_live_view_link_mints_code_with_session_and_user_in_order(
 
 @pytest.mark.unit
 def test_live_view_url_joins_base_and_session_under_the_live_path(monkeypatch):
-    monkeypatch.setattr(live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io")
+    monkeypatch.setattr(links.settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
+    monkeypatch.setattr(links.settings, "HOST", "https://api.heygaia.io")
 
     url = live_view.live_view_url("sess-xyz-789")
 

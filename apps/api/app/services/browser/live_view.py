@@ -16,7 +16,6 @@ import base64
 import html
 from pathlib import Path
 
-from app.config.settings import settings
 from app.services.browser.links import browser_link_base
 from app.services.browser.live_code import mint_live_code
 
@@ -35,13 +34,11 @@ def live_view_url(session_id: str) -> str:
 async def create_live_view_link(session_id: str, user_id: str) -> str:
     """Mint a short capability link a bot delivers so user_id can take over without a web login.
 
-    {vhost}/{code} when a dedicated live-view vhost is configured (the vhost rewrites /{code} to the app's /live/{code}), else {host}/live/{code}. The
-    code maps to the session + owner in Redis — no session id or token in the URL."""
+    Always {base}/live/{code}: a bare /{code} route at the API root would answer
+    every unknown one-segment path. The code maps to the session + owner in
+    Redis — no session id or token in the URL."""
     code = await mint_live_code(session_id, user_id)
-    base = browser_link_base()
-    if settings.BROWSER_LIVE_VIEW_BASE_URL:
-        return f"{base}/{code}"
-    return f"{base}/live/{code}"
+    return f"{browser_link_base()}/live/{code}"
 
 
 def render_live_view_page(session_id: str) -> str:

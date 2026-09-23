@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.config.browser_host_settings import browser_host_settings
 from app.config.settings import settings
 from app.utils import crawl_obscura
 
@@ -70,7 +71,7 @@ class _Spawner:
 def _isolated_engine_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """No engine at the start of a test, and none left behind for the next one."""
     monkeypatch.setattr(settings, "OBSCURA_CRAWL_PORT", _BASE_PORT)
-    monkeypatch.setattr(settings, "OBSCURA_BIN", "/usr/bin/obscura")
+    monkeypatch.setattr(browser_host_settings, "OBSCURA_BIN", "/usr/bin/obscura")
     crawl_obscura._engine = None
     yield
     crawl_obscura._engine = None
@@ -241,9 +242,8 @@ class TestEnsureCrawlObscura:
 
         await crawl_obscura.ensure_crawl_obscura()
 
-        assert spawner.kwargs == [
-            {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL},
-        ]
+        (kwargs,) = spawner.kwargs
+        assert (kwargs["stdout"], kwargs["stderr"]) == (subprocess.DEVNULL, subprocess.DEVNULL)
 
     async def test_a_process_that_dies_before_termination_does_not_break_the_probe(
         self, mock_poll: AsyncMock, monkeypatch: pytest.MonkeyPatch, no_bind_settle: list[float]

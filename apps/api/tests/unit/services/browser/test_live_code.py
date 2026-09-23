@@ -10,7 +10,7 @@ from app.constants.browser import (
     BROWSER_LIVE_CODE_TTL_SECONDS,
 )
 from app.schemas.browser import LiveCodeRecord
-from app.services.browser import live_code, live_view
+from app.services.browser import links, live_code, live_view
 
 _URL_SAFE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -66,13 +66,11 @@ async def test_remaining_seconds_is_the_codes_ttl(monkeypatch):
 
 
 @pytest.mark.unit
-async def test_link_is_bare_slug_when_a_vhost_is_configured(monkeypatch):
+async def test_link_keeps_the_live_path_on_a_vhost(monkeypatch):
     monkeypatch.setattr(live_view, "mint_live_code", AsyncMock(return_value="Xk3p9qR2mN4t"))
-    monkeypatch.setattr(
-        live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.io"
-    )
+    monkeypatch.setattr(links.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.io")
 
     link = await live_view.create_live_view_link("sess-abc", "user-1")
 
-    # No /live/ prefix, no session id, no ?t= token — the vhost rewrites /{code}.
-    assert link == "https://browser.heygaia.io/Xk3p9qR2mN4t"
+    # No session id and no ?t= token; /live/ keeps a bare /{code} off the API root.
+    assert link == "https://browser.heygaia.io/live/Xk3p9qR2mN4t"

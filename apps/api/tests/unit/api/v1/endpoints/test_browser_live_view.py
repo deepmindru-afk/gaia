@@ -162,7 +162,8 @@ class TestStepScreenshot:
         async with AsyncClient(transport=transport, base_url="https://browser.test") as client:
             resp = await client.get(f"/shots/{code}/{traversal}.png")
 
-        assert resp.status_code == 404
+        # A traversal the client normalises out of /shots lands on another route (401/404).
+        assert not resp.is_success
         assert b"top-secret" not in resp.content
 
     async def test_logs_the_operation_and_the_resolved_session(self, shot_backend: Path) -> None:
