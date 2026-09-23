@@ -1336,6 +1336,15 @@ describe("DiscordAdapter - deliverOutboundFile channel routing", () => {
     );
     expect(client.channels.fetch).not.toHaveBeenCalled();
   });
+
+  it("throws when the channel a photo is for is not a sendable text channel", async () => {
+    const { adapter, client } = makeAdapter();
+    client.channels.fetch.mockResolvedValueOnce({ isTextBased: () => false });
+
+    await expect(
+      adapter.deliverOutboundFile("voice-1", shot, true),
+    ).rejects.toThrow("not a sendable text channel");
+  });
 });
 
 // ---------------------------------------------------------------------------

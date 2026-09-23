@@ -56,6 +56,8 @@ import {
   type MessageContextMenuCommandInteraction,
   MessageFlags,
   Partials,
+  type SendableChannels,
+  type User,
 } from "discord.js";
 import { downloadDiscordAttachment, extractDiscordMedia } from "./media";
 import { ROTATING_STATUSES, STATUS_ROTATION_INTERVAL_MS } from "./statuses";
@@ -209,24 +211,29 @@ export class DiscordAdapter extends BaseBotAdapter {
     return this.client;
   }
 
+  /**
+   * Resolves where an outbound message is sent: the channel itself for a
+   * group/channel conversation, else the user, whose `send` is their DM.
+   */
+  private async resolveOutboundTarget(
+    destinationId: string,
+    isChannel: boolean,
+  ): Promise<SendableChannels | User> {
+    if (!isChannel) return this.client.users.fetch(destinationId);
+    const channel = await this.client.channels.fetch(destinationId);
+    if (channel?.isTextBased() && "send" in channel) return channel;
+    throw new Error(
+      `Discord destination ${destinationId} is not a sendable text channel`,
+    );
+  }
+
   protected async deliverOutbound(
     destinationId: string,
     text: string,
     isChannel: boolean,
   ): Promise<void> {
-    if (isChannel) {
-      // A group/channel conversation: send to the channel itself, not a DM.
-      const channel = await this.client.channels.fetch(destinationId);
-      if (channel?.isTextBased() && "send" in channel) {
-        await channel.send(text);
-        return;
-      }
-      throw new Error(
-        `Discord destination ${destinationId} is not a sendable text channel`,
-      );
-    }
-    const user = await this.client.users.fetch(destinationId);
-    await user.send(text);
+    const target = await this.resolveOutboundTarget(destinationId, isChannel);
+    await target.send(text);
   }
 
   /**
@@ -245,22 +252,11 @@ export class DiscordAdapter extends BaseBotAdapter {
       isChannel,
     );
     if (!artifact) return; // too large — fetchOutboundArtifact already replied
-    const message = {
+    const target = await this.resolveOutboundTarget(destinationId, isChannel);
+    await target.send({
       content: attachment.caption ?? undefined,
       files: [{ attachment: artifact.data, name: attachment.filename }],
-    };
-    if (isChannel) {
-      const channel = await this.client.channels.fetch(destinationId);
-      if (channel?.isTextBased() && "send" in channel) {
-        await channel.send(message);
-        return;
-      }
-      throw new Error(
-        `Discord destination ${destinationId} is not a sendable text channel`,
-      );
-    }
-    const user = await this.client.users.fetch(destinationId);
-    await user.send(message);
+    });
   }
 
   protected override async deliverOutboundReaction(
