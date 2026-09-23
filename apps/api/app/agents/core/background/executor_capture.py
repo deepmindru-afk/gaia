@@ -24,6 +24,7 @@ from app.agents.core.background.session import (
 )
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.cache import EXECUTOR_WAIT_TIMEOUT
+from app.constants.chat import SUBAGENT_GROUP_TOOL_NAME
 from app.constants.log_tags import LogTag
 from app.models.chat_models import ToolDataEntry, tool_fields
 from app.services.chat.chunks import normalize_custom_event
@@ -164,7 +165,7 @@ def build_returned_to_frontend_note(stream_id: str) -> str:
     subagent_names: dict[str, str] = {}
     for entry in entries:
         group = entry.get("data")
-        if entry.get("tool_name") != "subagent_group" or not isinstance(group, dict):
+        if entry.get("tool_name") != SUBAGENT_GROUP_TOOL_NAME or not isinstance(group, dict):
             continue
         subagent_names[str(group.get("subagent_id"))] = str(group.get("subagent_name") or "")
 

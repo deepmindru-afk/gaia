@@ -93,6 +93,8 @@ class _Boundaries:
         self.stream_manager.is_cancelled = AsyncMock(return_value=False)
         self.stream_manager.publish_chunk = AsyncMock()
         self.stream_manager.complete_stream = AsyncMock()
+        # A queued run's stream is closed by close_detached_stream, in executor_queue.
+        stack.enter_context(patch.object(eq, "StreamManager", self.stream_manager))
         self.release = stack.enter_context(
             patch.object(er, "release_lock_if_owned", new_callable=AsyncMock)
         )

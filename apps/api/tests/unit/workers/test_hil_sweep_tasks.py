@@ -20,7 +20,7 @@ class TestTheCronRunsTheSweep:
     async def test_the_sweep_is_actually_invoked(self) -> None:
         with patch(
             f"{MODULE}.sweep_approvals",
-            new=AsyncMock(return_value={"expired": 0, "redispatched": 0, "deferred_subagent": 0}),
+            new=AsyncMock(return_value={"expired": 0, "redispatched": 0}),
         ) as sweep:
             await sweep_hil_approvals({})
 
@@ -32,21 +32,21 @@ class TestTheCronRunsTheSweep:
         # quiet one.
         with patch(
             f"{MODULE}.sweep_approvals",
-            new=AsyncMock(return_value={"expired": 3, "redispatched": 2, "deferred_subagent": 1}),
+            new=AsyncMock(return_value={"expired": 3, "redispatched": 2}),
         ):
             result = await sweep_hil_approvals({})
 
-        assert result == "expired=3 redispatched=2 deferred_subagent=1"
+        assert result == "expired=3 redispatched=2"
 
     async def test_the_counts_land_on_the_wide_event(self) -> None:
         with patch(
             f"{MODULE}.sweep_approvals",
-            new=AsyncMock(return_value={"expired": 3, "redispatched": 2, "deferred_subagent": 1}),
+            new=AsyncMock(return_value={"expired": 3, "redispatched": 2}),
         ):
             async with captured_wide_event() as event:
                 await sweep_hil_approvals({})
 
-        assert {
-            key: event.get(key)
-            for key in ("expired_count", "redispatched_count", "deferred_subagent_count")
-        } == {"expired_count": 3, "redispatched_count": 2, "deferred_subagent_count": 1}
+        assert {key: event.get(key) for key in ("expired_count", "redispatched_count")} == {
+            "expired_count": 3,
+            "redispatched_count": 2,
+        }

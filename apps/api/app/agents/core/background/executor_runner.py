@@ -21,19 +21,18 @@ from uuid import uuid4
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from langsmith import traceable
-from pydantic import BaseModel, ConfigDict
 
 from app.agents.core.background.comms_narrator import record_executor_cancellation
 from app.agents.core.background.executor_capture import (
     build_returned_to_frontend_note,
     drain_executor_tool_data,
-    teardown_executor_capture,
 )
 from app.agents.core.background.executor_channel import ExecutorInbox, decide_drain
 from app.agents.core.background.executor_queue import (
     LockClaim,
     PreparedQueuedTask,
     build_run_item,
+    close_detached_stream,
     extend_lock_if_owned,
     is_executor_busy,
     prepare_run_from_item,
@@ -51,6 +50,7 @@ from app.agents.core.background.session import (
 from app.agents.core.subagents.subagent_runner import (
     SubagentExecutionContext,
     execute_subagent_stream,
+    paused_approval_ids,
     prepare_executor_execution,
     thread_messages,
 )
@@ -68,6 +68,7 @@ from app.constants.log_tags import LogTag
 from app.core.stream_manager import StreamManager
 from app.models.agent_models import AgentConfigurable, AgentConfigurableView
 from app.models.chat_models import ToolDataEntry
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.hil.approvals_store import set_resume_item
 from app.services.hil.resume_slot import release_resume_dispatch
@@ -146,7 +147,7 @@ async def run_executor_background(
 
         try:
             with span() as elapsed_active:
-                result = await _execute_executor(task, configurable, run.stream_id, resume)
+                result = await _execute_executor(task, configurable, run, resume)
             active_ms = round(elapsed_active() * 1000.0, 2)
             result_text, result_type, run_ctx = result.text, result.type, result.ctx
             ttft_ms = _executor_ttft_ms(run, run_start)
@@ -335,35 +336,10 @@ class _ExecutorResult(NamedTuple):
     ctx: SubagentExecutionContext | None = None
 
 
-class _PauseInterrupt(BaseModel):
-    """The approval ids a subagent's interrupt payload carries.
-
-    Both are ``object``: the payload is the gate's raw interrupt value, and the
-    reader below keeps its own guards (a non-list batch is ignored, a single id
-    is stringified) rather than letting validation reject a pause outright.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    approval_ids: object = None
-    approval_id: object = ""
-
-
-def _paused_approval_ids(interrupt: _PauseInterrupt) -> tuple[str, ...]:
-    """Approval ids from an interrupt payload — batch shape first, then single."""
-    batch = interrupt.approval_ids
-    if isinstance(batch, list):
-        ids = tuple(str(a) for a in batch if a)
-        if ids:
-            return ids
-    single = str(interrupt.approval_id)
-    return (single,) if single else ()
-
-
 async def _execute_executor(
     task: str,
     configurable: AgentConfigurable,
-    stream_id: str,
+    run: ExecutorRun,
     resume: Command | None = None,
 ) -> _ExecutorResult:
     """Run the executor agent graph once. Never raises on error.
@@ -373,6 +349,7 @@ async def _execute_executor(
     model/provider/reasoning from configurable (free -> Gemini, paid -> MiniMax M3).
     """
     ctx: SubagentExecutionContext | None = None
+    stream_id = run.stream_id
     try:
         with span() as elapsed_prep:
             ctx, error = await prepare_executor_execution(
@@ -390,12 +367,13 @@ async def _execute_executor(
             # skip that per-handoff checkpoint read.
             ctx.configurable[HIL_RESUME_CONFIG_KEY] = True
             ctx.config.setdefault("configurable", {})[HIL_RESUME_CONFIG_KEY] = True
+        if message_id := run.render_message_id:
+            ctx.configurable["bot_message_id"] = message_id
+            ctx.config.setdefault("configurable", {})["bot_message_id"] = message_id
         writer = make_redis_stream_writer(stream_id)
         outcome = await execute_subagent_stream(ctx=ctx, stream_writer=writer, resume=resume)
         if outcome.paused:
-            approval_ids = _paused_approval_ids(
-                _PauseInterrupt.model_validate(outcome.interrupt or {})
-            )
+            approval_ids = paused_approval_ids(outcome.interrupt or {})
             if not approval_ids:
                 # Unresumable: nothing can ever re-dispatch this thread. Fail the
                 # run loudly rather than leave the conversation's lock held.
@@ -650,10 +628,7 @@ async def _close_queued_stream(run: ExecutorRun, was_cancelled: bool) -> None:
     """
     if not run.is_queued:
         return
-    teardown_executor_capture(run.stream_id)
-    if not was_cancelled:
-        await StreamManager.publish_chunk(run.stream_id, "data: [DONE]\n\n")
-        await StreamManager.complete_stream(run.stream_id)
+    await close_detached_stream(run.stream_id, cancelled=was_cancelled)
 
 
 def _spawn_detached_run(prepared: PreparedQueuedTask, conversation_id: str) -> None:
@@ -677,22 +652,28 @@ def _spawn_detached_run(prepared: PreparedQueuedTask, conversation_id: str) -> N
 
 async def deliver_to_executor(
     conversation_id: str,
-    configurable: AgentConfigurable,
+    user: AuthenticatedUser,
     task: str,
     *,
+    tag: AgentTag | None = None,
     workflow_execution_id: str | None = None,
 ) -> None:
     """Give the executor work from outside a comms turn — the one way to do it.
 
     A live run absorbs the task through its inbox, an idle one gets a run started
-    to carry it; never a second parallel answer. The busy check is a fast path —
-    the claim inside _start_executor_run is the atomic decision.
+    to carry it; never a second parallel answer. Tagged work (a subagent result)
+    always travels through the inbox so it arrives framed. The busy check is a
+    fast path — the claim inside _start_executor_run is the atomic decision.
     """
-    if not await is_executor_busy(conversation_id) and await _start_executor_run(
-        conversation_id, configurable, task, workflow_execution_id=workflow_execution_id
+    if (
+        tag is None
+        and not await is_executor_busy(conversation_id)
+        and await _start_executor_run(
+            conversation_id, user, task, workflow_execution_id=workflow_execution_id
+        )
     ):
         return
-    await ExecutorInbox(conversation_id).append(str(uuid4()), task)
+    await ExecutorInbox(conversation_id).append(str(uuid4()), task, tag)
     log.info(
         f"{LogTag.AGENT} Work handed to the live executor run",
         conversation_id=conversation_id,
@@ -701,34 +682,38 @@ async def deliver_to_executor(
     # carries EXECUTOR_CARRY_TASK because the entry already holds the real work.
     if not await is_executor_busy(conversation_id) and await _start_executor_run(
         conversation_id,
-        configurable,
+        user,
         EXECUTOR_CARRY_TASK,
         workflow_execution_id=workflow_execution_id,
     ):
         log.info(
-            f"{LogTag.AGENT} Work landed mid-finalize; started a carry run",
+            f"{LogTag.AGENT} Work landed with no live run; started a carry run",
             conversation_id=conversation_id,
         )
 
 
 async def _prepare_executor_run(
     conversation_id: str,
-    configurable: AgentConfigurable,
+    user: AuthenticatedUser,
     task: str,
     *,
     workflow_execution_id: str | None = None,
 ) -> PreparedQueuedTask | None:
     """Claim the conversation and materialize a detached run for the task.
 
-    None means another run holds the conversation (or Redis is down) and nothing
-    was started.
+    Built from the user alone: a caller's configurable belongs to the run that
+    held it (its thread, subagent id, turn hints), never to the run started here.
+    None means another run holds the conversation (or Redis is down).
     """
     return await prepare_run_from_item(
         conversation_id,
         build_run_item(
             task=task,
             configurable={
-                **configurable,
+                "user_id": user.user_id,
+                "email": user.email or "",
+                "user_name": user.name or "",
+                "user_timezone": user.timezone,
                 "thread_id": conversation_id,
                 "execution_mode": "interactive",
             },
@@ -745,14 +730,14 @@ async def _prepare_executor_run(
 
 async def _start_executor_run(
     conversation_id: str,
-    configurable: AgentConfigurable,
+    user: AuthenticatedUser,
     task: str,
     *,
     workflow_execution_id: str | None = None,
 ) -> bool:
     """Materialize and spawn a detached run for the task. Returns whether it started."""
     prepared = await _prepare_executor_run(
-        conversation_id, configurable, task, workflow_execution_id=workflow_execution_id
+        conversation_id, user, task, workflow_execution_id=workflow_execution_id
     )
     if prepared is None:
         return False
@@ -786,12 +771,7 @@ async def _carry_pending_into_new_run(
         # the crash-safe path. Concatenating + retiring here first lost work on a crash.
         started = await _start_executor_run(
             run.conversation_id,
-            {
-                "user_id": run.user.user_id,
-                "email": run.user.email or "",
-                "user_name": run.user.name or "",
-                "user_timezone": run.user.timezone,
-            },
+            run.user,
             EXECUTOR_CARRY_TASK,
             workflow_execution_id=run.workflow_execution_id,
         )

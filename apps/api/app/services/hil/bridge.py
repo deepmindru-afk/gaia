@@ -39,6 +39,7 @@ from app.core.stream_manager import stream_manager
 from app.db.redis import redis_cache
 from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.db.repositories.conversations import conversation_repository
+from app.models.agent_config import SubagentResumeItem
 from app.models.hil_models import (
     DeclinedCallRecord,
     HILApprovalRecord,
@@ -97,6 +98,8 @@ async def publish_approval_request(
     summary: str,
     integration_name: str | None,
     auto_reason: str | None = None,
+    subagent_resume: SubagentResumeItem | None = None,
+    subagent_thread_id: str | None = None,
 ) -> None:
     """Record the pending approval and surface its card — exactly once.
 
@@ -114,6 +117,8 @@ async def publish_approval_request(
         args=tool_call.args,
         summary=summary,
         integration_name=integration_name,
+        subagent_thread_id=subagent_thread_id,
+        subagent_resume=subagent_resume,
     )
     if not created:
         return

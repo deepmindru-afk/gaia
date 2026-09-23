@@ -17,6 +17,7 @@ from typing import Literal
 from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool
+from pydantic import BaseModel, ConfigDict
 
 from app.agents.tools.core.registry import ToolRegistry, get_tool_registry
 from app.agents.tools.execute.resolver import resolve_tool
@@ -161,6 +162,21 @@ async def is_gated(
     )
 
 
+class _DelegationArgs(BaseModel):
+    """The one argument of spawn_subagent / handoff that decides whether it can pause its parent."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    background: bool = True
+
+
+def _pauses_parent(name: str, args: Mapping[str, object] | None) -> bool:
+    """Whether a delegation sibling can bubble its child's gate up: only when it runs blocking."""
+    return (
+        name in HIL_PAUSING_TOOLS and _DelegationArgs.model_validate(args or {}).background is False
+    )
+
+
 async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_id: str) -> bool:
     """Return whether another call in this AI message can pause the run.
 
@@ -180,7 +196,7 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
     ]
     if not siblings:
         return False
-    if any(name in HIL_PAUSING_TOOLS for name, _ in siblings):
+    if any(_pauses_parent(name, args) for name, args in siblings):
         return True
 
     # Forced-ask siblings pause even when HIL is off, since the stamp isn't

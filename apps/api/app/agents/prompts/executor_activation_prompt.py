@@ -18,60 +18,6 @@ anchor and replacement, so a skipped rewrite still fails loudly in CI.
 from app.agents.prompts.comms_prompts import EXECUTOR_AGENT_PROMPT
 from shared.py.wide_events import log
 
-_DELEGATION_MODEL = """DELEGATION MODEL
-
-Integrations are not separate agents you hand work to. You activate one, then do
-the work yourself with its tools in your own hands.
-
-activate_integration(integration_id) loads an integration into THIS conversation:
-its most-used tools arrive as schemas in the reply (run them via execute, never
-by name), its helpers bind immediately, the rest become retrievable, and its
-operating notes and the user's standing preferences for it land in your context,
-and its skills become readable. No second
-agent, no separate context window, no cold start. You keep everything you have
-already gathered this turn, which is exactly what handing work to a subagent used
-to throw away.
-
-The flow is always the same:
-  1. activate_integration(integration_id="gmail")
-  2. run the preloaded tools through execute(task_description=..., tool_name=...,
-     data=...) built from the schemas in the reply; call bound helpers directly
-  3. retrieve_tools (which searches the active integration too) for anything
-     else, then execute those the same way
-
-Activate once per integration per turn. A second activation of the same one is
-wasted work: its tools are already preloaded and retrievable and its notes are already in your
-context. Activating several DIFFERENT integrations in a turn is normal and cheap,
-so when a task spans gmail and calendar, activate both up front rather than
-discovering the second one halfway through.
-
-If the integration is not connected, activation returns the connect prompt and
-shows the user a connect card. Relay that and stop. Do not try to route around it.
-
-- Third-party work (gmail, googlecalendar, notion, slack, linear, github, etc.): activate, then act.
-- Unknown integration ids: discover first with retrieve_tools.
-- CONNECTED INTEGRATIONS LIST: your context carries a live "CONNECTED INTEGRATIONS" block listing the user's currently connected accounts, each with its integration_id in parentheses. Trust it over retrieve_tools for what is connected this turn. If the user asks for an integration that is NOT listed, STILL call activate_integration on it: that call is what renders the connect card. Telling the user to connect without calling it leaves them hunting for a button nobody rendered. Built-in integrations (reminders, todos, gaia_knowledge_guide, docgen) are always available and are not listed.
-
-Per-user integrations (custom MCP connections, and any integration whose tools are issued per user) cannot be pulled in-context. When you call activate_integration on one, it tells you to delegate with handoff(subagent_id="<id>", task=...) instead, which runs it in its own per-user graph and hands back the result. That is the ONLY thing handoff is for in this mode; every other integration you activate and act on yourself.
-
-"""
-
-_WORKING_CONTRACT = """Working an activated integration
-- Hold the user's objective as-is. Do not narrow it into your own smaller script.
-- Finish one integration's whole objective before moving to the next, so related items batch into one pass instead of scattering.
-- NEVER use one integration's tools to do another's work (do not try to read Gmail with Slack tools). Activate the right one instead.
-- The notes activation returns encode the user's standing preferences for that integration. They beat your defaults; read them before acting.
-
-spawn_subagent (context isolation)
-- A spawn is a fresh worker with no memory of this conversation. It inherits the tools you have bound (the helpers activation bound, not the preloaded schemas). A spawn that needs an integration tool either needs its schema pasted into its task text or must re-discover it itself with retrieve_tools, which searches your active integrations.
-- Spawns run ONE AT A TIME, not side by side. Issuing several does not make them finish sooner, it just adds turns. Spawning is for keeping bulky intermediate work out of your context, never for speed.
-- Use it when a step produces far more output than its answer is worth: mining a large file, extracting from a long document, scanning many items to report a few.
-- It returns once, and only what it returns survives. Put everything it needs in the task text, and require it to hand back every finding, id, and path.
-- Do NOT spawn for a call you could make yourself. A spawn costs a whole model turn; a direct tool call does not.
-- Default to acting yourself with the activated tools via execute. Reach for a spawn when the output would bury you, not by habit.
-
-"""
-
 #: (anchor, replacement). Anchors are the smallest distinctive slice of the
 #: passage, so ordinary edits elsewhere in the prompt do not break the swap.
 _PHRASE_REWRITES: tuple[tuple[str, str], ...] = (
@@ -161,35 +107,6 @@ _PHRASE_REWRITES: tuple[tuple[str, str], ...] = (
     ),
 )
 
-#: (start marker, end marker, replacement). The end marker is the heading that
-#: follows the section and is preserved.
-_SECTION_REWRITES: tuple[tuple[str, str, str], ...] = (
-    (
-        "DELEGATION MODEL",
-        "RESEARCH EFFORT LADDER",
-        _DELEGATION_MODEL,
-    ),
-    (
-        "Handoff contract (strict)",
-        "YOUR OUTPUT (INTERNAL",
-        _WORKING_CONTRACT,
-    ),
-)
-
-
-class ActivationPromptAnchorError(RuntimeError):
-    """An anchor no longer matches EXECUTOR_AGENT_PROMPT, so the rewrite is stale."""
-
-
-def _replace_section(prompt: str, start: str, end: str, replacement: str) -> str:
-    start_idx = prompt.find(start)
-    if start_idx == -1:
-        raise ActivationPromptAnchorError(f"section start {start!r} not found")
-    end_idx = prompt.find(end, start_idx + len(start))
-    if end_idx == -1:
-        raise ActivationPromptAnchorError(f"section end {end!r} not found after {start!r}")
-    return prompt[:start_idx] + replacement + prompt[end_idx:]
-
 
 def build_activation_executor_prompt() -> str:
     """EXECUTOR_AGENT_PROMPT rewritten to teach activation instead of handoff.
@@ -197,11 +114,6 @@ def build_activation_executor_prompt() -> str:
     Stale anchors degrade with a warning, never raise: this runs at import.
     """
     prompt = EXECUTOR_AGENT_PROMPT
-    for start, end, replacement in _SECTION_REWRITES:
-        try:
-            prompt = _replace_section(prompt, start, end, replacement)
-        except ActivationPromptAnchorError as e:
-            log.warning("activation_prompt.stale_section_anchor_skipped", error=str(e))
     for anchor, replacement in _PHRASE_REWRITES:
         if anchor not in prompt:
             log.warning("activation_prompt.stale_phrase_anchor_skipped", anchor=anchor[:80])

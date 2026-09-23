@@ -26,13 +26,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import fakeredis.aioredis
+from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.outputs import ChatGenerationChunk
 from langgraph.store.memory import InMemoryStore
+from pydantic import PrivateAttr
 import pytest
 
 from app.agents.core.background.session import teardown_session
 from app.agents.core.graph_builder import build_graph as build_graph_module
 from app.agents.core.graph_manager import GraphManager
 from app.agents.core.nodes.follow_up_actions_node import FollowUpActions
+from app.agents.core.subagents import spawn_agent
+from app.agents.prompts.spawn_subagent_prompts import SPAWN_SUBAGENT_SYSTEM_PROMPT
 from app.constants.cache import EXECUTOR_BUSY_PREFIX
 from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME, HIL_DECIDED_UNRESUMED_GRACE_SECONDS
 from app.constants.memory import ReconcileOutcome
@@ -60,8 +66,9 @@ from app.services.chat import stream as chat_stream
 from app.services.hil import resolution
 from app.workers.tasks.hil_sweep_tasks import sweep_hil_approvals
 from tests.e2e._harness.background import drain_background_runs, drain_publishes
+from tests.e2e._harness.saved_messages import SavedToolData
 from tests.e2e._harness.transcript import Frame, Transcript
-from tests.e2e.test_agent_chain import call, streaming_model
+from tests.e2e.test_agent_chain import StreamingScriptedModel, call, streaming_model
 
 pytestmark = pytest.mark.e2e
 
@@ -190,7 +197,7 @@ class InMemoryApprovals:
             for r in self.records.values()
             if r.status in statuses
             and r.resumed_at is None
-            and r.resume_item is not None
+            and (r.resume_item is not None or r.subagent_resume is not None)
             and r.decided_at is not None
             and r.decided_at < cutoff
         ]
@@ -213,8 +220,8 @@ class InMemoryApprovals:
                 r
                 for r in self.records.values()
                 if r.conversation_id == conversation_id
-                and r.subagent_thread_id is not None
-                and r.subagent_collected_at is None
+                and r.subagent_resume is not None
+                and r.resumed_at is None
             ),
             key=lambda r: r.created_at,
         )
@@ -271,6 +278,8 @@ class HilWorld:
     #: cancel path never settles on the stream.
     cancelled_broadcasts: list[dict[str, Any]] = field(default_factory=list)
     overrides_set: list[tuple[str, str, bool | None]] = field(default_factory=list)
+    #: The turn's saved cards, as a reload would read them back.
+    saved: SavedToolData = field(default_factory=SavedToolData)
     delivered: list[tuple[str, str]] = field(default_factory=list)
 
     #: Streams opened by a chat turn, oldest first. More than one when a later
@@ -396,6 +405,7 @@ async def hil_world(
     tool_overrides: dict[str, bool],
     comms: Sequence[Any] | None = None,
     executor: Sequence[Any] | None = None,
+    executor_model: Any | None = None,
 ) -> AsyncIterator[HilWorld]:
     """Build a live conversation with HIL configured, held open across a pause.
 
@@ -491,6 +501,15 @@ async def hil_world(
             build_graph_module, "get_tools_store", AsyncMock(return_value=InMemoryStore())
         ),
         patch.object(build_graph_module, "get_checkpointer_manager", AsyncMock(return_value=None)),
+        # A spawn's graph is compiled once per process and cached by model type, so a
+        # world gets a fresh cache (its own scripted model) and an in-memory thread.
+        patch.dict(spawn_agent._graph_cache, clear=True),
+        patch.object(spawn_agent, "get_tools_store", AsyncMock(return_value=InMemoryStore())),
+        patch.object(
+            spawn_agent,
+            "get_checkpointer_manager",
+            AsyncMock(side_effect=RuntimeError("no postgres in tests")),
+        ),
         patch(
             f"{FOLLOW_UP_NODE}.ainvoke_structured",
             new=AsyncMock(return_value=FollowUpActions(actions=[])),
@@ -503,7 +522,15 @@ async def hil_world(
         patch("app.agents.core.nodes.memory_node.memory_engine", memory),
         patch("app.services.chat.stream.save_conversation_async", new=AsyncMock()),
         patch.object(
-            conversation_repository, "append_message_tool_data", new=AsyncMock(return_value=True)
+            conversation_repository,
+            "append_message_tool_data",
+            new=world.saved.append_message_tool_data,
+        ),
+        patch.object(conversation_repository, "get_message", new=world.saved.get_message),
+        patch.object(
+            conversation_repository,
+            "extend_subagent_group",
+            new=world.saved.extend_subagent_group,
         ),
         patch("app.agents.core.background.executor_runner.deliver_result", new=_deliver),
         patch(
@@ -523,7 +550,7 @@ async def hil_world(
             )
             executor_graph = await stack.enter_async_context(
                 build_graph_module.build_executor_graph(
-                    chat_llm=streaming_model(executor or executor_script()),
+                    chat_llm=executor_model or streaming_model(executor or executor_script()),
                     in_memory_checkpointer=True,
                 )
             )
@@ -943,7 +970,7 @@ class TestApprovalExpiry:
 
             counts = await sweep()
 
-            assert counts == "expired=1 redispatched=0 deferred_subagent=0", (
+            assert counts == "expired=1 redispatched=0", (
                 f"the sweep must report the one expiry it performed, got {counts!r}"
             )
             record = world.approvals.only_record()
@@ -973,7 +1000,7 @@ class TestApprovalExpiry:
 
             counts = await sweep()
 
-            assert counts == "expired=0 redispatched=0 deferred_subagent=0", (
+            assert counts == "expired=0 redispatched=0", (
                 f"a live approval is not the sweep's to touch, got {counts!r}"
             )
             record = world.approvals.only_record()
@@ -1191,7 +1218,7 @@ class TestResumeAgainstAThreadWithNoInterrupt:
             orphan_the_resume(world)
             counts = await sweep()
 
-            assert counts == "expired=0 redispatched=1 deferred_subagent=0", (
+            assert counts == "expired=0 redispatched=1", (
                 f"the sweep must re-dispatch the crashed resume, got {counts!r}"
             )
             assert len(await world.outputs_for(GATED_CALL_ID)) == 1, (
@@ -1364,3 +1391,172 @@ class TestAnUngatedCallAcrossTwoResumes:
                     f"{call_id} parked without re-dispatch context, so its decision "
                     "could never be applied"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Scenario — a background spawn's approval card, its decision, and its resume
+# ---------------------------------------------------------------------------
+
+SPAWN_TASK = "draw the flowchart of how an approved action reaches the user"
+
+
+class TierRoutedModel(StreamingScriptedModel):
+    """The executor and the spawns it runs share one model object; each tier replays its own script.
+
+    A background spawn's model calls interleave with the executor's in scheduling
+    order, so one shared script would hand responses to whichever tier asked first.
+    """
+
+    _spawn: StreamingScriptedModel | None = PrivateAttr(default=None)
+
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        spawned = any(
+            isinstance(m, SystemMessage) and SPAWN_SUBAGENT_SYSTEM_PROMPT in str(m.content)
+            for m in messages
+        )
+        model: StreamingScriptedModel = self._spawn if spawned and self._spawn else self
+        stream = (
+            model._astream(messages, stop, run_manager, **kwargs)
+            if model is not self
+            else super()._astream(messages, stop, run_manager, **kwargs)
+        )
+        async for chunk in stream:
+            yield chunk
+
+
+def tier_routed_model(executor: Sequence[Any], spawn: Sequence[Any]) -> TierRoutedModel:
+    model = TierRoutedModel(responses=streaming_model(executor).responses)
+    model._spawn = streaming_model(spawn)
+    return model
+
+
+def background_spawn_executor_script() -> list[Any]:
+    # The live turn dispatches and answers; the park note and the landed result each
+    # wake a collection run (padded for the completion guard's nudges).
+    return [
+        call("spawn_subagent", {"task": SPAWN_TASK}, call_id="tc_spawn"),
+        "Started the flowchart in the background.",
+        *["The flowchart is waiting on your approval."] * 3,
+        *["The flowchart is drawn."] * 3,
+    ]
+
+
+def gated_spawn_script() -> list[Any]:
+    return [
+        call("retrieve_tools", {"exact_tool_names": [GATED_TOOL]}, call_id="tc_spawn_retrieve"),
+        call(GATED_TOOL, GATED_ARGS, call_id=GATED_CALL_ID),
+        "Drew the flowchart.",
+    ]
+
+
+async def _cards_by_stream(world: HilWorld) -> dict[str, list[str]]:
+    """Each stream's approval-card statuses for the gated tool, in order."""
+    await drain_publishes()
+    seen: dict[str, list[str]] = {}
+    for stream_id in world.stream_ids():
+        chunks = [chunk async for chunk in stream_manager.subscribe_stream(stream_id)]
+        for frame in Transcript.from_sse("".join(chunks)).frames():
+            if frame.kind != "tool_data":
+                continue
+            entries = frame.data if isinstance(frame.data, list) else [frame.data]
+            for entry in entries:
+                if (
+                    isinstance(entry, dict)
+                    and entry.get("tool_name") == APPROVAL_REQUEST_TOOL_NAME
+                    and entry["data"]["gated_tool_name"] == GATED_TOOL
+                ):
+                    seen.setdefault(stream_id, []).append(entry["data"]["status"])
+    return seen
+
+
+class TestABackgroundSpawnsApproval:
+    @asynccontextmanager
+    async def _world(self) -> AsyncIterator[tuple[HilWorld, TierRoutedModel]]:
+        model = tier_routed_model(background_spawn_executor_script(), gated_spawn_script())
+        async with hil_world(
+            mode="always_ask", tool_overrides={GATED_TOOL: True}, executor_model=model
+        ) as world:
+            await run_turn(world, "draw me a flowchart")
+            await drain_background_runs()
+            yield world, model
+
+    @staticmethod
+    def _shown_to_the_executor(model: TierRoutedModel) -> list[str]:
+        return [
+            str(message.content)
+            for prompt in model.prompts
+            for message in prompt
+            if isinstance(message, HumanMessage)
+        ]
+
+    @pytest.mark.regression
+    async def test_the_card_is_raised_on_the_spawns_own_stream(self) -> None:
+        """The spawn outlives the turn that started it, so its card must not ride the turn's stream."""
+        async with self._world() as (world, _model):
+            cards = await _cards_by_stream(world)
+
+            assert world.comms_stream_id not in cards, (
+                "the background spawn's card landed on the parent turn's stream"
+            )
+            ((stream_id, statuses),) = cards.items()
+            assert stream_id in world.started_streams
+            assert statuses == ["pending"]
+            assert await world.outputs_for(GATED_CALL_ID) == [], "nothing runs before approval"
+
+    async def test_the_parked_spawn_carries_its_recipe_and_tells_the_executor(self) -> None:
+        async with self._world() as (world, model):
+            record = world.approvals.only_record()
+
+            assert record.subagent_resume is not None
+            assert record.subagent_resume["task"] == SPAWN_TASK
+            assert record.subagent_thread_id is not None
+            assert await world.approvals.list_parked_subagents_for_conversation(
+                world.conversation_id
+            ) == [record]
+            assert any(
+                "is waiting for the user's approval" in text and record.approval_id in text
+                for text in self._shown_to_the_executor(model)
+            ), "the executor was never told its spawn is waiting on the user"
+
+    async def test_approving_resumes_the_spawn_which_runs_the_tool_once(self) -> None:
+        async with self._world() as (world, model):
+            decided = await world.decide("approve")
+            await drain_background_runs()
+
+            assert decided.resumed_at is not None
+            outputs = await world.outputs_for(GATED_CALL_ID)
+            assert len(outputs) == 1, f"expected one result frame, got {len(outputs)}"
+            assert_real_tool_output(outputs[0])
+            # The settled card reached the stream the resumed spawn runs on.
+            statuses = [s for per in (await _cards_by_stream(world)).values() for s in per]
+            assert statuses == ["pending", "approved"]
+            assert any(
+                "): Drew the flowchart." in text for text in self._shown_to_the_executor(model)
+            ), "the resumed spawn's result never reached the executor"
+            assert any("The flowchart is drawn." in text for text, _type in world.delivered)
+            # What a reload shows: one row for the spawn (both segments' calls) and one card.
+            saved = world.saved.entries()
+            rows = [e for e in saved if e["tool_name"] == "subagent_group"]
+            assert len(rows) == 1
+            assert GATED_CALL_ID in [c.get("tool_call_id") for c in rows[0]["data"]["tool_calls"]]
+            assert len([e for e in saved if e["tool_name"] == APPROVAL_REQUEST_TOOL_NAME]) == 1
+
+    async def test_denying_resumes_the_spawn_which_never_runs_the_tool(self) -> None:
+        async with self._world() as (world, model):
+            await world.decide("deny")
+            await drain_background_runs()
+
+            outputs = await world.outputs_for(GATED_CALL_ID)
+            assert outputs, "the spawn must be told it was declined"
+            assert not any(GATED_ARGS["description"] in output for output in outputs), (
+                "a denied call must never produce the tool's real output"
+            )
+            assert any(
+                "): Drew the flowchart." in text for text in self._shown_to_the_executor(model)
+            ), "the resumed spawn must still land its outcome"

@@ -7,6 +7,11 @@ import re
 # multi-page summaries truncate, with the full text in the `<file>.summary.md` sidecar.
 
 
+#: tool_data entry a subagent's streamed work is grouped under (mirrored as
+#: SUBAGENT_GROUP_TOOL_NAME in @gaia/shared/chat).
+SUBAGENT_GROUP_TOOL_NAME = "subagent_group"
+
+
 class ConversationSource(str, Enum):
     """Client or channel a conversation originated from."""
 

@@ -10,7 +10,7 @@ from langgraph.config import get_config
 
 from app.constants.agents import AgentTag
 from app.constants.comms import CommsDirectiveKind
-from app.constants.hil import HIL_RESUME_CONFIG_KEY
+from app.constants.hil import HIL_RESUME_CONFIG_KEY, SUBAGENT_RESUME_CONFIG_KEY
 
 # The configurable bag's shape and its typed read live in app.models.agent_config,
 # a leaf with no langchain import, so app.utils.timezone can read a home timezone
@@ -20,6 +20,8 @@ from app.models.agent_config import (
     AgentConfigurableView,
     AgentRunConfig,
     ExecutionMode,
+    SubagentKind,
+    SubagentResumeItem,
     agent_configurable,
     read_agent_configurable,
 )
@@ -42,6 +44,8 @@ __all__ = [
     "InboxEntry",
     "RunningSubagent",
     "SilentRunResult",
+    "SubagentKind",
+    "SubagentResumeItem",
     "agent_configurable",
     "read_agent_configurable",
     "config_agent_name",
@@ -237,7 +241,8 @@ class RunningSubagent:
 # (checkpoint_ns, __pregel_*) are filtered by not being declared on it.
 CONFIGURABLE_OWNED_KEYS: frozenset[str] = frozenset(AgentConfigurable.__annotations__)
 
-# Owned keys that are nonetheless scoped to ONE dispatch and must not ride along
-# to the next: hil_resume_replay means "this exact call is a replay", so carrying
-# it would make a fresh run probe its subagent threads for interrupts it cannot have.
-CONFIGURABLE_RUN_SCOPED_KEYS: frozenset[str] = frozenset({HIL_RESUME_CONFIG_KEY})
+# Owned keys scoped to ONE dispatch: hil_resume_replay ("this call is a replay") would
+# make a fresh run probe for interrupts it cannot have; subagent_resume is one run's own.
+CONFIGURABLE_RUN_SCOPED_KEYS: frozenset[str] = frozenset(
+    {HIL_RESUME_CONFIG_KEY, SUBAGENT_RESUME_CONFIG_KEY}
+)

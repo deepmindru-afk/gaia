@@ -13,15 +13,12 @@ from app.agents.core.background.session import (
     ExecutorRun,
     RunIdentity,
     RunKind,
-    claim_bg_integration,
     claim_tool_output,
     create_session,
     get_or_create_session,
     get_session,
-    has_bg_integration,
     mark_executor_spawned,
     note_tool_output_owner,
-    release_bg_integration,
     signal_executor_done,
     teardown_session,
 )
@@ -54,12 +51,10 @@ class TestSessionRegistry:
     def test_teardown_leaves_no_residue(self) -> None:
         create_session("s1", RunKind.QUEUED)
         mark_executor_spawned("s1")
-        claim_bg_integration("s1", "gmail")
 
         teardown_session("s1")
 
         assert get_session("s1") is None
-        assert has_bg_integration("s1", "gmail") is False
 
     def test_teardown_is_idempotent(self) -> None:
         create_session("s1", RunKind.LIVE)
@@ -169,21 +164,6 @@ class TestOwnershipRule:
         assert run.workflow_id is None
         assert run.workflow_notify_on_completion is True
         assert run.executor_owns_tool_data is False
-
-    def test_integration_slot_claim_is_exclusive_until_released(self) -> None:
-        # The slot is what stops two concurrent background handoffs to the same
-        # integration from sharing (and corrupting) one checkpoint thread.
-        create_session("s1", RunKind.LIVE)
-        assert claim_bg_integration("s1", "gmail") is True
-        assert claim_bg_integration("s1", "gmail") is False  # second claim loses
-        assert claim_bg_integration("s1", "slack") is True  # other integrations unaffected
-
-        release_bg_integration("s1", "gmail")
-        assert claim_bg_integration("s1", "gmail") is True  # reusable after release
-
-    def test_integration_slot_for_missing_session_is_safe(self) -> None:
-        release_bg_integration("missing", "gmail")  # must not raise
-        assert has_bg_integration("missing", "gmail") is False
 
 
 class TestToolOutputOwnership:

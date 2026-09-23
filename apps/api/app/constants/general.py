@@ -39,6 +39,9 @@ SPAWN_THREAD_PREFIX = "spawn_"
 # Shared because prepare_executor_execution mints these and the workflow thread
 # reset selects on them — a drift would replay a workflow's whole history.
 EXECUTOR_THREAD_PREFIX = "executor_"
+# SubagentExecutionContext.integration_id of an executor run — the one run the
+# executor tier drives with the worker driver without being a delegated worker.
+EXECUTOR_INTEGRATION_ID = "executor"
 
 MAX_EMAILS_PER_PLATFORM = 20
 DEDUPLICATION_SIMILARITY_THRESHOLD = 0.9

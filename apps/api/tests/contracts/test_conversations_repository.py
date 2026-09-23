@@ -15,7 +15,12 @@ import pytest
 
 from app.db.repositories.cache import CachePolicy
 from app.db.repositories.conversations import ConversationRepository
-from app.models.chat_models import ConversationSource, MessageModel, SystemPurpose
+from app.models.chat_models import (
+    ConversationSource,
+    MessageModel,
+    SavedSubagentGroup,
+    SystemPurpose,
+)
 from app.models.conversation_models import ConversationDocument
 
 
@@ -415,6 +420,80 @@ class TestMessages:
         assert msg is not None
         assert msg.tool_data is not None and msg.tool_data[0]["tool_name"] == "weather"
         assert msg.follow_up_actions == ["do x"]
+
+    async def test_a_resumed_subagent_extends_its_saved_row_in_place(self, repo):
+        """Array-filtered: the one group gets the calls, a sibling group and other cards are untouched."""
+        doc = _doc()
+        await repo.create(doc)
+        ids = await repo.append_messages(
+            doc.conversation_id,
+            user_id=doc.user_id,
+            messages=[MessageModel(type="bot", response="r")],
+        )
+        assert ids is not None
+        mid = ids[0]
+
+        def group(subagent_id: str) -> dict[str, object]:
+            return {
+                "tool_name": "subagent_group",
+                "data": {
+                    "subagent_id": subagent_id,
+                    "tool_calls": [{"tool_call_id": f"{subagent_id}-before"}],
+                    "completed_at": None,
+                    "duration_ms": None,
+                },
+            }
+
+        assert await repo.append_message_tool_data(
+            doc.conversation_id,
+            user_id=doc.user_id,
+            message_id=mid,
+            entries=[group("row-1"), group("row-2"), {"tool_name": "weather", "data": {}}],
+        )
+
+        assert await repo.extend_subagent_group(
+            doc.conversation_id,
+            user_id=doc.user_id,
+            message_id=mid,
+            group=SavedSubagentGroup(
+                subagent_id="row-1",
+                tool_calls=[{"tool_call_id": "row-1-after"}],
+                completed_at="2026-09-23T10:05:00Z",
+                duration_ms=1200,
+            ),
+        )
+
+        msg = await repo.get_message(doc.conversation_id, mid, user_id=doc.user_id)
+        assert msg is not None and msg.tool_data is not None
+        groups = {
+            e["data"]["subagent_id"]: e["data"] for e in msg.tool_data if "subagent_id" in e["data"]
+        }
+        assert [c["tool_call_id"] for c in groups["row-1"]["tool_calls"]] == [
+            "row-1-before",
+            "row-1-after",
+        ]
+        assert groups["row-1"]["completed_at"] == "2026-09-23T10:05:00Z"
+        assert groups["row-1"]["duration_ms"] == 1200
+        assert [c["tool_call_id"] for c in groups["row-2"]["tool_calls"]] == ["row-2-before"]
+        assert groups["row-2"]["completed_at"] is None
+        assert len(msg.tool_data) == 3
+
+    async def test_extending_a_row_the_message_does_not_hold_matches_nothing(self, repo):
+        doc = _doc()
+        await repo.create(doc)
+        ids = await repo.append_messages(
+            doc.conversation_id,
+            user_id=doc.user_id,
+            messages=[MessageModel(type="bot", response="r")],
+        )
+        assert ids is not None
+
+        assert not await repo.extend_subagent_group(
+            doc.conversation_id,
+            user_id=doc.user_id,
+            message_id=ids[0],
+            group=SavedSubagentGroup(subagent_id="missing"),
+        )
 
     async def test_append_preserves_every_key_emitters_stamp_on_tool_data(self, repo):
         """append_messages must not drop tool_category/mcp_ui/mcp_server_url/subagent_id, invisible live but breaking on reload."""

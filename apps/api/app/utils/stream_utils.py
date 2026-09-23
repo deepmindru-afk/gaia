@@ -25,6 +25,7 @@ from typing import Annotated
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
+from app.constants.chat import SUBAGENT_GROUP_TOOL_NAME
 from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
 from app.models.chat_models import ToolDataEntry
 from app.utils.agent_utils import (
@@ -383,7 +384,7 @@ def reconstruct_subagent_groups(accumulated: MutableMapping[str, object]) -> Non
     # Rebuild tool_data
     group_entries: list[ToolDataEntry] = [
         {
-            "tool_name": "subagent_group",
+            "tool_name": SUBAGENT_GROUP_TOOL_NAME,
             "data": asdict(group),
             "timestamp": group.started_at,
         }

@@ -41,6 +41,7 @@ from app.agents.core.subagents.subagent_runner import (
     build_initial_messages,
     execute_subagent_stream,
     interrupt_payload,
+    subagent_row_id,
 )
 from app.constants.hil import HIL_RESUME_CONFIG_KEY, LANGGRAPH_INTERRUPT_KEY
 from tests.helpers import PassthroughFakeLLM, create_fake_llm
@@ -391,7 +392,7 @@ async def real_subagent_seams():
         ),
         # handoff() is invoked directly here (no parent graph node), so there is
         # no active LangGraph runnable context for get_stream_writer() to hook.
-        patch(f"{HANDOFF_MODULE}.get_stream_writer", return_value=MagicMock()),
+        patch("app.agents.core.subagents.delegation.get_stream_writer", return_value=MagicMock()),
         patch(
             "app.agents.core.subagents.subagent_runner.assemble_context",
             AsyncMock(
@@ -869,11 +870,11 @@ class TestHandoffFunctionDirectly:
                 return_value=fake_subagent_config,
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                "app.agents.core.subagents.delegation.execute_subagent_stream",
                 new=AsyncMock(return_value=SubagentOutcome(text="direct handoff result")),
             ) as mock_execute,
             patch(
-                "app.agents.core.subagents.handoff_tools.get_stream_writer",
+                "app.agents.core.subagents.delegation.get_stream_writer",
                 return_value=MagicMock(),
             ),
         ):
@@ -935,11 +936,11 @@ class TestHandoffFunctionDirectly:
                 return_value=fake_subagent_config,
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                "app.agents.core.subagents.delegation.execute_subagent_stream",
                 new=capture_execute,
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.get_stream_writer",
+                "app.agents.core.subagents.delegation.get_stream_writer",
                 return_value=MagicMock(),
             ),
         ):
@@ -1061,11 +1062,11 @@ class TestCustomMCPPath:
                 return_value=fake_subagent_config,
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                "app.agents.core.subagents.delegation.execute_subagent_stream",
                 new=AsyncMock(return_value=SubagentOutcome(text="custom mcp result")),
             ) as mock_execute,
             patch(
-                "app.agents.core.subagents.handoff_tools.get_stream_writer",
+                "app.agents.core.subagents.delegation.get_stream_writer",
                 return_value=MagicMock(),
             ),
         ):
@@ -1194,11 +1195,11 @@ class TestHandoffThreadIsolation:
 
         with (
             patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                "app.agents.core.subagents.delegation.execute_subagent_stream",
                 new=AsyncMock(return_value="done"),
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.get_stream_writer",
+                "app.agents.core.subagents.delegation.get_stream_writer",
                 return_value=MagicMock(),
             ),
             patch(
@@ -1295,11 +1296,11 @@ class TestHandoffThreadIsolation:
                 side_effect=capture_build,
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                "app.agents.core.subagents.delegation.execute_subagent_stream",
                 new=AsyncMock(return_value="done"),
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.get_stream_writer",
+                "app.agents.core.subagents.delegation.get_stream_writer",
                 return_value=MagicMock(),
             ),
         ):
@@ -1374,11 +1375,11 @@ class TestHandoffWithToolCallArgs:
                 return_value=fake_subagent_config,
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                "app.agents.core.subagents.delegation.execute_subagent_stream",
                 new=AsyncMock(return_value=SubagentOutcome(text="args test result")),
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.get_stream_writer",
+                "app.agents.core.subagents.delegation.get_stream_writer",
                 return_value=MagicMock(),
             ),
         ):
@@ -1442,11 +1443,11 @@ class TestHandoffWithToolCallArgs:
                 return_value=fake_subagent_config,
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                "app.agents.core.subagents.delegation.execute_subagent_stream",
                 new=AsyncMock(return_value="ok"),
             ),
             patch(
-                "app.agents.core.subagents.handoff_tools.get_stream_writer",
+                "app.agents.core.subagents.delegation.get_stream_writer",
                 return_value=MagicMock(),
             ),
         ):
@@ -1616,9 +1617,10 @@ def _interrupt_payloads(events: list) -> list[dict[str, Any]]:
 class _ExecutorDriver:
     """Calls the real handoff tool from inside a parent node, as the executor does.
 
-    A handoff drives its subagent imperatively, so the subagent's GraphInterrupt
-    only becomes a pause if _run_blocking_handoff re-raises it into a parent
-    runtime — which needs a real checkpointed parent graph around the call.
+    A blocking handoff drives its subagent imperatively, so the subagent's
+    GraphInterrupt only becomes a pause if the delegation runner re-raises it into
+    a parent runtime — which needs a real checkpointed parent graph around the call.
+    No stream_id here, so the handoff runs blocking.
     """
 
     def __init__(self) -> None:
@@ -1770,7 +1772,7 @@ async def background_dispatch_seams():
             "app.utils.agent_utils.get_tool_registry",
             AsyncMock(return_value=SimpleNamespace(get_category_of_tool=lambda _name: "general")),
         ),
-        patch(f"{HANDOFF_MODULE}.run_subagent_background", run_bg),
+        patch("app.agents.core.subagents.delegation._run_background", run_bg),
         patch("app.utils.background_tasks.asyncio.create_task", side_effect=_tracking_create_task),
     ):
         yield run_bg
@@ -1808,8 +1810,8 @@ class TestBackgroundSubagentDispatch:
             tool_call_id="tc-bg-1",
         )
 
-        assert "started in background" in result
-        assert "gmail_agent" in result
+        assert "started in the background" in result
+        assert subagent_row_id("tc-bg-1") in result
         background_dispatch_seams.assert_called_once()
 
     async def test_duplicate_dispatch_same_tool_call_id_is_deduplicated(
@@ -1843,8 +1845,8 @@ class TestBackgroundSubagentDispatch:
             tool_call_id="tc-bg-dup-1",
         )
 
-        assert "started in background" in first
-        assert "started in background" in second
+        assert "started in the background" in first
+        assert "started in the background" in second
         assert background_dispatch_seams.call_count == 1, (
             "the second dispatch with the same tool_call_id must not re-spawn the subagent"
         )

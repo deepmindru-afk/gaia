@@ -7,9 +7,8 @@ absorbs it (see executor_channel). There is no queue of pending runs.
 
 What remains here is the lock itself and prepare_run_from_item, which
 materializes a DETACHED run that owns its own stream rather than sharing a comms
-turn's. HIL approval resume is its main consumer; the collection wake-up is the
-other. Preparing is this module's job, spawning the runner's — the one-way
-dependency (runner -> queue) that keeps the import graph acyclic.
+turn's. HIL approval resume and deliver_to_executor are its consumers.
+Preparing is this module's job, spawning the runner's — the one-way dependency (runner -> queue) that keeps the import graph acyclic.
 """
 
 from dataclasses import dataclass
@@ -23,14 +22,13 @@ from app.agents.core.background.session import (
     ExecutorRun,
     RunIdentity,
     RunKind,
+    StreamSession,
     create_session,
+    teardown_session,
 )
 from app.constants.cache import EXECUTOR_BUSY_PREFIX, EXECUTOR_BUSY_TTL
-from app.constants.executor import (
-    EXECUTOR_COLLECT_MARKER_PREFIX,
-    EXECUTOR_COLLECT_MARKER_TTL,
-)
 from app.constants.log_tags import LogTag
+from app.constants.streaming import WS_EVENT_EXECUTOR_STREAM_STARTED, DetachedStreamKind
 from app.core.stream_manager import StreamManager
 from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
@@ -216,8 +214,8 @@ async def get_lock_holder(conversation_id: str) -> str | None:
 async def is_executor_busy(conversation_id: str) -> bool:
     """Whether ANY executor run (running or parked) holds this conversation's lock.
 
-    Redis-unavailable degrades to False: the caller (HIL early-decision) must
-    treat "cannot tell" as "no collector is alive" and fail closed.
+    Redis-unavailable degrades to False, so deliver_to_executor attempts a run
+    start, whose own claim then decides.
     """
     if not redis_cache.client:
         return False
@@ -251,20 +249,6 @@ async def extend_lock_if_owned(
     return bool(
         await redis_cache.client.expire(f"{EXECUTOR_BUSY_PREFIX}{conversation_id}", ttl_seconds)
     )
-
-
-async def claim_collection_wake(conversation_id: str) -> bool:
-    """Claim the right to wake the executor for landed background-subagent work.
-
-    The "rest" contract: an executor may end its turn while background subagents
-    are still running. When their work lands, someone has to make sure an
-    executor sees it. The SETNX marker keeps that to one wake at a time — it
-    self-cleans on TTL — so N landings do not produce N wakes.
-    """
-    if not redis_cache.client:
-        return False
-    marker = f"{EXECUTOR_COLLECT_MARKER_PREFIX}{conversation_id}"
-    return bool(await redis_cache.client.set(marker, "1", nx=True, ex=EXECUTOR_COLLECT_MARKER_TTL))
 
 
 def decode_raw_item(raw: bytes | memoryview | str) -> str:
@@ -323,6 +307,54 @@ def safe_configurable(configurable: AgentConfigurable) -> AgentConfigurable:
     return cast(AgentConfigurable, kept)
 
 
+async def open_detached_stream(
+    stream_id: str,
+    *,
+    conversation_id: str,
+    user_id: str,
+    task_id: str | None,
+    bot_message_id: str | None,
+    kind: DetachedStreamKind,
+) -> StreamSession:
+    """Mint a stream a detached run owns and announce it with executor.stream_started.
+
+    The one way a run with no comms turn reaches the client: a session collects its
+    frames for persistence, and the client folds the stream into bot_message_id's
+    message when given, else into a placeholder keyed by task_id.
+    """
+    session = create_session(stream_id, RunKind.QUEUED)
+    await StreamManager.start_stream(
+        stream_id=stream_id,
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+    if user_id:
+        await websocket_manager.broadcast_to_user(
+            user_id,
+            {
+                "type": WS_EVENT_EXECUTOR_STREAM_STARTED,
+                "stream_id": stream_id,
+                "conversation_id": conversation_id,
+                "task_id": task_id,
+                "bot_message_id": bot_message_id,
+                "kind": kind.value,
+            },
+        )
+    return session
+
+
+async def close_detached_stream(stream_id: str, *, cancelled: bool) -> None:
+    """Drop a detached run's session and end the stream it owns.
+
+    A cancelled stream closes silently — the cancel already told the client — so
+    no [DONE] and no complete_stream.
+    """
+    teardown_session(stream_id)
+    if not cancelled:
+        await StreamManager.publish_chunk(stream_id, "data: [DONE]\n\n")
+        await StreamManager.complete_stream(stream_id)
+
+
 async def prepare_run_from_item(
     conversation_id: str, item: ExecutorRunItem, *, claim: LockClaim
 ) -> PreparedQueuedTask | None:
@@ -359,29 +391,18 @@ async def prepare_run_from_item(
         # would see its own lock as FOREIGN and wedge it until TTL.
         await redis_cache.client.set(lock_key, lock_value, ex=EXECUTOR_BUSY_TTL)
 
-    session = create_session(queued_stream_id, RunKind.QUEUED)
-    session.executor_spawned = True
-
-    await StreamManager.start_stream(
-        stream_id=queued_stream_id,
+    session = await open_detached_stream(
+        queued_stream_id,
         conversation_id=conversation_id,
         user_id=user_id,
+        task_id=task_id,
+        # A HIL resume continues the ORIGINAL turn's message: the client folds
+        # this stream into it instead of opening a second placeholder (which
+        # would render its own tool accordion).
+        bot_message_id=queued_bot_message_id,
+        kind=DetachedStreamKind.EXECUTOR,
     )
-
-    if user_id:
-        await websocket_manager.broadcast_to_user(
-            user_id,
-            {
-                "type": "executor.stream_started",
-                "stream_id": queued_stream_id,
-                "conversation_id": conversation_id,
-                "task_id": task_id,
-                # A HIL resume continues the ORIGINAL turn's message: the client
-                # folds this stream into it instead of opening a second
-                # placeholder (which would render its own tool accordion).
-                "bot_message_id": item.get("bot_message_id"),
-            },
-        )
+    session.executor_spawned = True
 
     configurable = {**configurable, "stream_id": queued_stream_id}
     run = ExecutorRun.from_configurable(

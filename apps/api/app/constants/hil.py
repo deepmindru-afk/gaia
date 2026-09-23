@@ -122,19 +122,20 @@ LANGGRAPH_INTERRUPT_KEY = "__interrupt__"
 # set, so fresh runs (the ~100% case) skip that per-handoff Postgres read.
 HIL_RESUME_CONFIG_KEY: Final = "hil_resume_replay"
 
+# configurable key a background subagent run carries its own rebuild recipe
+# under, so the gate files it on every approval the run raises and a decision
+# can resume the parked thread from any process.
+SUBAGENT_RESUME_CONFIG_KEY: Final = "subagent_resume"
+
 # Keyed by stream_id (unique per turn), so this only suppresses re-asks within
 # the same turn — a genuinely new request in a later turn still prompts.
 HIL_DECLINE_MEMORY_TTL_SECONDS = 1800
 
-# Background subagent results live in Redis, keyed by conversation (never
-# stream_id — it changes on resume): they must survive the executor's approval
-# pause, which the in-process session does not.
+# Background-dispatch claims (one per delegating tool call), keyed by conversation
+# (never stream_id — it changes on resume): a node replay after the executor's
+# approval pause must find the dispatch the first pass already made.
 HIL_BG_RESULTS_KEY_PREFIX = "hil:bg_results:"
 HIL_BG_RESULTS_TTL_SECONDS = 7200
-
-# Interrupt payload type for a parked-approval batch pause. Carries the whole
-# batch of parked-subagent approvals, unlike the gate's single "hil_approval".
-HIL_BATCH_INTERRUPT_TYPE = "hil_approval_batch"
 
 # Debounce: at most one executor resume dispatch per conversation at a time —
 # two LangGraph runs on one thread would corrupt its checkpoint. TTL is crash
@@ -162,9 +163,8 @@ HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# The exempt tools that can nonetheless PAUSE the run: handoff and spawn_subagent
-# bubble up their child graph's gate interrupt. A gated sibling of one must never
-# auto-run — the pause re-runs the whole node, so it would execute twice.
+# Exempt tools that still PAUSE the run when called with background=False (they bubble
+# the child's gate up): a gated sibling must never auto-run, the replay would run it twice.
 HIL_PAUSING_TOOLS: frozenset[str] = frozenset({"handoff", "spawn_subagent"})
 
 # tool_data entry name for the approval card (mirrored in @gaia/shared/chat).

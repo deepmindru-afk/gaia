@@ -928,6 +928,17 @@ class TestFinalizeRun:
             }
         )
 
+    @pytest.mark.regression
+    def test_the_executors_plain_answer_is_its_answer(self):
+        """A collection run's whole job is to report what landed, in words; nothing re-issues the executor."""
+        run = _make_run(ctx_overrides={**self._ctx_overrides(), "integration_id": "executor"})
+        run.complete_message = "The report is drafted and saved."
+
+        with patch("app.agents.core.subagents.subagent_runner.log"):
+            outcome = _finalize_run(run)
+
+        assert outcome.text == "The report is drafted and saved."
+
     def test_an_announced_tool_call_makes_the_same_text_an_ordinary_result(self):
         """A run that announced a call did the work, even if no ToolMessage came back before the stream ended."""
         run = _make_run(ctx_overrides=self._ctx_overrides())

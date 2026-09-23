@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.core.background.executor_queue import ExecutorRunItem
 from app.db.repositories.base import MongoDocument
+from app.models.agent_config import SubagentResumeItem
 
 
 class HILApprovalStatus(StrEnum):
@@ -140,15 +141,27 @@ class HILApprovalRecord(MongoDocument):
     # Stamped when the resume run is dispatched; a decided record without it is
     # a crashed resume the sweep re-dispatches.
     resumed_at: datetime | None = None
-    # Set only when a detached background subagent parked on this approval: its
-    # graph is checkpointed under this deterministic thread id (durable, not the
-    # in-process session). None for every other approval.
+    # Set at creation only when a background subagent raised this approval: its thread
+    # and the SubagentResumeItem that rebuilds it, so any process can resume it on a
+    # decision. dict[str, Any] on the read side for the same reason as resume_item.
     subagent_thread_id: str | None = None
-    subagent_agent_name: str | None = None
-    # Reserved for the HIL rework: stamped once a parked subagent has been resumed
-    # and its result collected. Distinct from ``resumed_at`` (which records that a
-    # decision dispatched the *executor*). Unused until a resume driver exists.
-    subagent_collected_at: datetime | None = None
+    subagent_resume: dict[str, Any] | None = None
+
+    def resume_payload(self) -> HilResumeDecision:
+        """The Command(resume=...) value this decided record wakes its gate with.
+
+        Abandoned resumes as a denial: the user moved on, the agent must not act.
+        approval_id lets a gate sequence match its own decision on replay.
+        """
+        status = self.status
+        return {
+            "status": HILApprovalStatus.DENIED.value
+            if status is HILApprovalStatus.ABANDONED
+            else status.value,
+            "feedback": self.feedback,
+            "scope": self.scope,
+            "approval_id": self.approval_id,
+        }
 
 
 class HILApprovalUpdate(BaseModel):
@@ -166,9 +179,7 @@ class HILApprovalUpdate(BaseModel):
     # deliberately: narrowing it would reject rows written before this type existed.
     resume_item: ExecutorRunItem | None = None
     resumed_at: datetime | None = None
-    subagent_thread_id: str | None = None
-    subagent_agent_name: str | None = None
-    subagent_collected_at: datetime | None = None
+    subagent_resume: SubagentResumeItem | None = None
 
 
 class HILToolRiskUpdate(BaseModel):

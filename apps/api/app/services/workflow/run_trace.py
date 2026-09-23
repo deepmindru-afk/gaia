@@ -15,6 +15,7 @@ import json
 import re
 
 from app.constants.agents import PLAYBOOK_TOOL_NAMES, AgentTag, wrap_agent_payload
+from app.constants.chat import SUBAGENT_GROUP_TOOL_NAME
 from app.models.chat_models import ToolDataEntry
 from app.models.workflow_execution_models import (
     RecordedCall,
@@ -25,7 +26,6 @@ from app.models.workflow_execution_models import (
 #: The two ``tool_data`` kinds that carry tool calls. Everything else in the list
 #: (per-tool card payloads like ``email_fetch_data``) is render material, not a call.
 TOOL_CALLS_ENTRY = "tool_calls_data"
-SUBAGENT_GROUP_ENTRY = "subagent_group"
 
 #: Reasoning deltas ride the tool-call channel as ``tool_calls_data`` entries
 #: named ``reasoning`` — not invocations; counting them once made a 6-call
@@ -73,7 +73,7 @@ def build_trace(tool_data: list[ToolDataEntry]) -> list[RecordedCall]:
             call = _recorded_call(entry.get("data"), entry.get("subagent_id"))
             if call is not None:
                 trace.append(call)
-        elif name == SUBAGENT_GROUP_ENTRY:
+        elif name == SUBAGENT_GROUP_TOOL_NAME:
             trace.extend(_group_calls(entry.get("data")))
     return trace
 

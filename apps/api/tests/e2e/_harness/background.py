@@ -6,7 +6,7 @@ import asyncio
 
 from app.agents.core.background.executor_runner import DETACHED_EXECUTOR_TASK_NAME
 from app.agents.core.background.redis_writer import STREAM_PUBLISH_TASK_NAME
-from app.agents.core.background.subagent_runner import BACKGROUND_SUBAGENT_TASK_NAME
+from app.agents.core.subagents.delegation import BACKGROUND_SUBAGENT_TASK_NAME
 from app.services.hil import resolution
 from app.utils import background_tasks
 

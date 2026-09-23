@@ -40,19 +40,9 @@ EXECUTOR_NARRATION_FAILED_ERROR_MESSAGE = (
     "That task didn't finish, and I couldn't write up what went wrong. Please try again."
 )
 
-# Task text for the wake-up turn queued when background-subagent work lands after
-# the executor rested. Landed results arrive through the executor inbox on their
-# own; the run only has to report what is new.
-EXECUTOR_COLLECTION_TASK = "Background subagent results have landed in this conversation. Summarize what is new for the user."
-
-# Dedup marker: at most one queued collection turn per conversation at a time.
-# TTL is crash insurance so a lost run can't suppress wake-ups forever.
-EXECUTOR_COLLECT_MARKER_PREFIX = "executor:collect_queued:"
-EXECUTOR_COLLECT_MARKER_TTL = 600
-
-# Seed task for the run that picks up work a finished run absorbed too late. The
-# carried entries stay in the inbox and arrive through the drain hook (framed,
-# ID-stamped, crash-safe); this only has to get the run to its first model call.
+# Seed task for a run started for inbox work no live run will absorb (late work, a
+# subagent landing on a rested executor). The entries arrive through the drain hook;
+# this only has to get the run to its first model call.
 EXECUTOR_CARRY_TASK = (
     "New work arrived in this conversation after your previous turn ended. Read it and act on it."
 )

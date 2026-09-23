@@ -2,9 +2,8 @@
 
 There is no queue any more: work handed to a busy executor goes to that
 conversation's inbox (executor_channel) and the live run absorbs it. What
-remains in executor_queue is the per-conversation busy lock, the
-collection-wake claim, and prepare_run_from_item — the path a HIL resume
-rebuilds its run through.
+remains in executor_queue is the per-conversation busy lock and
+prepare_run_from_item — the path a HIL resume rebuilds its run through.
 
 Redis is real (fakeredis) here on purpose. The lock's whole job is atomic
 ownership under SET NX with a TTL, and a mock that returns whatever the test
@@ -29,7 +28,6 @@ from app.agents.core.background.executor_queue import (
     adopt_lock,
     build_lock_value,
     build_run_item,
-    claim_collection_wake,
     extend_lock_if_owned,
     get_lock_holder,
     get_lock_state,
@@ -42,17 +40,12 @@ from app.agents.core.background.executor_queue import (
 )
 from app.agents.core.background.session import RunIdentity, RunKind, get_session
 from app.constants.cache import EXECUTOR_BUSY_PREFIX, EXECUTOR_BUSY_TTL
-from app.constants.executor import (
-    EXECUTOR_COLLECT_MARKER_PREFIX,
-    EXECUTOR_COLLECT_MARKER_TTL,
-)
 from app.db.redis import redis_cache
 from app.models.agent_models import AgentConfigurable
 from app.models.user_models import AuthenticatedUser
 
 CONVERSATION = "conv-1"
 BUSY_KEY = f"{EXECUTOR_BUSY_PREFIX}{CONVERSATION}"
-COLLECT_KEY = f"{EXECUTOR_COLLECT_MARKER_PREFIX}{CONVERSATION}"
 
 
 @pytest.fixture(autouse=True)
@@ -288,37 +281,10 @@ class TestWithoutRedis:
         with _no_redis():
             assert await extend_lock_if_owned(CONVERSATION, "s1", "t1", 900) is False
 
-    async def test_collection_wake_is_not_claimed(self) -> None:
-        with _no_redis():
-            assert await claim_collection_wake(CONVERSATION) is False
-
     async def test_preparing_a_run_yields_nothing(self, stream_side) -> None:
         with _no_redis():
             assert await prepare_run_from_item(CONVERSATION, _item(), claim=LockClaim.SEIZE) is None
         stream_side.stream_manager.start_stream.assert_not_awaited()
-
-
-class TestCollectionWake:
-    """One wake per conversation while the marker is held.
-
-    An executor may end its turn while background subagents are still running.
-    Every landing wants to wake someone; without this claim, N landings produce
-    N wake-up runs for one pile of results.
-    """
-
-    async def test_the_first_caller_claims_and_the_next_is_refused(self, redis) -> None:
-        assert await claim_collection_wake(CONVERSATION) is True
-        assert await claim_collection_wake(CONVERSATION) is False
-
-    async def test_the_claim_is_per_conversation(self, redis) -> None:
-        assert await claim_collection_wake(CONVERSATION) is True
-        assert await claim_collection_wake("conv-2") is True
-
-    async def test_the_marker_expires_so_a_lost_run_cannot_mute_collection(self, redis) -> None:
-        """Crash insurance: a run that dies after claiming would otherwise suppress every future wake-up for that conversation forever."""
-        await claim_collection_wake(CONVERSATION)
-
-        assert await redis.ttl(COLLECT_KEY) == EXECUTOR_COLLECT_MARKER_TTL
 
 
 class TestBuildRunItem:
@@ -426,8 +392,8 @@ class TestSafeConfigurable:
 class TestPrepareRunFromItem:
     """Materializing a DETACHED run — one that owns its own stream instead of sharing a comms turn's.
 
-    The HIL approval resume is its main consumer, the collection wake-up the other; both re-
-    dispatch a run whose original owner is gone, so both SEIZE the lock rather than acquire it.
+    The HIL approval resume SEIZES the lock its paused owner still holds; deliver_to_executor
+    ACQUIRES it, starting only on a conversation nobody holds.
     """
 
     async def test_seizes_the_lock_in_the_form_its_owner_reads_back(
@@ -514,6 +480,8 @@ class TestPrepareRunFromItem:
             # key to decide between folding into an existing message and opening
             # a fresh placeholder.
             "bot_message_id": None,
+            # An executor run owns its message: the client folds it as the run's own.
+            "kind": "executor",
         }
 
     async def test_an_item_with_no_user_still_prepares_but_announces_nothing(

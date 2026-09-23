@@ -21,7 +21,7 @@ from datetime import datetime
 
 from bson import ObjectId
 
-from app.constants.chat import USER_MESSAGE_TYPE
+from app.constants.chat import SUBAGENT_GROUP_TOOL_NAME, USER_MESSAGE_TYPE
 from app.db.repositories.base import UserScopedRepository
 from app.models.artifact_models import ArtifactRegistryEntry
 from app.models.chat_models import (
@@ -29,6 +29,7 @@ from app.models.chat_models import (
     ConversationSource,
     ConversationSyncItem,
     MessageModel,
+    SavedSubagentGroup,
     SystemPurpose,
     ToolDataEntry,
 )
@@ -363,6 +364,37 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
             scope=user_id,
             doc_id=conversation_id,
             extra_filter={"user_id": user_id},
+        )
+        return matched > 0
+
+    async def extend_subagent_group(
+        self, conversation_id: str, *, user_id: str, message_id: str, group: SavedSubagentGroup
+    ) -> bool:
+        """Append calls to one saved subagent group in place and stamp its end; False when absent."""
+        path = "messages.$[msg].tool_data.$[group].data"
+        matched = await self._apply_raw_update_unfetched(
+            {
+                "conversation_id": conversation_id,
+                "messages.message_id": message_id,
+                "messages.tool_data.data.subagent_id": group.subagent_id,
+            },
+            {
+                "$push": {f"{path}.tool_calls": {"$each": group.tool_calls}},
+                "$set": {
+                    f"{path}.completed_at": group.completed_at,
+                    f"{path}.duration_ms": group.duration_ms,
+                },
+            },
+            scope=user_id,
+            doc_id=conversation_id,
+            extra_filter={"user_id": user_id},
+            array_filters=[
+                {"msg.message_id": message_id},
+                {
+                    "group.tool_name": SUBAGENT_GROUP_TOOL_NAME,
+                    "group.data.subagent_id": group.subagent_id,
+                },
+            ],
         )
         return matched > 0
 
