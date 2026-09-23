@@ -25,6 +25,7 @@ from bson import ObjectId
 
 from app.db.mongodb.collections import get_async_collection
 from app.db.mongodb.mongodb import init_mongodb
+from scripts._prompt import ainput
 from shared.py.wide_events import log as logger
 
 plans_collection = get_async_collection("subscription_plans")
@@ -164,14 +165,13 @@ async def main():
     print("3. Update them to point to GAIA Pro Yearly")
     print("4. Show details and exit")
 
-    choice = (await asyncio.to_thread(input, "\nEnter your choice (1-4): ")).strip()
+    choice = (await ainput("\nEnter your choice (1-4): ")).strip()
 
     if choice == "1":
         confirm = (
             (
-                await asyncio.to_thread(
-                    input,
-                    f"⚠️  Are you sure you want to DELETE {len(invalid_subs)} subscriptions? (yes/no): ",
+                await ainput(
+                    f"⚠️  Are you sure you want to DELETE {len(invalid_subs)} subscriptions? (yes/no): "
                 )
             )
             .strip()
