@@ -328,16 +328,6 @@ async def test_select_becomes_select_dropdown_by_option_text(flights_state) -> N
         ("SCROLL_UP", {"scroll": {"down": False, "pages": 1.0}}),
         ("WAIT", {"wait": {"seconds": 4}}),
         ("GO_BACK", {"go_back": {}}),
-        (
-            "BLOCKED",
-            {
-                "done": {
-                    "text": "I couldn't find a way to move forward on this page.",
-                    "success": False,
-                    "files_to_display": [],
-                }
-            },
-        ),
     ],
 )
 async def test_control_operations_map_without_the_helper(
@@ -1264,3 +1254,26 @@ async def test_a_site_that_never_loaded_is_named_when_the_run_is_blocked(flights
     assert _action(result.completion)["done"]["text"] == (
         "I couldn't open https://nowhere.invalid/: the page never loaded."
     )
+
+
+async def test_a_writer_call_that_times_out_is_retried_once(flights_state) -> None:
+    model, _, helper, session = _model(
+        flights_state, [("TYPE_TEXT", "2")], [TimeoutError(), {"text": "Zurich"}]
+    )
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion)["input_text"]["text"] == "Zurich"
+    assert len(helper.calls) == 2
+
+
+async def test_a_blocked_run_that_read_pages_reports_them(flights_state) -> None:
+    model, _, _, _ = _model(
+        flights_state, [("BLOCKED", None)], [{"text": "Found the flights page; no fares shown."}]
+    )
+
+    result = await model.ainvoke([], _agent_output())
+
+    done = _action(result.completion)["done"]
+    assert done["text"] == "Found the flights page; no fares shown."
+    assert done["success"] is False

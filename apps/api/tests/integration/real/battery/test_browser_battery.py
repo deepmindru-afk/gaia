@@ -266,8 +266,8 @@ def test_a_login_is_handed_to_the_user_then_reused_without_a_second_handoff(
         return [record]
 
     outcome = battery.run(
-        f"Use the browser. Go to {_INTERNET}/login, log in as tomsmith with password "
-        "SuperSecretPassword!, and tell me the exact flash message shown after logging in.",
+        f"Use the browser. Go to {_INTERNET}/login and log me in; I'll type my username and "
+        "password myself. Then tell me the exact flash message shown after logging in.",
         on_running=act,
     )
 
@@ -305,6 +305,21 @@ def test_a_login_is_handed_to_the_user_then_reused_without_a_second_handoff(
     assert reuse.success is True, reuse.summary
     assert "Secure Area" in reuse.summary, reuse.summary
     _one_final_message(reuse)
+
+
+def test_a_login_with_credentials_given_in_the_message_needs_no_handoff(battery: Battery) -> None:
+    battery.forget_logins()
+    outcome = battery.run(
+        f"Use the browser. Go to {_INTERNET}/login, log in as tomsmith with password "
+        "SuperSecretPassword!, and tell me the exact flash message shown after logging in.",
+    )
+
+    assert outcome.success is True, outcome.summary
+    assert "You logged into a secure area!" in outcome.summary, outcome.summary
+    assert not outcome.transcript.texts_matching(r"Open the live browser"), (
+        "the run asked the user for a login it had been given"
+    )
+    _one_final_message(outcome)
 
 
 def test_a_captcha_is_handed_over_and_a_cancel_ends_the_run_cleanly(battery: Battery) -> None:

@@ -32,12 +32,12 @@ from app.constants.browser import (
     BROWSER_GUIDANCE_RECENT_ACTIONS,
     BROWSER_RUN_BLOCKED_SUMMARY,
     JEV_CLOSING_ANSWER_ACTIONS,
-    JEV_CLOSING_ANSWER_ATTEMPTS,
     JEV_CLOSING_ANSWER_TIMEOUT_SECONDS,
     JEV_DONE_REASK_BUDGET,
     JEV_MIN_DONE_CONFIDENCE,
     JEV_PLAN_MAX_STEPS,
     JEV_SUMMARY_MAX_CHARS,
+    JEV_TEXT_ATTEMPTS,
     JEV_TEXT_HELPER_RECENT_ACTIONS,
     JEV_TEXT_TIMEOUT_SECONDS,
     JEV_TEXT_VALUE_MAX_CHARS,
@@ -591,20 +591,16 @@ class JevChatModel:
 
     async def _closing_answer(self, observation: JevObservation, goal: str) -> str | None:
         """Write the final message against the whole task, or None when it could not be written."""
-        answer = None
-        for _ in range(JEV_CLOSING_ANSWER_ATTEMPTS):
-            answer = await self._structured(
-                _ClosingAnswer,
-                DONE_SUMMARY,
-                self._effective_goal([], whole_task=True) if self._task else goal,
-                observation,
-                None,
-                seen_text=self._seen_text.all_text,
-                whole_history=True,
-                timeout=JEV_CLOSING_ANSWER_TIMEOUT_SECONDS,
-            )
-            if answer is not None:
-                break
+        answer = await self._structured(
+            _ClosingAnswer,
+            DONE_SUMMARY,
+            self._effective_goal([], whole_task=True) if self._task else goal,
+            observation,
+            None,
+            seen_text=self._seen_text.all_text,
+            whole_history=True,
+            timeout=JEV_CLOSING_ANSWER_TIMEOUT_SECONDS,
+        )
         summary = answer.text.strip() if answer else None
         if summary and len(summary) > JEV_SUMMARY_MAX_CHARS:
             log.warning(
@@ -628,9 +624,10 @@ class JevChatModel:
                 # forward on this page" would describe a blank tab instead.
                 text = f"I couldn't open {unopened}: the page never loaded."
                 return {"done": {"text": text, "success": False}}, text
-            if self._findings:
-                # Parts already done produced findings; a blocked run reports them
-                # and says what it could not finish, rather than nothing at all.
+            if self._seen_text.pages:
+                # A blocked run that read pages reports what they held and what it
+                # could not finish; "no way forward" once threw away a front page
+                # and an article already read.
                 summary = await self._closing_answer(observation, goal)
                 if summary:
                     return {"done": {"text": summary, "success": False}}, summary
@@ -791,18 +788,25 @@ class JevChatModel:
             context["seen_on_pages_read"] = seen_text
         t0 = perf_counter()
         label = f"browser_{output.__name__.strip('_').lower()}"
-        try:
-            parsed = await self._structured_call(
-                output,
-                [SystemMessage(content=instructions), HumanMessage(content=json.dumps(context))],
-                label=label,
-                timeout=timeout,
-            )
-        except Exception as exc:
-            log.warning(
-                f"{LogTag.BROWSER} Jev text helper failed ({type(exc).__name__}: {str(exc)[:200]})",
-                error_type=type(exc).__name__,
-            )
+        prompt = [SystemMessage(content=instructions), HumanMessage(content=json.dumps(context))]
+        parsed: T | None = None
+        for attempt in range(1, JEV_TEXT_ATTEMPTS + 1):
+            try:
+                parsed = await self._structured_call(output, prompt, label=label, timeout=timeout)
+                break
+            except TimeoutError:
+                log.warning(
+                    f"{LogTag.BROWSER} Jev text helper timed out after {timeout:.0f}s "
+                    f"(attempt {attempt} of {JEV_TEXT_ATTEMPTS})",
+                    error_type="TimeoutError",
+                )
+            except Exception as exc:
+                log.warning(
+                    f"{LogTag.BROWSER} Jev text helper failed ({type(exc).__name__}: {str(exc)[:200]})",
+                    error_type=type(exc).__name__,
+                )
+                return None
+        if parsed is None:
             return None
         answer = next(iter(parsed.model_dump().values()), None)
         log.info(

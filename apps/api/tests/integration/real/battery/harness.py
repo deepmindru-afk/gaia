@@ -212,6 +212,7 @@ class Battery:
             start_new_session=True,
         )
         proc.transcript_path = out  # type: ignore[attr-defined]
+        proc.channel = self.last_channel  # type: ignore[attr-defined]
         self.senders.append(proc)
         return proc
 
@@ -234,12 +235,24 @@ class Battery:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
     def transcript_of(self, proc: subprocess.Popen[str]) -> Transcript:
+        """Everything the sender saw that was meant for its own chat.
+
+        The sim consumes the whole Telegram outbound queue, so a delivery for
+        another scenario's chat (an earlier run's late outcome) lands in this
+        transcript too; only this chat's and the user's DM count.
+        """
         path: Path = proc.transcript_path  # type: ignore[attr-defined]
+        channel: str = proc.channel  # type: ignore[attr-defined]
         events = []
         if path.exists():
             for line in path.read_text().splitlines():
-                if line.strip():
-                    events.append(json.loads(line))
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                destination = str(event.get("destinationId") or "")
+                if destination.startswith("battery-") and destination != channel:
+                    continue
+                events.append(event)
         return Transcript(events)
 
     # -- the account's quota --------------------------------------------------

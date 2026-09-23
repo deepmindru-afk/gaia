@@ -33,8 +33,13 @@ import {
 import type { PlatformEmulation } from "./emulation";
 import type { TranscriptRecorder } from "./transcript";
 
-/** Default HTTP health-server port — high, to avoid the 3200-3203 real bots. */
-const HARNESS_SERVER_PORT = 3210;
+/**
+ * Port 0: the OS picks a free one. Nothing calls the harness's health server,
+ * and a fixed port made a second concurrent sender (a "stop" sent mid-run)
+ * die on EADDRINUSE while its outbound consumer kept taking the first run's
+ * replies.
+ */
+const HARNESS_SERVER_PORT = 0;
 
 /** Options accepted by {@link HarnessAdapter.simulateMessage}. */
 export interface SimulateOptions {

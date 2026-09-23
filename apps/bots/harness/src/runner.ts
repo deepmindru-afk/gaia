@@ -139,7 +139,14 @@ async function bootAdapter(
   // points the real GaiaClient at the same API the dev endpoints used.
   process.env.GAIA_API_URL = apiUrl;
   const adapter = new HarnessAdapter(resolveEmulation(platform), transcript);
-  await adapter.boot([]);
+  try {
+    await adapter.boot([]);
+  } catch (error: unknown) {
+    // Boot can fail after the outbound consumer is up; left running it keeps
+    // the process alive and silently takes another run's replies.
+    await adapter.shutdown("harness").catch(() => undefined);
+    throw error;
+  }
   return adapter;
 }
 

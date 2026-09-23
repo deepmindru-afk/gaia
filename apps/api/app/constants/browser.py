@@ -322,13 +322,16 @@ JEV_MAX_ELEMENTS = 100
 
 JEV_GATEWAY_TIMEOUT_SECONDS = 8.0
 # One writer call (a typed value, a URL, a part judgement, the closing answer).
-JEV_TEXT_TIMEOUT_SECONDS = 60.0
+# One writer call's budget, and how many times a timed-out call is retried.
+# Measured 2026-09-23: p50 3 s, p90 17 s, max 59 s, and one call past 60 s;
+# the slow tail is one upstream provider, so a second attempt is usually fast.
+JEV_TEXT_TIMEOUT_SECONDS = 30.0
+JEV_TEXT_ATTEMPTS = 2
 # The closing answer carries every page read and every action of the run, and
 # the run's whole value rides on it: a 13-minute research task once ended as
 # "could not write the closing answer" when this call timed out at 60 s on a
 # slow link. It gets a longer budget and a second attempt.
 JEV_CLOSING_ANSWER_TIMEOUT_SECONDS = 150.0
-JEV_CLOSING_ANSWER_ATTEMPTS = 2
 JEV_GATEWAY_MAX_ATTEMPTS = 3
 
 # Observation budget: visible page text sent as Jev state, and how much of the
