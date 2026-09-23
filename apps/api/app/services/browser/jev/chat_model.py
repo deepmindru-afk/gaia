@@ -306,6 +306,8 @@ class JevChatModel:
         #: What each finished part produced, in the writer's words: the list a
         #: later part works through, the fact the closing answer reports.
         self._findings: list[str] = []
+        #: What the last judgement of the current part found no evidence for.
+        self._missing: list[str] = []
         #: Parts whose own site the run has opened; a part opens its site once.
         self._opened_parts: set[int] = set()
         self._history: list[JevHistoryEntry] = []
@@ -1127,6 +1129,15 @@ class JevChatModel:
         unverified = [
             item.source for item in evidence if not self._holds(item, page_key(start_page))
         ]
+        if verdict is not None and part == self._plan_index:
+            held = {
+                " ".join(item.requirement.casefold().split())
+                for item in evidence
+                if item.source not in unverified
+            }
+            self._missing = [
+                r for r in verdict.requirements if " ".join(r.casefold().split()) not in held
+            ]
         uncovered = verdict.uncovered() if verdict else []
         done = (
             bool(verdict and verdict.done and verdict.requirements and evidence and not unverified)
@@ -1189,6 +1200,7 @@ class JevChatModel:
         _discard(self._judging)
         self._judging = None
         self._plan_index += 1
+        self._missing = []
         self._remember(f"DONE part {self._plan_index}: {done.goal[:80]}", "done_part", None)
         log.info(
             f"{LogTag.BROWSER} Jev plan advanced (part {self._plan_index + 1}/{len(self._plan)}: "
@@ -1285,6 +1297,13 @@ class JevChatModel:
         if self._findings:
             lines.append(
                 "FOUND SO FAR, what the parts done produced: " + " | ".join(self._findings)
+            )
+        if self._missing:
+            # The judge knew each article was read only for its title; Jev, not
+            # told, went back to the list for 37 steps.
+            lines.append(
+                "STILL NEEDED FOR THIS PART, what the last check found nothing for: "
+                + " / ".join(self._missing)
             )
         if i < n - 1:
             lines.append(

@@ -2115,3 +2115,39 @@ async def test_a_part_is_not_done_while_a_requirement_it_named_has_no_evidence()
     )
 
     assert "done" not in action, action
+
+
+@pytest.mark.regression
+async def test_what_the_part_judge_found_missing_is_what_jev_is_told_to_do_next() -> None:
+    """Regression: a research part stayed "not done" for 37 steps.
+
+    The judge knew each article had been read only for its title, and said so
+    in every verdict; Jev never heard it and kept going back to the list.
+    """
+    helper = FakeTextModel()
+
+    async def writer(schema, prompt, *, label, timeout=None, reasoning=None):
+        if prompt[0].content.startswith(PLAN_STEPS):
+            return schema.model_validate({"steps": _TOP_STORY_PLAN})
+        if prompt[0].content.startswith(PART_DONE):
+            return schema.model_validate(
+                {
+                    "requirements": ["rank noted", "article body read past its headline"],
+                    "evidence": [{"requirement": "rank noted", "kind": "fact", "source": _HN}],
+                    "done": False,
+                    "findings": "",
+                }
+            )
+        return await helper.structured(schema, prompt, label=label, timeout=timeout)
+
+    _, gateway = await _run_to_done(
+        make_state({1: FakeNode("A", text="TTS")}, url=_HN),
+        make_state({1: FakeNode("A", text="TTS")}, url=_HN),
+        [("WAIT", None), ("WAIT", None)],
+        writer,
+        _HN_TASK,
+    )
+
+    goal = str(gateway.requests[-1].questions["operation"].instructions["goal"])
+    assert "article body read past its headline" in goal
+    assert "rank noted" not in goal
