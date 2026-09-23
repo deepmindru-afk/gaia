@@ -456,6 +456,8 @@ BROWSER_JOB_RELAY_BLOCK_MS = 1000
 
 # The ARQ function name, shared by the enqueue site and the worker registration.
 BROWSER_JOB_TASK = "run_browser_job"
+# Browser jobs have their own ARQ queue and worker (app.workers.browser_worker).
+BROWSER_JOB_QUEUE = "arq:queue:browser"
 
 
 # ---------------------------------------------------------------------------
@@ -479,8 +481,6 @@ class BrowserRunFailure(StrEnum):
     RUN_CRASHED = "run_crashed"
 
 
-# Browser jobs have their own ARQ queue and worker (app.workers.browser_worker).
-BROWSER_JOB_QUEUE = "arq:queue:browser"
 # Why a run moved to the fallback engine when its engine did not fail: a page it
 # could not pass. The engine-failure reasons are EngineFailure's values.
 BROWSER_FALLBACK_PAGE_BLOCKED = "page_blocked"
