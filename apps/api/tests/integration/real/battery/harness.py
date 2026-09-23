@@ -41,7 +41,8 @@ API_URL = os.environ.get("GAIA_BATTERY_API_URL", "http://localhost:8480")
 HOST_URL = os.environ.get("BROWSER_HOST_URL", "http://localhost:8930")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
-BATTERY_USER = os.environ.get("GAIA_BATTERY_USER", "aryan@heygaia.io")
+# Never a person's account: seeding links the harness's synthetic platform id, replacing a real one.
+BATTERY_USER = os.environ.get("GAIA_BATTERY_USER", "dev@gaia.local")
 RABBITMQ_MANAGEMENT_URL = os.environ.get("RABBITMQ_MANAGEMENT_URL", "http://localhost:15672")
 RABBITMQ_MANAGEMENT_AUTH = ("guest", "guest")
 #: The queue the emulated Telegram bot consumes; any other consumer on it takes
