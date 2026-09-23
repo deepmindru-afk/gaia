@@ -36,6 +36,23 @@ export const BOT_FAILURE_REASON = {
 export type BotFailureReason =
   (typeof BOT_FAILURE_REASON)[keyof typeof BOT_FAILURE_REASON];
 
+/**
+ * The failures a retry can get past: the platform or network, not the request.
+ * Everything else (a chat that is gone, a blocked bot, a rejected request) fails
+ * the same way on every attempt.
+ */
+const TRANSIENT_FAILURE_REASONS: ReadonlySet<BotFailureReason> = new Set([
+  BOT_FAILURE_REASON.SERVER_ERROR,
+  BOT_FAILURE_REASON.TIMEOUT,
+  BOT_FAILURE_REASON.RATE_LIMITED,
+  BOT_FAILURE_REASON.BACKEND_UNREACHABLE,
+]);
+
+/** Whether a failure with this reason may succeed if the same request is sent again. */
+export function isTransientBotFailure(reason: BotFailureReason): boolean {
+  return TRANSIENT_FAILURE_REASONS.has(reason);
+}
+
 const NOT_LINKED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODE.NOT_AUTHENTICATED,
   API_ERROR_CODE.BOT_ACCOUNT_NOT_LINKED,

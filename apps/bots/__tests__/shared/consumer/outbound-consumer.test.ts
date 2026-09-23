@@ -163,25 +163,97 @@ describe("OutboundConsumer message handling", () => {
     expect(channel.ack).toHaveBeenCalledWith(msg);
   });
 
-  it("requeues once when delivery fails on the first attempt", async () => {
-    const deliver = vi.fn().mockRejectedValue(new Error("send failed"));
-    const handle = await startAndCaptureHandler("whatsapp", deliver);
-    const msg = msgFor(
+  /** A platform send error the way the bots' clients raise it: a status and a reason. */
+  function platformError(status: number, description: string) {
+    return Object.assign(new Error(`${status}: ${description}`), {
+      name: "GrammyError",
+      error_code: status,
+      description,
+    });
+  }
+
+  function firstAttempt() {
+    return msgFor(
       {
-        id: "1",
-        platform: "whatsapp",
-        destination_id: "1555",
+        id: "env-1",
+        platform: "telegram",
+        destination_id: "5550001",
         text: "hi",
         enqueued_at: "t",
       },
       false,
     );
+  }
 
-    await deliverMessage(handle, msg);
+  it.each([
+    ["a server error", platformError(502, "Bad Gateway"), "server_error"],
+    [
+      "a rate limit",
+      platformError(429, "Too Many Requests: retry after 5"),
+      "rate_limited",
+    ],
+    ["a timeout", new Error("Request timed out"), "timeout"],
+  ])(
+    "requeues once on %s, which a retry can get past",
+    async (_label, error, reason) => {
+      const handle = await startAndCaptureHandler(
+        "telegram",
+        vi.fn().mockRejectedValue(error),
+      );
+      const msg = firstAttempt();
 
-    expect(channel.nack).toHaveBeenCalledWith(msg, false, true); // requeue
-    expect(channel.ack).not.toHaveBeenCalled();
-  });
+      const [event] = await captureBotEvents("outbound_message", () =>
+        deliverMessage(handle, msg),
+      );
+
+      expect(channel.nack).toHaveBeenCalledWith(msg, false, true); // requeue
+      expect(channel.ack).not.toHaveBeenCalled();
+      expect(event).toMatchObject({
+        outcome: "failed",
+        reason,
+        requeued: true,
+      });
+    },
+  );
+
+  it.each([
+    [
+      "a chat that does not exist",
+      platformError(400, "Bad Request: chat not found"),
+      "destination_not_found",
+    ],
+    [
+      "a user who blocked the bot",
+      platformError(403, "Forbidden: bot was blocked by the user"),
+      "destination_blocked",
+    ],
+    ["a forbidden send", platformError(403, "Forbidden"), "unauthorized"],
+    [
+      "a request the platform rejects",
+      platformError(400, "Bad Request: message text is empty"),
+      "client_error",
+    ],
+  ])(
+    "dead-letters %s on the first attempt, since a retry fails the same way",
+    async (_label, error, reason) => {
+      const handle = await startAndCaptureHandler(
+        "telegram",
+        vi.fn().mockRejectedValue(error),
+      );
+      const msg = firstAttempt();
+
+      const [event] = await captureBotEvents("outbound_message", () =>
+        deliverMessage(handle, msg),
+      );
+
+      expect(channel.nack).toHaveBeenCalledWith(msg, false, false); // DLQ
+      expect(event).toMatchObject({
+        outcome: "failed",
+        reason,
+        requeued: false,
+      });
+    },
+  );
 
   it("a send the platform rejects is a failed outbound event naming the reason and the hashed chat", async () => {
     // grammY's GrammyError: Telegram's status in error_code, its reason in description.
@@ -229,7 +301,7 @@ describe("OutboundConsumer message handling", () => {
   });
 
   it("dead-letters when delivery fails again after redelivery", async () => {
-    const deliver = vi.fn().mockRejectedValue(new Error("send failed"));
+    const deliver = vi.fn().mockRejectedValue(new Error("Request timed out"));
     const handle = await startAndCaptureHandler("whatsapp", deliver);
     const msg = msgFor(
       {

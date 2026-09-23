@@ -12,7 +12,11 @@
 import { type Channel, type ConsumeMessage, connect } from "amqplib";
 import type { PlatformName } from "../types";
 import { segmentIntoBubbles } from "../utils/bubbles";
-import { BOT_FAILURE_REASON, recordBotFailure } from "../utils/failure-reasons";
+import {
+  BOT_FAILURE_REASON,
+  isTransientBotFailure,
+  recordBotFailure,
+} from "../utils/failure-reasons";
 import { renderForPlatform } from "../utils/formatters";
 import {
   type BotLogger,
@@ -389,15 +393,19 @@ export class OutboundConsumer {
       this.settle(channel, () => channel.ack(msg));
     } catch (err) {
       wideLog.set({ delivered_count: progress.delivered });
-      recordBotFailure("outbound_delivery_failed", err, {
+      const reason = recordBotFailure("outbound_delivery_failed", err, {
         envelope_id: id,
         delivered: progress.delivered,
         redelivered: msg.fields.redelivered,
       });
-      // Requeue for one retry ONLY if nothing was sent yet: requeue re-delivers the WHOLE
-      // envelope, so once any chunk is out, retrying would re-send delivered chunks. After a
-      // partial send (or a second attempt) dead-letter instead, to avoid duplicating the user.
-      const requeue = progress.delivered === 0 && !msg.fields.redelivered;
+      // One retry, only for a failure a retry can get past and only if nothing went out:
+      // requeue re-delivers the WHOLE envelope, so after a partial send it would duplicate
+      // the user. A permanent failure (chat gone, bot blocked) dead-letters at once.
+      const requeue =
+        isTransientBotFailure(reason) &&
+        progress.delivered === 0 &&
+        !msg.fields.redelivered;
+      wideLog.set({ requeued: requeue });
       this.settle(channel, () => channel.nack(msg, false, requeue));
     }
   }
