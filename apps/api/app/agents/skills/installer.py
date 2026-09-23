@@ -163,14 +163,10 @@ async def install_from_github(
             owner, repo, base_path, client=client
         )
 
-        # Find SKILL.md
-        skill_md_entry: GitHubContentEntry | None = None
-        for entry in contents:
-            if entry["name"] == "SKILL.md":
-                skill_md_entry = entry
-                break
-
-        if not skill_md_entry:
+        skill_md_entry: GitHubContentEntry | None = next(
+            (entry for entry in contents if entry["name"] == "SKILL.md"), None
+        )
+        if skill_md_entry is None:
             raise ValueError(
                 f"No SKILL.md found in {owner}/{repo}/{base_path}. "
                 "A valid skill must contain a SKILL.md file."
