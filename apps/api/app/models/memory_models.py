@@ -95,6 +95,10 @@ class MemorySearchResult(ResponseModel):
         default_factory=list, description="List of matching memories"
     )
     total_count: int = Field(default=0, description="Total number of matching memories")
+    has_confident_match: bool = Field(
+        default=False,
+        description="Whether any memory matched the query confidently rather than as a weak fallback",
+    )
 
 
 class MemoryListResponse(ResponseModel):

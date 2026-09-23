@@ -32,6 +32,9 @@ class SectionContext:
     writing_style: dict[str, Any] | None = None
     #: What this turn is about — the retrieval query for every volatile section.
     query: str | None = None
+    #: The user's own words for this turn, when comms already recalled memories
+    #: on them. Memory recall reuses that result before querying with query.
+    request_query: str | None = None
     subagent_id: str | None = None
     integration_id: str | None = None
     vfs_session_id: str | None = None
@@ -48,6 +51,7 @@ class SectionContext:
         configurable: AgentConfigurable,
         *,
         query: str | None = None,
+        request_query: str | None = None,
         user_id: str | None = None,
         subagent_id: str | None = None,
         integration_id: str | None = None,
@@ -68,6 +72,7 @@ class SectionContext:
             user_preferences=configurable.get("user_preferences"),
             writing_style=configurable.get("writing_style"),
             query=query,
+            request_query=request_query,
             subagent_id=subagent_id,
             integration_id=integration_id,
             vfs_session_id=configurable.get("vfs_session_id"),

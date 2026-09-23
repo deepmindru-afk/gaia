@@ -1096,6 +1096,21 @@ class TestRecall:
         assert [memory.content for memory in result.memories] == ["the answer"]
         assert result.total_count == 1
 
+    @pytest.mark.parametrize(("logit", "confident"), [(5.0, True), (-9.0, False)])
+    async def test_it_reports_whether_anything_matched_confidently(
+        self, logit: float, confident: bool
+    ) -> None:
+        row = make_row("a fact")
+        harness = _RecallHarness()
+        harness.rerank_scores = {"a fact": logit}
+        result = await _run_recall(
+            harness,
+            harness.patches(ann=[(str(row.id), 0.1)], fts=[], rows=[row]),
+            include_graph_expansion=False,
+        )
+        assert result.memories
+        assert result.has_confident_match is confident
+
     async def test_empty_index_returns_an_empty_result(self) -> None:
         harness = _RecallHarness()
         result = await _run_recall(

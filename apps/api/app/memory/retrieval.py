@@ -177,7 +177,11 @@ async def recall(
             timings={key: float(value) for key, value in timings.items()},
         ),
     )
-    return MemorySearchResult(memories=entries, total_count=len(entries))
+    return MemorySearchResult(
+        memories=entries,
+        total_count=len(entries),
+        has_confident_match=any(item.confident for item in scored),
+    )
 
 
 async def recall_episodes(

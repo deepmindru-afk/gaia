@@ -109,6 +109,20 @@ class TestMemoryRecallBlock:
 
         recall.assert_awaited_once_with("user-7", "what did I promise?", limit=5)
 
+    async def test_a_failed_shared_recall_falls_back_to_the_executors_own_query(self) -> None:
+        found = MemorySearchResult(
+            memories=[memory("User's manager is Priya")], total_count=1, has_confident_match=True
+        )
+        recall = AsyncMock(side_effect=[RuntimeError("cache down"), found])
+        executor = SectionContext(
+            tier=AgentTier.EXECUTOR, user_id="user-7", query="the brief", request_query="yes"
+        )
+        with patch("app.memory.engine.memory_engine.recall", recall):
+            block = await build_memory_recall_block(executor)
+
+        assert "User's manager is Priya" in block
+        assert recall.await_args_list[-1].args == ("user-7", "the brief")
+
     async def test_no_memories_yields_no_block(self) -> None:
         with patch(
             "app.memory.engine.memory_engine.recall",
