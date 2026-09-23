@@ -674,7 +674,6 @@ async def _executor_thread_remembering_the_last_login(brief: str) -> list[Any]:
         )
 
 
-@pytest.mark.regression
 async def test_a_browser_request_the_executor_remembers_doing_still_runs_the_browser() -> None:
     """Regression: with a memory of the same login, the executor answered from it and never called browser_task."""
     from app.agents.context.slots import MEMORY_RECALL_MARKER

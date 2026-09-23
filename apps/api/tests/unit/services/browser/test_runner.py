@@ -2117,7 +2117,6 @@ def _host_holding(state: dict[str, Any], reads: list[str]):
     return respond
 
 
-@pytest.mark.regression
 async def test_a_login_made_on_the_primary_engine_moves_with_the_run_to_the_fallback(
     monkeypatch,
 ) -> None:
