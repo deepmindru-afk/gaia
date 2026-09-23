@@ -4,6 +4,31 @@
  */
 
 export interface paths {
+    "/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live View Short Link
+         * @description Bare-code form of the live view (``/{code}`` instead of ``/live/{code}``).
+         *
+         *     Registered last so it never shadows the routes above. Exists because the
+         *     bot link uses the short form whenever a live-view base URL is configured,
+         *     and outside the prod vhost rewrite there is nothing translating it: opened
+         *     directly against this API it must resolve the same way.
+         */
+        get: operations["browser_live_view_short_link"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/{file_id}": {
         parameters: {
             query?: never;
@@ -10017,6 +10042,12 @@ export interface components {
          */
         MemorySearchResult: {
             /**
+             * Has Confident Match
+             * @description Whether any memory matched the query confidently rather than as a weak fallback
+             * @default false
+             */
+            has_confident_match: boolean;
+            /**
              * Memories
              * @description List of matching memories
              */
@@ -15499,6 +15530,57 @@ export type WritingStyleExampleBlocks = components['schemas']['WritingStyleExamp
 export type WritingStyleRegenerateRequest = components['schemas']['WritingStyleRegenerateRequest'];
 export type $defs = Record<string, never>;
 export interface operations {
+    browser_live_view_short_link: {
+        parameters: {
+            query?: {
+                t?: string | null;
+            };
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     file_update_file_endpoint: {
         parameters: {
             query?: never;

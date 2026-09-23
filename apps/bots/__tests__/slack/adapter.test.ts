@@ -44,6 +44,12 @@ vi.mock("@slack/bolt", () => ({
 
 vi.mock("@gaia/shared/bots", async () => {
   const { makeGaiaSharedMock } = await import("../shared/mocks/gaiaSharedBase");
+  // The real boundary and failure recorder, so the runtime-error test reads
+  // the bot_event the adapter really prints.
+  const actual =
+    await vi.importActual<typeof import("@gaia/shared/bots")>(
+      "@gaia/shared/bots",
+    );
   const base = makeGaiaSharedMock("slack", {
     streamingDefaults: {
       slack: { editIntervalMs: 1500, streaming: true, platform: "slack" },
@@ -56,6 +62,8 @@ vi.mock("@gaia/shared/bots", async () => {
   const SUBCOMMAND_COMMANDS = new Set(["todo", "workflow"]);
   return {
     ...base,
+    withWideEvent: actual.withWideEvent,
+    recordBotFailure: actual.recordBotFailure,
     extractSubcommandArgs: vi.fn(
       (commandName: string, rawText: string | undefined) => {
         if (!SUBCOMMAND_COMMANDS.has(commandName)) return {};
@@ -72,6 +80,7 @@ vi.mock("@gaia/shared/bots", async () => {
 
 import { handleStreamingChat } from "@gaia/shared/bots";
 import { SlackAdapter } from "../../slack/src/adapter";
+import { captureBotEvents } from "../shared/helpers/capture-bot-event";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -920,5 +929,63 @@ describe("SlackAdapter - deliverOutbound channel routing", () => {
       channel: "D-dm",
       text: "hi",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// app.error — Bolt's last-resort handler
+// ---------------------------------------------------------------------------
+
+// The adapter resolves @slack/bolt from apps/bots/slack, which the mock above
+// does not reach, so initialize() builds a real Bolt App: a listener that
+// throws goes through Bolt's own dispatch into the adapter's error handler.
+// app_uninstalled skips Bolt's authorize step, so no Slack API call is made.
+describe("SlackAdapter - runtime errors", () => {
+  interface RealBoltApp {
+    event: (type: string, listener: () => Promise<void>) => void;
+    processEvent: (event: {
+      body: Record<string, unknown>;
+      ack: () => Promise<void>;
+    }) => Promise<void>;
+  }
+
+  async function bootRealApp(): Promise<RealBoltApp> {
+    vi.stubEnv("SLACK_BOT_TOKEN", "xoxb-test");
+    vi.stubEnv("SLACK_SIGNING_SECRET", "signing-secret");
+    vi.stubEnv("SLACK_APP_TOKEN", "xapp-test");
+    const adapter = new SlackAdapter();
+    await (
+      adapter as unknown as { initialize: () => Promise<void> }
+    ).initialize();
+    vi.unstubAllEnvs();
+    return (adapter as unknown as { app: RealBoltApp }).app;
+  }
+
+  it("turns a listener crash into a failed bot_runtime_error event with its reason and hashed user", async () => {
+    const app = await bootRealApp();
+    app.event("app_uninstalled", async () => {
+      throw new Error("An API error occurred: channel_not_found");
+    });
+
+    const events = await captureBotEvents("bot_runtime_error", () =>
+      app.processEvent({
+        body: {
+          type: "event_callback",
+          team_id: "T1",
+          api_app_id: "A1",
+          event: { type: "app_uninstalled", user: "U123" },
+        },
+        ack: async () => undefined,
+      }),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      platform: "slack",
+      outcome: "failed",
+      reason: "destination_not_found",
+      user_hash: "h_U123",
+    });
+    expect(JSON.stringify(events[0])).not.toContain('"U123"');
   });
 });

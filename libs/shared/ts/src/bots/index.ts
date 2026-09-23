@@ -161,6 +161,7 @@ export {
   readBodyBytesBounded,
   readResponseBytesCapped,
   readStreamBytesCapped,
+  recordBotFailure,
   renderForPlatform,
   STREAMING_DEFAULTS,
   sanitizeErrorForLog,
