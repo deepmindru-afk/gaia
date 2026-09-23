@@ -107,15 +107,14 @@ class SubagentInitialState(TypedDict, total=False):
 
 def _block_reasoning(block: object) -> str | None:
     """Return a content block's reasoning text, or None when it is not a reasoning block."""
-    if isinstance(block, dict):
-        # only "type" is read before the block is known to be a reasoning block
-        reasoning_block: ReasoningContentBlock = cast(ReasoningContentBlock, block)
-        if reasoning_block.get("type") != "reasoning":
-            return None
-        return reasoning_block.get("reasoning")
-    if getattr(block, "type", None) != "reasoning":
+    # content_blocks yields ContentBlock dicts (a v1 list may also hold bare strings)
+    if not isinstance(block, dict):
         return None
-    return getattr(block, "reasoning", "")
+    # only "type" is read before the block is known to be a reasoning block
+    reasoning_block: ReasoningContentBlock = cast(ReasoningContentBlock, block)
+    if reasoning_block.get("type") != "reasoning":
+        return None
+    return reasoning_block.get("reasoning")
 
 
 def _extract_reasoning_delta(chunk: AIMessageChunk) -> str:
@@ -127,14 +126,12 @@ def _extract_reasoning_delta(chunk: AIMessageChunk) -> str:
     the caller emits nothing for them.
     """
     parts: list[str] = []
-    for block in getattr(chunk, "content_blocks", None) or []:
+    for block in chunk.content_blocks:
         text = _block_reasoning(block)
         if text:
             parts.append(text)
     if not parts:
-        kwargs: _ReasoningKwargs = cast(
-            _ReasoningKwargs, getattr(chunk, "additional_kwargs", None) or {}
-        )
+        kwargs: _ReasoningKwargs = cast(_ReasoningKwargs, chunk.additional_kwargs)
         fallback = kwargs.get("reasoning_content")
         if fallback:
             parts.append(fallback if isinstance(fallback, str) else str(fallback))
@@ -498,7 +495,7 @@ async def execute_subagent_stream(
 
     # The executor addresses a cancel to this subagent by its own thread_id.
     run_configurable: AgentConfigurable = agent_configurable(ctx.config)
-    subagent_thread_id = str(run_configurable.get("thread_id", ""))
+    subagent_thread_id = run_configurable.get("thread_id")
     cancel = SubagentCancel(subagent_thread_id) if subagent_thread_id else None
 
     # One span per segment; a pause ends its segment here, so the HIL wait that
@@ -554,11 +551,13 @@ async def execute_subagent_stream(
                 observe_subagent_run(
                     time.perf_counter() - segment_start, subagent_id=label, status="cancelled"
                 )
+                # What the run said so far, not the finished-run text: that one reads
+                # "Task completed" or tells the executor to re-issue what it just stopped.
                 return replace(
                     outcome,
                     text=wrap_agent_payload(
                         AgentTag.SUBAGENT_CANCELLED,
-                        outcome.text or "Stopped by the executor before finishing.",
+                        run.complete_message or "Stopped by the executor before finishing.",
                     ),
                 )
 
