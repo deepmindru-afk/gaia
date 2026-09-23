@@ -317,7 +317,8 @@ async def _run_background(
         resumed=resume is not None,
     ):
         outcome: SubagentOutcome | None = None
-        failure = ""
+        # Equivalent under mutation: read only after the except below has reassigned it.
+        failure = ""  # pragma: no mutate
         try:
             outcome = await _execute_on_own_stream(
                 delegation, stream_id, resume=resume, parent_stream_id=parent_stream_id
@@ -537,7 +538,7 @@ async def _approval_summaries(
     summaries: list[str] = []
     for approval_id in approval_ids:
         record = await get_approval(approval_id)
-        summary = record.summary if record is not None else interrupt.get("summary", "")
+        summary = record.summary if record is not None else interrupt.get("summary")
         summaries.append(f"{summary or 'an action'} (approval {approval_id})")
     return summaries
 
