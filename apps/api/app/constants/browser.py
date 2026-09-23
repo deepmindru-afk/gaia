@@ -473,3 +473,12 @@ class HostAdmissionRefusal(StrEnum):
 
     SESSION_CEILING = "session_ceiling"
     MEMORY = "memory"
+
+
+# Browser-Use's own env switches (browser_use/config.py), forced off in every GAIA
+# process: the telemetry sends usage to its PostHog, the version check costs a
+# PyPI request (up to 3 s) on every run. Cloud sync follows telemetry's value.
+BROWSER_USE_PHONE_HOME_OFF: dict[str, str] = {
+    "ANONYMIZED_TELEMETRY": "false",
+    "BROWSER_USE_VERSION_CHECK": "false",
+}
