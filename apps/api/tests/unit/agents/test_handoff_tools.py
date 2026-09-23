@@ -30,6 +30,7 @@ from app.models.integration_models import Integration
 from app.models.mcp_config import MCPConfig, SubAgentConfig
 from app.models.subagent_models import Subagent
 from app.utils.agent_utils import IntegrationMetadata
+from tests.helpers import captured_wide_event
 
 HANDOFF = "app.agents.core.subagents.handoff_tools"
 DELEGATION = "app.agents.core.subagents.delegation"
@@ -418,6 +419,42 @@ class TestResolveSubagent:
         assert graph is None
         assert "Unknown integration" in error
 
+    async def test_a_known_integration_that_is_not_a_target_is_pointed_at_activation(self):
+        with (
+            patch(f"{HANDOFF}._get_subagent_by_id", new_callable=AsyncMock, return_value=None),
+            patch(f"{HANDOFF}.get_subagent_by_id", return_value=SimpleNamespace(id="gmail")),
+        ):
+            _, _, error, _ = await _resolve_subagent("subagent:gmail", "user1")
+
+        assert error == (
+            "'subagent:gmail' is not a handoff target. Use "
+            "activate_integration(integration_id='gmail') to load it "
+            "in-context, then act on it yourself."
+        )
+
+    @pytest.mark.parametrize(
+        ("known_ids", "examples"),
+        [
+            (["a", "b", "c", "d", "e", "f"], "a, b, c, d, e..."),
+            (["a", "b"], "a, b"),
+        ],
+        ids=["more_than_five_are_elided", "a_short_list_is_complete"],
+    )
+    async def test_an_unknown_id_is_answered_with_up_to_five_examples(
+        self, known_ids: list[str], examples: str
+    ):
+        with (
+            patch(f"{HANDOFF}._get_subagent_by_id", new_callable=AsyncMock, return_value=None),
+            patch(f"{HANDOFF}.get_subagent_by_id", return_value=None),
+            patch(
+                f"{HANDOFF}.all_subagents",
+                return_value=[SimpleNamespace(id=known) for known in known_ids],
+            ),
+        ):
+            _, _, error, _ = await _resolve_subagent("nope", "user1")
+
+        assert error == f"Unknown integration 'nope'. Examples: {examples}"
+
     async def test_resolves_custom_mcp(self):
         custom_dict = {"id": "abc", "name": "Custom"}
         mock_graph = MagicMock()
@@ -556,8 +593,19 @@ class TestResolveSubagent:
         ):
             graph, name, error, is_custom = await _resolve_subagent("gcal", "user1")
         assert graph is None
-        assert "activate_integration" in error
-        assert "not a handoff target" in error
+        assert error == (
+            "'gcal' is not a handoff target. Load it in-context with "
+            "activate_integration(integration_id='gcal'), then act on "
+            "it yourself with its tools."
+        )
+
+    async def test_a_redirect_to_activation_is_recorded_on_the_wide_event(self):
+        subagent = _make_subagent("gcal", "gcal", "Google Calendar", managed_by="internal")
+        with patch(f"{HANDOFF}._get_subagent_by_id", new_callable=AsyncMock, return_value=subagent):
+            async with captured_wide_event() as event:
+                await _resolve_subagent("gcal", "user1")
+
+        assert event["handoff"] == {"integration": "gcal", "routed_to_activation": True}
 
     async def test_platform_composio_redirects_without_connection_check(self):
         subagent = _make_subagent(
@@ -866,6 +914,19 @@ class TestHandoffRunsOnTheSharedRunner:
 
         assert run.await_args.kwargs == {"background": True, "probe_parked": False}
 
+    async def test_the_delegation_is_keyed_by_the_calling_tool_call(self) -> None:
+        with _resolved_subagent("mcp_agent", "my-mcp") as run:
+            await handoff.coroutine(
+                subagent_id="my-mcp",
+                task="Fetch the rows.",
+                config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
+                tool_call_id="tc9",
+            )
+
+        delegation = run.await_args.args[0]
+        assert delegation.tool_call_id == "tc9"
+        assert delegation.subagent_id == subagent_row_id("tc9")
+
     async def test_background_false_waits_for_the_result(self) -> None:
         with _resolved_subagent("mcp_agent", "my-mcp") as run:
             await handoff.coroutine(
@@ -959,6 +1020,31 @@ class TestHandoffBuildsItsDelegation:
             return_value=(None, None, "not connected"),
         ):
             assert await build_handoff_delegation("ab12", "t", {}, "tc1") == "not connected"
+
+    async def test_an_unresolvable_subagent_with_no_reason_still_says_so(self) -> None:
+        with patch(
+            f"{HANDOFF}.prepare_subagent_execution",
+            new_callable=AsyncMock,
+            return_value=(None, None, None),
+        ):
+            reason = await build_handoff_delegation("ab12", "t", {}, "tc1")
+
+        assert reason == "Unknown error resolving subagent"
+
+    async def test_the_task_runs_on_the_parents_stream_under_its_tool_call(self) -> None:
+        parent = {"user_id": "u1", "stream_id": "parent-stream"}
+        with self._prepared(None) as prepare:
+            delegation = await build_handoff_delegation("ab12", "find the doc", parent, "tc1")
+
+        assert prepare.await_args.kwargs == {
+            "subagent_id": "ab12",
+            "task": "find the doc",
+            "configurable": parent,
+            "stream_id": "parent-stream",
+        }
+        assert not isinstance(delegation, str)
+        assert delegation.tool_call_id == "tc1"
+        assert delegation.display.integration == "ab12"
 
 
 @pytest.mark.unit

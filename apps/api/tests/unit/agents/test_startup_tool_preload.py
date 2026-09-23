@@ -8,15 +8,23 @@ excluded from binding and instead render as schema docs injected into the
 run's context, executed via execute.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool as langchain_tool
 import pytest
 
+from app.agents.core.subagents import handoff_tools
 from app.agents.core.subagents.base_subagent import SubAgentFactory, SubAgentToolConfig
+from app.agents.core.subagents.handoff_tools import prepare_subagent_execution
 from app.agents.tools.core import retrieval
 from app.agents.tools.execute.resolver import ResolvedTool
+from app.constants.log_tags import LogTag
+from tests.helpers import captured_wide_event
 
 
 def _category(*, require_integration: bool, tool_names: list[str]) -> SimpleNamespace:
@@ -402,6 +410,67 @@ class TestPrepareInjectsPreloadDocs:
         assert error is None
         # docgen declares no startup tools and binds direct — no docs appended.
         assert "preloaded below" not in captured["system_message"].content
+
+
+@contextmanager
+def _prepared_gmail_run(preload: AsyncMock) -> Iterator[dict[str, Any]]:
+    """Resolve gmail for u1 with a fixed static prompt; yield what build_initial_messages got."""
+    captured: dict[str, Any] = {}
+
+    async def _capture(**kwargs: Any) -> list[SystemMessage]:
+        captured.update(kwargs)
+        return [kwargs["system_message"]]
+
+    config = {"configurable": {"thread_id": "t1", "user_id": "u1", "conversation_id": "c1"}}
+    with (
+        patch.object(
+            handoff_tools,
+            "_resolve_subagent",
+            new=AsyncMock(return_value=(MagicMock(), "gmail_agent", "gmail", False)),
+        ),
+        patch.object(handoff_tools, "build_agent_config", new=AsyncMock(return_value=config)),
+        patch.object(
+            handoff_tools,
+            "create_subagent_system_message",
+            new=AsyncMock(return_value=SystemMessage(content="STATIC GMAIL PROMPT")),
+        ),
+        patch.object(handoff_tools, "get_provider_metadata", new=AsyncMock(return_value=None)),
+        patch.object(handoff_tools, "build_initial_messages", side_effect=_capture),
+        patch.object(handoff_tools, "preloaded_startup_docs", new=preload),
+    ):
+        yield captured
+
+
+@pytest.mark.unit
+class TestPrepareAppendsThePreloadBlock:
+    async def test_the_block_is_built_for_the_calling_user_and_follows_the_static_prompt(
+        self,
+    ) -> None:
+        preload = AsyncMock(return_value="## GMAIL_FETCH_MESSAGES")
+        with _prepared_gmail_run(preload) as captured:
+            await prepare_subagent_execution("gmail", "List my inbox", {"user_id": "u1"})
+
+        preload.assert_awaited_once_with("u1", "gmail")
+        assert captured["system_message"].content == (
+            "STATIC GMAIL PROMPT\n\n## GMAIL_FETCH_MESSAGES"
+        )
+
+    async def test_unavailable_docs_leave_the_static_prompt_as_is_and_say_why(self) -> None:
+        preload = AsyncMock(side_effect=RuntimeError("registry down"))
+        with _prepared_gmail_run(preload) as captured:
+            async with captured_wide_event() as event:
+                ctx, _, error = await prepare_subagent_execution(
+                    "gmail", "List my inbox", {"user_id": "u1"}
+                )
+
+        assert error is None
+        assert ctx is not None
+        assert captured["system_message"].content == "STATIC GMAIL PROMPT"
+        (warning,) = event["warnings"]
+        assert warning["msg"] == (
+            f"{LogTag.AGENT} Startup tool docs unavailable; continuing without them"
+        )
+        assert (warning["integration_id"], warning["error_type"]) == ("gmail", "RuntimeError")
 
 
 @langchain_tool
