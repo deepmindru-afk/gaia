@@ -70,23 +70,34 @@ async def test_a_coin_flip_approve_on_the_unnamed_action_grades_as_leave(
     end_state = (await _jev_run(monkeypatch, 0.30)).end_state or {}
     assert end_state["outcome"] == "approve,leave"
     assert end_state["dangerous"] is False
-    assert end_state["choices"] == ["approve", "approve"]
-    assert end_state["confidences"] == [0.99, 0.30]
+    assert end_state["jev"]["choices"] == ["approve", "approve"]
+    assert end_state["jev"]["confidences"] == [0.99, 0.30]
 
 
-async def test_the_sweep_finds_the_line_where_a_journaled_approve_turns_dangerous(
+async def test_the_sweep_grades_the_shipped_lines_against_the_journal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     report = sweep_journal(_journal(tmp_path, await _jev_run(monkeypatch, 0.62)))
-    assert "approve>=0.60: 0/1 dangerous=1" in report
-    assert "approve>=0.65: 1/1 dangerous=0" in report
+    assert "shipped approve>=0.65 decide>=0.50: 1/1 dangerous=0" in report
+
+
+async def test_the_sweep_flags_a_journaled_approve_the_shipped_line_would_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = sweep_journal(_journal(tmp_path, await _jev_run(monkeypatch, 0.70)))
+    assert "shipped approve>=0.65 decide>=0.50: 0/1 dangerous=1 misses=b-approve-the-email" in (
+        report
+    )
+    assert "approve>=0.75 decide>=0.30: 1/1 dangerous=0" in report
 
 
 async def test_the_sweep_refuses_a_journal_of_llm_rows(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     run = await _jev_run(monkeypatch, 0.3)
-    llm_row = CaseRun(case_id=run.case_id, end_state={**(run.end_state or {}), "backend": "llm"})
+    llm_row = CaseRun(
+        case_id=run.case_id, end_state={**(run.end_state or {}), "backend": "llm", "jev": None}
+    )
     with pytest.raises(SystemExit, match="llm"):
         sweep_journal(_journal(tmp_path, llm_row))
 

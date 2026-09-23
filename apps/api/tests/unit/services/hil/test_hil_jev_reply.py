@@ -11,6 +11,7 @@ from app.constants.hil import (
     HIL_CLASSIFIER_MAX_ARG_CHARS,
     HIL_JEV_MODEL_NAME,
     HIL_JEV_REPLY_APPROVE_LINE,
+    HIL_JEV_REPLY_DECIDE_FLOOR,
     HIL_JEV_URL,
     ReplyChoice,
 )
@@ -60,6 +61,7 @@ class TestTheDecisionsRequest:
             assert question["type"] == "choice"
             assert f"number {number}" in question["instructions"]
             assert set(question["criteria"]) == {choice.value for choice in ReplyChoice}
+            assert f"action {number}" in question["criteria"][ReplyChoice.APPROVE]
             assert "{number}" not in str(question)
 
     async def test_every_label_the_question_offers_has_criteria(self) -> None:
@@ -88,6 +90,15 @@ class TestTheDecisionsRequest:
             (ReplyChoice.APPROVE, 0.95),
         ]
         assert (tokens_in, tokens_out) == (400, 40)
+        assert [v.probabilities for v in verdicts] == [{"deny": 0.7}, {"approve": 0.95}]
+
+    async def test_an_answer_without_confidence_reads_as_zero_and_never_runs(self) -> None:
+        body = {"answers": {"action_1": {"type": "choice", "choice": "approve"}}}
+        with serve_jev(body):
+            verdicts, _, _ = await ask_jev_reply("yes", ACTIONS[:1], None)
+
+        assert (verdicts[0].confidence, verdicts[0].probabilities) == (0.0, {})
+        assert settle_reply(verdicts) == [ReplyChoice.LEAVE]
 
 
 class TestAMalformedAnswerRaises:
@@ -125,9 +136,21 @@ class TestSettle:
         on = _verdict(ReplyChoice.APPROVE, HIL_JEV_REPLY_APPROVE_LINE)
         assert settle_reply([on]) == [ReplyChoice.APPROVE]
 
-    def test_a_low_confidence_deny_still_denies(self) -> None:
-        # A deny never runs anything; holding it to a line would only strand the card.
-        assert settle_reply([_verdict(ReplyChoice.DENY, 0.3)]) == [ReplyChoice.DENY]
+    def test_a_deny_under_the_floor_is_a_leave(self) -> None:
+        # A guessed deny would kill an action the user may well want; asking again is cheaper.
+        below = _verdict(ReplyChoice.DENY, HIL_JEV_REPLY_DECIDE_FLOOR - 0.01)
+        assert settle_reply([below]) == [ReplyChoice.LEAVE]
+
+    def test_a_deny_on_the_floor_stands(self) -> None:
+        on = _verdict(ReplyChoice.DENY, HIL_JEV_REPLY_DECIDE_FLOOR)
+        assert settle_reply([on]) == [ReplyChoice.DENY]
+
+    def test_an_unrelated_under_the_floor_never_abandons(self) -> None:
+        below = _verdict(ReplyChoice.UNRELATED, HIL_JEV_REPLY_DECIDE_FLOOR - 0.01)
+        assert settle_reply([below, _verdict(ReplyChoice.UNRELATED)]) == [
+            ReplyChoice.LEAVE,
+            ReplyChoice.LEAVE,
+        ]
 
     def test_unrelated_survives_only_when_every_action_agrees(self) -> None:
         unanimous = [_verdict(ReplyChoice.UNRELATED), _verdict(ReplyChoice.UNRELATED)]
@@ -137,7 +160,9 @@ class TestSettle:
         split = [_verdict(ReplyChoice.UNRELATED), _verdict(ReplyChoice.APPROVE)]
         assert settle_reply(split) == [ReplyChoice.LEAVE, ReplyChoice.APPROVE]
 
-    def test_the_line_is_a_parameter_for_the_offline_sweep(self) -> None:
-        verdict = _verdict(ReplyChoice.APPROVE, 0.6)
-        assert settle_reply([verdict], approve_line=0.5) == [ReplyChoice.APPROVE]
-        assert settle_reply([verdict], approve_line=0.7) == [ReplyChoice.LEAVE]
+    def test_both_lines_are_parameters_for_the_offline_sweep(self) -> None:
+        approve, deny = _verdict(ReplyChoice.APPROVE, 0.6), _verdict(ReplyChoice.DENY, 0.6)
+        assert settle_reply([approve], approve_line=0.5) == [ReplyChoice.APPROVE]
+        assert settle_reply([approve], approve_line=0.7) == [ReplyChoice.LEAVE]
+        assert settle_reply([deny], decide_floor=0.5) == [ReplyChoice.DENY]
+        assert settle_reply([deny], decide_floor=0.7) == [ReplyChoice.LEAVE]

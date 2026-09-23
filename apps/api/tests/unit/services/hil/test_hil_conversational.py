@@ -16,12 +16,12 @@ verdict and resolve_approval is the production code under test.
 
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from app.agents.llm.client import StructuredCallOptions
+from app.agents.llm.client import StructuredCallOptions, silent_metered_config
 from app.constants.hil import (
     HIL_JEV_REPLY_APPROVE_LINE,
     HIL_LLM_TIMEOUT_SECONDS,
@@ -35,6 +35,7 @@ from app.models.hil_models import (
     LedgerState,
 )
 from app.models.message_models import MessageDict
+from app.services.hil.bridge import build_action_detail
 from app.services.hil.conversational import (
     LEDGER_OUTCOME_TEXT,
     classify_batch_with_llm,
@@ -473,7 +474,7 @@ class TestTheClassifierCall:
 
         with patch(f"{MODULE}.ainvoke_structured", fake_ainvoke_structured):
             result = await classify_with_llm(
-                "yes", ["Send email — to: bob@example.com"], user_id=USER_ID
+                "yes", "Send email — to: bob@example.com", user_id=USER_ID
             )
 
         assert result == DecisionResult(action="approve")
@@ -794,7 +795,22 @@ class TestNoHistory:
         with pending("Send email"):
             await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes")
 
-        assert "RECENT CONVERSATION" not in prompt_of(resolver["llm"])
+        text = prompt_of(resolver["llm"])
+        assert "RECENT CONVERSATION" not in text
+        record = make_record(summary="Send email")
+        detail = build_action_detail(record.summary, record.args)
+        assert f"{detail}\n\nTHE USER'S REPLY" in text
+
+
+def assert_logged_jev_fallback(log: MagicMock, error_type: type[Exception], error: str) -> None:
+    """Assert one warning names the JEV failure and its cause, so a fallback is never silent."""
+    log.warning.assert_called_once()
+    assert (
+        "JEV reply classifier failed; falling back to the LLM classifier"
+        in (log.warning.call_args.args[0])
+    )
+    assert log.warning.call_args.kwargs["error_type"] == error_type.__name__
+    assert log.warning.call_args.kwargs["error"] == error
 
 
 class TestJevClassifiesTheReply:
@@ -843,6 +859,39 @@ class TestJevClassifiesTheReply:
         assert action is None
         resolver["resolve"].assert_not_awaited()
         resolver["abandon"].assert_not_awaited()
+
+    async def test_the_decisions_call_carries_the_reply_and_recent_turns(
+        self, resolver: dict
+    ) -> None:
+        with pending("Send email"), serve_jev(jev_reply_body(("approve", 0.99))) as client:
+            await resolve_pending_from_message(
+                CONVERSATION_ID, USER_ID, "sure thing", history=HISTORY
+            )
+
+        state = client.post.await_args.kwargs["json"]["state"]
+        assert state["reply"] == "sure thing"
+        record = make_record(summary="Send email")
+        assert state["pending_actions"] == [
+            {"number": 1, "action": build_action_detail(record.summary, record.args)}
+        ]
+        assert state["recent_conversation"] == HISTORY
+        assert resolver["jev_flag"].await_args.args == (USER_ID,)
+
+    async def test_a_batch_decisions_call_carries_every_action_the_reply_and_turns(
+        self, resolver: dict
+    ) -> None:
+        body = jev_reply_body(("approve", 0.99), ("approve", 0.99))
+        with pending("Send email", "Post to Slack"), serve_jev(body) as client:
+            await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "both", history=HISTORY)
+
+        state = client.post.await_args.kwargs["json"]["state"]
+        assert state["reply"] == "both"
+        assert [a["action"].split("\n")[0] for a in state["pending_actions"]] == [
+            "Send email",
+            "Post to Slack",
+        ]
+        assert state["recent_conversation"] == HISTORY
+        assert resolver["jev_flag"].await_args.args == (USER_ID,)
 
     async def test_an_approve_on_the_line_runs(self, resolver: dict) -> None:
         with (
@@ -915,34 +964,49 @@ class TestJevClassifiesTheReply:
         resolver["abandon"].assert_awaited_once_with(CONVERSATION_ID, USER_ID, UNRELATED_FEEDBACK)
 
     @pytest.mark.parametrize(
-        "failure",
+        ("failure", "error_type", "error"),
         [
-            httpx.ConnectError("decisions API down"),
-            jev_reply_body(("maybe", 0.9)),
-            {"answers": {}},
+            (httpx.ConnectError("decisions API down"), httpx.ConnectError, "decisions API down"),
+            (jev_reply_body(("maybe", 0.9)), ValueError, "unknown JEV reply choice: 'maybe'"),
+            (
+                {"answers": {}},
+                ValueError,
+                "JEV reply answer missing for question 'action_1'",
+            ),
         ],
         ids=["transport", "unknown-choice", "missing-answer"],
     )
     async def test_a_jev_failure_falls_back_to_the_llm(
-        self, resolver: dict, failure: dict | Exception
+        self,
+        resolver: dict,
+        failure: dict | Exception,
+        error_type: type[Exception],
+        error: str,
     ) -> None:
         resolver["llm"].return_value = DecisionResult(action="approve")
-        with pending("Send email"), serve_jev(failure):
+        with pending("Send email"), serve_jev(failure), patch(f"{MODULE}.log") as log:
             action = await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes")
 
         assert action == "approve"
-        resolver["llm"].assert_awaited_once()
         assert resolved_kinds(resolver["resolve"]) == ["approve"]
+        assert resolver["llm"].await_args.kwargs["config"] == silent_metered_config(USER_ID)
+        assert_logged_jev_fallback(log, error_type, error)
 
     async def test_a_batch_jev_failure_falls_back_to_the_llm(self, resolver: dict) -> None:
         resolver["llm"].return_value = BatchDecisionResult(
             unrelated=False, decisions=[BatchItemDecision(index=2, action="deny")]
         )
-        with pending("Send email", "Post to Slack"), serve_jev(httpx.ReadTimeout("slow")):
+        with (
+            pending("Send email", "Post to Slack"),
+            serve_jev(httpx.ReadTimeout("slow")),
+            patch(f"{MODULE}.log") as log,
+        ):
             action = await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "not slack")
 
         assert action == "deny"
         assert resolved_ids(resolver["resolve"]) == ["appr-2"]
+        assert resolver["llm"].await_args.kwargs["config"] == silent_metered_config(USER_ID)
+        assert_logged_jev_fallback(log, httpx.ReadTimeout, "slow")
 
     async def test_the_flag_off_never_calls_jev(self, resolver: dict) -> None:
         resolver["jev_flag"].return_value = False

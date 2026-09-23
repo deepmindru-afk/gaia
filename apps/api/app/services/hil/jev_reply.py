@@ -1,8 +1,8 @@
 """JEV reply classifier: what a bot user's chat reply means for each pending approval.
 
 One Decisions call asks one question per numbered pending action. Code, not the
-model, owns the safety rules: an approve under the approve line leaves the
-action pending, and a reply is unrelated only when every action reads it so.
+model, owns the safety rules: a verdict under its line leaves the action
+pending, and a reply is unrelated only when every action reads it so.
 Question text lives in prompts.py, the line in constants/hil.py — both tuned
 through the hil-reply calibration suite, never by hand here.
 """
@@ -10,6 +10,7 @@ through the hil-reply calibration suite, never by hand here.
 from app.constants.hil import (
     HIL_CLASSIFIER_MAX_ARG_CHARS,
     HIL_JEV_REPLY_APPROVE_LINE,
+    HIL_JEV_REPLY_DECIDE_FLOOR,
     HIL_JEV_REPLY_QUESTION_PREFIX,
     ReplyChoice,
 )
@@ -51,8 +52,8 @@ def reply_state(
     if history:
         state["recent_conversation"] = [
             {
-                "role": turn.get("role", ""),
-                "content": clip_text(turn.get("content") or "", HIL_CLASSIFIER_MAX_ARG_CHARS),
+                "role": turn["role"],
+                "content": clip_text(turn["content"], HIL_CLASSIFIER_MAX_ARG_CHARS),
             }
             for turn in history
         ]
@@ -93,20 +94,21 @@ async def ask_jev_reply(
 
 
 def settle_reply(
-    verdicts: list[JevReplyVerdict], *, approve_line: float = HIL_JEV_REPLY_APPROVE_LINE
+    verdicts: list[JevReplyVerdict],
+    *,
+    approve_line: float = HIL_JEV_REPLY_APPROVE_LINE,
+    decide_floor: float = HIL_JEV_REPLY_DECIDE_FLOOR,
 ) -> list[ReplyChoice]:
     """Apply the code rules, one choice per action. Pure, shared by prod and eval.
 
-    Unrelated survives only when unanimous; an approve under the line is a leave.
+    A verdict under its line is a leave; unrelated survives only when unanimous.
     """
-    if all(v.choice is ReplyChoice.UNRELATED for v in verdicts):
-        return [ReplyChoice.UNRELATED] * len(verdicts)
-    settled = []
-    for verdict in verdicts:
-        if verdict.choice is ReplyChoice.UNRELATED or (
-            verdict.choice is ReplyChoice.APPROVE and verdict.confidence < approve_line
-        ):
-            settled.append(ReplyChoice.LEAVE)
-        else:
-            settled.append(verdict.choice)
-    return settled
+    settled = [_settle_one(v, approve_line, decide_floor) for v in verdicts]
+    if all(choice is ReplyChoice.UNRELATED for choice in settled):
+        return settled
+    return [ReplyChoice.LEAVE if c is ReplyChoice.UNRELATED else c for c in settled]
+
+
+def _settle_one(verdict: JevReplyVerdict, approve_line: float, decide_floor: float) -> ReplyChoice:
+    line = approve_line if verdict.choice is ReplyChoice.APPROVE else decide_floor
+    return verdict.choice if verdict.confidence >= line else ReplyChoice.LEAVE

@@ -4,8 +4,8 @@ A bot user answers an approval by typing, so this classifier is the whole
 approval UI on WhatsApp/Telegram/Slack/Discord. Drives the classifier backends
 directly (no chat stream, no dev user): JEV (Decisions API) or the LLM
 fallback, both graded through the production mapping in conversational.py.
-JEV runs journal every per-action verdict, so the approve line is tuned by a
-free offline sweep over the journal, not another model-spending run.
+JEV runs journal every per-action verdict, so the lines are tuned by a free
+offline sweep over the journal, not another model-spending run.
 
 Run:  uv run --group backend python -m scripts.evals run --suite hil-reply
   HIL_REPLY_EVAL_BACKEND=jev|llm (default jev)
@@ -17,20 +17,22 @@ approve runs an action the user did not accept), stable across 3 runs.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Mapping
-from enum import StrEnum
+from collections.abc import Awaitable
 import os
 from pathlib import Path
 import time
-from typing import Any, TypedDict
 
 import httpx
 
 from app.config.settings import get_settings
-from app.constants.hil import HIL_JEV_MODEL_NAME, HIL_JEV_REPLY_APPROVE_LINE, ReplyChoice
+from app.constants.hil import (
+    HIL_JEV_MODEL_NAME,
+    HIL_JEV_REPLY_APPROVE_LINE,
+    HIL_JEV_REPLY_DECIDE_FLOOR,
+    ReplyChoice,
+)
 from app.models.hil_models import BatchDecisionResult, DecisionResult
 from app.models.jev_models import JevReplyVerdict
-from app.models.message_models import MessageDict
 from app.services.hil.bridge import build_action_detail
 from app.services.hil.conversational import (
     batch_from_jev_reply,
@@ -49,25 +51,19 @@ from scripts.evals.core.journal import RunJournal
 from scripts.evals.core.providers import EvalConfig, ProviderConfig
 from scripts.evals.core.runner import Suite, register_suite
 from scripts.evals.core.types import Case, CaseRun, ProviderError
+from scripts.evals.suites.hil_reply_models import (
+    JevReplyJournal,
+    ReplyBackend,
+    ReplyCaseSetup,
+    ReplyEndState,
+)
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "hil-reply"
 
 EVAL_USER_ID = "hil-reply-eval"
 
-
-class ReplyBackend(StrEnum):
-    """Which classifier a run drove — HIL_REPLY_EVAL_BACKEND, journaled on every row."""
-
-    JEV = "jev"
-    LLM = "llm"
-
-
-class JevReplyJournalFields(TypedDict):
-    """The per-action JEV verdicts a row was graded on — what the offline sweep regrades."""
-
-    choices: list[str]
-    confidences: list[float]
-    probabilities: list[dict[str, float]]
+# Line pairs the sweep prints, best first; the shipped pair is always printed too.
+SWEEP_TOP = 10
 
 
 EXTRA = {
@@ -75,19 +71,6 @@ EXTRA = {
         1.0 if (run.end_state or {}).get("outcome") == case.expected.get("outcome") else 0.0
     ),
 }
-
-
-def _action_details(setup: Mapping[str, Any]) -> list[str]:
-    """Each pending action rendered exactly as prod renders it for the classifier."""
-    return [
-        build_action_detail(str(action["summary"]), dict(action.get("args") or {}))
-        for action in setup["actions"]
-    ]
-
-
-def _history(setup: Mapping[str, Any]) -> list[MessageDict] | None:
-    turns = setup.get("history") or []
-    return [MessageDict(role=str(t["role"]), content=str(t["content"])) for t in turns] or None
 
 
 def single_outcome(result: DecisionResult | None) -> str:
@@ -117,9 +100,15 @@ def batch_outcome(result: BatchDecisionResult, count: int) -> str:
     return ",".join(outcomes)
 
 
-def jev_outcome(verdicts: list[JevReplyVerdict], message: str, approve_line: float) -> str:
+def jev_outcome(
+    verdicts: list[JevReplyVerdict],
+    message: str,
+    *,
+    approve_line: float = HIL_JEV_REPLY_APPROVE_LINE,
+    decide_floor: float = HIL_JEV_REPLY_DECIDE_FLOOR,
+) -> str:
     """The graded outcome of a JEV verdict list through prod's settle + mapping."""
-    settled = settle_reply(verdicts, approve_line=approve_line)
+    settled = settle_reply(verdicts, approve_line=approve_line, decide_floor=decide_floor)
     if len(verdicts) == 1:
         return single_outcome(decision_from_jev_reply(settled[0], message))
     return batch_outcome(batch_from_jev_reply(settled, message), len(verdicts))
@@ -134,10 +123,10 @@ def is_dangerous(outcome: str, expected: str) -> bool:
 
 
 class ReplyTransport:
-    """One case: build classifier input from the YAML, run one backend, journal all."""
+    """One case: validate its setup, run one backend, journal the verdict it was graded on."""
 
     def __init__(self) -> None:
-        self._backend = os.environ.get("HIL_REPLY_EVAL_BACKEND", ReplyBackend.JEV)
+        self._backend = ReplyBackend(os.environ.get("HIL_REPLY_EVAL_BACKEND", ReplyBackend.JEV))
 
     async def run(
         self,
@@ -148,40 +137,39 @@ class ReplyTransport:
     ) -> CaseRun:
         del cfg, tracker
         start = time.monotonic()
-        setup = case.setup
-        message = str(setup["reply"])
-        details = _action_details(setup)
-        history = _history(setup)
-        verdict: JevReplyJournalFields | None = None
-        if self._backend == ReplyBackend.LLM:
-            outcome, usage = await self._run_llm(message, details, history)
-            model = "llm-reply-classifier"
-        elif self._backend == ReplyBackend.JEV:
-            outcome, usage, verdict = await self._run_jev(message, details, history, provider)
-            model = HIL_JEV_MODEL_NAME
-        else:
-            raise ProviderError(provider.name, f"unknown reply backend {self._backend!r}")
+        setup = ReplyCaseSetup.model_validate(case.setup)
+        details = [build_action_detail(a.summary, a.args) for a in setup.actions]
+        journal: JevReplyJournal | None = None
+        match self._backend:
+            case ReplyBackend.LLM:
+                outcome, usage = await self._run_llm(setup, details)
+                model = "llm-reply-classifier"
+            case ReplyBackend.JEV:
+                outcome, usage, journal = await self._run_jev(setup, details, provider)
+                model = HIL_JEV_MODEL_NAME
         duration_s = time.monotonic() - start
         want = str(case.expected.get("outcome"))
-        mark = "ok" if outcome == want else ("DANGER" if is_dangerous(outcome, want) else "MISS")
-        print(f"[{mark}] {case.id}: want={want} got={outcome} ({duration_s:.1f}s) {verdict or ''}")
-        end_state: dict[str, Any] = {
-            "outcome": outcome,
-            "backend": self._backend,
-            "questions_version": JEV_REPLY_QUESTIONS_VERSION if verdict is not None else "llm",
-            "dangerous": is_dangerous(outcome, want),
-            "reply": message,
-            **(verdict or {}),
-        }
+        dangerous = is_dangerous(outcome, want)
+        mark = "ok" if outcome == want else ("DANGER" if dangerous else "MISS")
+        verdict = journal.model_dump(mode="json") if journal else ""
+        print(f"[{mark}] {case.id}: want={want} got={outcome} ({duration_s:.1f}s) {verdict}")
+        end_state = ReplyEndState(
+            outcome=outcome,
+            backend=self._backend,
+            questions_version=JEV_REPLY_QUESTIONS_VERSION if journal else ReplyBackend.LLM,
+            dangerous=dangerous,
+            reply=setup.reply,
+            jev=journal,
+        )
         return CaseRun(
             case_id=case.id,
             provider=provider.name,
             model=model,
             messages=[
-                {"role": "user", "content": message},
+                {"role": "user", "content": setup.reply},
                 {"role": "assistant", "content": outcome},
             ],
-            end_state=end_state,
+            end_state=end_state.model_dump(mode="json"),
             text=outcome,
             tokens_in=usage[0],
             tokens_out=usage[1],
@@ -189,85 +177,100 @@ class ReplyTransport:
         )
 
     async def _run_llm(
-        self, message: str, details: list[str], history: list[MessageDict] | None
+        self, setup: ReplyCaseSetup, details: list[str]
     ) -> tuple[str, tuple[int, int]]:
         await ensure_app_registered()
+        history = setup.history or None
         if len(details) == 1:
             outcome = single_outcome(
-                await classify_with_llm(message, details, history, user_id=EVAL_USER_ID)
+                await classify_with_llm(setup.reply, details[0], history, user_id=EVAL_USER_ID)
             )
         else:
             outcome = batch_outcome(
-                await classify_batch_with_llm(message, details, history, user_id=EVAL_USER_ID),
+                await classify_batch_with_llm(setup.reply, details, history, user_id=EVAL_USER_ID),
                 len(details),
             )
         # App-side metering owns LLM cost; journal an openly-labelled estimate, not zeros.
-        return outcome, (estimate_tokens(message + "".join(details)), estimate_tokens(outcome))
+        return outcome, (estimate_tokens(setup.reply + "".join(details)), estimate_tokens(outcome))
 
     async def _run_jev(
-        self,
-        message: str,
-        details: list[str],
-        history: list[MessageDict] | None,
-        provider: ProviderConfig,
-    ) -> tuple[str, tuple[int, int], JevReplyJournalFields]:
+        self, setup: ReplyCaseSetup, details: list[str], provider: ProviderConfig
+    ) -> tuple[str, tuple[int, int], JevReplyJournal]:
         if not get_settings().OPENROUTER_API_KEY:
             raise ProviderError(provider.name, "OPENROUTER_API_KEY unset")
         try:
-            verdicts, tokens_in, tokens_out = await ask_jev_reply(message, details, history)
+            verdicts, tokens_in, tokens_out = await ask_jev_reply(
+                setup.reply, details, setup.history or None
+            )
         except httpx.HTTPError as e:
             raise ProviderError(provider.name, f"decisions API failed: {e}") from e
-        fields = JevReplyJournalFields(
-            choices=[v.choice.value for v in verdicts],
+        journal = JevReplyJournal(
+            choices=[v.choice for v in verdicts],
             confidences=[v.confidence for v in verdicts],
             probabilities=[dict(v.probabilities) for v in verdicts],
         )
-        return (
-            jev_outcome(verdicts, message, HIL_JEV_REPLY_APPROVE_LINE),
-            (tokens_in, tokens_out),
-            fields,
-        )
+        return jev_outcome(verdicts, setup.reply), (tokens_in, tokens_out), journal
 
 
-def _journaled_verdicts(end_state: Mapping[str, Any]) -> list[JevReplyVerdict]:
+def _journaled_verdicts(journal: JevReplyJournal) -> list[JevReplyVerdict]:
     return [
-        JevReplyVerdict(choice=ReplyChoice(choice), confidence=float(conf), probabilities=probs)
-        for choice, conf, probs in zip(
-            end_state["choices"], end_state["confidences"], end_state["probabilities"]
+        JevReplyVerdict(choice=choice, confidence=confidence, probabilities=probabilities)
+        for choice, confidence, probabilities in zip(
+            journal.choices, journal.confidences, journal.probabilities, strict=True
         )
     ]
 
 
 def sweep_journal(run_dir: Path) -> str:
-    """Grid-search the approve line over one journaled JEV run. Free — no model calls."""
+    """Grid-search (approve line x decide floor) over one journaled JEV run. Free — no model calls."""
     rows = list(RunJournal(run_dir.parent, run_dir.name).latest_per_case().values())
     unjudged = sum(1 for r in rows if not r.get("end_state"))
-    rows = [r for r in rows if r.get("end_state")]
-    foreign = sorted({str(r["end_state"].get("backend")) for r in rows} - {ReplyBackend.JEV})
+    graded = [
+        (
+            str(r["case_id"]),
+            str(r["expected"]["outcome"]),
+            ReplyEndState.model_validate(r["end_state"]),
+        )
+        for r in rows
+        if r.get("end_state")
+    ]
+    foreign = sorted({es.backend for _, _, es in graded if es.jev is None})
     if foreign:
         raise SystemExit(
             f"{run_dir} holds rows from backend(s) {', '.join(foreign)}: the sweep regrades "
             "journaled JEV verdicts only (run with HIL_REPLY_EVAL_BACKEND=jev)"
         )
-    out = [
-        f"sweep over {len(rows)} journaled cases (approve line):",
-        f"unjudged rows left out (errored, no verdict): {unjudged}",
-    ]
-    for line in [round(v / 100, 2) for v in range(50, 100, 5)]:
+    journals = [(cid, want, es.reply, es.jev) for cid, want, es in graded if es.jev is not None]
+
+    def grade(approve: float, floor: float) -> tuple[int, int, float, float, list[str]]:
         score = dangerous = 0
         misses: list[str] = []
-        for row in rows:
-            es = row["end_state"]
-            want = str((row.get("expected") or {}).get("outcome"))
-            got = jev_outcome(_journaled_verdicts(es), str(es["reply"]), line)
+        for case_id, want, reply, journal in journals:
+            got = jev_outcome(
+                _journaled_verdicts(journal), reply, approve_line=approve, decide_floor=floor
+            )
             score += got == want
             dangerous += is_dangerous(got, want)
             if got != want:
-                misses.append(str(row.get("case_id")))
-        out.append(
-            f"  approve>={line:.2f}: {score}/{len(rows)} dangerous={dangerous} "
-            f"misses={','.join(misses[:12])}"
-        )
+                misses.append(case_id)
+        return score, dangerous, approve, floor, misses
+
+    results = [
+        grade(approve / 100, floor / 100)
+        for approve in range(50, 100, 5)
+        for floor in range(30, 85, 5)
+    ]
+    shipped = grade(HIL_JEV_REPLY_APPROVE_LINE, HIL_JEV_REPLY_DECIDE_FLOOR)
+    results.sort(key=lambda r: (-r[0], r[1], r[2], r[3]))
+    out = [
+        f"sweep over {len(journals)} journaled cases (approve line x decide floor):",
+        f"unjudged rows left out (errored, no verdict): {unjudged}",
+    ]
+    out.extend(
+        f"  {'shipped ' if r is shipped else ''}approve>={r[2]:.2f} decide>={r[3]:.2f}: "
+        f"{r[0]}/{len(journals)} dangerous={r[1]} misses={','.join(r[4][:12])}"
+        for r in [*results[:SWEEP_TOP], shipped]
+    )
     return "\n".join(out)
 
 

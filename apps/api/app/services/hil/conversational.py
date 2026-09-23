@@ -13,7 +13,7 @@ error leaves approvals pending, never approves.
 """
 
 import contextlib
-from typing import Literal
+from typing import Literal, assert_never
 
 from app.agents.llm.client import StructuredCallOptions, ainvoke_structured, silent_metered_config
 from app.constants.hil import (
@@ -107,7 +107,7 @@ async def _resolve_single(
     history: list[MessageDict] | None,
 ) -> DecisionAction | None:
     action_detail = build_action_detail(record.summary, record.args)
-    result = await interpret_decision_message(message, [action_detail], history, user_id=user_id)
+    result = await interpret_decision_message(message, action_detail, history, user_id=user_id)
     if result is None:
         # The classifier errored. Leave the approval pending rather than abandon it —
         # a transient hiccup must not silently decline a legitimate pending action
@@ -208,7 +208,7 @@ async def interpret_batch_decision_message(
 
 async def interpret_decision_message(
     message: str,
-    action_details: list[str],
+    action_detail: str,
     history: list[MessageDict] | None = None,
     *,
     user_id: str,
@@ -219,12 +219,12 @@ async def interpret_decision_message(
     """
     if await is_jev_reply_enabled(user_id):
         try:
-            verdicts, _in, _out = await ask_jev_reply(message, action_details, history)
+            verdicts, _in, _out = await ask_jev_reply(message, [action_detail], history)
         except Exception as e:
             _log_jev_fallback(e)
         else:
             return decision_from_jev_reply(settle_reply(verdicts)[0], message)
-    return await classify_with_llm(message, action_details, history, user_id=user_id)
+    return await classify_with_llm(message, action_detail, history, user_id=user_id)
 
 
 def decision_from_jev_reply(choice: ReplyChoice, message: str) -> DecisionResult | None:
@@ -242,6 +242,8 @@ def decision_from_jev_reply(choice: ReplyChoice, message: str) -> DecisionResult
             return DecisionResult(action="unrelated")
         case ReplyChoice.LEAVE:
             return None
+        case _:
+            assert_never(choice)
 
 
 def batch_from_jev_reply(choices: list[ReplyChoice], message: str) -> BatchDecisionResult:
@@ -257,6 +259,8 @@ def batch_from_jev_reply(choices: list[ReplyChoice], message: str) -> BatchDecis
                 decisions.append(BatchItemDecision(index=index, action="deny", feedback=message))
             case ReplyChoice.LEAVE | ReplyChoice.UNRELATED:
                 decisions.append(BatchItemDecision(index=index, action="leave"))
+            case _:
+                assert_never(choice)
     return BatchDecisionResult(unrelated=False, decisions=decisions)
 
 
@@ -291,7 +295,7 @@ async def classify_batch_with_llm(
 
 async def classify_with_llm(
     message: str,
-    action_details: list[str],
+    action_detail: str,
     history: list[MessageDict] | None = None,
     *,
     user_id: str,
@@ -304,7 +308,7 @@ async def classify_with_llm(
     try:
         return await ainvoke_structured(
             DecisionResult,
-            _prompt(message, action_details, history),
+            _prompt(message, action_detail, history),
             label="hil_conversational_resolve",
             config=silent_metered_config(user_id),
             options=StructuredCallOptions(timeout=HIL_LLM_TIMEOUT_SECONDS),
@@ -416,9 +420,9 @@ def _context(history: list[MessageDict] | None) -> str:
     return CONVERSATIONAL_CONTEXT_BLOCK.format(history=history_block) if history_block else ""
 
 
-def _prompt(message: str, action_details: list[str], history: list[MessageDict] | None) -> str:
+def _prompt(message: str, action_detail: str, history: list[MessageDict] | None) -> str:
     return CONVERSATIONAL_REPLY_PROMPT.format(
-        action="\n\n".join(action_details), context=_context(history), message=message
+        action=action_detail, context=_context(history), message=message
     )
 
 
