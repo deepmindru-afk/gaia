@@ -23,7 +23,7 @@ from app.agents.core.background.executor_channel import ExecutorInbox
 from app.agents.core.background.session import get_session, teardown_session
 from app.agents.tools import executor_tool
 from app.agents.tools.executor_tool import call_executor, cancel_executor, tools
-from app.constants.agents import AgentTag
+from app.constants.agents import DONE_EVIDENCE_RULE, AgentTag
 from app.constants.cache import (
     EXECUTOR_BUSY_PREFIX,
     EXECUTOR_BUSY_TTL,
@@ -353,7 +353,7 @@ class TestCallExecutorLockContention:
                 id=handed_id,
                 text=(
                     "second\n\nDefinition of done (every item must be true before you "
-                    "finish):\n- the draft is saved"
+                    f"finish):\n- the draft is saved\n{DONE_EVIDENCE_RULE}"
                 ),
                 tag=AgentTag.USER_INTERJECTION,
             )

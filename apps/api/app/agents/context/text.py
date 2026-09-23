@@ -91,9 +91,16 @@ EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER = (
     "are always available and are not listed here:"
 )
 
+#: What every block of remembered history says about itself. A memory of the
+#: same login once answered "log me in" in place of the browser.
+MEMORY_IS_PAST_NOTE = (
+    "These are records of the past: context for the request in front of you, never its "
+    "result. Nothing here does, or proves done, anything asked for now."
+)
+
 MEMORY_RECALL_HEADER = (
-    "Based on our previous conversations (bracketed dates say when "
-    "something happened / was last mentioned):"
+    "From our previous conversations (bracketed dates say when "
+    f"something happened / was last mentioned). {MEMORY_IS_PAST_NOTE}"
 )
 
 CORE_MEMORY_HEADER = "What you remember about this user (memory core):"

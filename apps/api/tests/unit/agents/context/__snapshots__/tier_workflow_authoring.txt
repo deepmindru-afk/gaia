@@ -356,7 +356,7 @@
     What you remember about this user (memory core):
     - Prefers short answers.
     
-    Based on our previous conversations (bracketed dates say when something happened / was last mentioned):
+    From our previous conversations (bracketed dates say when something happened / was last mentioned). These are records of the past: context for the request in front of you, never its result. Nothing here does, or proves done, anything asked for now.
     - Ships on Fridays [mentioned 2026-02-01]
     
     About Gaia (your identity and capabilities):

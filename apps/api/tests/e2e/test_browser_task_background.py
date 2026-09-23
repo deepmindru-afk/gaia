@@ -618,3 +618,104 @@ async def test_a_login_the_user_made_is_still_signed_in_after_the_run_moves_engi
     assert [(card["status"], card["success"]) for card in results] == [
         (BrowserSessionStatus.COMPLETED.value, True)
     ]
+
+
+#: A memory of an earlier run of the exact task the user is asking for again.
+_MEMORY_OF_THE_LAST_LOGIN = (
+    "Logged the user in to the-internet.herokuapp.com through the browser; the page "
+    "showed 'You logged into a secure area!'"
+)
+_JOURNAL_OF_THE_LAST_LOGIN = "Logged in to the-internet.herokuapp.com with the browser"
+_LOGIN_REQUEST = "Use the browser to log me in to https://the-internet.herokuapp.com/login"
+
+
+def _block_holding(slot: str, text: str) -> str:
+    """Return the blank-line-separated block of slot that holds text."""
+    return next(block for block in slot.split("\n\n") if text in block)
+
+
+async def _executor_thread_remembering_the_last_login(brief: str) -> list[Any]:
+    """Seed the executor's thread the way prepare_executor_execution does, with the login remembered."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.agents.context.tiers import AgentTier
+    from app.agents.core.subagents.subagent_runner import ThreadSeed, build_initial_messages
+    from app.helpers.message_helpers import create_system_message
+    from app.memory.context import RECENT_ACTIVITY_HEADING
+    from app.models.memory_models import MemoryEntry, MemorySearchResult
+
+    memory = MagicMock()
+    memory.recall = AsyncMock(
+        return_value=MemorySearchResult(
+            memories=[
+                MemoryEntry(
+                    content=_MEMORY_OF_THE_LAST_LOGIN,
+                    occurred_start=datetime(2026, 9, 23, tzinfo=UTC),
+                )
+            ],
+            total_count=1,
+            has_confident_match=True,
+        )
+    )
+    memory.get_core_context = AsyncMock(
+        return_value=f"{RECENT_ACTIVITY_HEADING}\n- {_JOURNAL_OF_THE_LAST_LOGIN}"
+    )
+    with patch("app.agents.context.fetchers.memory_engine", memory):
+        return await build_initial_messages(
+            system_message=create_system_message(user_id=USER, agent_type="executor"),
+            agent_name="executor_agent",
+            task=brief,
+            seed=ThreadSeed(
+                tier=AgentTier.EXECUTOR,
+                configurable={"user_id": USER, "thread_id": CONVERSATION},
+                user_id=USER,
+            ),
+        )
+
+
+@pytest.mark.regression
+async def test_a_browser_request_the_executor_remembers_doing_still_runs_the_browser() -> None:
+    """Regression: with a memory of the same login, the executor answered from it and never called browser_task."""
+    from app.agents.context.slots import MEMORY_RECALL_MARKER
+    from app.agents.context.text import MEMORY_IS_PAST_NOTE
+    from app.agents.core.subagents.subagent_runner import compose_executor_brief
+    from app.constants.agents import DONE_EVIDENCE_RULE
+    from tests.e2e._harness.graph_run import NUDGE_NODE
+
+    brief = compose_executor_brief(
+        _LOGIN_REQUEST,
+        ["The user is logged in at the-internet.herokuapp.com"],
+        verbatim_request=_LOGIN_REQUEST,
+    )
+    messages = await _executor_thread_remembering_the_last_login(brief)
+    answer_from_memory = "You are already logged in; the earlier run did it."
+
+    async with browser_job_world(STREAM, steps=TWO_STEPS) as world:
+        async with executor_graph([answer_from_memory, START, JOIN, "Logged in."]) as graph:
+            run = await run_graph(
+                graph,
+                brief,
+                thread_id=CONVERSATION,
+                user_id=USER,
+                state={"messages": messages, "todos": []},
+                **_configurable(),
+            )
+            await world.settle()
+
+    # Offered: bound before the model's first word, never left to retrieval.
+    assert "browser_task" in run.bound[0]
+    # Framed: the memory reaches the model as a record of the past, not a result.
+    first_prompt = run.prompts[0]
+    memory_slot = next(
+        str(m.content) for m in first_prompt if m.additional_kwargs.get(MEMORY_RECALL_MARKER)
+    )
+    # Each block of remembered history carries it: the recalled memory and the journal.
+    assert MEMORY_IS_PAST_NOTE in _block_holding(memory_slot, _MEMORY_OF_THE_LAST_LOGIN)
+    assert MEMORY_IS_PAST_NOTE in _block_holding(memory_slot, _JOURNAL_OF_THE_LAST_LOGIN)
+    # Required: the brief's definition of done asks for this run's own evidence,
+    assert DONE_EVIDENCE_RULE in brief
+    # and an answer from memory alone is sent back until the browser actually runs.
+    assert NUDGE_NODE in run.visited
+    assert run.ran("browser_task")
+    assert len(world.enqueued) == 1
