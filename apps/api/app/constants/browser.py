@@ -325,10 +325,23 @@ BROWSER_ENGINE_FALLBACK_NOTE = (
     "That page didn't work in the fast browser, continuing in a full one."
 )
 
+# Engine watchdog: while a run is on the primary engine, its host is asked this
+# often whether the engine still answers, and this many unanswered reads in a row
+# end the run there. A SIGSTOPped engine otherwise took ~285 s to notice
+# (Browser-Use's 15 s click timeout, then two 120 s state reads).
+BROWSER_ENGINE_WATCH_INTERVAL_SECONDS = 10.0
+BROWSER_ENGINE_WATCH_STRIKES = 2
+# How long a run cut short by the watchdog may take to unwind before the switch
+# goes ahead without it; Browser-Use's cleanup talks to the frozen engine too.
+BROWSER_ENGINE_WATCH_CANCEL_GRACE_SECONDS = 5.0
+
 # The host answers a liveness read inside its own budget, whatever the engine is
 # doing, and the client allows it a little more before calling it unanswered.
 BROWSER_HOST_LIVENESS_TIMEOUT_SECONDS = 3.0
 BROWSER_ENGINE_PROBE_TIMEOUT_SECONDS = 5.0
+# The outcome of a run the user stopped while its engine was frozen; never shown,
+# since a stopped run's card reads the stop.
+BROWSER_ENGINE_UNRESPONSIVE_SUMMARY = "The browser stopped responding."
 
 # How a decision taken on the handoff card is written into the agent's thread,
 # so the reply it later voices knows the user changed course.

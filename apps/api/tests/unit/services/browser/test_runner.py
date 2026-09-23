@@ -2332,15 +2332,38 @@ async def test_a_run_finished_on_the_fallback_bills_the_tokens_both_engines_spen
 
 
 class _EngineAgent(FakeAgent):
-    """Browser-Use on each engine in turn: every run plays the next scripted run."""
+    """Browser-Use on each engine in turn: every run plays the next scripted run.
+
+    A step marked hang sits on the engine forever, as a click on a frozen engine does.
+    """
 
     runs: ClassVar[list[tuple[list[dict], _History]]] = []
+    made: ClassVar[list["_EngineAgent"]] = []
+    #: Browser-Use's per-model token meter, read by a run the watchdog cut short.
+    spent_by_model: ClassVar[dict[str, tuple[int, int]]] = {}
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.token_cost_service = SimpleNamespace(get_usage_summary=self._usage_summary)
+        self.browser_session = SimpleNamespace(reset=AsyncMock())
+        type(self).made.append(self)
+
+    async def _usage_summary(self):
+        return _Usage(
+            {
+                name: _Stats(prompt_tokens=inputs, completion_tokens=outputs)
+                for name, (inputs, outputs) in type(self).spent_by_model.items()
+            }
+        )
 
     async def run(self, max_steps: int, on_step_end=None):
         script, history = type(self).runs.pop(0)
-        type(self).script = script
+        type(self).script = [step for step in script if not step.get("hang")]
         type(self).history = history
-        return await super().run(max_steps, on_step_end)
+        ended = await super().run(max_steps, on_step_end)
+        if any(step.get("hang") for step in script):
+            await asyncio.Event().wait()
+        return ended
 
 
 def _steps(*goals: str) -> list[dict]:
@@ -2367,6 +2390,8 @@ def two_engines(patch_browser, monkeypatch):
 
     monkeypatch.setattr(runner_mod, "publish_step_screenshot", _upload)
     _EngineAgent.runs = []
+    _EngineAgent.made = []
+    _EngineAgent.spent_by_model = {}
 
 
 def _two_engine_runner(
@@ -2478,3 +2503,216 @@ async def test_a_run_that_stays_on_its_engine_says_nothing_about_engines(
     open_fallback.assert_not_awaited()
     note.assert_not_awaited()
     assert result.steps == 2
+
+
+# ---------------------------------------------------------------------------
+# Engine watchdog: a frozen primary engine is caught while the run is on it
+# ---------------------------------------------------------------------------
+
+
+class _HostProbe:
+    """The browser host's session endpoint, counting every liveness read the run makes."""
+
+    def __init__(self, respond) -> None:
+        self.reads = 0
+        self._respond = respond
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.reads += 1
+        answer = self._respond(request)
+        return await answer if asyncio.iscoroutine(answer) else answer
+
+
+@pytest.fixture
+def fast_watchdog(monkeypatch):
+    from app.services.browser import engine_watchdog
+
+    monkeypatch.setattr(engine_watchdog, "BROWSER_ENGINE_WATCH_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(engine_watchdog, "BROWSER_ENGINE_WATCH_CANCEL_GRACE_SECONDS", 0.1)
+
+
+def _watched_host(monkeypatch, respond) -> _HostProbe:
+    probe = _HostProbe(respond)
+    _host_answers(monkeypatch, probe)
+    return probe
+
+
+async def test_a_frozen_engine_moves_the_run_to_the_fallback_while_the_step_is_still_stuck(
+    two_engines, fast_watchdog, monkeypatch
+) -> None:
+    """A SIGSTOPped engine took ~285 s to notice: a 15 s click timeout, then two 120 s state reads."""
+    from app.constants.browser import BROWSER_ENGINE_WATCH_STRIKES
+
+    probe = _watched_host(monkeypatch, _engine_wedged)
+    events, emit = _collector()
+    _EngineAgent.runs = [
+        (_steps("open the story") + [{"hang": True}], _GAVE_OUT),
+        (_steps("read the count"), _History(result="67 comments")),
+    ]
+    runner, open_fallback = _two_engine_runner(emit=emit)
+
+    result = await asyncio.wait_for(runner.run("count the comments"), timeout=5)
+
+    open_fallback.assert_awaited_once_with(None)
+    assert probe.reads == BROWSER_ENGINE_WATCH_STRIKES
+    # The frozen run's calls are failed at once rather than left holding
+    # Browser-Use's global event lock, and so the fallback's first step, to a timeout.
+    _EngineAgent.made[0].browser_session.reset.assert_awaited_once()
+    assert (result.status, result.summary, result.steps) == (
+        BrowserSessionStatus.COMPLETED,
+        "67 comments",
+        2,
+    )
+
+
+async def test_a_frozen_run_cut_short_still_bills_what_the_primary_spent(
+    two_engines, fast_watchdog, monkeypatch
+) -> None:
+    record = AsyncMock()
+    monkeypatch.setattr(runner_mod, "record_llm_call", record)
+    _watched_host(monkeypatch, _engine_wedged)
+    _, emit = _collector()
+    _EngineAgent.spent_by_model = {"jev": (700, 30)}
+    _EngineAgent.runs = [([{"hang": True}], _GAVE_OUT), (_steps("read"), _History())]
+    runner, _ = _two_engine_runner(emit=emit)
+
+    await asyncio.wait_for(runner.run("count the comments"), timeout=5)
+
+    billed = [
+        (call.kwargs["model_name"], call.kwargs["usage"]["input_tokens"])
+        for call in record.await_args_list
+    ]
+    assert billed == [("jev", 700)]
+
+
+async def test_a_frozen_engine_under_a_run_the_user_stopped_ends_it_cancelled_not_on_the_fallback(
+    two_engines, fast_watchdog, monkeypatch
+) -> None:
+    _watched_host(monkeypatch, _engine_wedged)
+    _, emit = _collector()
+    _EngineAgent.runs = [([{"hang": True}], _GAVE_OUT)]
+    runner, open_fallback = _two_engine_runner(emit=emit, is_cancelled=AsyncMock(return_value=True))
+
+    result = await asyncio.wait_for(runner.run("count the comments"), timeout=5)
+
+    open_fallback.assert_not_awaited()
+    assert result.status == BrowserSessionStatus.CANCELLED
+
+
+async def _slow_but_alive(request: httpx.Request) -> httpx.Response:
+    await asyncio.sleep(0.03)
+    return _session_live(request)
+
+
+class _AgentRunOnASlowPage(_AgentRunOnFailingEngine):
+    """A step on a heavy page: many watchdog intervals long, then it finishes."""
+
+    async def execute(self, task: str) -> RunOutcome:
+        type(self).runs.append((self._session.session_id, self._llm.fallback_available))
+        await asyncio.sleep(0.3)
+        return RunOutcome(success=True, summary="read it")
+
+    async def spent(self) -> list[RunUsage]:
+        return []
+
+
+async def test_a_slow_page_on_a_live_engine_is_never_mistaken_for_a_frozen_one(
+    fast_watchdog, monkeypatch
+) -> None:
+    probe = _watched_host(monkeypatch, _slow_but_alive)
+    _, emit = _collector()
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=_AgentRunOnASlowPage)
+
+    result = await runner.run("read the page")
+
+    open_fallback.assert_not_awaited()
+    assert probe.reads >= 3  # the watchdog was reading the whole time
+    assert (result.status, result.summary) == (BrowserSessionStatus.COMPLETED, "read it")
+
+
+class _AgentRunPausedOnTheUser(_AgentRunOnFailingEngine):
+    """The run hands the browser to the user and waits, many watchdog intervals long."""
+
+    async def execute(self, task: str) -> RunOutcome:
+        type(self).runs.append((self._session.session_id, self._llm.fallback_available))
+        await self._hooks.takeover("Sign in", "credentials")
+        return RunOutcome(success=True, summary="signed in and read it")
+
+    async def spent(self) -> list[RunUsage]:
+        return []
+
+
+async def test_a_run_paused_on_the_user_is_never_cut_short_by_the_watchdog(
+    fast_watchdog, monkeypatch
+) -> None:
+    probe = _watched_host(monkeypatch, _engine_wedged)
+    _, emit = _collector()
+
+    async def _user_takes_their_time(request, session) -> HandoffOutcome:
+        await asyncio.sleep(0.3)
+        return HandoffOutcome(status=HandoffStatus.COMPLETED)
+
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    runner = _fallback_runner(
+        monkeypatch,
+        emit,
+        open_fallback,
+        agent_run=_AgentRunPausedOnTheUser,
+        request_handoff=AsyncMock(side_effect=_user_takes_their_time),
+    )
+
+    result = await runner.run("sign in and read")
+
+    open_fallback.assert_not_awaited()
+    assert probe.reads == 0
+    assert (result.status, result.summary) == (
+        BrowserSessionStatus.COMPLETED,
+        "signed in and read it",
+    )
+
+
+async def test_the_watchdog_stops_reading_the_host_once_the_run_ends(
+    fast_watchdog, monkeypatch
+) -> None:
+    probe = _watched_host(monkeypatch, _session_live)
+    _, emit = _collector()
+    runner = _fallback_runner(
+        monkeypatch,
+        emit,
+        AsyncMock(return_value=_fallback_session()),
+        agent_run=_AgentRunOnASlowPage,
+    )
+
+    await runner.run("read the page")
+    reads_at_the_end = probe.reads
+    await asyncio.sleep(0.1)
+
+    assert probe.reads == reads_at_the_end
+
+
+class _AgentRunThatNeverEndsOnALiveEngine(_AgentRunThatNeverEnds):
+    async def spent(self) -> list[RunUsage]:
+        return []
+
+
+async def test_the_watchdog_stops_reading_the_host_once_the_run_spent_its_budget(
+    fast_watchdog, monkeypatch
+) -> None:
+    probe = _watched_host(monkeypatch, _session_live)
+    _, emit = _collector()
+    runner = _fallback_runner(
+        monkeypatch,
+        emit,
+        AsyncMock(return_value=_fallback_session()),
+        agent_run=_AgentRunThatNeverEndsOnALiveEngine,
+        task_timeout=0.1,
+    )
+
+    result = await runner.run("read the page")
+    reads_at_the_end = probe.reads
+    await asyncio.sleep(0.1)
+
+    assert result.summary == "Browser task timed out after 0.1s."
+    assert reads_at_the_end > 0
+    assert probe.reads == reads_at_the_end

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from browser_use.agent.views import AgentHistoryList, AgentOutput
     from browser_use.browser.views import BrowserStateSummary
     from browser_use.llm.base import BaseChatModel
+    from browser_use.tokens.views import UsageSummary
     from pydantic import BaseModel
 
 
@@ -166,9 +167,10 @@ def _usage_from_history(history: AgentHistoryList[BaseModel]) -> list[RunUsage]:
     Populated only when Agent.run returns normally; timeout, cancellation and
     CDP failure never reach a history.
     """
-    usage = history.usage
-    if usage is None:
-        return []
+    return [] if history.usage is None else _usage_by_model(history.usage)
+
+
+def _usage_by_model(usage: UsageSummary) -> list[RunUsage]:
     return [
         RunUsage(
             model_name=model_name,
@@ -281,6 +283,23 @@ class BrowserAgentRun:
     def stop(self) -> None:
         if self._agent is not None:
             self._agent.stop()
+
+    async def abandon(self) -> None:
+        """Drop the connection to an engine that stopped answering, failing every call still waiting on it.
+
+        Every Browser-Use EventBus shares one global lock, and a handler waiting on
+        a frozen engine holds it to its own timeout (120 s for a state read), which
+        stalled the fallback run's first step. Failed at once, the run's teardown
+        goes through Browser-Use's own path and never waits on the engine.
+        """
+        if self._agent is not None:
+            await self._agent.browser_session.reset()
+
+    async def spent(self) -> list[RunUsage]:
+        """Return the tokens this run has spent so far, for a run cut short before it could return a history."""
+        if self._agent is None:
+            return []
+        return _usage_by_model(await self._agent.token_cost_service.get_usage_summary())
 
     async def _takeover(self, reason: str, category: str) -> str:
         """Hand the browser to the user, then give the note they left to both readers: Jev's own state, and the action result Browser-Use records for this step."""

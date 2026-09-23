@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from app.constants.browser import (
     BROWSER_AGENT_GUIDANCE_MAX,
     BROWSER_ENGINE_FALLBACK_NOTE,
+    BROWSER_ENGINE_UNRESPONSIVE_SUMMARY,
     BROWSER_RUN_BLOCKED_SUMMARY,
     BROWSER_RUN_HANDOFF_TIMED_OUT,
     BROWSER_STALL_NOTE,
@@ -30,6 +31,7 @@ from app.constants.browser import (
     MAX_HANDOFFS_PER_TASK,
     BrowserRunFailure,
     BrowserSessionStatus,
+    EngineFailure,
     HandoffStatus,
     SensitiveCategory,
 )
@@ -44,6 +46,7 @@ from app.schemas.browser import (
     HandoffRequest,
 )
 from app.services.browser.agent_run import BrowserAgentRun
+from app.services.browser.engine_watchdog import run_watched
 from app.services.browser.exceptions import BrowserHandoffCancelled, BrowserUnavailableError
 from app.services.browser.jev.chat_model import JevChatModel
 from app.services.browser.replay import create_replay_link
@@ -252,16 +255,25 @@ class BrowserTaskRunner:
             stall_watch.cancel()
 
     async def _execute(self, task: str) -> RunOutcome:
-        """Run the agent; finish on the fallback engine, once, when the primary engine failed under the run or could not pass a page."""
+        """Run the agent; finish on the fallback engine, once, when the primary engine failed under the run or could not pass a page.
+
+        While the run is on the primary engine a watchdog reads the engine's
+        liveness, so a frozen engine moves the run in seconds, not after
+        Browser-Use's own timeouts give out.
+        """
         route = self._fallback_route()
+        if route is None:
+            return await self._agent_run.execute(task)
         try:
-            outcome = await self._agent_run.execute(task)
+            ended = await run_watched(
+                self._agent_run, task, self._session, paused=lambda: self._waiting_on_someone
+            )
         except (BrowserHandoffCancelled, InterruptedError):
             raise
         except Exception as exc:
             # Browser-Use raises only when it cannot attach at all; the host says
             # whether that was the engine or something the fallback would not fix.
-            if route is None or not await self._engine_failed_under_run(route.jev):
+            if not await self._engine_failed_under_run(route.jev):
                 raise
             log.warning(
                 f"{LogTag.BROWSER} Browser agent could not run on the failed engine",
@@ -269,11 +281,16 @@ class BrowserTaskRunner:
                 browser={"session_id": self._session.session_id},
             )
             return await self._resume_on_fallback(task, route, spent=[])
-        if route is None or outcome.success:
-            return outcome
+        if isinstance(ended, EngineFailure):
+            if await self._should_stop():
+                return RunOutcome(success=False, summary=BROWSER_ENGINE_UNRESPONSIVE_SUMMARY)
+            self._fall_back_after_engine_failure(route.jev, ended)
+            return await self._resume_on_fallback(task, route, spent=await self._agent_run.spent())
+        if ended.success:
+            return ended
         if route.jev.fallback_url is not None or await self._engine_failed_under_run(route.jev):
-            return await self._resume_on_fallback(task, route, spent=outcome.usage)
-        return outcome
+            return await self._resume_on_fallback(task, route, spent=ended.usage)
+        return ended
 
     def _fallback_route(self) -> _FallbackRoute | None:
         """Return how this run moves to the fallback engine, or None when it cannot (no host, or it already has)."""
@@ -294,6 +311,10 @@ class BrowserTaskRunner:
         failure = await engine_failure(self._session)
         if failure is None:
             return False
+        self._fall_back_after_engine_failure(jev, failure)
+        return True
+
+    def _fall_back_after_engine_failure(self, jev: JevChatModel, failure: EngineFailure) -> None:
         log.warning(
             f"{LogTag.BROWSER} Browser engine failed under the run ({failure})",
             browser={"session_id": self._session.session_id, "operation": "engine_failure"},
@@ -301,7 +322,6 @@ class BrowserTaskRunner:
         )
         log.set_ns("browser", fallback_reason=failure.value)
         jev.fall_back_after_engine_failure()
-        return True
 
     async def _resume_on_fallback(
         self, task: str, route: _FallbackRoute, *, spent: list[RunUsage]
