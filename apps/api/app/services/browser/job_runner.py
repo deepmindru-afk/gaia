@@ -413,7 +413,7 @@ async def _run_handoff(
 
 
 async def _open_fallback_session(
-    sessions: contextlib.AsyncExitStack, user_id: str, host_url: str, url: str
+    sessions: contextlib.AsyncExitStack, user_id: str, host_url: str, url: str | None
 ) -> BrowserHostSession:
     """Open a session on the fallback host for url; released with the job's other sessions."""
     return await sessions.enter_async_context(

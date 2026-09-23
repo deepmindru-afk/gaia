@@ -23,9 +23,11 @@ from pydantic import BaseModel
 
 from app.agents.core.background.session import RunKind, create_session
 from app.agents.tools import browser_tool
+from app.config.settings import settings
 from app.models.hil_models import HILPreferences
 from app.schemas.browser_job import BrowserJobRequest
-from app.services.browser.exceptions import BrowserHandoffCancelled
+from app.services.browser.exceptions import BrowserHandoffCancelled, BrowserSessionGone
+from app.services.browser.host_client import HostSessionInfo
 from app.services.browser.jev.chat_model import JevChatModel
 from app.services.browser.jev.gateway import JevChoiceAnswer, JevEvaluation, JevUsage
 from app.services.browser.jev.prompts import PART_DONE, PLAN_STEPS
@@ -56,6 +58,9 @@ class ScriptedStep:
     #: Wait until an executor has joined the job before deciding, so a journey
     #: about what a joined executor sees is not a race with the turn's own poll.
     await_joiner: bool = False
+    #: The engine under the run dies here: the host loses the session and the run
+    #: ends the way Browser-Use ends one, on step failures, with nothing raised.
+    engine_dies: bool = False
 
 
 class _Action:
@@ -94,16 +99,17 @@ class _AgentState:
 
 
 class _History:
-    def __init__(self, summary: str, successful: bool) -> None:
+    def __init__(self, summary: str, successful: bool, *, done: bool = True) -> None:
         self._summary = summary
         self._successful = successful
+        self._done = done
         self.usage = None
 
     def final_result(self) -> str:
         return self._summary
 
     def is_done(self) -> bool:
-        return True
+        return self._done
 
     def is_successful(self) -> bool:
         return self._successful
@@ -128,6 +134,11 @@ class BrowserDouble:
         self.guidance: Callable[[str], Any] | None = None
         #: Set once the job reaches the worker; the await_joiner step needs it.
         self.job_id: str = ""
+        #: The next step to play: a run moved to the fallback engine picks up
+        #: where the run on the dead engine stopped.
+        self.next_step = 0
+        #: Kills the engine under the session the run is on; the world wires it.
+        self.kill_engine: Callable[[], None] = lambda: None
 
     def agent(self, **kwargs: Any) -> _ScriptedAgent:
         return _ScriptedAgent(self, **kwargs)
@@ -148,7 +159,14 @@ class _ScriptedAgent:
         self._stopped = True
 
     async def run(self, max_steps: int, on_step_end: Any = None) -> _History:
-        for index, step in enumerate(self._double.steps, start=1):
+        double = self._double
+        while double.next_step < len(double.steps):
+            step = double.steps[double.next_step]
+            double.next_step += 1
+            index = double.next_step
+            if step.engine_dies:
+                double.kill_engine()
+                return _History("", successful=False, done=False)
             if step.await_stop:
                 await self._wait_for_stop()
                 break
@@ -233,6 +251,8 @@ class JobWorld:
         self.jev: ScriptedJevGateway | None = None
         self.jobs: list[asyncio.Task[Any]] = []
         self.host_sessions = 0
+        #: Sessions whose engine died; the host answers 404 for them.
+        self.dead_sessions: set[str] = set()
 
     def frames(self) -> list[dict[str, Any]]:
         """Return each SSE chunk the turn's stream carried, decoded."""
@@ -268,6 +288,7 @@ async def browser_job_world(
     successful: bool = True,
     host_error: Exception | None = None,
     jev: JevScript | None = None,
+    fallback_host: str | None = None,
 ) -> AsyncIterator[JobWorld]:
     """Wire one turn's world: a fake Redis, a scripted browser, an in-process worker."""
     double = BrowserDouble(
@@ -325,6 +346,18 @@ async def browser_job_world(
     async def _deliver(**kwargs: Any) -> None:
         world.deliveries.append(kwargs)
 
+    def _kill_engine() -> None:
+        world.dead_sessions.add(f"sess-{world.host_sessions}")
+
+    double.kill_engine = _kill_engine
+
+    async def _get_host_session(session_id: str, host_url: str) -> HostSessionInfo:
+        if session_id in world.dead_sessions:
+            raise BrowserSessionGone(
+                f"Browser host returned 404 for {host_url}/sessions/{session_id}"
+            )
+        return HostSessionInfo(session_id=session_id, live=True, last_activity_at=0.0)
+
     patches = [
         patch("app.db.redis.redis_cache.redis", redis),
         # The real waits are tens of seconds of polling. Shrunk, not removed: the
@@ -352,6 +385,8 @@ async def browser_job_world(
         ),
         patch("app.services.browser.session.host_client.create_session", _create_host_session),
         patch("app.services.browser.session.host_client.delete_session", AsyncMock()),
+        patch("app.services.browser.session.host_client.get_session", _get_host_session),
+        patch.object(settings, "BROWSER_FALLBACK_HOST_URL", fallback_host),
         patch("app.services.browser.session.load_storage_state", AsyncMock(return_value=None)),
         patch("app.services.browser.session.save_storage_state", AsyncMock()),
         patch("app.services.browser.job_runner.build_browser_llm", lambda user_id=None: llm),
@@ -425,6 +460,7 @@ class _JevAction(BaseModel):
     """The Browser-Use action model Jev fills in, cut down to the operations this suite offers."""
 
     click: dict[str, Any] | None = None
+    navigate: dict[str, Any] | None = None
     input_text: dict[str, Any] | None = None
     wait: dict[str, Any] | None = None
     done: dict[str, Any] | None = None
@@ -516,11 +552,13 @@ class ScriptedJevGateway:
 
 def _choice(choice: str, keys: list[str]) -> JevChoiceAnswer:
     """One answer whose distribution passes the policy's own validation."""
-    rest = (1 - 0.8) / (len(keys) - 1) if len(keys) > 1 else 0.0
+    # A lone key carries the whole distribution, or the policy rejects the answer.
+    top = 0.8 if len(keys) > 1 else 1.0
+    rest = (1 - top) / (len(keys) - 1) if len(keys) > 1 else 0.0
     return JevChoiceAnswer(
         type="choice",
         choice=choice,
-        probabilities={key: (0.8 if key == choice else rest) for key in keys},
+        probabilities={key: (top if key == choice else rest) for key in keys},
     )
 
 

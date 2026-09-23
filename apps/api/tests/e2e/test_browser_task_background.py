@@ -532,3 +532,38 @@ async def test_giving_up_ends_the_run_failed_and_frees_the_conversation() -> Non
     assert "the site needs an account" not in results[0]["summary"]
     assert "DID NOT COMPLETE" in ((run.results_from("tools") or [])[-1])
     assert await get_conversation_slot(CONVERSATION) is None
+
+
+async def test_a_run_whose_engine_dies_mid_task_finishes_on_the_fallback_engine() -> None:
+    """The primary engine crashing under a run is not the task failing: the run moves to the fallback engine, back on the page it was reading, and finishes there."""
+    steps = [
+        ScriptedStep(actions=[], decide=True),
+        ScriptedStep(actions=[], engine_dies=True),
+        ScriptedStep(actions=[], decide=True, url="https://example.test/book"),
+        ScriptedStep(actions=[], decide=True, url="https://example.test/book"),
+    ]
+    script = JevScript(
+        decisions=[("TYPE_TEXT", "1"), ("TYPE_TEXT", "1")],
+        texts=[{"text": "Friday"}, {"text": "Friday"}],
+    )
+
+    async with browser_job_world(
+        STREAM, steps=steps, jev=script, fallback_host="http://fallback.test"
+    ) as world:
+        async with executor_graph([RETRIEVE, START, JOIN, "Booked."]) as graph:
+            run = await _drive(graph, world)
+
+    sessions = [card["session_id"] for card in world.cards() if card["kind"] == "session"]
+    assert sessions == ["sess-1", "sess-2"]
+    assert [next(iter(action)) for action in _step_actions(world)] == [
+        "input_text",
+        "navigate",
+        "input_text",
+    ]
+    assert _step_actions(world)[1]["navigate"]["url"] == "https://example.test/book"
+    results = [card for card in world.cards() if card["kind"] == "result"]
+    assert [(card["status"], card["success"]) for card in results] == [
+        (BrowserSessionStatus.COMPLETED.value, True)
+    ]
+    joined = run.result_for("wait_for_browser_task") or ""
+    assert joined.startswith("The table is booked for 7pm on Friday.")

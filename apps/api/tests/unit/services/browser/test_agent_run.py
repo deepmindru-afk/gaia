@@ -143,3 +143,31 @@ class TestFrameNumbering:
 
         assert harness.outputs[0] == (1, ["clicked"])
         assert harness.outputs[-1] == (3, ["confirmed"])
+
+
+@pytest.mark.unit
+class TestStepCaption:
+    async def test_a_finishing_step_is_named_after_the_part_it_finished(
+        self, harness: _Harness
+    ) -> None:
+        """Regression: the only step of a one-step run read "Step 1 · Finished"."""
+        output = SimpleNamespace(
+            next_goal="Read the top story on news.ycombinator.com",
+            action=[_Action("done", {"text": "The top story is X.", "success": True})],
+        )
+
+        await harness.run._on_step(_page(), output, 1)
+
+        assert harness.frames[-1].goal == "Read the top story on news.ycombinator.com"
+
+    async def test_a_finish_that_did_not_achieve_the_goal_says_so_not_the_part(
+        self, harness: _Harness
+    ) -> None:
+        output = SimpleNamespace(
+            next_goal="Buy the item on shop.test",
+            action=[_Action("done", {"text": "There is no Buy button.", "success": False})],
+        )
+
+        await harness.run._on_step(_page(), output, 1)
+
+        assert harness.frames[-1].goal == "Could not find a way forward on this page"

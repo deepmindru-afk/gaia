@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections import Counter
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -54,7 +55,7 @@ from app.services.browser.run_contract import (
     StepFrame,
 )
 from app.services.browser.screenshots import publish_step_screenshot
-from app.services.browser.session import BrowserHostSession
+from app.services.browser.session import BrowserHostSession, engine_failure
 from app.services.llm_metering import LLMCallContext, TokenUsage, record_llm_call
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log
@@ -67,7 +68,7 @@ _STALL_POLL_SECONDS = 1.0
 
 EmitFn = Callable[[BrowserCardSnapshot], Awaitable[None]]
 RequestHandoffFn = Callable[[HandoffRequest, BrowserHostSession], Awaitable[HandoffOutcome]]
-OpenFallbackSessionFn = Callable[[str], Awaitable[BrowserHostSession]]
+OpenFallbackSessionFn = Callable[[str | None], Awaitable[BrowserHostSession]]
 IsCancelledFn = Callable[[], Awaitable[bool]]
 RequestGuidanceFn = Callable[[AgentGuidanceRequest], Awaitable[HandoffOutcome]]
 NoteFn = Callable[[str], Awaitable[None]]
@@ -79,6 +80,14 @@ __all__ = [
     "BrowserRunnerCallbacks",
     "BrowserTaskRunner",
 ]
+
+
+@dataclass(frozen=True)
+class _FallbackRoute:
+    """What moving a run to the fallback engine takes: the Jev run to resume, and the host to open."""
+
+    jev: JevChatModel
+    open_session: OpenFallbackSessionFn
 
 
 @dataclass(frozen=True)
@@ -95,8 +104,9 @@ class BrowserRunnerCallbacks:
     request_guidance: RequestGuidanceFn | None = None
     #: One plain line to the user when a step has shown nothing for a while.
     note: NoteFn | None = None
-    #: Opens a session on the fallback engine at a url. Absent when no fallback
-    #: host is configured, and a run blocked on a page then simply ends blocked.
+    #: Opens a session on the fallback engine at a url, or at none when the run
+    #: never read a page. Absent when no fallback host is configured, and a run
+    #: blocked on a page or failed by its engine then simply ends failed.
     open_fallback_session: OpenFallbackSessionFn | None = None
 
 
@@ -123,7 +133,8 @@ class BrowserTaskRunner:
         self._note = callbacks.note
         self._request_guidance = callbacks.request_guidance
         self._open_fallback_session = callbacks.open_fallback_session
-        #: Whether the run moved to the fallback engine for a page it could not pass.
+        #: Whether the run moved to the fallback engine, for a page it could not pass
+        #: or an engine that failed under it.
         self.used_fallback = False
         if isinstance(llm, JevChatModel):
             llm.fallback_available = callbacks.open_fallback_session is not None
@@ -239,17 +250,69 @@ class BrowserTaskRunner:
             stall_watch.cancel()
 
     async def _execute(self, task: str) -> RunOutcome:
-        """Run the agent; when it gave up on a page the primary engine could not pass, finish on the fallback engine."""
-        outcome = await self._agent_run.execute(task)
-        jev = self._llm if isinstance(self._llm, JevChatModel) else None
-        if jev is None or jev.fallback_url is None or self._open_fallback_session is None:
+        """Run the agent; finish on the fallback engine, once, when the primary engine failed under the run or could not pass a page."""
+        route = self._fallback_route()
+        try:
+            outcome = await self._agent_run.execute(task)
+        except (BrowserHandoffCancelled, InterruptedError):
+            raise
+        except Exception as exc:
+            # Browser-Use raises only when it cannot attach at all; the host says
+            # whether that was the engine or something the fallback would not fix.
+            if route is None or not await self._engine_failed_under_run(route.jev):
+                raise
+            log.warning(
+                f"{LogTag.BROWSER} Browser agent could not run on the failed engine",
+                error_type=type(exc).__name__,
+                browser={"session_id": self._session.session_id},
+            )
+            return await self._resume_on_fallback(task, route, spent=[])
+        if route is None or outcome.success:
             return outcome
-        url = jev.fallback_url
+        if route.jev.fallback_url is not None or await self._engine_failed_under_run(route.jev):
+            return await self._resume_on_fallback(task, route, spent=outcome.usage)
+        return outcome
+
+    def _fallback_route(self) -> _FallbackRoute | None:
+        """Return how this run moves to the fallback engine, or None when it cannot (no host, or it already has)."""
+        jev = self._llm if isinstance(self._llm, JevChatModel) else None
+        if jev is None or not jev.fallback_available or self._open_fallback_session is None:
+            return None
+        return _FallbackRoute(jev=jev, open_session=self._open_fallback_session)
+
+    async def _engine_failed_under_run(self, jev: JevChatModel) -> bool:
+        """Whether the primary engine itself failed the run; when it did, Jev resumes where it was.
+
+        A run the user stopped or a handoff ended is never retried. Otherwise the
+        host decides: a run that failed on an engine still serving it (a site that
+        did not resolve, a model that gave out) failed on its own.
+        """
+        if await self._should_stop():
+            return False
+        failure = await engine_failure(self._session)
+        if failure is None:
+            return False
+        log.warning(
+            f"{LogTag.BROWSER} Browser engine failed under the run ({failure})",
+            browser={"session_id": self._session.session_id, "operation": "engine_failure"},
+            engine_failure=failure.value,
+        )
+        log.set_ns("browser", fallback_reason=failure.value)
+        jev.fall_back_after_engine_failure()
+        return True
+
+    async def _resume_on_fallback(
+        self, task: str, route: _FallbackRoute, *, spent: list[RunUsage]
+    ) -> RunOutcome:
+        """Open the fallback engine where the run left off and finish the task there, keeping plan, findings and history."""
+        url = route.jev.fallback_url
         log.info(
-            f"{LogTag.BROWSER} Browser run moving to the fallback engine for {url[:120]}",
+            f"{LogTag.BROWSER} Browser run moving to the fallback engine for "
+            f"{(url or 'the start of the task')[:120]}",
             browser={"session_id": self._session.session_id, "operation": "engine_fallback"},
         )
-        self._session = await self._open_fallback_session(url)
+        log.set_ns("browser", primary_session_id=self._session.session_id)
+        self._session = await route.open_session(url)
         self.used_fallback = True
         await self._emit(
             BrowserSessionSnapshot(
@@ -259,9 +322,10 @@ class BrowserTaskRunner:
                 live_view_url=self._session.live_view_url,
             )
         )
-        jev.continue_on_fallback()
+        route.jev.continue_on_fallback()
         self._agent_run = self._build_agent_run()
-        return await self._agent_run.execute(task)
+        outcome = await self._agent_run.execute(task)
+        return replace(outcome, usage=_merged_usage(spent, outcome.usage))
 
     async def _finish_from_handoff(self) -> BrowserResultSnapshot:
         """Judge a run the handoff ended: blocked with no guidance, expired, completed by the user, or stopped."""
@@ -518,3 +582,16 @@ class BrowserTaskRunner:
         if isinstance(llm, JevChatModel) and model_name == llm.model:
             return llm.actual_cost_usd
         return None
+
+
+def _merged_usage(first: list[RunUsage], second: list[RunUsage]) -> list[RunUsage]:
+    """Sum two runs' token spend per billed model, so a run finished on the fallback bills both halves."""
+    inputs: Counter[str] = Counter()
+    outputs: Counter[str] = Counter()
+    for entry in (*first, *second):
+        inputs[entry.model_name] += entry.input_tokens
+        outputs[entry.model_name] += entry.output_tokens
+    return [
+        RunUsage(model_name=name, input_tokens=inputs[name], output_tokens=outputs[name])
+        for name in inputs
+    ]

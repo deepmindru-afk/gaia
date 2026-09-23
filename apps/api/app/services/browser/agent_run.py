@@ -16,7 +16,7 @@ from app.constants.browser import (
 )
 from app.constants.log_tags import LogTag
 from app.schemas.browser import BrowserAction, BrowserActionOutput
-from app.services.browser.captions import caption_from_action_list
+from app.services.browser.captions import step_caption
 from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev import JevChatModel
 from app.services.browser.run_contract import (
@@ -336,11 +336,10 @@ class BrowserAgentRun:
             if isinstance(self._llm, JevChatModel)
             else getattr(browser_state_summary, "screenshot", None)
         )
-        # Never the model's own next_goal/thinking: Jev fills both with its raw
-        # decision label ("CLICK [6] Log In"). The caption describes what the
-        # step does, named after the element it resolved.
+        # The caption describes what the step does, named after the element it
+        # resolved; the model's next_goal only names a step that finishes the run.
         self._emit_frame(
-            goal=caption_from_action_list(step_actions),
+            goal=step_caption(step_actions, getattr(agent_output, "next_goal", None)),
             actions=step_actions,
             state=browser_state_summary,
             raw_screenshot=raw_screenshot,

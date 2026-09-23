@@ -32,6 +32,19 @@ class BrowserEngine(StrEnum):
     OBSCURA = "obscura"
 
 
+class EngineFailure(StrEnum):
+    """How the browser engine under a run failed it, as its host reports it.
+
+    Either one sends the run to the fallback engine; a run that failed on an
+    engine still serving its session did not fail because of the engine.
+    """
+
+    #: The engine process died or the host lost the session: 404, or not live.
+    SESSION_GONE = "session_gone"
+    #: The host did not answer for the session: the engine is wedged or the host is down.
+    UNRESPONSIVE = "unresponsive"
+
+
 # ---------------------------------------------------------------------------
 # SSE card-event key (must match tool_fields in chat_models.py and the frontend TOOL_RENDERERS/toolRegistry registration).
 # ---------------------------------------------------------------------------

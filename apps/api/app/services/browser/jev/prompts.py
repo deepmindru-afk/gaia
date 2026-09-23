@@ -70,7 +70,10 @@ together complete the goal. Each part is an object with two keys: goal, a short 
 naming the site or page it happens on and what it must obtain or do there, and url, the absolute
 https address where that part starts (the site or page the goal names) or null when it continues on
 the page the previous part ends on. Split only where the goal moves to a different site or a clearly
-separate part; a goal with one part is one step; a closing "report back" is not a part. Only what
+separate part; a goal with one part is one step; a closing "report back" is not a part. Only
+navigating to the page a part works on (opening the site, a category, a menu) is never a part of its
+own; it is the start of that part. Word each part as the goal words it, never wider ("across all
+pages", "every result") than the goal asks. Only what
 the goal asks for: never add a part that opens, reads or checks something the goal does not name
 (a discussion thread when the goal names the article, every item when it names the top three).
 At most 6 steps. No commentary."""

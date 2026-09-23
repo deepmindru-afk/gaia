@@ -9,12 +9,13 @@ actions), which is what the takeover tests below exercise directly.
 """
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock
 
 import browser_use
+import httpx
 import pytest
 
 from app.constants.browser import (
@@ -26,7 +27,7 @@ from app.constants.browser import (
 )
 from app.constants.log_tags import LogTag
 from app.schemas.browser import BrowserSessionSnapshot, HandoffOutcome, HandoffRequest
-from app.services.browser import agent_run, runner as runner_mod
+from app.services.browser import agent_run, host_client, runner as runner_mod
 from app.services.browser.agent_run import outcome_from_history
 from app.services.browser.jev.chat_model import JevChatModel
 from app.services.browser.jev.policy import JevHistoryEntry
@@ -34,6 +35,7 @@ from app.services.browser.run_contract import (
     ActionResultsFn,
     BrowserRunConfig,
     RunOutcome,
+    RunUsage,
     StepFrame,
 )
 from app.services.browser.runner import BrowserRunnerCallbacks, BrowserTaskRunner
@@ -1906,22 +1908,31 @@ class _AgentRunThatBlocksOnce:
         return None
 
 
-def _fallback_runner(monkeypatch, emit, open_fallback_session) -> BrowserTaskRunner:
+def _fallback_runner(
+    monkeypatch,
+    emit,
+    open_fallback_session,
+    *,
+    agent_run: type = _AgentRunThatBlocksOnce,
+    is_cancelled: AsyncMock | None = None,
+    request_handoff: AsyncMock | None = None,
+    task_timeout: float = 30,
+) -> BrowserTaskRunner:
     _AgentRunThatBlocksOnce.runs = []
-    monkeypatch.setattr(runner_mod, "BrowserAgentRun", _AgentRunThatBlocksOnce)
+    monkeypatch.setattr(runner_mod, "BrowserAgentRun", agent_run)
     return BrowserTaskRunner(
         session=_session(),
         llm=JevChatModel(client=MagicMock(), text_model=MagicMock()),
         callbacks=BrowserRunnerCallbacks(
             emit=emit,
-            request_handoff=AsyncMock(),
-            is_cancelled=AsyncMock(return_value=False),
+            request_handoff=request_handoff or AsyncMock(),
+            is_cancelled=is_cancelled or AsyncMock(return_value=False),
             open_fallback_session=open_fallback_session,
         ),
         config=BrowserRunConfig(
             max_steps=10,
             max_actions_per_step=5,
-            task_timeout_seconds=30,
+            task_timeout_seconds=task_timeout,
             step_timeout_seconds=180,
             handoff_timeout_seconds=0,
             stream_screenshots=False,
@@ -1977,3 +1988,267 @@ async def test_a_run_blocked_with_no_fallback_engine_ends_on_its_first_outcome(
         False,
         "blocked on the primary",
     )
+
+
+# ---------------------------------------------------------------------------
+# Engine failure: the primary engine crashed, dropped or wedged under the run
+# ---------------------------------------------------------------------------
+
+_LAST_PAGE = "https://news.example.com/item?id=1"
+#: What Browser-Use's run returns once the engine stopped answering: its loop
+#: ends on consecutive failures and nothing is raised.
+_ENGINE_GAVE_OUT = RunOutcome(success=False, summary="Could not complete the browser task.")
+
+
+def _host_answers(monkeypatch, respond) -> None:
+    """Stand in for the browser host's HTTP API, answering every call with respond."""
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        host_client.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs),
+    )
+
+
+def _session_gone(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(404, json={"detail": "session not found"})
+
+
+def _session_dead(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"session_id": "s1", "live": False, "last_activity_at": 0})
+
+
+def _engine_wedged(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("the host did not answer", request=request)
+
+
+def _session_live(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"session_id": "s1", "live": True, "last_activity_at": 0})
+
+
+class _AgentRunOnFailingEngine:
+    """Stands in for BrowserAgentRun: each run plays the next scripted ending, an outcome or a raise."""
+
+    endings: ClassVar[list[RunOutcome | Exception]] = []
+    runs: ClassVar[list[tuple[str, bool]]] = []
+    #: The page the run had read when its engine gave out; None when it never read one.
+    last_page: ClassVar[str | None] = _LAST_PAGE
+
+    def __init__(self, *, session, llm, config, hooks, step_timeout) -> None:
+        self._session = session
+        self._llm = llm
+        self._hooks = hooks
+
+    async def execute(self, task: str) -> RunOutcome:
+        cls = type(self)
+        cls.runs.append((self._session.session_id, self._llm.fallback_available))
+        if cls.last_page is not None:
+            # What Jev's observation records for the page it read last.
+            self._llm._observation = SimpleNamespace(url=cls.last_page)
+        ending = cls.endings.pop(0)
+        if isinstance(ending, Exception):
+            raise ending
+        return ending
+
+    def stop(self) -> None:
+        return None
+
+
+def _failing_engine(*endings: RunOutcome | Exception, last_page: str | None = _LAST_PAGE):
+    _AgentRunOnFailingEngine.endings = list(endings)
+    _AgentRunOnFailingEngine.runs = []
+    _AgentRunOnFailingEngine.last_page = last_page
+    return _AgentRunOnFailingEngine
+
+
+@pytest.mark.parametrize("host", [_session_gone, _session_dead, _engine_wedged])
+async def test_a_run_whose_engine_failed_finishes_on_the_fallback_from_the_page_it_was_on(
+    monkeypatch, host
+) -> None:
+    events, emit = _collector()
+    _host_answers(monkeypatch, host)
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    agent = _failing_engine(_ENGINE_GAVE_OUT, RunOutcome(success=True, summary="67 comments"))
+    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=agent)
+
+    result = await runner.run("count the comments")
+
+    open_fallback.assert_awaited_once_with(_LAST_PAGE)
+    assert agent.runs == [("s1", True), ("s-fallback", False)]
+    running = [e.session_id for e in events if isinstance(e, BrowserSessionSnapshot)]
+    assert running == ["s1", "s-fallback"]
+    assert runner.used_fallback is True
+    assert (result.status, result.success, result.summary) == (
+        BrowserSessionStatus.COMPLETED,
+        True,
+        "67 comments",
+    )
+
+
+async def test_an_engine_that_died_before_the_agent_attached_starts_the_task_over_on_the_fallback(
+    monkeypatch,
+) -> None:
+    _, emit = _collector()
+    _host_answers(monkeypatch, _session_gone)
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    agent = _failing_engine(
+        RuntimeError("Failed to establish CDP connection to browser: HTTP 403"),
+        RunOutcome(success=True, summary="67 comments"),
+        last_page=None,
+    )
+    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=agent)
+
+    result = await runner.run("count the comments")
+
+    open_fallback.assert_awaited_once_with(None)
+    assert (result.status, result.summary) == (BrowserSessionStatus.COMPLETED, "67 comments")
+
+
+@pytest.mark.parametrize(
+    ("ending", "summary"),
+    [
+        # A site that never loaded, or a model that gave out, on a healthy engine.
+        (_ENGINE_GAVE_OUT, "Could not complete the browser task."),
+        (RuntimeError("LLM provider exploded"), "Browser task failed: LLM provider exploded"),
+    ],
+)
+async def test_a_run_that_failed_on_a_live_engine_ends_failed_without_the_fallback(
+    monkeypatch, ending, summary
+) -> None:
+    _, emit = _collector()
+    _host_answers(monkeypatch, _session_live)
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=_failing_engine(ending))
+
+    result = await runner.run("count the comments")
+
+    open_fallback.assert_not_awaited()
+    assert runner.used_fallback is False
+    assert (result.status, result.summary) == (BrowserSessionStatus.FAILED, summary)
+
+
+async def test_a_run_the_user_stopped_never_moves_to_the_fallback_even_with_its_engine_gone(
+    monkeypatch,
+) -> None:
+    _, emit = _collector()
+    _host_answers(monkeypatch, _session_gone)
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    runner = _fallback_runner(
+        monkeypatch,
+        emit,
+        open_fallback,
+        agent_run=_failing_engine(_ENGINE_GAVE_OUT),
+        is_cancelled=AsyncMock(return_value=True),
+    )
+
+    result = await runner.run("count the comments")
+
+    open_fallback.assert_not_awaited()
+    assert result.status == BrowserSessionStatus.CANCELLED
+
+
+class _AgentRunHandedOffThenLostItsEngine(_AgentRunOnFailingEngine):
+    """The user declined a handoff, and the engine was gone by the time the run ended."""
+
+    async def execute(self, task: str) -> RunOutcome:
+        from app.services.browser.exceptions import BrowserHandoffCancelled
+
+        # Browser-Use turns the cancelled handoff into an action error and carries on.
+        with pytest.raises(BrowserHandoffCancelled):
+            await self._hooks.takeover("Sign in", "credentials")
+        return await super().execute(task)
+
+
+async def test_a_run_ended_by_a_declined_handoff_never_moves_to_the_fallback(monkeypatch) -> None:
+    _, emit = _collector()
+    _host_answers(monkeypatch, _session_gone)
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    _failing_engine(_ENGINE_GAVE_OUT)
+    runner = _fallback_runner(
+        monkeypatch,
+        emit,
+        open_fallback,
+        agent_run=_AgentRunHandedOffThenLostItsEngine,
+        request_handoff=AsyncMock(return_value=HandoffOutcome(status=HandoffStatus.CANCELLED)),
+    )
+
+    result = await runner.run("count the comments")
+
+    open_fallback.assert_not_awaited()
+    assert result.status == BrowserSessionStatus.CANCELLED
+
+
+class _AgentRunThatNeverEnds(_AgentRunOnFailingEngine):
+    async def execute(self, task: str) -> RunOutcome:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+async def test_a_run_that_spent_its_whole_budget_never_moves_to_the_fallback(monkeypatch) -> None:
+    _, emit = _collector()
+    _host_answers(monkeypatch, _engine_wedged)
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    runner = _fallback_runner(
+        monkeypatch,
+        emit,
+        open_fallback,
+        agent_run=_AgentRunThatNeverEnds,
+        task_timeout=0.05,
+    )
+
+    result = await runner.run("count the comments")
+
+    open_fallback.assert_not_awaited()
+    assert (result.status, result.summary) == (
+        BrowserSessionStatus.FAILED,
+        "Browser task timed out after 0.05s.",
+    )
+
+
+async def test_a_run_whose_fallback_engine_fails_too_ends_there_without_a_second_switch(
+    monkeypatch,
+) -> None:
+    _, emit = _collector()
+    _host_answers(monkeypatch, _session_gone)
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    fallback_gave_out = RunOutcome(success=False, summary="The fallback gave out too.")
+    agent = _failing_engine(_ENGINE_GAVE_OUT, fallback_gave_out)
+    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=agent)
+
+    result = await runner.run("count the comments")
+
+    open_fallback.assert_awaited_once()
+    assert agent.runs == [("s1", True), ("s-fallback", False)]
+    assert (result.status, result.summary) == (
+        BrowserSessionStatus.FAILED,
+        "The fallback gave out too.",
+    )
+
+
+@pytest.mark.regression
+async def test_a_run_finished_on_the_fallback_bills_the_tokens_both_engines_spent(
+    monkeypatch,
+) -> None:
+    """Regression: only the fallback half of a run was metered; the primary's tokens went unbilled."""
+    record = AsyncMock()
+    monkeypatch.setattr(runner_mod, "record_llm_call", record)
+    _, emit = _collector()
+    _host_answers(monkeypatch, _session_gone)
+    agent = _failing_engine(
+        replace(_ENGINE_GAVE_OUT, usage=[RunUsage("jev", 1000, 40), RunUsage("writer", 300, 20)]),
+        RunOutcome(success=True, summary="67 comments", usage=[RunUsage("jev", 500, 10)]),
+    )
+    runner = _fallback_runner(
+        monkeypatch, emit, AsyncMock(return_value=_fallback_session()), agent_run=agent
+    )
+
+    await runner.run("count the comments")
+
+    billed = {
+        call.kwargs["model_name"]: (
+            call.kwargs["usage"]["input_tokens"],
+            call.kwargs["usage"]["output_tokens"],
+        )
+        for call in record.await_args_list
+    }
+    assert billed == {"jev": (1500, 50), "writer": (300, 20)}

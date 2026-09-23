@@ -1,8 +1,9 @@
 """Turn a Browser-Use action into a human-readable caption.
 
 Used by both the SSE step card (runner.py) and the bot's photo caption
-(bot_delivery.py). The model's own next_goal is never used for it: Jev fills
-that field with its raw decision label ("CLICK [6] Log In"), not a caption.
+(bot_delivery.py). The model's own next_goal is used only for a step that
+finishes the run: everywhere else Jev fills that field with its raw decision
+label ("CLICK [6] Log In"), not a caption.
 """
 
 from __future__ import annotations
@@ -127,6 +128,20 @@ def describe_action(name: str, params: Mapping[str, object], target: str | None 
     if dynamic is not None:
         return dynamic(_ActionParams.model_validate(params), target)
     return _STATIC_CAPTIONS.get(name) or name.replace("_", " ")
+
+
+def step_caption(actions: list[BrowserAction], next_goal: str | None) -> str:
+    """Return a step's caption; a step that finishes the run is named after the part it finished.
+
+    Only there is the model's next_goal a caption: Jev puts the plan part's goal
+    in it, where "Finished" told the user nothing about the run's one step.
+    """
+    finishing = any(
+        a.name == "done" and _ActionParams.model_validate(a.inputs).success for a in actions
+    )
+    if finishing and next_goal and next_goal.strip():
+        return _shorten(next_goal)
+    return caption_from_action_list(actions)
 
 
 def caption_from_action_list(actions: list[BrowserAction]) -> str:

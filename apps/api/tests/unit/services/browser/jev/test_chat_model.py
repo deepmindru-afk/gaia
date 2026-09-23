@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import contextlib
 from dataclasses import dataclass, field
 import json
 from types import SimpleNamespace
@@ -339,7 +341,6 @@ async def test_select_becomes_select_dropdown_by_option_text(flights_state) -> N
         ("SCROLL_DOWN", {"scroll": {"down": True, "pages": 1.0}}),
         ("SCROLL_UP", {"scroll": {"down": False, "pages": 1.0}}),
         ("WAIT", {"wait": {"seconds": 4}}),
-        ("GO_BACK", {"go_back": {}}),
     ],
 )
 async def test_control_operations_map_without_the_helper(
@@ -1340,6 +1341,22 @@ async def test_a_blocked_page_asks_for_the_fallback_engine_once_and_resumes_ther
     assert model.fallback_available is False
 
 
+async def test_a_run_whose_engine_failed_resumes_on_the_fallback_at_the_page_it_last_read(
+    flights_state,
+) -> None:
+    model, gateway, _, _ = _model(flights_state, [("CLICK", "4")])
+    model.fallback_available = True
+    await model.ainvoke([], _agent_output())
+
+    model.fall_back_after_engine_failure()
+    model.continue_on_fallback()
+    resumed = await model.ainvoke([], _agent_output())
+
+    assert _action(resumed.completion) == {"navigate": {"url": flights_state.url, "new_tab": False}}
+    assert len(gateway.requests) == 1
+    assert model.fallback_available is False
+
+
 # ---------------------------------------------------------------------------
 # A wall that clears on the same url: the page it turns into is judged again
 # ---------------------------------------------------------------------------
@@ -1365,6 +1382,7 @@ async def test_a_list_that_replaces_a_wall_on_the_same_url_is_judged_and_answers
             ViewportRead(
                 text="Ray ID: a3f9\nPerformance and Security by Cloudflare", at_bottom=True
             ),
+            ViewportRead(text="Newest Questions\nHow to keep direct initialization errors?"),
             ViewportRead(text="Newest Questions\nHow to keep direct initialization errors?"),
         ]
     )
@@ -1394,7 +1412,13 @@ async def test_a_list_that_replaces_a_wall_on_the_same_url_is_judged_and_answers
         session, f"Go to {_QUESTIONS_URL} and tell me the exact title of the first question listed."
     )  # type: ignore[arg-type]  # a fake session stands in for Browser-Use's
     await model.ainvoke([], _agent_output())
+    for _ in range(20):  # the step's wait executes; the wall's judgement comes back
+        await asyncio.sleep(0)
     session.state = questions
+    # The list is judged while this step's scroll goes out; its verdict ends the run next step.
+    await model.ainvoke([], _agent_output())
+    for _ in range(20):
+        await asyncio.sleep(0)
 
     result = await model.ainvoke([], _agent_output())
 
@@ -1407,3 +1431,361 @@ async def test_a_list_that_replaces_a_wall_on_the_same_url_is_judged_and_answers
             "read": "top part only",
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# Latency: the writer's plan, part judgement and closing answer off the step's path
+# ---------------------------------------------------------------------------
+
+_HN_PART = "Read the top story on news.ycombinator.com"
+
+
+def _writer_model(state, script, writer) -> tuple[JevChatModel, ScriptedGateway, FakeSession]:
+    gateway = ScriptedGateway(script=list(script))
+    model = JevChatModel(client=gateway, text_model=FakeTextModel(), structured_call=writer)  # type: ignore[arg-type]  # a scripted gateway and a fake text model stand in for the real ones
+    session = FakeSession(state)
+    model.bind(session, "Fly Zurich to London")  # type: ignore[arg-type]  # a fake session stands in for Browser-Use's
+    return model, gateway, session
+
+
+class _Judge:
+    """The writer seam with a part judgement that answers only when the test releases it."""
+
+    def __init__(self, *, done: bool = False) -> None:
+        self.helper = FakeTextModel(replies=[{"text": "Flights are listed."}])
+        self.done = done
+        self.release = asyncio.Event()
+        self.asked = asyncio.Event()
+        self.judged = 0
+
+    async def __call__(self, schema, prompt, *, label, timeout=None):
+        if not prompt[0].content.startswith(PART_DONE):
+            return await self.helper.structured(schema, prompt, label=label, timeout=timeout)
+        self.judged += 1
+        self.asked.set()
+        await self.release.wait()
+        url = json.loads(prompt[1].content)["pages_read"][0]["url"]
+        return schema.model_validate(
+            {"done": self.done, "evidence": [url] if self.done else [], "findings": ""}
+        )
+
+
+async def test_the_plan_is_asked_for_while_the_first_page_is_still_being_read(
+    flights_state,
+) -> None:
+    plan_asked = asyncio.Event()
+    helper = FakeTextModel()
+
+    async def writer(schema, prompt, *, label, timeout=None):
+        if prompt[0].content.startswith(PLAN_STEPS):
+            plan_asked.set()
+        return await helper.structured(schema, prompt, label=label, timeout=timeout)
+
+    class _SlowPage(FakeSession):
+        async def get_browser_state_summary(self, **kwargs):
+            # The first read waits on the engine loading the page; the plan needs no page.
+            await asyncio.wait_for(plan_asked.wait(), timeout=1)
+            return await super().get_browser_state_summary(**kwargs)
+
+    model = JevChatModel(
+        client=ScriptedGateway(script=[("CLICK", "4")]), text_model=helper, structured_call=writer
+    )  # type: ignore[arg-type]  # a scripted gateway and a fake text model stand in for the real ones
+    model.bind(_SlowPage(flights_state), "Fly Zurich to London")  # type: ignore[arg-type]  # a fake session stands in for Browser-Use's
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion) == {"click": {"index": 40}}
+
+
+async def test_a_finishing_step_is_named_after_the_part_it_finished(flights_state) -> None:
+    helper = FakeTextModel(replies=[{"text": "The top story is X with 217 points."}])
+
+    async def writer(schema, prompt, *, label, timeout=None):
+        if prompt[0].content.startswith(PLAN_STEPS):
+            return schema.model_validate(
+                {"steps": [{"goal": _HN_PART, "url": "https://news.ycombinator.com"}]}
+            )
+        return await helper.structured(schema, prompt, label=label, timeout=timeout)
+
+    model, _, _ = _writer_model(flights_state, [("DONE", None)], writer)
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion)["done"]["success"] is True
+    assert result.completion.next_goal == _HN_PART
+
+
+async def test_a_step_jev_decides_does_not_wait_for_a_slow_part_judgement(flights_state) -> None:
+    judge = _Judge()
+    model, _, _ = _writer_model(flights_state, [("CLICK", "4")], judge)
+
+    result = await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
+
+    assert _action(result.completion) == {"click": {"index": 40}}
+    assert not judge.release.is_set()
+    judge.release.set()
+
+
+async def test_a_done_step_waits_for_the_part_judgement(flights_state) -> None:
+    judge = _Judge(done=True)
+    model, _, _ = _writer_model(flights_state, [("DONE", None)], judge)
+
+    step = asyncio.create_task(model.ainvoke([], _agent_output()))
+    await asyncio.wait_for(judge.asked.wait(), timeout=1)
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert not step.done()
+
+    judge.release.set()
+    result = await asyncio.wait_for(step, timeout=1)
+
+    assert _action(result.completion)["done"] == {
+        "text": "Flights are listed.",
+        "success": True,
+        "files_to_display": [],
+    }
+
+
+async def test_a_part_judged_done_after_its_step_ends_the_run_on_the_next(flights_state) -> None:
+    judge = _Judge(done=True)
+    # One scripted choice: the next step must finish without asking Jev again.
+    model, gateway, _ = _writer_model(flights_state, [("CLICK", "4")], judge)
+    await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
+    judge.release.set()
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+    result = await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
+
+    assert _action(result.completion)["done"]["success"] is True
+    assert len(gateway.requests) == 1
+    assert judge.judged == 1
+
+
+async def test_the_blank_tab_before_the_first_page_is_never_judged() -> None:
+    blank = make_state({1: FakeNode("BUTTON", text="Search")}, url="about:blank", title="")
+    judge = _Judge()
+    judge.release.set()
+    model, _, _ = _writer_model(blank, [("CLICK", "1")], judge)
+
+    await model.ainvoke([], _agent_output())
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+    assert judge.judged == 0
+
+
+async def test_the_closing_answer_is_written_while_the_evidence_check_runs(flights_state) -> None:
+    order: list[str] = []
+    answer_asked = asyncio.Event()
+    helper = FakeTextModel(replies=[{"text": "Flights are listed."}])
+
+    async def writer(schema, prompt, *, label, timeout=None):
+        if prompt[0].content.startswith(DONE_SUMMARY):
+            order.append("answer asked")
+            answer_asked.set()
+        elif label == "browser_done_check":
+            # A slow check: the answer is already being written when it returns.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(answer_asked.wait(), timeout=1)
+            order.append("check answered")
+        return await helper.structured(schema, prompt, label=label, timeout=timeout)
+
+    model, _, _ = _writer_model(flights_state, [("DONE", None)], writer)
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion)["done"]["text"] == "Flights are listed."
+    assert order == ["answer asked", "check answered"]
+
+
+async def test_no_answer_goes_out_when_the_evidence_check_says_the_part_is_not_done(
+    flights_state,
+) -> None:
+    helper = FakeTextModel(confirms_done=False)
+    never = asyncio.Event()
+
+    async def writer(schema, prompt, *, label, timeout=None):
+        if prompt[0].content.startswith(DONE_SUMMARY):
+            # An answer written ahead that is never needed must not hold the step.
+            await never.wait()
+        return await helper.structured(schema, prompt, label=label, timeout=timeout)
+
+    model, gateway, _ = _writer_model(flights_state, [("DONE", None), ("WAIT", None)], writer)
+
+    result = await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
+
+    assert _action(result.completion) == {"wait": {"seconds": 4}}
+    assert "DONE" not in gateway.requests[1].questions["operation"].criteria
+
+
+# ---------------------------------------------------------------------------
+# GO_BACK only where this browser has a page to go back to
+# ---------------------------------------------------------------------------
+
+_BLANK = make_state({}, url="about:blank", title="")
+
+
+async def test_go_back_returns_to_the_page_this_browser_came_from(flights_state) -> None:
+    model, gateway, _, session = _model(flights_state, [("CLICK", "4"), ("GO_BACK", None)])
+    await model.ainvoke([], _agent_output())
+    session.state = make_state({1: FakeNode("A", text="Results")}, url="https://x/results")
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion) == {"go_back": {}}
+
+
+@pytest.mark.regression
+async def test_the_first_page_after_the_engine_switch_offers_no_go_back(flights_state) -> None:
+    """Regression: GO_BACK from the fallback's first page landed on about:blank, and the run ended there."""
+    model, gateway, _, session = _model(flights_state, [("CLICK", "4"), ("SCROLL_DOWN", None)])
+    model.fallback_available = True
+    await model.ainvoke([], _agent_output())
+    model.fall_back_after_engine_failure()
+    model.continue_on_fallback()
+    session.state = _BLANK
+    await model.ainvoke([], _agent_output())
+    session.state = flights_state
+
+    await model.ainvoke([], _agent_output())
+
+    assert "GO_BACK" not in gateway.requests[-1].questions["operation"].criteria
+
+
+@pytest.mark.regression
+async def test_the_first_page_a_run_opened_from_the_blank_tab_offers_no_go_back(
+    flights_state,
+) -> None:
+    """Regression: back from the run's first page is the blank tab the browser opened on."""
+    model, gateway, _, session = _model(flights_state, [("CLICK", "1"), ("SCROLL_DOWN", None)])
+    session.state = make_state({1: FakeNode("BUTTON", text="Go")}, url="about:blank", title="")
+    await model.ainvoke([], _agent_output())
+    session.state = flights_state
+
+    await model.ainvoke([], _agent_output())
+
+    assert "GO_BACK" not in gateway.requests[-1].questions["operation"].criteria
+
+
+# ---------------------------------------------------------------------------
+# A one-page list read to its bottom answers a "compare them all" part
+# ---------------------------------------------------------------------------
+
+_TRAVEL = "https://books.toscrape.com/catalogue/category/books/travel_2/index.html"
+
+
+async def test_a_one_page_category_read_to_its_bottom_answers_the_cheapest_book(
+    monkeypatch,
+) -> None:
+    """The Travel category: 11 books, no next link; the bottom scroll must make it read "to the end"."""
+    travel = make_state(
+        {1: FakeNode("A", text="Travel")}, url=_TRAVEL, title="Travel | Books to Scrape"
+    )
+    screens = iter(
+        [
+            ViewportRead(text="It's Only the Himalayas\n£45.17\nVagabonding\n£36.94"),
+            ViewportRead(
+                text="The Road to Little Dribbling\n£23.21\n1,000 Places to See Before You Die\n£26.08",
+                at_bottom=True,
+            ),
+            ViewportRead(text="The Road to Little Dribbling\n£23.21", at_bottom=True),
+        ]
+    )
+
+    async def screen(*args: object) -> ViewportRead:
+        return next(screens)
+
+    monkeypatch.setattr(chat_model_mod, "read_viewport", screen)
+    helper = FakeTextModel(replies=[{"text": "The Road to Little Dribbling, £23.21."}])
+    judged: list[list[dict[str, str]]] = []
+
+    async def writer(schema, prompt, *, label, timeout=None):
+        if prompt[0].content.startswith(PLAN_STEPS):
+            return schema.model_validate(
+                {"steps": [{"goal": "Find the cheapest book in Travel", "url": _TRAVEL}]}
+            )
+        if not prompt[0].content.startswith(PART_DONE):
+            return await helper.structured(schema, prompt, label=label, timeout=timeout)
+        pages = json.loads(prompt[1].content)["pages_read"]
+        judged.append(pages)
+        # Judges like the real writer: a whole list is known only from a page read to the end.
+        whole = any(p["url"] == _TRAVEL and p["read"] == "to the end" for p in pages)
+        return schema.model_validate(
+            {"done": whole, "evidence": [_TRAVEL] if whole else [], "findings": ""}
+        )
+
+    gateway = ScriptedGateway(script=[("SCROLL_DOWN", None), ("SCROLL_DOWN", None)])
+    model = JevChatModel(client=gateway, text_model=helper, structured_call=writer)  # type: ignore[arg-type]  # a scripted gateway and a fake text model stand in for the real ones
+    model.bind(FakeSession(travel), "Find the cheapest book in the Travel category")  # type: ignore[arg-type]  # a fake session stands in for Browser-Use's
+    for _ in range(2):
+        await model.ainvoke([], _agent_output())
+        for _ in range(20):  # the scroll executes; the judgement comes back
+            await asyncio.sleep(0)
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert judged[-1] == [
+        {"url": _TRAVEL, "title": "Travel | Books to Scrape", "read": "to the end"}
+    ]
+    assert _action(result.completion)["done"] == {
+        "text": "The Road to Little Dribbling, £23.21.",
+        "success": True,
+        "files_to_display": [],
+    }
+
+
+class _SlowJudgeFastCheck:
+    """Part judgements hang until released; the DONE evidence check answers at once."""
+
+    def __init__(self) -> None:
+        self.helper = FakeTextModel(replies=[{"text": "Flights are listed."}])
+        self.release = asyncio.Event()
+        self.plan: list[dict[str, Any]] = []
+
+    async def __call__(self, schema, prompt, *, label, timeout=None):
+        if prompt[0].content.startswith(PLAN_STEPS) and self.plan:
+            return schema.model_validate({"steps": self.plan})
+        if not prompt[0].content.startswith(PART_DONE):
+            return await self.helper.structured(schema, prompt, label=label, timeout=timeout)
+        if label != "browser_done_check":
+            await self.release.wait()
+        url = json.loads(prompt[1].content)["pages_read"][-1]["url"]
+        return schema.model_validate({"done": True, "evidence": [url], "findings": ""})
+
+
+async def test_a_done_on_newer_pages_is_not_held_by_a_judgement_of_older_ones(
+    flights_state,
+) -> None:
+    writer = _SlowJudgeFastCheck()
+    model, _, session = _writer_model(
+        flights_state, [("SCROLL_DOWN", None), ("DONE", None)], writer
+    )
+    await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
+    session.state = make_state(flights_state.dom_state.selector_map, url="https://x/results")
+
+    result = await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
+
+    assert _action(result.completion)["done"]["success"] is True
+    writer.release.set()
+
+
+async def test_a_judgement_of_a_finished_part_never_finishes_the_next(flights_state) -> None:
+    writer = _SlowJudgeFastCheck()
+    writer.plan = [{"goal": "Find the flights"}, {"goal": "Pick the cheapest"}]
+    model, _, session = _writer_model(
+        flights_state,
+        [("SCROLL_DOWN", None), ("DONE", None), ("CLICK", "4"), ("CLICK", "4")],
+        writer,
+    )
+    await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
+    session.state = make_state(flights_state.dom_state.selector_map, url="https://x/results")
+    # Part 1 ends on its own evidence check; its slow judgement then says "done" too.
+    await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
+    writer.release.set()
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+    result = await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
+
+    assert _action(result.completion) == {"click": {"index": 40}}

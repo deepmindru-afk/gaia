@@ -3,9 +3,10 @@
 The host owns the Chromium and enforces the concurrency cap; this client just
 speaks to it. create_session returns the two websocket URLs the runner hands
 to browser-use, cdp_ws and live_ws for the live-view proxy. A host at capacity
-raises BrowserConcurrencyLimit; any transport failure raises
-BrowserUnavailableError, so the browser tool degrades to a clean "not
-available" message rather than a raw stack trace.
+raises BrowserConcurrencyLimit; a session the host no longer holds raises
+BrowserSessionGone; any transport failure raises BrowserUnavailableError, so
+the browser tool degrades to a clean "not available" message rather than a raw
+stack trace.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from app.config.settings import settings
 from app.services.browser.exceptions import (
     BrowserConcurrencyLimit,
+    BrowserSessionGone,
     BrowserUnavailableError,
 )
 
@@ -26,6 +28,7 @@ from app.services.browser.exceptions import (
 _CREATE_TIMEOUT_SECONDS = 30.0
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _AT_CAPACITY_STATUS = 429
+_SESSION_GONE_STATUS = 404
 
 
 class _DeletedSession(TypedDict):
@@ -145,6 +148,7 @@ def _raise_for_status(response: httpx.Response) -> None:
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        raise BrowserUnavailableError(
-            f"Browser host returned {response.status_code} for {response.request.url}"
-        ) from exc
+        message = f"Browser host returned {response.status_code} for {response.request.url}"
+        if response.status_code == _SESSION_GONE_STATUS:
+            raise BrowserSessionGone(message) from exc
+        raise BrowserUnavailableError(message) from exc

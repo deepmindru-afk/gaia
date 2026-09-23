@@ -9,6 +9,10 @@ class BrowserUnavailableError(BrowserAutomationError):
     """The capability cannot run: disabled, missing config, or the browser host unreachable."""
 
 
+class BrowserSessionGone(BrowserUnavailableError):
+    """The browser host no longer holds the session: its engine died or the host restarted."""
+
+
 class BrowserHandoffCancelled(BrowserAutomationError):
     """The user cancelled a sensitive-step handoff; the run must stop cleanly."""
 

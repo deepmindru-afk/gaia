@@ -20,11 +20,12 @@ from app.constants.browser import (
     HANDOFF_AUTORESOLVE_POLL_SECONDS,
     HANDOFF_AUTORESOLVE_STABLE_POLLS,
     HANDOFF_AUTORESOLVED_NOTE,
+    EngineFailure,
     HandoffDecision,
 )
 from app.constants.log_tags import LogTag
 from app.services.browser import host_client
-from app.services.browser.exceptions import BrowserUnavailableError
+from app.services.browser.exceptions import BrowserSessionGone, BrowserUnavailableError
 from app.services.browser.handoff import resolve_handoff
 from app.services.browser.live_view import live_view_url
 from app.services.browser.registry import register_session, unregister_session
@@ -74,6 +75,21 @@ async def keep_session_alive(session: BrowserHostSession) -> None:
                 error_type=type(exc).__name__,
                 browser={"session_id": session.session_id, "operation": "handoff_keepalive"},
             )
+
+
+async def engine_failure(session: BrowserHostSession) -> EngineFailure | None:
+    """Ask the host whether the engine under session still serves it; None when it does.
+
+    The host is the one witness a run can trust here: Browser-Use reports a
+    crashed, dropped or wedged engine only as step failures it ends the run on.
+    """
+    try:
+        info = await host_client.get_session(session.session_id, session.host_url)
+    except BrowserSessionGone:
+        return EngineFailure.SESSION_GONE
+    except BrowserUnavailableError:
+        return EngineFailure.UNRESPONSIVE
+    return None if info.live else EngineFailure.SESSION_GONE
 
 
 # Path fragments that mean "still inside the auth flow": a login walks

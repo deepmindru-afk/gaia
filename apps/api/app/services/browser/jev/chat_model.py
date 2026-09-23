@@ -92,6 +92,7 @@ if TYPE_CHECKING:
     from browser_use.llm.views import ChatInvokeCompletion
 
 T = TypeVar("T", bound=BaseModel)
+_R = TypeVar("_R")
 
 
 class _WaitAction(TypedDict, total=False):
@@ -135,6 +136,9 @@ _USER_REQUEST = re.compile(r"<user_request>\s*(.*?)\s*</user_request>", re.DOTAL
 # to an unconfident DONE.
 _TERMINAL_OPERATIONS = frozenset({JevOperation.DONE, JevOperation.BLOCKED})
 _HANDOFF_OPERATIONS = frozenset({JevOperation.REQUEST_HUMAN, JevOperation.SOLVE_CAPTCHA})
+# A step that ends the run or hands it to someone acts only once the part's
+# judgement is in: ending a part already done, or asking a person to finish it, is wrong.
+_WAITS_FOR_JUDGEMENT = _TERMINAL_OPERATIONS | _HANDOFF_OPERATIONS
 _JEV_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 # Vercel AI Gateway evaluation endpoint: same {model, state, questions} body
 # and {answers, usage} response as the OpenRouter decisions route.
@@ -246,6 +250,13 @@ class JevChatModel:
         #: The task split into ordered sub-goals once, at the first decision; Jev
         #: sees only the current one, so a compound task cannot loop on its first part.
         self._plan: list[_PlanStep] | None = None
+        #: The plan being written; it needs only the task, so it starts at bind,
+        #: while the browser opens the first page.
+        self._planning: asyncio.Task[list[_PlanStep]] | None = None
+        #: The current part's judgement, left running while the step's action
+        #: executes; a done verdict is applied at the next step.
+        self._judging: asyncio.Task[bool] | None = None
+        self._judging_for: tuple[int, tuple[tuple[str, ...], ...]] | None = None
         self._plan_index = 0
         #: The part and the pages_read it was last judged on, so each part is judged
         #: once per state of what was read: a new page, a page read to the end, or a
@@ -262,7 +273,8 @@ class JevChatModel:
         #: Whether a run blocked on a page may retry it once on the fallback
         #: engine (the runner says so when a fallback host is configured).
         self.fallback_available = False
-        #: The page the run gave up on, once it asked for the fallback engine.
+        #: Where the run resumes on the fallback engine: the page it gave up on, or
+        #: the last page it read when the primary engine failed under it.
         self.fallback_url: str | None = None
         #: Where the run resumes after the switch: its first step opens it.
         self._resume_url: str | None = None
@@ -281,6 +293,8 @@ class JevChatModel:
         self._blocked_suppressed = False
         #: History length when a stalled page was last acted on, so one stall is one BLOCKED.
         self._stall_handled_at = 0
+        #: This browser's back list as the run moved through it, oldest first.
+        self._back_list: list[str] = []
 
     def viewport_points(self) -> dict[int, tuple[float, float]]:
         """Return the last observation's on-screen centres by Browser-Use index, for the UI pulse."""
@@ -320,6 +334,8 @@ class JevChatModel:
         self._task = task
         self._guidance_allowed = guidance_allowed
         defer_screenshots_for(browser)
+        if self._plan is None and self._planning is None:
+            self._planning = asyncio.create_task(self._build_plan(task))
 
     @overload
     async def ainvoke(
@@ -386,7 +402,7 @@ class JevChatModel:
             at_bottom=observation.at_bottom is True,
         )
         self._settle_previous_step(observation)
-        await self._ensure_plan(observation)
+        await self._ensure_plan()
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
         self._steps += 1
@@ -397,30 +413,52 @@ class JevChatModel:
             return self._direct(
                 output_format, {"navigate": {"url": url, "new_tab": False}}, observation
             )
-        # The part check and Jev's choice run side by side: the check only
-        # matters when it finds the part done, and waiting for it first put a
-        # writer call (3 s typical, far more on a slow provider) on every page.
-        judging = asyncio.create_task(self._part_is_done(observation, goal))
+        # Only a step that ends or hands off the run waits for the part check (10-30 s
+        # of writer reasoning once held every click); a check still running when the
+        # action goes out is applied at the next step.
+        judging = self._judgement(observation, goal)
         opening, offered = self._step_options(observation, registered)
+        stalled = self._page_stalled()
+        # A judgement already done here is a done part not yet applied: no choice needed.
         choosing = (
             asyncio.create_task(self._choose(observation, goal, offered))
-            if opening is None and not self._page_stalled()
+            if opening is None and not stalled and not judging.done()
             else None
         )
-        while await judging:
-            _discard(choosing)
-            choosing = None
-            if not self._advance_plan():
-                # The writer judged the last part complete: finish with the summary,
-                # without waiting for Jev to reach the same conclusion by chance.
-                return await self._finish(observation, goal, registered, output_format)
-            # The next part is judged on the same pages at once: the page that
-            # finished one part often already answers the next (a research task's
-            # article opened while collecting its list), and waiting for another
-            # page to be read once spent 24 steps clicking around that article.
-            goal = self._effective_goal(messages)
-            opening, offered = self._step_options(observation, registered)
-            judging = asyncio.create_task(self._part_is_done(observation, goal))
+        chosen = await _settled(choosing)
+        answering: asyncio.Task[_ClosingAnswer | None] | None = None
+        if chosen is not None and chosen.operation is JevOperation.DONE and self._on_last_part():
+            # Written while the checks decide whether the run ends; dropped if not.
+            answering = asyncio.create_task(self._closing_answer(observation, goal))
+        # A DONE is settled by its own check on the pages read now; a judgement
+        # still running on older pages is left to the next step, not waited out.
+        stale = (
+            chosen is not None
+            and chosen.operation is JevOperation.DONE
+            and self._judging_for != self._read_state()
+        )
+        if (
+            judging.done()
+            or stalled
+            or (chosen is not None and chosen.operation in _WAITS_FOR_JUDGEMENT and not stale)
+        ):
+            while await judging:
+                self._judging = None
+                _discard(choosing)
+                choosing = None
+                if not self._advance_plan():
+                    # The writer judged the last part complete: finish with the summary,
+                    # without waiting for Jev to reach the same conclusion by chance.
+                    return await self._finish(
+                        observation, goal, registered, output_format, answering
+                    )
+                # The next part is judged on the same pages at once: the page that
+                # finished one part often already answers the next (a research task's
+                # article opened while collecting its list), and waiting for another
+                # page to be read once spent 24 steps clicking around that article.
+                goal = self._effective_goal(messages)
+                opening, offered = self._step_options(observation, registered)
+                judging = self._judgement(observation, goal)
         if opening is not None:
             # A new part starts on a site of its own; open it outright instead of
             # spending a decision and a URL answer on what the plan already knows.
@@ -448,10 +486,14 @@ class JevChatModel:
         try:
             decision = await (choosing or self._choose(observation, goal, offered))
             if decision.operation is JevOperation.DONE:
+                if answering is None and self._on_last_part():
+                    answering = asyncio.create_task(self._closing_answer(observation, goal))
                 if not await self._part_is_done(observation, goal, done_chosen=True):
                     # Jev's DONE is a read of the screen; the evidence check decides.
                     # A DONE taken on confidence alone once reported a page still
                     # showing "Loading..." as the finished answer.
+                    _discard(answering)
+                    answering = None
                     log.info(
                         f"{LogTag.BROWSER} Jev DONE withheld (the part is not done on "
                         f"{observation.url[:80]})",
@@ -479,7 +521,7 @@ class JevChatModel:
                 usage=None,
             )
 
-        action, text = await self._action_for(decision, observation, goal, registered)
+        action, text = await self._action_for(decision, observation, goal, registered, answering)
         wait_action: _WaitAction = cast(_WaitAction, action)
         kind = (
             "error"
@@ -515,7 +557,7 @@ class JevChatModel:
             completion=_output(
                 output_format,
                 action,
-                decision.label,
+                self._next_goal(decision),
                 f"Step {self._steps}: {decision.label} (p={decision.confidence:.2f})",
             ),
             usage=ChatInvokeUsage(
@@ -567,13 +609,23 @@ class JevChatModel:
         return alternative if alternative.confidence >= decision.confidence else decision
 
     async def _action_for(
-        self, decision: JevDecision, observation: JevObservation, goal: str, registered: set[str]
+        self,
+        decision: JevDecision,
+        observation: JevObservation,
+        goal: str,
+        registered: set[str],
+        answering: asyncio.Task[_ClosingAnswer | None] | None = None,
     ) -> tuple[dict[str, dict[str, object]], str | None]:
-        """Return the Browser-Use action a decision executes as, plus any text the helper wrote."""
+        """Return the Browser-Use action a decision executes as, plus any text the helper wrote.
+
+        answering is a closing answer already being written for this step's DONE.
+        """
         action: tuple[dict[str, dict[str, object]], str | None] | None = None
         match decision.operation:
             case JevOperation.DONE | JevOperation.BLOCKED:
-                action = await self._terminal_action(decision, observation, goal, registered)
+                action = await self._terminal_action(
+                    decision, observation, goal, registered, answering
+                )
             case JevOperation.REQUEST_HUMAN | JevOperation.SOLVE_CAPTCHA:
                 action = await self._handoff_action(decision, observation, goal)
             case JevOperation.CLICK | JevOperation.TYPE_TEXT | JevOperation.SELECT:
@@ -591,11 +643,16 @@ class JevChatModel:
         return action
 
     async def _terminal_action(
-        self, decision: JevDecision, observation: JevObservation, goal: str, registered: set[str]
+        self,
+        decision: JevDecision,
+        observation: JevObservation,
+        goal: str,
+        registered: set[str],
+        answering: asyncio.Task[_ClosingAnswer | None] | None,
     ) -> tuple[dict[str, dict[str, object]], str | None]:
         if decision.operation is JevOperation.BLOCKED:
             return await self._blocked_action(goal, observation, registered)
-        answer = await self._closing_answer(observation, goal)
+        answer = await (answering or self._closing_answer(observation, goal))
         if answer is None:
             # The pages were read but the answer could not be written; saying
             # "completed" here would report a success the user never receives.
@@ -778,7 +835,7 @@ class JevChatModel:
         output: type[T],
         instructions: str,
         goal: str,
-        observation: JevObservation,
+        observation: JevObservation | None,
         field: JevElement | None,
         seen_text: str | None = None,
         *,
@@ -798,7 +855,9 @@ class JevChatModel:
             "field": {"label": field.label, "role": field.role, "value": field.value}
             if field
             else None,
-            "page": {"title": observation.title, "url": observation.url, "text": observation.text},
+            "page": {"title": observation.title, "url": observation.url, "text": observation.text}
+            if observation
+            else None,
             "recent_actions": [
                 {"action": h.action, "text": h.text, "page_changed": h.page_changed}
                 for h in (
@@ -918,24 +977,68 @@ class JevChatModel:
                 page_changed=observation.fingerprint != self._last_fingerprint,
             )
         self._last_fingerprint = observation.fingerprint
+        key = page_key(observation.url)
+        went_back = bool(self._history) and self._history[-1].kind == "go_back"
+        if went_back and len(self._back_list) >= 2 and self._back_list[-2] == key:
+            self._back_list.pop()
+        elif not self._back_list or self._back_list[-1] != key:
+            self._back_list.append(key)
 
-    async def _ensure_plan(self, observation: JevObservation) -> None:
-        """Split the task into its ordered parts once; a single-part task is its own plan."""
+    async def _ensure_plan(self) -> None:
         if self._plan is not None:
             return
-        task = self._task or ""
-        plan = await self._structured(_PlanSteps, PLAN_STEPS, task, observation, None)
+        if self._planning is None:
+            self._planning = asyncio.create_task(self._build_plan(self._task or ""))
+        self._plan = await self._planning
+
+    async def _build_plan(self, task: str) -> list[_PlanStep]:
+        """Split the task into its ordered parts; a single-part task is its own plan.
+
+        A one-part plan decides on the task itself (see _goal_with_plan) and opens
+        no site of its own; its goal is only the writer's name for it, or empty.
+        """
+        plan = await self._structured(_PlanSteps, PLAN_STEPS, task, None, None)
         steps = [
             _PlanStep(goal=s.goal.strip(), url=_https_or_none(s.url))
             for s in (plan.steps if plan else [])
             if s.goal and s.goal.strip()
         ]
-        self._plan = steps[:JEV_PLAN_MAX_STEPS] if len(steps) > 1 else [_PlanStep(goal=task)]
-        log.info(
-            f"{LogTag.BROWSER} Jev plan built ({len(self._plan)} part(s): "
-            f"{' | '.join(f'{s.goal[:60]} @ {s.url}' for s in self._plan)})",
-            steps=len(self._plan),
+        parts = (
+            steps[:JEV_PLAN_MAX_STEPS]
+            if len(steps) > 1
+            else [_PlanStep(goal=steps[0].goal if steps else "")]
         )
+        log.info(
+            f"{LogTag.BROWSER} Jev plan built ({len(parts)} part(s): "
+            f"{' | '.join(f'{s.goal[:60]} @ {s.url}' for s in parts)})",
+            steps=len(parts),
+        )
+        return parts
+
+    def _on_last_part(self) -> bool:
+        return self._plan is not None and self._plan_index == len(self._plan) - 1
+
+    def _next_goal(self, decision: JevDecision) -> str | None:
+        """Return the step's next_goal: the part a finishing step finished (its caption), else Jev's label."""
+        if decision.operation is not JevOperation.DONE:
+            return decision.label
+        return (self._plan[self._plan_index].goal or None) if self._plan else None
+
+    def _judgement(self, observation: JevObservation, goal: str) -> asyncio.Task[bool]:
+        """Return the current part's judgement in flight, or start one on the pages read now.
+
+        A finished judgement that found the part done is returned until it is applied.
+        """
+        held = self._judging
+        if held is not None and (not held.done() or (not held.cancelled() and held.result())):
+            return held
+        self._judging = asyncio.create_task(self._part_is_done(observation, goal))
+        self._judging_for = self._read_state()
+        return self._judging
+
+    def _read_state(self) -> tuple[int, tuple[tuple[str, ...], ...]]:
+        """Return the part in progress and what has been read, the state a judgement is of."""
+        return self._plan_index, tuple(tuple(page.values()) for page in self._seen_text.pages)
 
     async def _part_is_done(
         self, observation: JevObservation, goal: str, *, done_chosen: bool = False
@@ -945,13 +1048,20 @@ class JevChatModel:
         done_chosen asks again on the current screen whatever was judged
         before: Jev chose DONE, and only this evidence check may accept it.
         """
-        read = tuple(tuple(page.values()) for page in self._seen_text.pages)
+        state = self._read_state()
+        part, read = state
         pages = len(read)
         if pages == 0 or self._plan is None:
             return False
-        if not done_chosen and self._judged == (self._plan_index, read):
+        if not done_chosen and self._judged == state:
             return False
-        self._judged = (self._plan_index, read)
+        self._judged = state
+        # Every evidence entry must be a page read (not the part's own listing) or an
+        # action taken, as the writer was shown them: it once declared three stories
+        # opened from the front page alone, and a radio chosen that was never clicked.
+        opened = {page_key(page["url"]) for page in self._seen_text.pages}
+        listing = page_key(self._plan[part].url)
+        taken = {entry.action for entry in self._history}
         # pages_read (titles and urls) and every action are in the context; the
         # pages' full text is not what a "was every requirement met" judgement needs.
         verdict = await self._structured(
@@ -963,13 +1073,6 @@ class JevChatModel:
             whole_history=True,
             label="browser_done_check" if done_chosen else None,
         )
-        # A "done" is only as good as its evidence: every entry must be a page the
-        # run actually read (not the part's own listing) or an action it actually
-        # took. The writer once declared three stories opened from the front page
-        # alone, and a radio button chosen that was never clicked.
-        opened = {page_key(page["url"]) for page in self._seen_text.pages}
-        listing = page_key(self._plan[self._plan_index].url)
-        taken = {entry.action for entry in self._history}
         evidence = [item.strip() for item in (verdict.evidence if verdict else []) if item.strip()]
         unverified = [
             item
@@ -982,17 +1085,17 @@ class JevChatModel:
                 f"{LogTag.BROWSER} Jev part claimed done on evidence the run does not hold "
                 f"(unverified {unverified[:4]}, cited {len(evidence)})",
                 step=self._steps,
-                part=self._plan_index + 1,
+                part=part + 1,
             )
         findings = (verdict.findings if verdict else "").strip()
         if done and findings:
-            self._findings.append(f"Part {self._plan_index + 1}: {findings}")
+            self._findings.append(f"Part {part + 1}: {findings}")
         log.info(
-            f"{LogTag.BROWSER} Jev part judged (part {self._plan_index + 1}/{len(self._plan)} "
+            f"{LogTag.BROWSER} Jev part judged (part {part + 1}/{len(self._plan)} "
             f"{'done' if done else 'not done'} after {pages} pages read"
             f"{f'; findings: {findings[:160]}' if findings else ''})",
             step=self._steps,
-            part=self._plan_index + 1,
+            part=part + 1,
             done=done,
         )
         return done
@@ -1002,6 +1105,9 @@ class JevChatModel:
         if self._plan is None or self._plan_index >= len(self._plan) - 1:
             return False
         done = self._plan[self._plan_index]
+        # A judgement still running is of the part just finished.
+        _discard(self._judging)
+        self._judging = None
         self._plan_index += 1
         self._remember(f"DONE part {self._plan_index}: {done.goal[:80]}", "done_part", None)
         log.info(
@@ -1065,6 +1171,7 @@ class JevChatModel:
         goal: str,
         registered: set[str],
         output_format: type[T],
+        answering: asyncio.Task[_ClosingAnswer | None] | None,
     ) -> ChatInvokeCompletion[T]:
         """End the run with the closing answer, as a DONE the writer decided."""
         from browser_use.llm.views import (  # noqa: PLC0415 -- heavy optional dep
@@ -1072,7 +1179,7 @@ class JevChatModel:
         )
 
         decision = JevDecision(operation=JevOperation.DONE, confidence=1.0)
-        action, text = await self._action_for(decision, observation, goal, registered)
+        action, text = await self._action_for(decision, observation, goal, registered, answering)
         self._remember(decision.label, "done", text, url=observation.url)
         log.info(
             f"{LogTag.BROWSER} Jev step decided (step={self._steps} DONE by the writer's judgement "
@@ -1081,7 +1188,9 @@ class JevChatModel:
             operation="DONE",
         )
         return ChatInvokeCompletion(
-            completion=_output(output_format, action, decision.label, f"Step {self._steps}: DONE"),
+            completion=_output(
+                output_format, action, self._next_goal(decision), f"Step {self._steps}: DONE"
+            ),
             usage=None,
         )
 
@@ -1192,11 +1301,22 @@ class JevChatModel:
         if observation.at_bottom:
             # Nothing is further down; an offered scroll there is a step that changes nothing.
             offered -= {JevOperation.SCROLL_DOWN}
+        if len(self._back_list) < 2 or self._back_list[-2].startswith("about:"):
+            # Back from this browser's first page lands on the blank tab it opened
+            # on: after the engine switch, GO_BACK and then clicks on about:blank ended a run.
+            offered -= {JevOperation.GO_BACK}
         if last is not None and last.kind == "go_back":
             # Two backs in a row is never the plan: the first one landed somewhere,
             # and the run decides from there; twenty of them once spent a whole run.
             offered -= {JevOperation.GO_BACK}
         return opening, offered - _stalled_operations(self._history)
+
+    def fall_back_after_engine_failure(self) -> None:
+        """Resume on the fallback engine at the last page the run read, since the primary engine failed under it.
+
+        A run that never read a page has nowhere to resume and starts the task over.
+        """
+        self.fallback_url = _https_or_none(self._observation.url if self._observation else None)
 
     def continue_on_fallback(self) -> None:
         """Resume on a fresh browser at the page the run gave up on, keeping plan, findings and history."""
@@ -1205,6 +1325,7 @@ class JevChatModel:
         self._handles = NodeHandles()
         self._last_fingerprint = None
         self._shot = None
+        self._back_list = []
 
     def _page_stalled(self) -> bool:
         return _page_stalled_in(self._history, self._stall_handled_at)
@@ -1241,14 +1362,22 @@ def _page_stalled_in(history: list[JevHistoryEntry], since: int) -> bool:
     )
 
 
-def _discard(task: asyncio.Task[JevDecision] | None) -> None:
-    """Drop a speculative choice the part check made moot, collecting its error if it had one."""
+async def _settled(task: asyncio.Task[JevDecision] | None) -> JevDecision | None:
+    """Wait for Jev's choice without raising; a failed choice re-raises where the step awaits it."""
+    if task is None:
+        return None
+    await asyncio.wait({task})
+    return None if task.exception() else task.result()
+
+
+def _discard(task: asyncio.Task[_R] | None) -> None:
+    """Drop speculative work the step made moot, collecting its error if it had one."""
     if task is None:
         return
-    if task.done():
-        task.exception()
-    else:
+    if not task.done():
         task.cancel()
+    elif not task.cancelled():
+        task.exception()
 
 
 def _stalled_operations(history: list[JevHistoryEntry]) -> frozenset[JevOperation]:
@@ -1321,7 +1450,7 @@ def _registered_actions(output_format: type[BaseModel]) -> set[str]:
 
 
 def _output(
-    output_format: type[T], action: dict[str, dict[str, object]], goal: str, memory: str
+    output_format: type[T], action: dict[str, dict[str, object]], goal: str | None, memory: str
 ) -> T:
     return output_format.model_validate({"memory": memory, "next_goal": goal, "action": [action]})
 

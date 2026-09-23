@@ -26,6 +26,10 @@ class SeenText:
     def record(self, url: str, text: str, title: str = "", *, at_bottom: bool = False) -> None:
         """Add this screen's lines to its page's memory; a page returned to keeps what it had."""
         self._page = url.split("#", 1)[0]
+        if self._page.startswith("about:"):
+            # The blank tab before the first navigate is no page read: judging it
+            # spent a writer call on nothing, and a blocked run "reported" it.
+            return
         if title and self._titles.get(self._page, title) != title:
             # A new document on the same url (a "Just a moment..." wall that cleared
             # into the list): the wall's bottom is not the list's.
