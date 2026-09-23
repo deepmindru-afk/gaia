@@ -1,7 +1,7 @@
 From 9db29319289def98a42fa2ce4118f52b8b95c53a Mon Sep 17 00:00:00 2001
 From: Aryan Randeriya <aryan.k.randeriya@gmail.com>
 Date: Wed, 23 Sep 2026 15:34:49 +0530
-Subject: [PATCH 2/2] fix(input): a click inside a submit button submits its
+Subject: [PATCH 02/13] fix(input): a click inside a submit button submits its
  form
 
 Hit testing an icon-only submit button lands on its <svg>; the click's
@@ -129,6 +129,3 @@ index 8bd3139..4a32772 100644
      #[test]
      fn window_named_access_tracks_dynamic_ids_and_fragment_parsing() {
          let mut rt = setup_runtime("<html><body><div id='host'></div></body></html>");
--- 
-2.43.0
-
