@@ -259,6 +259,23 @@ class TestMcpResolution:
 
 @pytest.mark.unit
 class TestCatalogMaterialization:
+    async def test_a_full_miss_cache_starts_over_so_an_evicted_slug_is_asked_again(self) -> None:
+        client = MagicMock()
+        client.find_integration.return_value = None
+        service = MagicMock()
+        service.get_tools_by_name = AsyncMock(return_value=[])
+        with (
+            patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=_registry_with({}))),
+            patch(f"{MODULE}.get_mcp_client", new=AsyncMock(return_value=client)),
+            patch(f"{MODULE}.get_composio_service", return_value=service),
+            patch(f"{MODULE}.UNKNOWN_CATALOG_SLUG_CACHE_MAX", 2),
+        ):
+            for slug in ("ASANA_CREATE_TASK", "ASANA_DELETE_TASK", "ASANA_GET_TASK"):
+                await resolver.resolve_tool("u1", slug)
+            await resolver.resolve_tool("u1", "ASANA_CREATE_TASK")
+        asked = [c.args[0] for c in service.get_tools_by_name.await_args_list]
+        assert asked.count(["ASANA_CREATE_TASK"]) == 2
+
     async def test_the_catalog_is_asked_for_exactly_the_named_slug(self) -> None:
         client = MagicMock()
         client.find_integration.return_value = None

@@ -168,6 +168,28 @@ class TestFullToolInfo:
             compact_output_type=compact,
         )
 
+    @pytest.mark.parametrize(
+        "unusable", [{}, "see the provider docs"], ids=["empty", "not_a_schema"]
+    )
+    async def test_an_unusable_provider_schema_is_no_provider_schema(
+        self, unusable: object
+    ) -> None:
+        tool = StructuredTool.from_function(
+            func=lambda max_results: None,
+            name="GMAIL_FETCH_EMAILS",
+            description="Fetch emails.",
+            metadata={"output_parameters": unusable},
+        )
+        resolved = ResolvedTool("GMAIL_FETCH_EMAILS", tool, True)
+        with (
+            patch(f"{INFO}.resolve_tool", new=AsyncMock(return_value=resolved)),
+            patch.object(tool_shapes_repository, "get_shape", new=AsyncMock(return_value=None)),
+        ):
+            contract = await full_tool_info("u1", "GMAIL_FETCH_EMAILS")
+        assert contract is not None
+        assert contract.provider_output_schema is None
+        assert contract.compact_output_type is None
+
     async def test_a_never_observed_undocumented_tool_has_no_return_shape(self) -> None:
         resolved = ResolvedTool("GMAIL_FETCH_EMAILS", _catalog_tool(None), True)
         with (

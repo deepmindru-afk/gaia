@@ -173,9 +173,7 @@ def _args_schema_of(tool: BaseTool) -> dict[str, JsonValue]:
 
 
 def _response_schema_of(tool: BaseTool) -> dict[str, JsonValue] | None:
-    metadata = getattr(tool, "metadata", None)
-    if not isinstance(metadata, dict):
-        return None
+    metadata = tool.metadata or {}
     for key in RESPONSE_SCHEMA_METADATA_KEYS:
         value = metadata.get(key)
         if isinstance(value, dict) and value:
