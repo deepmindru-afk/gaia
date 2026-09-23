@@ -25,6 +25,7 @@ from app.constants.hil import (
     HIL_JUDGE_MAX_PRIOR_CALLS,
     HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS,
 )
+from app.models.agent_config import SubagentKind, SubagentResumeItem
 from app.services.hil.approvals_store import (
     approval_id_for,
     record_auto_approval,
@@ -240,6 +241,38 @@ class TestThePendingApprovalRecord:
         assert record.expires_at > datetime.now(UTC), "born expired"
         window = (record.expires_at - record.created_at).total_seconds()
         assert window == pytest.approx(HIL_APPROVAL_TIMEOUT_SECONDS, abs=1)
+
+    async def test_a_parked_subagent_record_carries_the_recipe_that_rebuilds_it(self) -> None:
+        # The decision rebuilds the parked subagent from this recipe; dropped, an
+        # approved background subagent can never resume.
+        recipe = SubagentResumeItem(
+            kind=SubagentKind.SPAWN,
+            tool_call_id="handoff-1",
+            task="triage the inbox",
+            context="",
+            integration_id="",
+            inherited_tool_names=["gmail_send"],
+            parent_configurable={"user_id": "u1"},
+        )
+        repository = AsyncMock()
+        with patch(f"{STORE}.hil_approval_repository", repository):
+            await upsert_pending_approval(
+                approval_id="a1",
+                user_id="u1",
+                conversation_id="conv-1",
+                stream_id="stream-1",
+                tool_name="send_email",
+                tool_call_id="call-1",
+                args={"to": "bob@example.com"},
+                summary="Send email — to: bob@example.com",
+                integration_name="Gmail",
+                subagent_thread_id="thread-sub-1",
+                subagent_resume=recipe,
+            )
+
+        record = written_record(repository)
+        assert record.subagent_thread_id == "thread-sub-1"
+        assert record.subagent_resume == dict(recipe)
 
 
 class TestPriorOutputs:
