@@ -243,11 +243,11 @@ class CustomLLM(LLM):
         if event.keys() & PLUMBING_EVENT_KEYS:
             await self.forward_stream_event_to_frontend(data)
 
-    # livekit-agents 1.6+ made LLMStream an ABC; this yields an async generator
-    # instead, satisfying the same `async with s: async for c in s` contract the
-    # pipeline actually uses (voice/agent.py) without reimplementing LLMStream.
+    # The pipeline calls this as `async with llm.chat(...) as stream: async for c in stream`,
+    # which @asynccontextmanager + yield gen() provides; **_kwargs takes the tools,
+    # tool_choice and conn_options the pipeline passes (voice/agent.py) and never reads.
     @asynccontextmanager
-    async def chat(  # type: ignore[override]  # yields an async generator, not an LLMStream
+    async def chat(
         self, *, chat_ctx: ChatContext, **_kwargs: object
     ) -> AsyncGenerator[AsyncGenerator[ChatChunk, None], None]:
         """Stream SSE from the backend and yield ChatChunks for TTS."""
