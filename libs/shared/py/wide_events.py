@@ -978,6 +978,31 @@ def spawn_logged_task(
     return task
 
 
+#: A detached task's exception that reached the top of the task with nobody awaiting it.
+REASON_UNHANDLED_EXCEPTION = "unhandled_exception"
+
+
+def emit_unobserved_task_failure(task_name: str, exc: BaseException, *, trace_id: str) -> None:
+    """Emit one failed background_task event for a detached task that died with nobody awaiting it.
+
+    Called from a done-callback, which is synchronous and runs after the task's
+    own frames are gone, so it cannot open a boundary; it writes the same event
+    log_context would have flushed for the failure: same message, logger, task
+    and outcome, the exception as error/error_type, and the spawner's trace id.
+    """
+    fields: dict[str, Any] = {
+        "task": task_name,
+        "outcome": OUTCOME_FAILED,
+        "reason": REASON_UNHANDLED_EXCEPTION,
+        "error": str(exc),
+        "error_type": type(exc).__name__,
+        "final_level": "ERROR",
+    }
+    if trace_id:
+        fields["trace_id"] = trace_id
+    _loguru.bind(logger_name="BG", **fields).log("ERROR", "background_task")
+
+
 def get_trace_id() -> str:
     """Return the trace_id for the current request or worker task."""
     return log.get_trace_id()
@@ -988,6 +1013,8 @@ __all__ = [
     "wide_task",
     "log_context",
     "spawn_logged_task",
+    "emit_unobserved_task_failure",
+    "REASON_UNHANDLED_EXCEPTION",
     "WideEventLogger",
     "WideEventFields",
     "UserContext",
