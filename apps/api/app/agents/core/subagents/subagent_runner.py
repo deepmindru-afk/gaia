@@ -21,7 +21,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command, StateSnapshot, interrupt
 
 from app.agents.context.assemble import assemble_context
-from app.agents.context.section_context import SectionContext
+from app.agents.context.section_context import SectionContext, SectionScope
 from app.agents.context.tiers import AgentTier
 from app.agents.core.background.session import claim_tool_output, note_tool_output_owner
 from app.agents.core.background.subagent_channel import SubagentCancel
@@ -217,11 +217,13 @@ async def build_initial_messages(
         SectionContext.from_configurable(
             tier,
             configurable,
-            query=retrieval_query if retrieval_query is not None else task,
-            request_query=seed.request_query,
-            user_id=user_id,
-            subagent_id=subagent_id,
-            integration_id=integration_id,
+            SectionScope(
+                query=retrieval_query if retrieval_query is not None else task,
+                request_query=seed.request_query,
+                user_id=user_id,
+                subagent_id=subagent_id,
+                integration_id=integration_id,
+            ),
         )
     )
 

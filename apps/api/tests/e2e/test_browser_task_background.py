@@ -22,6 +22,7 @@ from tests.e2e._harness.browser_job import (
     SHOT_URL_TEMPLATE,
     JevScript,
     JobWorld,
+    ScriptedHost,
     ScriptedStep,
     browser_job_world,
 )
@@ -130,10 +131,8 @@ async def test_a_bot_conversation_gets_one_photo_per_step_and_only_the_recap_lin
         SHOT_URL_TEMPLATE.format(index=1),
         SHOT_URL_TEMPLATE.format(index=2),
     ]
-    # Session start is deliberately silent (the link arrives at a handoff, if
-    # one comes). The outcome is the assistant's to voice once, so the progress
-    # channel closes with the recap link alone: a canned outcome line here made
-    # every result arrive twice.
+    # Session start is silent, and the assistant voices the outcome once, so the
+    # progress channel closes with the recap link alone (else results arrive twice).
     assert world.bot_messages == [f"📽 Here's a recap of the run: {REPLAY_URL}"]
 
 
@@ -198,7 +197,7 @@ async def test_a_stop_reaches_the_browser_and_releases_the_conversation() -> Non
 async def test_a_worker_crash_still_reports_a_failure_and_frees_the_conversation() -> None:
     """A job that dies silently wedges the conversation's one browser slot and leaves the user watching a run that already stopped."""
     async with browser_job_world(
-        STREAM, host_error=RuntimeError("the browser host fell over")
+        STREAM, host=ScriptedHost(error=RuntimeError("the browser host fell over"))
     ) as world:
         async with executor_graph([RETRIEVE, START, "Started."]) as graph:
             await _drive(graph, world)
@@ -549,7 +548,7 @@ async def test_a_run_whose_engine_dies_mid_task_finishes_on_the_fallback_engine(
     )
 
     async with browser_job_world(
-        STREAM, steps=steps, jev=script, fallback_host="http://fallback.test"
+        STREAM, steps=steps, jev=script, host=ScriptedHost(fallback_url="http://fallback.test")
     ) as world:
         async with executor_graph([RETRIEVE, START, JOIN, "Booked."]) as graph:
             run = await _drive(graph, world)

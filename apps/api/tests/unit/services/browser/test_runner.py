@@ -1949,38 +1949,48 @@ class _AgentRunThatBlocksOnce:
         return None
 
 
-def _fallback_runner(
-    monkeypatch,
+def _fallback_callbacks(
     emit,
     open_fallback_session,
     *,
-    agent_run: type = _AgentRunThatBlocksOnce,
     is_cancelled: AsyncMock | None = None,
     request_handoff: AsyncMock | None = None,
-    task_timeout: float = 30,
-    start_url: str | None = None,
+) -> BrowserRunnerCallbacks:
+    return BrowserRunnerCallbacks(
+        emit=emit,
+        request_handoff=request_handoff or AsyncMock(),
+        is_cancelled=is_cancelled or AsyncMock(return_value=False),
+        open_fallback_session=open_fallback_session,
+    )
+
+
+def _fallback_config(*, task_timeout: float = 30, start_url: str | None = None) -> BrowserRunConfig:
+    return BrowserRunConfig(
+        max_steps=10,
+        max_actions_per_step=5,
+        task_timeout_seconds=task_timeout,
+        step_timeout_seconds=180,
+        handoff_timeout_seconds=0,
+        stream_screenshots=False,
+        solve_captcha=False,
+        start_url=start_url,
+    )
+
+
+def _fallback_runner(
+    monkeypatch,
+    callbacks: BrowserRunnerCallbacks,
+    *,
+    agent_run: type = _AgentRunThatBlocksOnce,
+    config: BrowserRunConfig | None = None,
 ) -> BrowserTaskRunner:
     _AgentRunThatBlocksOnce.runs = []
     monkeypatch.setattr(runner_mod, "BrowserAgentRun", agent_run)
     return BrowserTaskRunner(
         session=_session(),
         llm=JevChatModel(client=MagicMock(), text_model=MagicMock()),
-        callbacks=BrowserRunnerCallbacks(
-            emit=emit,
-            request_handoff=request_handoff or AsyncMock(),
-            is_cancelled=is_cancelled or AsyncMock(return_value=False),
-            open_fallback_session=open_fallback_session,
-        ),
-        config=BrowserRunConfig(
-            max_steps=10,
-            max_actions_per_step=5,
-            task_timeout_seconds=task_timeout,
-            step_timeout_seconds=180,
-            handoff_timeout_seconds=0,
-            stream_screenshots=False,
-            solve_captcha=False,
-            start_url=start_url,
-        ),
+        callbacks=callbacks,
+        config=config if config is not None else _fallback_config(),
     )
 
 
@@ -1988,7 +1998,7 @@ async def test_a_run_blocked_on_the_primary_engine_finishes_on_the_fallback(monk
     events, emit = _collector()
     fallback = _fallback_session()
     open_fallback = AsyncMock(return_value=fallback)
-    runner = _fallback_runner(monkeypatch, emit, open_fallback)
+    runner = _fallback_runner(monkeypatch, _fallback_callbacks(emit, open_fallback))
 
     result = await runner.run("find fares")
 
@@ -2017,7 +2027,7 @@ async def test_a_run_blocked_with_no_fallback_engine_ends_on_its_first_outcome(
     monkeypatch,
 ) -> None:
     events, emit = _collector()
-    runner = _fallback_runner(monkeypatch, emit, None)
+    runner = _fallback_runner(monkeypatch, _fallback_callbacks(emit, None))
 
     result = await runner.run("find fares")
 
@@ -2051,10 +2061,9 @@ async def test_a_run_resumed_on_the_fallback_at_its_page_does_not_reopen_the_sta
     _AgentRunRecordingStart.starts = []
     runner = _fallback_runner(
         monkeypatch,
-        emit,
-        AsyncMock(return_value=_fallback_session()),
+        _fallback_callbacks(emit, AsyncMock(return_value=_fallback_session())),
         agent_run=_AgentRunRecordingStart,
-        start_url="https://flights.example.com/",
+        config=_fallback_config(start_url="https://flights.example.com/"),
     )
 
     await runner.run("find fares")
@@ -2141,7 +2150,9 @@ async def test_a_run_whose_engine_failed_finishes_on_the_fallback_from_the_page_
     _host_answers(monkeypatch, host)
     open_fallback = AsyncMock(return_value=_fallback_session())
     agent = _failing_engine(_ENGINE_GAVE_OUT, RunOutcome(success=True, summary="67 comments"))
-    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=agent)
+    runner = _fallback_runner(
+        monkeypatch, _fallback_callbacks(emit, open_fallback), agent_run=agent
+    )
 
     result = await runner.run("count the comments")
 
@@ -2168,7 +2179,9 @@ async def test_an_engine_that_died_before_the_agent_attached_starts_the_task_ove
         RunOutcome(success=True, summary="67 comments"),
         last_page=None,
     )
-    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=agent)
+    runner = _fallback_runner(
+        monkeypatch, _fallback_callbacks(emit, open_fallback), agent_run=agent
+    )
 
     result = await runner.run("count the comments")
 
@@ -2190,7 +2203,9 @@ async def test_a_run_that_failed_on_a_live_engine_ends_failed_without_the_fallba
     _, emit = _collector()
     _host_answers(monkeypatch, _session_live)
     open_fallback = AsyncMock(return_value=_fallback_session())
-    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=_failing_engine(ending))
+    runner = _fallback_runner(
+        monkeypatch, _fallback_callbacks(emit, open_fallback), agent_run=_failing_engine(ending)
+    )
 
     result = await runner.run("count the comments")
 
@@ -2207,10 +2222,8 @@ async def test_a_run_the_user_stopped_never_moves_to_the_fallback_even_with_its_
     open_fallback = AsyncMock(return_value=_fallback_session())
     runner = _fallback_runner(
         monkeypatch,
-        emit,
-        open_fallback,
+        _fallback_callbacks(emit, open_fallback, is_cancelled=AsyncMock(return_value=True)),
         agent_run=_failing_engine(_ENGINE_GAVE_OUT),
-        is_cancelled=AsyncMock(return_value=True),
     )
 
     result = await runner.run("count the comments")
@@ -2238,10 +2251,12 @@ async def test_a_run_ended_by_a_declined_handoff_never_moves_to_the_fallback(mon
     _failing_engine(_ENGINE_GAVE_OUT)
     runner = _fallback_runner(
         monkeypatch,
-        emit,
-        open_fallback,
+        _fallback_callbacks(
+            emit,
+            open_fallback,
+            request_handoff=AsyncMock(return_value=HandoffOutcome(status=HandoffStatus.CANCELLED)),
+        ),
         agent_run=_AgentRunHandedOffThenLostItsEngine,
-        request_handoff=AsyncMock(return_value=HandoffOutcome(status=HandoffStatus.CANCELLED)),
     )
 
     result = await runner.run("count the comments")
@@ -2262,10 +2277,9 @@ async def test_a_run_that_spent_its_whole_budget_never_moves_to_the_fallback(mon
     open_fallback = AsyncMock(return_value=_fallback_session())
     runner = _fallback_runner(
         monkeypatch,
-        emit,
-        open_fallback,
+        _fallback_callbacks(emit, open_fallback),
         agent_run=_AgentRunThatNeverEnds,
-        task_timeout=0.05,
+        config=_fallback_config(task_timeout=0.05),
     )
 
     result = await runner.run("count the comments")
@@ -2285,7 +2299,9 @@ async def test_a_run_whose_fallback_engine_fails_too_ends_there_without_a_second
     open_fallback = AsyncMock(return_value=_fallback_session())
     fallback_gave_out = RunOutcome(success=False, summary="The fallback gave out too.")
     agent = _failing_engine(_ENGINE_GAVE_OUT, fallback_gave_out)
-    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=agent)
+    runner = _fallback_runner(
+        monkeypatch, _fallback_callbacks(emit, open_fallback), agent_run=agent
+    )
 
     result = await runner.run("count the comments")
 
@@ -2311,7 +2327,9 @@ async def test_a_run_finished_on_the_fallback_bills_the_tokens_both_engines_spen
         RunOutcome(success=True, summary="67 comments", usage=[RunUsage("jev", 500, 10)]),
     )
     runner = _fallback_runner(
-        monkeypatch, emit, AsyncMock(return_value=_fallback_session()), agent_run=agent
+        monkeypatch,
+        _fallback_callbacks(emit, AsyncMock(return_value=_fallback_session())),
+        agent_run=agent,
     )
 
     await runner.run("count the comments")
@@ -2622,7 +2640,9 @@ async def test_a_slow_page_on_a_live_engine_is_never_mistaken_for_a_frozen_one(
     probe = _watched_host(monkeypatch, _slow_but_alive)
     _, emit = _collector()
     open_fallback = AsyncMock(return_value=_fallback_session())
-    runner = _fallback_runner(monkeypatch, emit, open_fallback, agent_run=_AgentRunOnASlowPage)
+    runner = _fallback_runner(
+        monkeypatch, _fallback_callbacks(emit, open_fallback), agent_run=_AgentRunOnASlowPage
+    )
 
     result = await runner.run("read the page")
 
@@ -2656,10 +2676,10 @@ async def test_a_run_paused_on_the_user_is_never_cut_short_by_the_watchdog(
     open_fallback = AsyncMock(return_value=_fallback_session())
     runner = _fallback_runner(
         monkeypatch,
-        emit,
-        open_fallback,
+        _fallback_callbacks(
+            emit, open_fallback, request_handoff=AsyncMock(side_effect=_user_takes_their_time)
+        ),
         agent_run=_AgentRunPausedOnTheUser,
-        request_handoff=AsyncMock(side_effect=_user_takes_their_time),
     )
 
     result = await runner.run("sign in and read")
@@ -2679,8 +2699,7 @@ async def test_the_watchdog_stops_reading_the_host_once_the_run_ends(
     _, emit = _collector()
     runner = _fallback_runner(
         monkeypatch,
-        emit,
-        AsyncMock(return_value=_fallback_session()),
+        _fallback_callbacks(emit, AsyncMock(return_value=_fallback_session())),
         agent_run=_AgentRunOnASlowPage,
     )
 
@@ -2703,10 +2722,9 @@ async def test_the_watchdog_stops_reading_the_host_once_the_run_spent_its_budget
     _, emit = _collector()
     runner = _fallback_runner(
         monkeypatch,
-        emit,
-        AsyncMock(return_value=_fallback_session()),
+        _fallback_callbacks(emit, AsyncMock(return_value=_fallback_session())),
         agent_run=_AgentRunThatNeverEndsOnALiveEngine,
-        task_timeout=0.1,
+        config=_fallback_config(task_timeout=0.1),
     )
 
     result = await runner.run("read the page")

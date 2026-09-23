@@ -436,7 +436,7 @@ async def test_a_failing_helper_still_hands_off_with_the_default_directive(
     }
     failures = [c for c in logger.warning.call_args_list if "text helper failed" in c.args[0]]
     assert len(failures) == 1, "the writer's own lane retries; the loop logs the final failure once"
-    assert failures[0].kwargs == {"error_type": "RuntimeError"}
+    assert failures[0].kwargs == {"error_type": "RuntimeError", "error": "provider down"}
 
 
 async def test_solve_captcha_describes_the_challenge(flights_state) -> None:
@@ -649,7 +649,10 @@ async def test_an_invalid_jev_answer_executes_nothing_but_a_wait(
     rejected = [c for c in logger.warning.call_args_list if "Jev decision rejected" in c.args[0]]
     assert len(rejected) == 1
     assert rejected[0].args[0].startswith(f"{LogTag.BROWSER} Jev decision rejected")
-    assert rejected[0].kwargs == {"error_type": "JevDecisionError"}
+    assert rejected[0].kwargs == {
+        "error_type": "JevDecisionError",
+        "error": "Invalid Jev response; no action executed.",
+    }
 
 
 async def test_calls_that_are_not_a_step_decision_go_to_the_text_helper(flights_state) -> None:
@@ -1953,11 +1956,7 @@ def _on_part(gateway: ScriptedGateway) -> str:
 
 @pytest.mark.regression
 async def test_facts_the_parts_own_listing_shows_are_evidence_for_it() -> None:
-    """Regression: a story's title and points, read where they are shown, were refused as evidence.
-
-    The front page is the part's start page, and every citation of it was thrown
-    out; the part could never be done, and the run wandered HN for 80 steps.
-    """
+    """Regression: citations of the part's start page were refused, so the run wandered HN for 80 steps."""
     writer = _evidence_writer(
         _TOP_STORY_PLAN,
         [
@@ -2094,11 +2093,7 @@ async def test_the_judge_is_told_the_page_the_part_started_on() -> None:
 
 @pytest.mark.regression
 async def test_a_part_is_not_done_while_a_requirement_it_named_has_no_evidence() -> None:
-    """Regression: the judge called a login part done on its first step.
-
-    It named the handoff as a requirement, cited only the login page for the
-    part, and its own findings said the run was still waiting for the user.
-    """
+    """Regression: a login part was judged done on step one while still waiting on the handoff."""
     writer = _evidence_writer(
         [{"goal": "Go to the login page and hand the live view to the user"}],
         [{"requirement": "login page open", "kind": "fact", "source": _LOGIN}],
@@ -2119,11 +2114,7 @@ async def test_a_part_is_not_done_while_a_requirement_it_named_has_no_evidence()
 
 @pytest.mark.regression
 async def test_what_the_part_judge_found_missing_is_what_jev_is_told_to_do_next() -> None:
-    """Regression: a research part stayed "not done" for 37 steps.
-
-    The judge knew each article had been read only for its title, and said so
-    in every verdict; Jev never heard it and kept going back to the list.
-    """
+    """Regression: a part stayed "not done" for 37 steps because Jev never heard the judge's gap."""
     helper = FakeTextModel()
 
     async def writer(schema, prompt, *, label, timeout=None, reasoning=None):

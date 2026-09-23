@@ -280,6 +280,14 @@ class JobWorld:
             await asyncio.gather(*pending, return_exceptions=True)
 
 
+@dataclass(frozen=True)
+class ScriptedHost:
+    """The browser host a job reaches: whether opening a session on it fails, and the fallback it may use."""
+
+    error: Exception | None = None
+    fallback_url: str | None = None
+
+
 @asynccontextmanager
 async def browser_job_world(
     stream_id: str,
@@ -287,9 +295,8 @@ async def browser_job_world(
     steps: list[ScriptedStep] | None = None,
     summary: str = "The table is booked for 7pm on Friday.",
     successful: bool = True,
-    host_error: Exception | None = None,
     jev: JevScript | None = None,
-    fallback_host: str | None = None,
+    host: ScriptedHost | None = None,
 ) -> AsyncIterator[JobWorld]:
     """Wire one turn's world: a fake Redis, a scripted browser, an in-process worker."""
     double = BrowserDouble(
@@ -305,6 +312,7 @@ async def browser_job_world(
         successful,
     )
     world = JobWorld(double)
+    scripted_host = host if host is not None else ScriptedHost()
     page: Any = AsyncMock()
     llm: Any = object()
     if jev is not None:
@@ -336,8 +344,8 @@ async def browser_job_world(
         return True
 
     async def _create_host_session(storage_state: Any, host_url: str) -> Any:
-        if host_error is not None:
-            raise host_error
+        if scripted_host.error is not None:
+            raise scripted_host.error
         world.host_sessions += 1
         return MagicMock(
             session_id=f"sess-{world.host_sessions}",
@@ -391,7 +399,7 @@ async def browser_job_world(
         patch("app.services.browser.session.host_client.create_session", _create_host_session),
         patch("app.services.browser.session.host_client.delete_session", AsyncMock()),
         patch("app.services.browser.session.host_client.get_session", _get_host_session),
-        patch.object(settings, "BROWSER_FALLBACK_HOST_URL", fallback_host),
+        patch.object(settings, "BROWSER_FALLBACK_HOST_URL", scripted_host.fallback_url),
         patch("app.services.browser.session.load_storage_state", AsyncMock(return_value=None)),
         patch("app.services.browser.session.save_storage_state", AsyncMock()),
         patch("app.services.browser.job_runner.build_browser_llm", lambda user_id=None: llm),
