@@ -275,9 +275,32 @@ async def test_a_run_whose_login_takeover_completed_saves_its_state(
     async with session_mod.browser_session(
         host_url=_HOST, user_id="u1", start_url="https://x.com"
     ) as session:
-        session.mark_authenticated()
+        session.mark_authenticated("https://x.com/home")
 
     session_mod.save_storage_state.assert_awaited_once_with("u1", "x.com", returned_state)
+
+
+@pytest.mark.regression
+async def test_a_sign_in_is_saved_for_the_site_it_happened_on_whatever_the_run_started_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a run given no start URL completed a login and saved nothing.
+
+    The login was keyed on the start URL's domain; the task carried its URL
+    only in its words, so there was no domain and the save was a no-op.
+    """
+    _make_session_fakes(monkeypatch)
+    returned_state = {"cookies": ["signed-in"]}
+    monkeypatch.setattr(
+        session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
+    )
+
+    async with session_mod.browser_session(host_url=_HOST, user_id="u1") as session:
+        session.mark_authenticated("https://the-internet.herokuapp.com/secure")
+
+    session_mod.save_storage_state.assert_awaited_once_with(
+        "u1", "the-internet.herokuapp.com", returned_state
+    )
 
 
 async def test_release_failure_is_caught_logged_and_unregister_still_runs(
@@ -314,7 +337,7 @@ async def test_save_storage_state_failure_is_also_caught(
     async with session_mod.browser_session(
         host_url=_HOST, user_id="u1", start_url="https://x"
     ) as session:
-        session.mark_authenticated()
+        session.mark_authenticated("https://x.com/home")
 
     session_mod.unregister_session.assert_awaited_once()
     assert len(fake_log.warning_calls) == 1

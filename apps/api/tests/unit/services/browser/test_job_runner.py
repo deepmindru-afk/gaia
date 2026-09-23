@@ -9,7 +9,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, NamedTuple
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -1391,10 +1391,16 @@ async def test_a_completed_login_takeover_marks_the_session_worth_saving(
         return _result(BrowserSessionStatus.COMPLETED, True, "done")
 
     h = _install(monkeypatch, run_body=body)
+    monkeypatch.setattr(
+        jr.host_client,
+        "get_session",
+        AsyncMock(return_value=MagicMock(url="https://site.example/account")),
+    )
 
     await _run(h, _request(task="x"))
 
-    h.session.mark_authenticated.assert_called_once_with()
+    # Saved under the site signed in to, which a run with no start URL has no other way to know.
+    h.session.mark_authenticated.assert_called_once_with("https://site.example/account")
 
 
 @pytest.mark.parametrize(

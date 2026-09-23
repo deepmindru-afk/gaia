@@ -52,10 +52,17 @@ class BrowserHostSession:
     #: Whether this run's cookies are worth keeping as a saved login: it was
     #: seeded from one, or a sign-in completed in it.
     persist_login: bool = False
+    #: The site a sign-in completed on, which its saved login is keyed under.
+    login_domain: str | None = None
 
-    def mark_authenticated(self) -> None:
-        """Record that a sign-in completed here, so the returned state is saved on release."""
+    def mark_authenticated(self, url: str | None) -> None:
+        """Record that a sign-in completed here, on url's site, so the returned state is saved under it on release.
+
+        The site signed in to, not the one the run started on: a run given no
+        start URL once completed a login and saved nothing.
+        """
         self.persist_login = True
+        self.login_domain = domain_of(url)
 
 
 async def keep_session_alive(session: BrowserHostSession) -> None:
@@ -232,7 +239,7 @@ async def browser_session(
             # Saving every run turned the login store into an invisible preference
             # cache: one task's Deutsch cookie answered the next task in German.
             if session.persist_login:
-                await save_storage_state(user_id, domain, returned_state)
+                await save_storage_state(user_id, session.login_domain or domain, returned_state)
             log.info(f"{LogTag.BROWSER} Browser session released")
         except Exception as exc:
             log.warning(

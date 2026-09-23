@@ -43,6 +43,7 @@ from app.schemas.browser import (
 )
 from app.schemas.browser_job import BrowserJobRequest, BrowserJobState, BrowserJobStatus
 from app.services.analytics_service import AnalyticsEvents, capture_event
+from app.services.browser import host_client
 from app.services.browser.agent_guidance import (
     clear_guidance_request,
     put_guidance_request,
@@ -407,7 +408,8 @@ async def _run_handoff(
         handoff_result=outcome.status.value,
     )
     if outcome.status == HandoffStatus.COMPLETED and req.category == SensitiveCategory.CREDENTIALS:
-        session.mark_authenticated()
+        page = await host_client.get_session(session.session_id, session.host_url)
+        session.mark_authenticated(page.url)
     await emit(_handoff_snapshot(handoff_id, req, session, outcome.status))
     return outcome
 
