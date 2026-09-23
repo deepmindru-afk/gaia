@@ -96,8 +96,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     clang cmake libclang-dev libssl-dev llvm-dev pkg-config \
     git ca-certificates perl make libunwind-dev build-essential
 ARG OBSCURA_COMMIT=8f9c630b17d655920e13907afd8b498bbb9a2291
+# Our fixes ride on the pinned upstream commit as a patch series, so taking an
+# update is a pin bump: git am fails the build loudly when a patch no longer
+# applies, and one upstream has merged is deleted from the series.
+COPY apps/api/obscura-patches /obscura-patches
 RUN git clone https://github.com/h4ckf0r0day/obscura /obscura \
-    && git -C /obscura checkout ${OBSCURA_COMMIT}
+    && git -C /obscura checkout ${OBSCURA_COMMIT} \
+    && git -C /obscura -c user.name=gaia -c user.email=build@heygaia.io am /obscura-patches/*.patch
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cd /obscura && cargo build --locked --release -p obscura-cli --bins --features render,stealth
 
