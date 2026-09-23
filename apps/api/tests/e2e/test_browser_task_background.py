@@ -596,7 +596,7 @@ async def test_a_login_the_user_made_is_still_signed_in_after_the_run_moves_engi
     )
 
     async with browser_job_world(
-        STREAM, steps=steps, jev=script, fallback_host="http://fallback.test"
+        STREAM, steps=steps, jev=script, host=ScriptedHost(fallback_url="http://fallback.test")
     ) as world:
         async with executor_graph([RETRIEVE, START, JOIN, "Booked."]) as graph:
             run_task = asyncio.create_task(_drive(graph, world))

@@ -2120,7 +2120,7 @@ async def test_a_login_made_on_the_primary_engine_moves_with_the_run_to_the_fall
     reads: list[str] = []
     _host_answers(monkeypatch, _host_holding(_SIGNED_IN_STATE, reads))
     open_fallback = AsyncMock(return_value=_fallback_session())
-    runner = _fallback_runner(monkeypatch, emit, open_fallback)
+    runner = _fallback_runner(monkeypatch, _fallback_callbacks(emit, open_fallback))
     primary = runner.session
     primary.mark_authenticated("https://flights.example.com/account")
 
@@ -2147,7 +2147,7 @@ async def test_a_run_that_never_signed_in_carries_its_state_without_the_right_to
     _, emit = _collector()
     _host_answers(monkeypatch, _host_holding(_SIGNED_IN_STATE, []))
     open_fallback = AsyncMock(return_value=_fallback_session())
-    runner = _fallback_runner(monkeypatch, emit, open_fallback)
+    runner = _fallback_runner(monkeypatch, _fallback_callbacks(emit, open_fallback))
 
     await runner.run("find fares")
 

@@ -171,41 +171,61 @@ class _ScriptedAgent:
         while double.next_step < len(double.steps):
             step = double.steps[double.next_step]
             double.next_step += 1
-            index = double.next_step
             if step.engine_dies:
                 double.kill_engine()
                 return _History("", successful=False, done=False)
-            if step.await_stop:
-                await self._wait_for_stop()
+            if await self._halts_before(step):
                 break
-            if self._stopped or await self._should_stop():
-                self._double.stop_observed = True
+            try:
+                step_actions = await self._actions_for(step)
+            except _RunHalted:
                 break
-            if step.await_joiner:
-                await self._wait_for_joiner()
-            if step.decide:
-                try:
-                    decided = await self._decide()
-                except BrowserHandoffCancelled:
-                    # Browser-Use turns this into an action error and the run's own
-                    # flags decide the outcome; the loop has nothing left to do.
-                    break
-                if decided is None:
-                    continue
-                step_actions = [decided]
-            else:
-                step_actions = list(step.actions)
-            actions = [_Action(name, params) for name, params in step_actions]
-            await self._on_step(_PageState(step.url), _AgentOutput(actions), index)
-            if on_step_end is not None:
-                self.state = _AgentState(step.outputs)
-                await on_step_end(self)
-            ended = _ended_by(step_actions)
+            if step_actions is None:
+                continue
+            ended = await self._perform(step, step_actions, double.next_step, on_step_end)
             if ended is not None:
-                # A done action ends the run where Browser-Use ends it, with its own
-                # text and verdict.
                 return ended
-        return _History(self._double.summary, self._double.successful)
+        return _History(double.summary, double.successful)
+
+    async def _halts_before(self, step: ScriptedStep) -> bool:
+        """Whether the run stops before this step, after waiting on whatever the step waits for."""
+        if step.await_stop:
+            await self._wait_for_stop()
+            return True
+        if self._stopped or await self._should_stop():
+            self._double.stop_observed = True
+            return True
+        if step.await_joiner:
+            await self._wait_for_joiner()
+        return False
+
+    async def _actions_for(self, step: ScriptedStep) -> list[tuple[str, dict[str, Any]]] | None:
+        """Return the step's actions, scripted or decided by the real Jev policy; None when a handoff was the step."""
+        if not step.decide:
+            return list(step.actions)
+        try:
+            decided = await self._decide()
+        except BrowserHandoffCancelled:
+            # Browser-Use turns this into an action error and the run's own flags
+            # decide the outcome; the loop has nothing left to do.
+            raise _RunHalted from None
+        return None if decided is None else [decided]
+
+    async def _perform(
+        self,
+        step: ScriptedStep,
+        step_actions: list[tuple[str, dict[str, Any]]],
+        index: int,
+        on_step_end: Any,
+    ) -> _History | None:
+        """Report the step as Browser-Use does and return the history a done action ends the run with, else None."""
+        actions = [_Action(name, params) for name, params in step_actions]
+        await self._on_step(_PageState(step.url), _AgentOutput(actions), index)
+        if on_step_end is not None:
+            self.state = _AgentState(step.outputs)
+            await on_step_end(self)
+        # A done action ends the run where Browser-Use ends it, with its own text and verdict.
+        return _ended_by(step_actions)
 
     async def _decide(self) -> tuple[str, dict[str, Any]] | None:
         """Ask the real Jev policy for this step, and perform a takeover it asks for.
@@ -302,6 +322,10 @@ class JobWorld:
             if not pending:
                 break
             await asyncio.gather(*pending, return_exceptions=True)
+
+
+class _RunHalted(Exception):
+    """The scripted run ends here, as Browser-Use ends it."""
 
 
 @dataclass(frozen=True)
