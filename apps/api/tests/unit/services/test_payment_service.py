@@ -660,12 +660,12 @@ class TestCreateSubscription:
         ],
         ids=["first-name", "full-name", "no-name"],
     )
+    @pytest.mark.usefixtures("mock_plan_repository")
     async def test_the_checkout_is_prefilled_with_the_users_email_and_best_name(
         self,
         payment_service,
         mock_users_collection,
         mock_subscription_repository,
-        mock_plan_repository,
         mock_dodo_client,
         names: dict[str, str | None],
         expected_name: str,
@@ -675,7 +675,6 @@ class TestCreateSubscription:
         mock_dodo_client.checkout_sessions.create = MagicMock(
             return_value=SimpleNamespace(session_id="sess_004", checkout_url="https://pay/x")
         )
-        mock_plan_repository.list_plans = AsyncMock(return_value=[])
 
         with patch.object(payment_service_module.settings, "ENV", "production"):
             await payment_service.create_subscription(

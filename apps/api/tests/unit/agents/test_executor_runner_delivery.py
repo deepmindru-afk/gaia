@@ -2476,37 +2476,47 @@ class _Delivered:
     notify: AsyncMock
 
 
+@dataclass(frozen=True)
+class _Seams:
+    """What the stubbed I/O seams answer during one delivery."""
+
+    comms_text: str
+    source: ConversationSource | None
+    follow_ups: list[str] | None = None
+    platform_id: str | None = None
+
+
 async def _deliver_run(
     run: ExecutorRun,
+    seams: _Seams,
     *,
-    comms_text: str,
-    source: ConversationSource | None,
     result_type: str = "final",
     tool_data: list[ToolDataEntry] | None = None,
-    follow_ups: list[str] | None = None,
-    platform_id: str | None = None,
 ) -> _Delivered:
     """Run deliver_result with every I/O seam recorded; the routing logic runs for real."""
     async with captured_wide_event() as event:
         with (
             patch.object(
-                rd, "narrate_executor_result", new_callable=AsyncMock, return_value=comms_text
+                rd, "narrate_executor_result", new_callable=AsyncMock, return_value=seams.comms_text
             ),
             patch.object(
                 rd,
                 "generate_follow_up_actions",
                 new_callable=AsyncMock,
-                return_value=follow_ups or [],
+                return_value=seams.follow_ups or [],
             ) as generated,
             patch.object(rd, "update_messages", new_callable=AsyncMock) as save,
             patch.object(
-                rd, "_get_conversation_source", new_callable=AsyncMock, return_value=source
+                rd, "_get_conversation_source", new_callable=AsyncMock, return_value=seams.source
             ),
             patch.object(
                 rd, "_lookup_user_message_content", new_callable=AsyncMock, return_value=""
             ),
             patch.object(
-                rd, "_lookup_platform_message_id", new_callable=AsyncMock, return_value=platform_id
+                rd,
+                "_lookup_platform_message_id",
+                new_callable=AsyncMock,
+                return_value=seams.platform_id,
             ) as lookup,
             patch.object(
                 rd, "deliver_reaction_to_platform", new_callable=AsyncMock, return_value=True
@@ -2559,7 +2569,7 @@ class TestTheCommsVerdictIsOnTheWideEvent:
         self, comms_text: str, expected: dict[str, str]
     ) -> None:
         delivered = await _deliver_run(
-            _run(), comms_text=comms_text, source=ConversationSource.WHATSAPP
+            _run(), _Seams(comms_text=comms_text, source=ConversationSource.WHATSAPP)
         )
 
         assert {key: delivered.event.get(key) for key in expected} == expected
@@ -2571,7 +2581,7 @@ class TestResolutionAnalyticsIsOnePerUpdate:
 
     async def test_a_queued_run_dedupes_on_its_task(self) -> None:
         delivered = await _deliver_run(
-            _run(RunKind.QUEUED, task_id="task-7"), comms_text="Done.", source=None
+            _run(RunKind.QUEUED, task_id="task-7"), _Seams(comms_text="Done.", source=None)
         )
 
         assert delivered.capture.call_args.kwargs == {
@@ -2579,7 +2589,7 @@ class TestResolutionAnalyticsIsOnePerUpdate:
         }
 
     async def test_a_taskless_run_dedupes_on_its_conversation(self) -> None:
-        delivered = await _deliver_run(_run(), comms_text="Done.", source=None)
+        delivered = await _deliver_run(_run(), _Seams(comms_text="Done.", source=None))
 
         assert delivered.capture.call_args.kwargs == {
             "dedupe_key": "chat_background_update_resolved:conv-1"
@@ -2587,7 +2597,8 @@ class TestResolutionAnalyticsIsOnePerUpdate:
 
     async def test_a_web_react_lands_as_a_badge(self) -> None:
         delivered = await _deliver_run(
-            replace(_run(), user_message_id="user-msg-1"), comms_text="REACT: ✅", source=None
+            replace(_run(), user_message_id="user-msg-1"),
+            _Seams(comms_text="REACT: ✅", source=None),
         )
 
         assert delivered.capture.call_args.args[2] == {
@@ -2597,7 +2608,9 @@ class TestResolutionAnalyticsIsOnePerUpdate:
         }
 
     async def test_a_web_reply_is_delivered_over_the_websocket(self) -> None:
-        delivered = await _deliver_run(_run(), comms_text="Done.", source=ConversationSource.WEB)
+        delivered = await _deliver_run(
+            _run(), _Seams(comms_text="Done.", source=ConversationSource.WEB)
+        )
 
         assert delivered.event["result_delivery"]["transport"] == "websocket"
         assert delivered.event["result_delivery"]["delivered"] is True
@@ -2609,9 +2622,11 @@ class TestInlineFollowUpsOnlyWhereNothingWaits:
     async def test_a_bot_reply_carries_its_follow_ups_inline(self) -> None:
         delivered = await _deliver_run(
             _run(),
-            comms_text="Booked your flight.",
-            source=ConversationSource.WHATSAPP,
-            follow_ups=["Add it to my calendar"],
+            _Seams(
+                comms_text="Booked your flight.",
+                source=ConversationSource.WHATSAPP,
+                follow_ups=["Add it to my calendar"],
+            ),
         )
 
         assert delivered.follow_ups.await_args.args[0] == "Booked your flight."
@@ -2619,14 +2634,14 @@ class TestInlineFollowUpsOnlyWhereNothingWaits:
 
     async def test_a_bot_reaction_generates_no_follow_ups(self) -> None:
         delivered = await _deliver_run(
-            _run(), comms_text="REACT: 👍", source=ConversationSource.WHATSAPP
+            _run(), _Seams(comms_text="REACT: 👍", source=ConversationSource.WHATSAPP)
         )
 
         delivered.follow_ups.assert_not_awaited()
 
     async def test_the_web_answer_is_not_gated_on_follow_ups(self) -> None:
         delivered = await _deliver_run(
-            _run(), comms_text="Done.", source=ConversationSource.WEB, tool_data=CARDS
+            _run(), _Seams(comms_text="Done.", source=ConversationSource.WEB), tool_data=CARDS
         )
 
         delivered.follow_ups.assert_not_awaited()
@@ -2637,14 +2652,16 @@ class TestInlineFollowUpsOnlyWhereNothingWaits:
         assert kwargs["target"].conversation_id == "conv-1"
 
     async def test_a_web_ack_with_no_answered_message_carries_no_reaction_target(self) -> None:
-        delivered = await _deliver_run(_run(), comms_text="REACT: ✅", source=None)
+        delivered = await _deliver_run(_run(), _Seams(comms_text="REACT: ✅", source=None))
 
         assert "reacts_to_message_id" not in delivered.ws.await_args.args[1]["message"]
 
 
 class TestAWorkflowResult:
     async def test_a_finished_workflow_reaches_the_platforms_and_the_badge(self) -> None:
-        delivered = await _deliver_run(_run(workflow=True), comms_text="Digest ready.", source=None)
+        delivered = await _deliver_run(
+            _run(workflow=True), _Seams(comms_text="Digest ready.", source=None)
+        )
 
         assert delivered.to_platforms.await_args.kwargs["notification_text"] == "Digest ready."
         notify = delivered.notify.await_args.kwargs
@@ -2656,7 +2673,7 @@ class TestAWorkflowResult:
 
     async def test_a_failed_workflow_notifies_failure_but_posts_nothing_to_platforms(self) -> None:
         delivered = await _deliver_run(
-            _run(workflow=True), comms_text="It failed.", source=None, result_type="error"
+            _run(workflow=True), _Seams(comms_text="It failed.", source=None), result_type="error"
         )
 
         delivered.to_platforms.assert_not_awaited()
@@ -2665,12 +2682,14 @@ class TestAWorkflowResult:
     async def test_a_silent_workflow_posts_nothing_to_platforms(self) -> None:
         run = replace(_run(workflow=True), workflow_notify_on_completion=False)
 
-        delivered = await _deliver_run(run, comms_text="Digest ready.", source=None)
+        delivered = await _deliver_run(run, _Seams(comms_text="Digest ready.", source=None))
 
         delivered.to_platforms.assert_not_awaited()
 
     async def test_a_workflow_react_falls_back_to_the_text_ack(self) -> None:
-        delivered = await _deliver_run(_run(workflow=True), comms_text="REACT: 👍", source=None)
+        delivered = await _deliver_run(
+            _run(workflow=True), _Seams(comms_text="REACT: 👍", source=None)
+        )
 
         assert delivered.returned == (None, _saved(delivered).message_id)
         assert delivered.capture.call_args.args[2] == {
@@ -2684,9 +2703,9 @@ class TestAPlatformReaction:
     async def test_a_known_platform_id_attaches_a_native_reaction(self) -> None:
         delivered = await _deliver_run(
             replace(_run(), user_message_id="user-msg-1"),
-            comms_text="REACT: 👍",
-            source=ConversationSource.WHATSAPP,
-            platform_id="wamid.123",
+            _Seams(
+                comms_text="REACT: 👍", source=ConversationSource.WHATSAPP, platform_id="wamid.123"
+            ),
         )
 
         delivered.lookup.assert_awaited_once_with("conv-1", "user-msg-1", "user-1")
@@ -2696,8 +2715,7 @@ class TestAPlatformReaction:
     async def test_no_platform_id_falls_back_to_a_text_bubble(self) -> None:
         delivered = await _deliver_run(
             replace(_run(), user_message_id="user-msg-1"),
-            comms_text="REACT: 👍",
-            source=ConversationSource.WHATSAPP,
+            _Seams(comms_text="REACT: 👍", source=ConversationSource.WHATSAPP),
         )
 
         delivered.reaction.assert_not_awaited()

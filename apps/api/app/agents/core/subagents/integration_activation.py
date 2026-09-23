@@ -271,7 +271,7 @@ async def activate_integration(
     acting as, the user's standing preferences, and its skills. Act on it
     yourself; `spawn_subagent` inherits it.
     """
-    configurable = agent_configurable(config)
+    configurable: AgentConfigurable = agent_configurable(config)
     user_id = configurable.get("user_id")
 
     # Repository-aware resolution: covers the static OAuth/builtin registry AND
