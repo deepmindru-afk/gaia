@@ -944,6 +944,24 @@ class TestBackgroundAuthorization:
         assert out[0] == "Execute workflow: Morning briefing"
         assert out[1] == "Scheduled workflow: Morning briefing. Emails my calendar and top emails"
 
+    @pytest.mark.parametrize(
+        ("title", "description", "expected"),
+        [
+            ("Morning briefing", "", "Scheduled workflow: Morning briefing"),
+            ("", "Emails my calendar", "Scheduled workflow. Emails my calendar"),
+        ],
+    )
+    def test_either_display_field_alone_still_authorizes(
+        self, title: str, description: str, expected: str
+    ) -> None:
+        out = background_authorization(
+            ["run it"],
+            execution_mode="background",
+            workflow_title=title,
+            workflow_description=description,
+        )
+        assert out == ["run it", expected]
+
     def test_generated_content_never_authorizes(self) -> None:
         # Steps and execution prompts may be LLM-generated (GeneratedStep), so the
         # function does not even accept them — only human-written display fields

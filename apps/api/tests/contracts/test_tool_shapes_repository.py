@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+import os
+import time
 from typing import Any
 import uuid
 
@@ -18,6 +21,20 @@ SCHEMA_V2 = {"type": "object", "properties": {"a": {"type": "string"}, "b": {"ty
 @pytest.fixture
 def repo(raw_collection) -> ToolShapesRepository:
     return ToolShapesRepository()
+
+
+@pytest.fixture
+def non_utc_host() -> Iterator[None]:
+    """Run with the process clock in IST, so a naive local now() is 5.5h off UTC."""
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Kolkata"
+    time.tzset()
+    yield
+    if previous is None:
+        del os.environ["TZ"]
+    else:
+        os.environ["TZ"] = previous
+    time.tzset()
 
 
 def _tool() -> str:
@@ -50,6 +67,17 @@ class TestToolShapesRepository:
         assert mcp_doc.output_schema == SCHEMA_V2
         # A scope that never recorded sees nothing — the privacy boundary.
         assert await repo.get_shape("mcp:other-999", tool) is None
+
+    async def test_last_seen_is_the_utc_instant_on_a_non_utc_host(self, repo, non_utc_host):
+        tool = _tool()
+        before = datetime.now(UTC)
+        await repo.record("global", tool, SCHEMA_V1)
+        after = datetime.now(UTC)
+
+        doc = await repo.get_shape("global", tool)
+
+        assert doc is not None
+        assert before - timedelta(seconds=1) <= doc.last_seen <= after + timedelta(seconds=1)
 
     async def test_get_shape_misses_cleanly_for_unknown_tool(self, repo):
         assert await repo.get_shape("global", _tool()) is None

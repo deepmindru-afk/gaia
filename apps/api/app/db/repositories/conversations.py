@@ -220,6 +220,8 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
             extra_filter={"user_id": user_id},
         )
         if matched:
+            # pragma: no mutate start — scope/doc_id repeat the eviction the write above just
+            # made, so no read can observe them; mutmut cannot pragma a single argument.
             await self._apply_raw_update_unfetched(
                 {"conversation_id": conversation_id, "source": {"$exists": False}},
                 {"$set": {"source": ConversationSource.BACKGROUND.value}},
@@ -227,6 +229,7 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
                 doc_id=conversation_id,
                 extra_filter={"user_id": user_id},
             )
+            # pragma: no mutate end
         return matched > 0
 
     async def refresh_live_approval_flag(
@@ -627,13 +630,12 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
     def _active_filter(self, user_id: str) -> dict[str, object]:
         # Background runs stay out of the sidebar unless one holds a live approval
         # (its card is the only way to reach it). Sourceless legacy rows match $ne
-        # and stay visible; a null starred reads as unstarred.
+        # and stay visible; {starred: null} matches a null AND a missing starred.
         return {
             "user_id": user_id,
             "$and": [
                 {
                     "$or": [
-                        {"starred": {"$exists": False}},
                         {"starred": False},
                         {"starred": None},
                     ]
