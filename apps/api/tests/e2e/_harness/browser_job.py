@@ -315,7 +315,7 @@ async def browser_job_world(
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     create_session(stream_id, RunKind.LIVE)
 
-    async def _enqueue(pool: Any, name: str, payload: dict[str, Any]) -> object:
+    async def _enqueue(pool: Any, name: str, payload: dict[str, Any], *, _queue_name: str) -> object:
         world.enqueued.append(BrowserJobRequest.model_validate(payload))
         double.job_id = world.enqueued[-1].job_id
         world.jobs.append(asyncio.create_task(browser_tasks.run_browser_job({}, payload)))

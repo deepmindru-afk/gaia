@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from app.constants.browser import (
     BROWSER_JOB_JOINER_REFRESH_SECONDS,
     BROWSER_JOB_POLL_INTERVAL_SECONDS,
+    BROWSER_JOB_QUEUE,
     BROWSER_JOB_TASK,
     BROWSER_USER_WORDS_MAX_CHARS,
     BrowserSessionStatus,
@@ -200,7 +201,12 @@ async def _enqueue(request: BrowserJobRequest) -> bool:
     """
     try:
         pool = await RedisPoolManager.get_pool()
-        job = await enqueue_worker_job(pool, BROWSER_JOB_TASK, request.model_dump(mode="json"))
+        job = await enqueue_worker_job(
+            pool,
+            BROWSER_JOB_TASK,
+            request.model_dump(mode="json"),
+            _queue_name=BROWSER_JOB_QUEUE,
+        )
     except Exception as exc:
         log.error(
             f"{LogTag.BROWSER} Could not enqueue the browser job",

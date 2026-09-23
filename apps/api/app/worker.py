@@ -5,7 +5,6 @@ from arq.typing import WorkerCoroutine
 from arq.worker import func
 import stackprinter
 
-from app.constants.browser import BROWSER_JOB_TASK
 from app.constants.email import SIGNUP_EMAIL_TASK
 from app.constants.onboarding import INTELLIGENCE_TASK
 from app.constants.payments import SUBSCRIPTION_WORKFLOW_SYNC_TASK
@@ -14,10 +13,9 @@ from app.constants.payments import SUBSCRIPTION_WORKFLOW_SYNC_TASK
 # custom tools 500 with "Missing user_id in auth_credentials" because the
 # CustomTool user_id-injection patch never loads here.
 import app.patches  # noqa: F401 -- applies monkeypatches on import; must run before the patched SDKs are used
-from app.services.browser.job_lifetime import browser_job_deadline_seconds
-from app.workers.config.worker_settings import WorkerSettings
+from app.workers.config.worker_settings import WorkerFunction, WorkerSettings
 from app.workers.lifecycle import shutdown, startup
-from app.workers.task_envelope import arq_function, arq_task
+from app.workers.task_envelope import arq_task
 from app.workers.tasks import (
     backfill_active_users,
     backfill_user_memories,
@@ -41,7 +39,6 @@ from app.workers.tasks import (
     sweep_idle_sandboxes,
     sweep_undelivered_signup_emails,
 )
-from app.workers.tasks.browser_tasks import run_browser_job
 from app.workers.tasks.device_tasks import warm_device_servers
 from app.workers.tasks.hil_sweep_tasks import sweep_hil_approvals
 from app.workers.tasks.maintenance_sweep_tasks import maintenance_sweep_tracked_todos
@@ -111,18 +108,9 @@ _sync_workflows_for_subscription_state = func(
     name=SUBSCRIPTION_WORKFLOW_SYNC_TASK,
 )
 
-# One run per conversation is enforced by the browser slot lease, not by ARQ; a
-# run is not idempotent (it may already have submitted a form), and handoffs
-# alone can hold a legitimate one for hours, past the default job cap.
-_run_browser_job = arq_function(
-    run_browser_job,
-    name=BROWSER_JOB_TASK,
-    timeout_seconds=browser_job_deadline_seconds(),
-    max_tries=1,
-    keep_result=0,
-)
-
-WorkerSettings.functions = [
+# Every job on the default queue. Browser jobs have their own worker
+# (app.workers.browser_worker), started from the worker lifecycle.
+TASK_FUNCTIONS: list[WorkerFunction] = [
     _sweep_hil_approvals,
     _process_reminder,
     _cleanup_expired_reminders,
@@ -150,8 +138,8 @@ WorkerSettings.functions = [
     _sweep_undelivered_signup_emails,
     _warm_device_servers,
     _sync_workflows_for_subscription_state,
-    _run_browser_job,
 ]
+WorkerSettings.functions = TASK_FUNCTIONS
 
 WorkerSettings.cron_jobs = [
     cron(

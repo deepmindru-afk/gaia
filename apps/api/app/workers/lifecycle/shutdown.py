@@ -8,6 +8,7 @@ from app.core.provider_registration import unified_shutdown
 from app.services.device.up_listener import stop_up_listener
 from app.utils.browser_reaper import stop_browser_reaper
 from app.utils.crawl_obscura import shutdown_crawl_obscura
+from app.workers.browser_worker import stop_browser_worker
 from shared.py.wide_events import log, log_context
 
 
@@ -19,6 +20,9 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     """
     async with log_context("worker_shutdown", component="arq_lifecycle"):
         log.info(f"{LogTag.WORKER} ARQ worker shutting down...")
+
+        # First: its jobs' cancel paths still need the services torn down below.
+        await stop_browser_worker(ctx)
 
         await stop_browser_reaper()
         await shutdown_crawl_obscura()

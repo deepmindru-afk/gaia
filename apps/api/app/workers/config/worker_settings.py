@@ -20,6 +20,9 @@ WORKER_JOB_TIMEOUT_SECONDS = 1800  # 30 minutes
 #: fire first and the task's cancel cleanup finish, so ARQ's is only a backstop.
 ARQ_BACKSTOP_GRACE_SECONDS = 60
 
+#: What a worker registers: an arq Function, or a task wrapped by arq_task.
+WorkerFunction = Function | Callable[..., Coroutine[Any, Any, str]]
+
 
 class WorkerSettings:
     """ARQ worker settings: Redis connection, task functions, scheduled jobs, and performance settings."""
@@ -29,7 +32,7 @@ class WorkerSettings:
     # Populated from the main worker file. Not ARQ's WorkerCoroutine protocol:
     # tasks arrive wrapped by instrument_task, and a Callable never
     # structurally matches (ctx, *args, **kwargs) — only the return type stays checked.
-    functions: ClassVar[list[Function | Callable[..., Coroutine[Any, Any, str]]]] = []
+    functions: ClassVar[list[WorkerFunction]] = []
 
     # Cron jobs will be populated from the main worker file
     cron_jobs: ClassVar[list[CronJob]] = []

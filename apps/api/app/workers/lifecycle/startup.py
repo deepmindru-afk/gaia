@@ -22,6 +22,7 @@ from app.core.provider_registration import (
 )
 from app.services.device.up_listener import start_up_listener
 from app.utils.browser_reaper import start_browser_reaper
+from app.workers.browser_worker import start_browser_worker
 from app.workers.metrics import start_metrics_server
 from shared.py.wide_events import log, log_context
 
@@ -62,3 +63,6 @@ async def startup(ctx: dict[str, Any]) -> None:
         # Reap any crawl4ai browser drivers that escape teardown (worker crawl
         # tasks are routinely cancelled; see app/utils/browser_reaper.py).
         start_browser_reaper()
+
+        # Last: browser jobs run on the services everything above just started.
+        start_browser_worker(ctx)

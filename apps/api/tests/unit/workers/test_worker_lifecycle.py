@@ -1,6 +1,7 @@
 """Unit tests for ARQ worker lifecycle (startup, shutdown) and config."""
 
 import asyncio
+from collections.abc import Iterator
 import importlib.util
 from pathlib import Path
 import socket
@@ -19,8 +20,39 @@ from app.workers.lifecycle.shutdown import shutdown
 # (configure_file_logging, setup_warnings).
 
 
+@pytest.fixture(autouse=True)
+def browser_worker_calls() -> Iterator[list[str]]:
+    """Record the browser worker's start/stop; a real one would consume the live Redis queue."""
+    calls: list[str] = []
+
+    def _start(ctx: dict) -> None:
+        calls.append("start")
+
+    async def _stop(ctx: dict) -> None:
+        calls.append("stop")
+
+    with (
+        patch("app.workers.lifecycle.startup.start_browser_worker", _start),
+        patch("app.workers.lifecycle.shutdown.stop_browser_worker", _stop),
+    ):
+        yield calls
+
+
 class TestWorkerStartup:
     """Tests for ARQ worker startup function."""
+
+    async def test_startup_starts_the_browser_worker_once_the_process_is_ready(
+        self, ctx: dict, browser_worker_calls: list[str]
+    ) -> None:
+        async def _ready(context: str) -> None:
+            assert browser_worker_calls == []
+
+        with patch("app.workers.lifecycle.startup.unified_startup", _ready):
+            from app.workers.lifecycle.startup import startup
+
+            await startup(ctx)
+
+        assert browser_worker_calls == ["start"]
 
     @pytest.fixture
     def ctx(self) -> dict:
@@ -103,6 +135,17 @@ class TestWorkerStartup:
 
 class TestWorkerShutdown:
     """Tests for ARQ worker shutdown function."""
+
+    async def test_shutdown_stops_the_browser_worker_before_tearing_services_down(
+        self, browser_worker_calls: list[str]
+    ) -> None:
+        async def _teardown(context: str) -> None:
+            assert browser_worker_calls == ["stop"]
+
+        with patch("app.workers.lifecycle.shutdown.unified_shutdown", _teardown):
+            await shutdown({})
+
+        assert browser_worker_calls == ["stop"]
 
     async def test_shutdown_calls_unified_shutdown_with_arq_worker(self):
         """unified_shutdown is called with the 'arq_worker' literal."""

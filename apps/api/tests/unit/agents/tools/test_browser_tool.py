@@ -9,7 +9,7 @@ import pytest
 
 from app.agents.tools import browser_tool as tool_mod
 from app.agents.tools.browser_tool import browser_task
-from app.constants.browser import BROWSER_JOB_TASK
+from app.constants.browser import BROWSER_JOB_QUEUE, BROWSER_JOB_TASK
 from app.models.chat_models import ConversationSource
 from app.schemas.browser_job import BrowserJobRequest, BrowserJobState, BrowserJobStatus
 
@@ -39,6 +39,7 @@ class Recorder:
         self.released: list[tuple[str, str]] = []
         self.relays: list[tuple[str, str]] = []
         self.spawned: list[str] = []
+        self.queues: list[str | None] = []
 
     @property
     def request(self) -> BrowserJobRequest:
@@ -67,8 +68,11 @@ def _install(
     async def _release(conversation_id: str, job_id: str) -> None:
         recorder.released.append((conversation_id, job_id))
 
-    async def _enqueue(pool: object, function: str, payload: dict[str, Any]) -> object | None:
+    async def _enqueue(
+        pool: object, function: str, payload: dict[str, Any], *, _queue_name: str | None = None
+    ) -> object | None:
         recorder.enqueued.append((function, payload))
+        recorder.queues.append(_queue_name)
         if enqueue_error is not None:
             raise enqueue_error
         return enqueued_job
@@ -138,6 +142,7 @@ async def test_the_job_crosses_the_queue_under_the_name_the_worker_registers(
 
     ((function, _payload),) = recorder.enqueued
     assert function == BROWSER_JOB_TASK
+    assert recorder.queues == [BROWSER_JOB_QUEUE]
 
 
 async def test_the_job_carries_the_turns_identity_and_provenance(

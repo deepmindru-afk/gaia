@@ -6,17 +6,13 @@ from app.config.settings import settings
 from app.constants.browser import (
     BROWSER_AGENT_GUIDANCE_MAX,
     BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS,
-    BROWSER_JOB_TASK,
     MAX_HANDOFFS_PER_TASK,
 )
 from app.services.browser.job_lifetime import (
     browser_job_deadline_seconds,
     browser_job_ttl_seconds,
 )
-from app.workers.config.worker_settings import (
-    ARQ_BACKSTOP_GRACE_SECONDS,
-    WORKER_JOB_TIMEOUT_SECONDS,
-)
+from app.workers.config.worker_settings import WORKER_JOB_TIMEOUT_SECONDS
 
 pytestmark = pytest.mark.unit
 
@@ -55,11 +51,3 @@ def test_a_jobs_state_outlives_the_longest_run_whatever_the_settings(
     monkeypatch.setattr(settings, "BROWSER_USE_HANDOFF_TIMEOUT_SECONDS", 10_000)
 
     assert browser_job_ttl_seconds() > browser_job_deadline_seconds()
-
-
-def test_the_worker_cuts_a_browser_job_off_at_its_deadline() -> None:
-    # Read off the module, not WorkerSettings.functions: other tests reset that registry.
-    from app.worker import _run_browser_job as job
-
-    assert job.name == BROWSER_JOB_TASK
-    assert job.timeout_s == browser_job_deadline_seconds() + ARQ_BACKSTOP_GRACE_SECONDS

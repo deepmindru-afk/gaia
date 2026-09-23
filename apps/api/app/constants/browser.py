@@ -455,6 +455,8 @@ class BrowserRunFailure(StrEnum):
     RUN_CRASHED = "run_crashed"
 
 
+# Browser jobs have their own ARQ queue and worker (app.workers.browser_worker).
+BROWSER_JOB_QUEUE = "arq:queue:browser"
 # Why a run moved to the fallback engine when its engine did not fail: a page it
 # could not pass. The engine-failure reasons are EngineFailure's values.
 BROWSER_FALLBACK_PAGE_BLOCKED = "page_blocked"
