@@ -18,10 +18,12 @@ from app.constants.hil import HIL_JUDGE_MIN_QUOTE_WORDS, HIL_LLM_TIMEOUT_SECONDS
 from app.constants.llm import HIL_JUDGE_FALLBACK_MODEL_NAMES, HIL_JUDGE_MODEL_NAME
 from app.services.hil.intent import (
     AutoContext,
+    IntentDecision,
     JudgedCall,
     RiskFactor,
     _Verdict,
     judge_intent,
+    ungrounded_targets,
 )
 from app.services.hil.prompts import INTENT_JUDGE_PROMPT
 from app.services.hil.utils import (
@@ -328,3 +330,120 @@ class TestPromptInjection:
 async def test_normalization_matches_reformatted_but_real_quotes(quote: str) -> None:
     decision, _ = await judge(verdict(authorizing_quote=quote))
     assert decision.outcome == "accept"
+
+
+class TestTheOutcomeVocabulary:
+    """The gate branches on the exact outcome strings, so a near-miss spelling is a silent no-op."""
+
+    async def test_an_ungrounded_allow_reads_exactly_ask(self) -> None:
+        decision, _ = await judge(verdict(authorizing_quote="the user said yes to all of it"))
+
+        assert decision.outcome == "ask"
+
+    async def test_no_user_words_reads_exactly_ask_without_a_judge_call(self) -> None:
+        decision, llm = await judge(verdict(), turns=["   "])
+
+        assert decision.outcome == "ask"
+        llm.assert_not_awaited()
+
+    async def test_the_assistants_recent_words_reach_the_judge(self) -> None:
+        seen: dict[str, Any] = {}
+
+        class _Recording:
+            async def decide(self, **kwargs: Any) -> IntentDecision:
+                seen.update(kwargs)
+                return IntentDecision("ask", "")
+
+        await judge_intent(
+            AutoContext(user_id="u-hil"),
+            user_messages=USER_TURNS,
+            call=JudgedCall(tool_name="send_email", description="", args={}, summary="s"),
+            prior_calls=[],
+            judge=_Recording(),
+            assistant_turns=["Your draft to bob is ready."],
+        )
+
+        assert seen["assistant_turns"] == ["Your draft to bob is ready."]
+
+    async def test_the_tools_own_schema_is_rendered_into_the_prompt(self) -> None:
+        schema: dict[str, object] = {"draft_id": {"type": "string", "title": "Draft Id"}}
+        with patch(f"{MODULE}.ainvoke_structured", new=AsyncMock(return_value=verdict())) as llm:
+            await judge_intent(
+                AutoContext(user_id="u-hil"),
+                user_messages=USER_TURNS,
+                call=JudgedCall(
+                    tool_name="send_email",
+                    description="Send.",
+                    args={},
+                    summary="s",
+                    tool_schema=schema,
+                ),
+                prior_calls=[],
+            )
+
+        assert render_tool_schema(schema) in llm.await_args.args[1]
+        assert "(no schema)" not in llm.await_args.args[1]
+
+
+class TestWhatCountsAsATarget:
+    """Only who/which/how-much values need provenance; prose, dates and flags never do."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "evt-abc",
+            "#general",
+            "room 42",
+            "x" * 22 + "1",
+            "1,000,000,000,000,000,000,000",
+            "1000000000000000000000000.50",
+            "$1000000000000000000000000",
+        ],
+        ids=["evt-prefix", "channel", "two-words", "23-chars", "commas", "decimal", "dollars"],
+    )
+    def test_a_reference_or_amount_from_nowhere_is_ungrounded(self, value: str) -> None:
+        assert ungrounded_targets({"ref": value}, ["do it"], []) == [value]
+
+    @pytest.mark.parametrize(
+        "value",
+        ["2026-09-01", "invoice 42 draft", "x" * 23 + "1", "x" * 26 + "1", "plain"],
+        ids=["iso-date", "three-words", "24-chars", "27-chars", "no-digit"],
+    )
+    def test_dates_prose_and_long_tokens_are_not_targets(self, value: str) -> None:
+        assert ungrounded_targets({"ref": value}, ["do it"], []) == []
+
+    def test_a_two_character_number_is_a_target(self) -> None:
+        assert ungrounded_targets({"count": 42}, ["do it"], []) == ["42"]
+
+    def test_prose_fields_are_skipped_whatever_their_case_and_the_rest_still_count(
+        self,
+    ) -> None:
+        args: dict[str, object] = {"body": "q3", "Subject": "ref 42x", "to": "x@y.com"}
+
+        assert ungrounded_targets(args, ["do it"], []) == ["x@y.com"]
+
+    def test_targets_inside_lists_and_nested_objects_count(self) -> None:
+        args: dict[str, object] = {"to": ["a@x.com", "b@x.com"], "meta": {"cc": "c@x.com"}}
+
+        assert ungrounded_targets(args, ["do it"], []) == ["a@x.com", "b@x.com", "c@x.com"]
+
+    def test_an_unparseable_output_that_mentions_the_id_still_grounds_nothing(self) -> None:
+        priors = [PriorCall(name="FIND", args={}, output="evt-4 is on friday")]
+
+        assert ungrounded_targets({"event_id": "evt-4"}, ["cancel it"], priors) == ["evt-4"]
+
+    def test_an_output_naming_one_id_among_amounts_still_identifies_it(self) -> None:
+        output = '{"id": "d123", "total": "1,000", "tax": "12.50", "tip": "$40"}'
+        priors = [PriorCall(name="GET_ORDER", args={}, output=output)]
+
+        assert ungrounded_targets({"order_id": "d123"}, ["refund it"], priors) == []
+
+    def test_a_target_is_never_grounded_by_two_priors_glued_together(self) -> None:
+        priors = [PriorCall(name="SEARCH", args={"q": "x1"}), PriorCall(name="LOOKUP", args={})]
+
+        assert ungrounded_targets({"ref": "x1-lookup"}, ["do it"], priors) == ["x1-lookup"]
+
+    def test_a_second_at_sign_is_no_address_so_a_name_cannot_ground_it(self) -> None:
+        target = "sarah@x.com@evil.com"
+
+        assert ungrounded_targets({"to": target}, ["reply yes to sarah's thread"], []) == [target]

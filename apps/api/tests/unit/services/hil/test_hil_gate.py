@@ -17,15 +17,27 @@ import pytest
 
 from app.constants.hil import HIL_STATUS_KWARG
 from app.models.hil_models import HILApprovalStatus
+from app.services.hil.approvals_store import approval_id_for
 from app.services.hil.bridge import ApprovalOutcome
-from app.services.hil.gate import GateContext, _judge, _outcome_from_record, read_gate_context
+from app.services.hil.gate import (
+    GateContext,
+    _judge,
+    _outcome_from_record,
+    decide_tool_call,
+    read_gate_context,
+)
 from app.services.hil.intent import IntentDecision, JudgedCall
+from app.services.hil.prompts import AUTO_REJECT_TEMPLATE
 from app.services.hil.utils import GatedCall
 
 from .conftest import (
     CONVERSATION_ID,
+    GATED_ARGS,
+    GATED_TOOL,
     STREAM_ID,
     USER_ID,
+    GateSeams,
+    gated_request,
     make_record,
     make_request,
     make_tool,
@@ -373,3 +385,89 @@ class TestGateValidatesArgsBeforeAsking:
         assert result.additional_kwargs[HIL_STATUS_KWARG] == "error"
         assert "subject" in str(result.content)
         assert "no approval was requested" in str(result.content)
+
+
+@pytest.fixture
+def barrier(gate_seams: GateSeams) -> GateSeams:
+    """Take the interrupt-barrier path: the run's user is not on the ledger."""
+    gate_seams.ledger_enabled.clear()
+    return gate_seams
+
+
+class TestBarrierAutoMode:
+    async def test_an_auto_refusal_without_words_is_repeated_as_auto(
+        self, barrier: GateSeams
+    ) -> None:
+        barrier.recall.return_value = ApprovalOutcome(
+            status=HILApprovalStatus.DENIED, feedback=None, auto=True
+        )
+
+        result = await decide_tool_call(gated_request())
+
+        assert result is not None
+        assert result.content == AUTO_REJECT_TEMPLATE.format(tool=GATED_TOOL, reason="")
+        assert result.additional_kwargs[HIL_STATUS_KWARG] == "denied"
+        barrier.publish_request.assert_not_awaited()
+
+    async def test_a_rejected_call_is_refused_and_remembered_as_auto(
+        self, barrier: GateSeams
+    ) -> None:
+        barrier.policy.return_value = "auto"
+        barrier.judge.return_value = IntentDecision("reject", "you said never email b@x")
+
+        result = await decide_tool_call(gated_request())
+
+        assert result is not None
+        assert result.content == AUTO_REJECT_TEMPLATE.format(
+            tool=GATED_TOOL, reason="you said never email b@x"
+        )
+        barrier.remember.assert_awaited_once_with(
+            STREAM_ID, GATED_TOOL, GATED_ARGS, "you said never email b@x", auto=True
+        )
+        barrier.publish_request.assert_not_awaited()
+        barrier.interrupt.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("reason", "card_reason"),
+        [("the recipient is new", "Auto mode wasn't sure: the recipient is new"), ("", None)],
+        ids=["explained", "unexplained"],
+    )
+    async def test_an_unsure_judge_explains_itself_on_the_card_only_when_it_can(
+        self, barrier: GateSeams, reason: str, card_reason: str | None
+    ) -> None:
+        barrier.policy.return_value = "auto"
+        barrier.judge.return_value = IntentDecision("ask", reason)
+
+        await decide_tool_call(gated_request())
+
+        assert barrier.publish_request.await_args_list[0].kwargs["auto_reason"] == card_reason
+        barrier.interrupt.assert_called_once()
+
+
+class TestBarrierValidatesArgsAgainstTheRealTool:
+    async def test_malformed_args_answer_with_the_schema_error(self, barrier: GateSeams) -> None:
+        result = await decide_tool_call(gated_request(args={}))
+
+        assert result is not None
+        assert str(result.content).startswith(f"Invalid arguments for {GATED_TOOL}: ")
+        assert result.additional_kwargs[HIL_STATUS_KWARG] == "error"
+        barrier.publish_request.assert_not_awaited()
+        barrier.interrupt.assert_not_called()
+
+
+class TestAResumeWithNoDecision:
+    async def test_the_stall_is_reported_as_a_system_error_not_a_denial(
+        self, barrier: GateSeams
+    ) -> None:
+        approval_id = approval_id_for(CONVERSATION_ID, "call-1")
+
+        result = await decide_tool_call(gated_request())
+
+        barrier.interrupt.assert_called_once()
+        assert result is not None
+        assert result.content == (
+            f"{GATED_TOOL} woke with no decision on its record ({approval_id}) — a system "
+            "error, not a denial. The action was NOT performed. Report the stall and "
+            "continue without it."
+        )
+        assert result.additional_kwargs[HIL_STATUS_KWARG] == "error"

@@ -148,12 +148,16 @@ def forbid_tripwire(user_messages: list[str]) -> bool:
     whether the forbid covers this call belongs to the focused JEV question.
     """
     for index, turn in enumerate(user_messages):
-        lowered = turn.lower()
-        if any(re.search(pattern, lowered) for pattern in _FORBID_PATTERNS):
-            later = " ".join(user_messages[index + 1 :]).lower()
-            if not any(re.search(pattern, later) for pattern in _LIFT_PATTERNS):
-                return True
+        if _matches_any(turn, _FORBID_PATTERNS) and not any(
+            _matches_any(later, _LIFT_PATTERNS) for later in user_messages[index + 1 :]
+        ):
+            return True
     return False
+
+
+def _matches_any(turn: str, patterns: tuple[str, ...]) -> bool:
+    lowered = turn.lower()
+    return any(re.search(pattern, lowered) for pattern in patterns)
 
 
 def decisive_forbidden(
@@ -357,7 +361,7 @@ class JevIntentJudge:
                 choice=choice,
                 confidence=confidence,
                 probabilities=probs,
-                forbid=await self._forbid_verdict(choice, confidence, probs, user_messages, call),
+                forbid=await self._forbid_verdict(choice, confidence, user_messages, call),
             ),
             JevCase(
                 call=call,
@@ -371,7 +375,6 @@ class JevIntentJudge:
         self,
         choice: str,
         confidence: float,
-        probs: dict[str, float],
         user_messages: list[str],
         call: JudgedCall,
     ) -> str | None:
@@ -387,8 +390,6 @@ class JevIntentJudge:
             accept_line=HIL_JEV_ACCEPT_LINE,
             reject_floor=HIL_JEV_REJECT_FLOOR,
         )
-        if outcome == "ask" and decisive_forbidden(choice, probs):
-            outcome = "reject"
         if not needs_forbid_check(outcome, user_messages):
             return None
         try:
@@ -491,7 +492,7 @@ def decide_from_verdict(
             )
         missing = ungrounded_targets(
             call.args,
-            "\n".join(case.user_messages),
+            case.user_messages,
             case.prior_calls,
             frozenset(case.history.known_targets),
         )

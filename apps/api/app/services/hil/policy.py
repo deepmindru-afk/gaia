@@ -27,7 +27,7 @@ from app.constants.log_tags import LogTag
 from app.models.hil_models import HIL_DEFAULT_MODE, HILPreferences
 from app.services.hil.classification import is_tool_destructive, mcp_destructive_hint
 from app.services.hil.preferences import get_hil_preferences
-from app.services.hil.utils import current_tool_calls, tool_of, unpack_tool_call
+from app.services.hil.utils import current_tool_calls, raw_tool_call, tool_of, unpack_tool_call
 from shared.py.wide_events import log
 
 # What the gate does with one call: allow it, ask (pause for the user), or auto
@@ -87,11 +87,7 @@ async def gated_tool_object(
     resolver. Registry-only resolution missed MCP tools and un-materialized
     catalog slugs, letting the classifier guess from a bare name and un-gate it.
     """
-    raw_call: ToolCall = request.tool_call
-    raw_name = (
-        raw_call.get("name", "") if isinstance(raw_call, dict) else getattr(raw_call, "name", "")
-    )
-    if raw_name == tool_name:
+    if raw_tool_call(request).name == tool_name:
         return tool_of(request)
     return await _real_tool(user_id, tool_name)
 

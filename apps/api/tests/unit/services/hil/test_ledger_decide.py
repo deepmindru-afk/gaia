@@ -1,14 +1,43 @@
 """Ledger decide: CAS commit, stale-v refresh, queued approvals, no execution yet."""
 
+from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
-from app.models.hil_models import LedgerState
+from app.agents.tools.execute.dispatch import DispatchErrorKind
+from app.constants.agents import AgentTag
+from app.constants.cache import EXECUTOR_BUSY_PREFIX, EXECUTOR_BUSY_TTL
+from app.constants.log_tags import LogTag
+from app.models.hil_models import ApprovalLedgerDocument, LedgerState
+from app.schemas.hil_schemas import BatchDecisionItem, BatchDecisionOutcome
+from app.services.analytics_service import AnalyticsEvents
+from app.services.hil.ledger_decide import (
+    STALE_HOLDER_MIN_AGE_SECONDS,
+    STALLED_EXECUTING_MINUTES,
+    LedgerDecision,
+    RedeemResult,
+    _reclaim_dead_holder,
+    cancel_ledger_approvals,
+    decide_ledger,
+    decide_ledger_batch,
+    publish_ledger_decision,
+    publish_ledger_revocation,
+    reconcile_conversation_ledger,
+    redeem_approved,
+    revoke_ticket,
+)
+from app.services.hil.resolution import (
+    ApprovalRequestForbiddenError,
+    ApprovalRequestNotFoundError,
+)
 
 MODULE = "app.services.hil.ledger_decide"
+RUNNER = "app.agents.core.background.executor_runner"
 
 
 def _row(**overrides: Any) -> MagicMock:
@@ -1264,3 +1293,839 @@ class TestReclaimDeadHolder:
         ):
             assert await ledger_decide._reclaim_dead_holder("conv-1") is True
         breaker.assert_awaited_once_with("conv-1", "s1:t1")
+
+
+def _doc(**overrides: Any) -> ApprovalLedgerDocument:
+    fields: dict[str, Any] = {
+        "approval_id": "ap_1",
+        "conversation_id": "conv-1",
+        "user_id": "u1",
+        "fingerprint": "fp",
+        "tool_name": "GMAIL_SEND_EMAIL",
+        "args": {"to": "b@x"},
+        "summary": "Send it",
+        "owner_agent": "gmail_conv-1",
+        "proposing_run_id": "stream-1",
+        "v": 3,
+    }
+    return ApprovalLedgerDocument(**{**fields, **overrides})
+
+
+@dataclass
+class LedgerSeams:
+    """Every seam the ledger decide path reaches; rows live in a dict the repo serves."""
+
+    rows: dict[str, ApprovalLedgerDocument]
+    repo: MagicMock
+    capture: MagicMock
+    log: MagicMock
+    publish_entry: AsyncMock
+    settle_frame: MagicMock
+    sync_flag: AsyncMock
+    persist: AsyncMock
+    broadcast: AsyncMock
+    inbox: MagicMock
+    redis: MagicMock
+    resume_owner: AsyncMock
+    record_deny: AsyncMock
+    deliver: AsyncMock
+    lock_holder: AsyncMock
+    break_lock: AsyncMock
+    get_session: MagicMock
+    barrier_pending: AsyncMock
+    dispatch: AsyncMock
+
+
+@pytest.fixture
+def seams() -> Iterator[LedgerSeams]:
+    rows: dict[str, ApprovalLedgerDocument] = {}
+
+    async def _get(approval_id: str) -> ApprovalLedgerDocument | None:
+        return rows.get(approval_id)
+
+    repo = MagicMock()
+    repo.get_by_approval_id = AsyncMock(side_effect=_get)
+    repo.transition = AsyncMock(return_value=True)
+    repo.claim_executing = AsyncMock(return_value=True)
+    repo.list_open = AsyncMock(return_value=[])
+    repo.list_stalled_executing = AsyncMock(return_value=[])
+    inbox = MagicMock()
+    inbox.return_value.append = AsyncMock()
+    redis = MagicMock()
+    redis.client.ttl = AsyncMock(return_value=100)
+    conversations = MagicMock()
+    conversations.set_message_approval_status = AsyncMock()
+    websocket = MagicMock()
+    websocket.broadcast_to_user = AsyncMock()
+    with (
+        patch(f"{MODULE}.approval_ledger_repository", new=repo),
+        patch(f"{MODULE}.capture_event") as capture,
+        patch(f"{MODULE}.log") as log,
+        patch(f"{MODULE}._publish_entry", new=AsyncMock()) as publish_entry,
+        patch(f"{MODULE}.settle_session_approval_frame") as settle_frame,
+        patch(f"{MODULE}.sync_conversation_approval_flag", new=AsyncMock()) as sync_flag,
+        patch(f"{MODULE}.conversation_repository", new=conversations),
+        patch(f"{MODULE}.websocket_manager", new=websocket),
+        patch(f"{MODULE}.ExecutorInbox", new=inbox),
+        patch(f"{MODULE}.redis_cache", new=redis),
+        patch(f"{MODULE}.resume_owner_after_approval", new=AsyncMock()) as resume_owner,
+        patch(f"{MODULE}.record_owner_deny", new=AsyncMock()) as record_deny,
+        patch(f"{RUNNER}.deliver_to_executor", new=AsyncMock()) as deliver,
+        patch(f"{MODULE}.get_lock_holder", new=AsyncMock(return_value=None)) as lock_holder,
+        patch(f"{MODULE}.break_holder_lock", new=AsyncMock(return_value=True)) as break_lock,
+        patch(f"{MODULE}.get_session", return_value=None) as get_session,
+        patch(
+            f"{MODULE}.list_pending_for_conversation", new=AsyncMock(return_value=[])
+        ) as barrier_pending,
+        patch(f"{MODULE}.dispatch_tool", new=AsyncMock()) as dispatch,
+        patch(f"{MODULE}.dispatch_config_for", side_effect=lambda uid: {"user": uid}),
+    ):
+        yield LedgerSeams(
+            rows=rows,
+            repo=repo,
+            capture=capture,
+            log=log,
+            publish_entry=publish_entry,
+            settle_frame=settle_frame,
+            sync_flag=sync_flag,
+            persist=conversations.set_message_approval_status,
+            broadcast=websocket.broadcast_to_user,
+            inbox=inbox,
+            redis=redis,
+            resume_owner=resume_owner,
+            record_deny=record_deny,
+            deliver=deliver,
+            lock_holder=lock_holder,
+            break_lock=break_lock,
+            get_session=get_session,
+            barrier_pending=barrier_pending,
+            dispatch=dispatch,
+        )
+
+
+def _inbox_lines(seams: LedgerSeams) -> list[tuple[str, str, str]]:
+    """Each wake as (conversation, text, tag), after checking its id is a fresh uuid."""
+    lines = []
+    for ctor, append in zip(
+        seams.inbox.call_args_list, seams.inbox.return_value.append.await_args_list, strict=True
+    ):
+        message_id, text, tag = append.args
+        UUID(message_id)
+        lines.append((ctor.args[0], text, tag))
+    return lines
+
+
+def _warned(log_level: MagicMock) -> dict[str, dict[str, object]]:
+    return {c.args[0]: c.kwargs for c in log_level.call_args_list}
+
+
+_DENY_TAIL = (
+    " The user said no — report what you skipped and continue without it. Do not re-request it."
+)
+
+
+@pytest.mark.unit
+class TestDecideLedgerOutcomes:
+    async def test_a_stale_version_refreshes_without_writing(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.PENDING, v=4)
+
+        outcome = await decide_ledger("ap_1", user_id="u1", kind="approve", v=3)
+
+        assert outcome == LedgerDecision(
+            committed=False,
+            approval_id="ap_1",
+            prior_state=LedgerState.PENDING,
+            state=LedgerState.PENDING,
+            stale=True,
+        )
+        seams.repo.transition.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("current", "state"),
+        [(LedgerState.DENIED, LedgerState.DENIED), (None, LedgerState.PENDING)],
+        ids=["someone-else-won", "row-vanished"],
+    )
+    async def test_a_lost_race_reports_what_the_row_says_now(
+        self, seams: LedgerSeams, current: LedgerState | None, state: LedgerState
+    ) -> None:
+        seams.rows["ap_1"] = _doc()
+
+        async def _lose(*_: object, **__: object) -> bool:
+            if current is None:
+                seams.rows.pop("ap_1")
+            else:
+                seams.rows["ap_1"] = _doc(state=current)
+            return False
+
+        seams.repo.transition.side_effect = _lose
+
+        outcome = await decide_ledger("ap_1", user_id="u1", kind="approve")
+
+        assert outcome == LedgerDecision(
+            committed=False, approval_id="ap_1", prior_state=LedgerState.PENDING, state=state
+        )
+        seams.capture.assert_not_called()
+
+    async def test_whitespace_feedback_is_no_condition(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc()
+
+        outcome = await decide_ledger("ap_1", user_id="u1", kind="approve", feedback="   ")
+
+        assert outcome.state is LedgerState.APPROVED
+
+    async def test_a_conditional_approve_is_recorded_as_a_deny(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc()
+
+        await decide_ledger("ap_1", user_id="u1", kind="approve", feedback="cc finance")
+
+        seams.log.set.assert_any_call(
+            hil={"approval_id": "ap_1", "decision": "deny", "tool": "GMAIL_SEND_EMAIL"}
+        )
+
+    async def test_a_committed_approve_is_one_exact_decision(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(created_at=None)
+
+        outcome = await decide_ledger("ap_1", user_id="u1", kind="approve")
+
+        assert outcome == LedgerDecision(
+            committed=True,
+            approval_id="ap_1",
+            prior_state=LedgerState.PENDING,
+            state=LedgerState.APPROVED,
+        )
+        seams.repo.get_by_approval_id.assert_any_await("ap_1")
+        seams.log.set.assert_any_call(
+            hil={"approval_id": "ap_1", "decision": "approve", "tool": "GMAIL_SEND_EMAIL"}
+        )
+        assert seams.capture.call_args.args[2]["card_age_seconds"] is None
+        seams.settle_frame.assert_called_once_with("stream-1", "ap_1", "approved", None)
+        stalled_cutoff, conversation = seams.repo.list_stalled_executing.await_args.args
+        assert conversation == "conv-1"
+        expected = datetime.now(UTC) - timedelta(minutes=STALLED_EXECUTING_MINUTES)
+        assert abs(stalled_cutoff - expected) < timedelta(seconds=5)
+
+    async def test_the_ticket_names_its_age_and_the_redeem_call(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(created_at=datetime.now(UTC) - timedelta(hours=2, minutes=5))
+
+        await decide_ledger("ap_1", user_id="u1", kind="approve")
+
+        seams.deliver.assert_awaited_once_with(
+            "conv-1",
+            {"user_id": "u1"},
+            "APPROVAL_READY ap_1: the user approved Send it (2h5m old). Run it now with "
+            'execute(tool_name="approve", data={"id": "ap_1"}) and continue with its result. '
+            "If it is no longer needed, say so instead of running it.",
+        )
+        seams.lock_holder.assert_awaited_once_with("conv-1")
+
+    async def test_a_ticket_with_no_birth_time_says_so(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(created_at=None)
+
+        await decide_ledger("ap_1", user_id="u1", kind="approve")
+
+        assert "Send it (unknown age)." in seams.deliver.await_args.args[2]
+
+    async def test_a_failed_ticket_delivery_is_reported_and_wakes_the_inbox(
+        self, seams: LedgerSeams
+    ) -> None:
+        seams.rows["ap_1"] = _doc()
+        seams.deliver.side_effect = RuntimeError("redis down")
+
+        await decide_ledger("ap_1", user_id="u1", kind="approve")
+
+        errors = _warned(seams.log.error)
+        assert errors[
+            f"{LogTag.HIL} Ledger ticket delivery failed; falling back to inbox wake"
+        ] == {
+            "approval_id": "ap_1",
+            "error_type": "RuntimeError",
+        }
+        assert _inbox_lines(seams) == [
+            ("conv-1", "DECISIONS: ap_1=APPROVED Send it", AgentTag.HIL_DECISION)
+        ]
+
+    async def test_a_deny_settles_the_card_and_tells_the_agent_why(
+        self, seams: LedgerSeams
+    ) -> None:
+        row = _doc()
+        seams.rows["ap_1"] = row
+
+        await decide_ledger("ap_1", user_id="u1", kind="deny", feedback="nope")
+
+        seams.deliver.assert_awaited_once_with(
+            "conv-1", {"user_id": "u1"}, f"DECISION ap_1=DENIED Send it :: nope{_DENY_TAIL}"
+        )
+        seams.record_deny.assert_awaited_once_with(row, "nope")
+        seams.lock_holder.assert_awaited_once_with("conv-1")
+        seams.settle_frame.assert_called_once_with("stream-1", "ap_1", "denied", "nope")
+        seams.persist.assert_awaited_once_with(
+            "conv-1", user_id="u1", approval_id="ap_1", status="denied"
+        )
+
+    async def test_a_bare_deny_carries_no_preview(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc()
+
+        await decide_ledger("ap_1", user_id="u1", kind="deny")
+
+        assert seams.deliver.await_args.args[2] == f"DECISION ap_1=DENIED Send it{_DENY_TAIL}"
+
+    async def test_a_long_deny_reason_is_clipped_for_the_agent(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc()
+
+        await decide_ledger("ap_1", user_id="u1", kind="deny", feedback="n" * 600)
+
+        assert seams.deliver.await_args.args[2] == (
+            f"DECISION ap_1=DENIED Send it :: {'n' * 500}{_DENY_TAIL}"
+        )
+
+    async def test_a_failed_verdict_delivery_is_reported_and_wakes_the_inbox(
+        self, seams: LedgerSeams
+    ) -> None:
+        seams.rows["ap_1"] = _doc()
+        seams.deliver.side_effect = RuntimeError("redis down")
+
+        await decide_ledger("ap_1", user_id="u1", kind="deny", feedback="nope")
+
+        errors = _warned(seams.log.error)
+        assert errors[
+            f"{LogTag.HIL} Ledger verdict delivery failed; falling back to inbox wake"
+        ] == {
+            "approval_id": "ap_1",
+            "outcome": "DENIED",
+            "error_type": "RuntimeError",
+        }
+        assert _inbox_lines(seams) == [
+            ("conv-1", "DECISIONS: ap_1=DENIED Send it :: nope", AgentTag.HIL_DECISION)
+        ]
+
+    async def test_a_queued_approve_names_its_blockers_in_the_wake(
+        self, seams: LedgerSeams
+    ) -> None:
+        seams.rows["ap_1"] = _doc(blocked_by=["ap_a", "ap_b"])
+
+        outcome = await decide_ledger("ap_1", user_id="u1", kind="approve")
+
+        assert outcome.queued is True
+        assert _inbox_lines(seams) == [
+            (
+                "conv-1",
+                "DECISIONS: ap_1=QUEUED Send it :: waiting on ap_a,ap_b",
+                AgentTag.HIL_DECISION,
+            )
+        ]
+        seams.deliver.assert_not_awaited()
+
+
+@pytest.mark.unit
+class TestPublishLedgerDecision:
+    """A committed decision settles the card on the proposing stream, the saved turn, and every client."""
+
+    @pytest.mark.parametrize(
+        ("state", "status"),
+        [(LedgerState.APPROVED, "approved"), (LedgerState.DENIED, "denied")],
+    )
+    async def test_the_settled_card_reaches_every_surface(
+        self, seams: LedgerSeams, state: LedgerState, status: str
+    ) -> None:
+        row = _doc(feedback="stored words")
+
+        await publish_ledger_decision(row, state)
+
+        stream_id, entry = seams.publish_entry.await_args.args
+        assert stream_id == "stream-1"
+        assert entry.data.approval_id == "ap_1"
+        assert entry.data.gated_tool_name == "GMAIL_SEND_EMAIL"
+        assert entry.data.tool_call_id == ""
+        assert entry.data.args_preview == {"to": "b@x"}
+        assert entry.data.status == status
+        assert entry.data.summary == "Send it"
+        assert entry.data.integration_name is None
+        assert entry.data.feedback == "stored words"
+        seams.settle_frame.assert_called_once_with("stream-1", "ap_1", status, "stored words")
+        seams.persist.assert_awaited_once_with(
+            "conv-1", user_id="u1", approval_id="ap_1", status=status
+        )
+        seams.broadcast.assert_awaited_once_with(
+            user_id="u1",
+            message={
+                "type": "hil_approval_decided",
+                "data": {
+                    "conversation_id": "conv-1",
+                    "approval_id": "ap_1",
+                    "status": status,
+                    "feedback": "stored words",
+                    "version": 4,
+                },
+            },
+        )
+
+    async def test_fresh_feedback_wins_over_the_stored_words(self, seams: LedgerSeams) -> None:
+        await publish_ledger_decision(_doc(feedback="old"), LedgerState.DENIED, feedback="new")
+
+        assert seams.publish_entry.await_args.args[1].data.feedback == "new"
+        assert seams.settle_frame.call_args.args[3] == "new"
+        assert seams.broadcast.await_args.kwargs["message"]["data"]["feedback"] == "new"
+
+    async def test_no_proposing_stream_skips_the_live_card(self, seams: LedgerSeams) -> None:
+        await publish_ledger_decision(_doc(proposing_run_id=None), LedgerState.APPROVED)
+
+        seams.publish_entry.assert_not_awaited()
+        seams.settle_frame.assert_not_called()
+        seams.persist.assert_awaited_once()
+
+    async def test_a_missed_stream_is_reported_and_the_rest_still_settles(
+        self, seams: LedgerSeams
+    ) -> None:
+        seams.publish_entry.side_effect = RuntimeError("redis down")
+
+        await publish_ledger_decision(_doc(), LedgerState.APPROVED)
+
+        assert _warned(seams.log.warning) == {
+            f"{LogTag.HIL} Ledger decision frame missed its stream": {
+                "approval_id": "ap_1",
+                "error_type": "RuntimeError",
+            }
+        }
+        seams.settle_frame.assert_called_once()
+        seams.broadcast.assert_awaited_once()
+
+    async def test_persist_and_broadcast_failures_are_reported_not_raised(
+        self, seams: LedgerSeams
+    ) -> None:
+        seams.persist.side_effect = RuntimeError("mongo down")
+        seams.broadcast.side_effect = ConnectionError("ws down")
+
+        await publish_ledger_decision(_doc(), LedgerState.APPROVED)
+
+        assert _warned(seams.log.warning) == {
+            f"{LogTag.HIL} Ledger decision persist missed; live delivery already attempted": {
+                "approval_id": "ap_1",
+                "error_type": "RuntimeError",
+            },
+            f"{LogTag.HIL} Ledger decision broadcast missed": {
+                "approval_id": "ap_1",
+                "error_type": "ConnectionError",
+            },
+        }
+
+    async def test_a_revocation_tombstones_everywhere(self, seams: LedgerSeams) -> None:
+        await publish_ledger_revocation(_doc())
+
+        seams.settle_frame.assert_called_once_with(
+            "stream-1", "ap_1", "revoked", drop_if_unpublished=True
+        )
+        seams.persist.assert_awaited_once_with(
+            "conv-1", user_id="u1", approval_id="ap_1", status="revoked"
+        )
+        message = seams.broadcast.await_args.kwargs["message"]
+        assert (message["data"]["status"], message["data"]["feedback"]) == ("revoked", None)
+
+
+@pytest.mark.unit
+class TestTheInboxWake:
+    async def test_no_redis_is_a_loud_drop(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(blocked_by=["ap_a"])
+        seams.redis.client = None
+
+        await decide_ledger("ap_1", user_id="u1", kind="approve")
+
+        seams.inbox.assert_not_called()
+        errors = _warned(seams.log.error)
+        assert errors[
+            f"{LogTag.HIL} Ledger wake dropped: no Redis client; agent will not learn this outcome"
+        ] == {"approval_id": "ap_1", "outcome": "QUEUED"}
+
+    async def test_a_failed_append_is_reported(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(blocked_by=["ap_a"])
+        seams.inbox.return_value.append.side_effect = RuntimeError("redis down")
+
+        await decide_ledger("ap_1", user_id="u1", kind="approve")
+
+        errors = _warned(seams.log.error)
+        assert errors[f"{LogTag.HIL} Ledger wake failed; outcome lives on the row only"] == {
+            "approval_id": "ap_1",
+            "outcome": "QUEUED",
+            "error_type": "RuntimeError",
+        }
+
+    async def test_a_long_result_is_clipped_in_the_wake(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(blocked_by=["x" * 600])
+
+        await decide_ledger("ap_1", user_id="u1", kind="approve")
+
+        text = _inbox_lines(seams)[0][1]
+        assert text == f"DECISIONS: ap_1=QUEUED Send it :: {('waiting on ' + 'x' * 600)[:500]}"
+
+
+@pytest.mark.unit
+class TestDecideLedgerBatchOutcomes:
+    async def test_every_item_is_decided_and_reported_on_its_own(self, seams: LedgerSeams) -> None:
+        results: list[LedgerDecision | Exception] = [
+            ApprovalRequestNotFoundError(),
+            ApprovalRequestForbiddenError(),
+            RuntimeError("mongo down"),
+            LedgerDecision(True, "ap_4", LedgerState.PENDING, LedgerState.APPROVED),
+            LedgerDecision(False, "ap_5", LedgerState.PENDING, LedgerState.PENDING, stale=True),
+            LedgerDecision(False, "ap_6", LedgerState.PENDING, LedgerState.DENIED),
+        ]
+        items = [
+            BatchDecisionItem(
+                approval_id=f"ap_{i}",
+                decision="approve" if i % 2 else "deny",
+                feedback=f"f{i}",
+                v=i,
+            )
+            for i in range(1, 7)
+        ]
+        with patch(f"{MODULE}.decide_ledger", new=AsyncMock(side_effect=results)) as decide:
+            outcomes = await decide_ledger_batch("u1", items)
+
+        assert [c.args for c in decide.await_args_list] == [(f"ap_{i}",) for i in range(1, 7)]
+        assert [c.kwargs for c in decide.await_args_list] == [
+            {"user_id": "u1", "kind": item.decision, "feedback": item.feedback, "v": item.v}
+            for item in items
+        ]
+        assert outcomes == [
+            BatchDecisionOutcome(approval_id="ap_1", resolved=False, reason="not_found"),
+            BatchDecisionOutcome(approval_id="ap_2", resolved=False, reason="forbidden"),
+            BatchDecisionOutcome(approval_id="ap_3", resolved=False, reason="error"),
+            BatchDecisionOutcome(approval_id="ap_4", resolved=True),
+            BatchDecisionOutcome(
+                approval_id="ap_5", resolved=False, reason="stale", status="pending"
+            ),
+            BatchDecisionOutcome(
+                approval_id="ap_6", resolved=False, reason="not_found", status="denied"
+            ),
+        ]
+        assert _warned(seams.log.error) == {
+            f"{LogTag.HIL} Ledger batch decision failed for": {
+                "approval_id": "ap_3",
+                "error": "mongo down",
+                "error_type": "RuntimeError",
+                "user_id": "u1",
+            }
+        }
+
+
+@pytest.mark.unit
+class TestReclaimDeadHolderEdges:
+    async def test_the_lock_is_read_for_this_conversation(self, seams: LedgerSeams) -> None:
+        await _reclaim_dead_holder("conv-1")
+
+        seams.lock_holder.assert_awaited_once_with("conv-1")
+
+    async def test_only_the_holders_own_live_session_holds_the_lock(
+        self, seams: LedgerSeams
+    ) -> None:
+        seams.lock_holder.return_value = "s1:t1"
+        seams.get_session.side_effect = lambda stream: MagicMock() if stream == "s1" else None
+
+        assert await _reclaim_dead_holder("conv-1") is False
+        seams.break_lock.assert_not_awaited()
+
+    async def test_no_redis_client_means_free(self, seams: LedgerSeams) -> None:
+        seams.lock_holder.return_value = "s1:t1"
+        seams.redis.client = None
+
+        assert await _reclaim_dead_holder("conv-1") is True
+        seams.break_lock.assert_not_awaited()
+
+    @pytest.mark.parametrize("ttl", [None, -1], ids=["gone", "no-expiry"])
+    async def test_a_lock_without_a_live_ttl_is_free(
+        self, seams: LedgerSeams, ttl: int | None
+    ) -> None:
+        seams.lock_holder.return_value = "s1:t1"
+        seams.redis.client.ttl.return_value = ttl
+
+        assert await _reclaim_dead_holder("conv-1") is True
+        seams.break_lock.assert_not_awaited()
+        seams.redis.client.ttl.assert_awaited_once_with(f"{EXECUTOR_BUSY_PREFIX}conv-1")
+
+    @pytest.mark.parametrize(
+        "ttl",
+        [0, EXECUTOR_BUSY_TTL - STALE_HOLDER_MIN_AGE_SECONDS],
+        ids=["expiring-now", "exactly-min-age"],
+    )
+    async def test_an_old_enough_lock_is_broken(self, seams: LedgerSeams, ttl: int) -> None:
+        seams.lock_holder.return_value = "s1:t1"
+        seams.redis.client.ttl.return_value = ttl
+
+        assert await _reclaim_dead_holder("conv-1") is True
+        seams.break_lock.assert_awaited_once_with("conv-1", "s1:t1")
+        seams.barrier_pending.assert_awaited_once_with("conv-1")
+
+    async def test_a_young_lock_holds(self, seams: LedgerSeams) -> None:
+        seams.lock_holder.return_value = "s1:t1"
+        seams.redis.client.ttl.return_value = EXECUTOR_BUSY_TTL - STALE_HOLDER_MIN_AGE_SECONDS + 1
+
+        assert await _reclaim_dead_holder("conv-1") is False
+        seams.break_lock.assert_not_awaited()
+
+    async def test_a_failed_check_keeps_the_lock_and_says_so(self, seams: LedgerSeams) -> None:
+        seams.lock_holder.side_effect = ConnectionError("redis down")
+
+        assert await _reclaim_dead_holder("conv-1") is False
+        assert _warned(seams.log.warning) == {
+            f"{LogTag.HIL} Holder reclaim check failed; keeping the lock": {
+                "conversation_id": "conv-1",
+                "error_type": "ConnectionError",
+            }
+        }
+
+
+@pytest.mark.unit
+class TestRedeemOutcomes:
+    async def _redeem(self, caller: str = "executor_conv-1") -> RedeemResult:
+        return await redeem_approved("ap_1", user_id="u1", conversation_id="conv-1", caller=caller)
+
+    async def test_an_already_settled_ticket_is_refused_with_its_state(
+        self, seams: LedgerSeams
+    ) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.EXECUTED)
+
+        assert await self._redeem() == RedeemResult(
+            ok=False,
+            approval_id="ap_1",
+            state=LedgerState.EXECUTED,
+            detail="Already executed; report that instead of retrying.",
+        )
+        seams.repo.get_by_approval_id.assert_awaited_once_with("ap_1")
+
+    async def test_the_proposing_worker_may_redeem_its_own_ticket(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.APPROVED)
+        seams.dispatch.return_value = MagicMock(ok=True, output="sent", error=None)
+
+        result = await self._redeem(caller="gmail_conv-1")
+
+        assert result == RedeemResult(
+            ok=True, approval_id="ap_1", state=LedgerState.EXECUTED, detail="sent"
+        )
+        seams.repo.claim_executing.assert_awaited_once_with("ap_1")
+        seams.dispatch.assert_awaited_once_with(
+            user_id="u1",
+            tool_name="GMAIL_SEND_EMAIL",
+            data={"to": "b@x"},
+            config={"user": "u1"},
+        )
+        seams.settle_frame.assert_called_once_with("stream-1", "ap_1", "executed")
+
+    async def test_another_worker_cannot_redeem(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.APPROVED)
+
+        assert await self._redeem(caller="slack_conv-1") == RedeemResult(
+            ok=False,
+            approval_id="ap_1",
+            state=LedgerState.APPROVED,
+            detail="This ticket belongs to another worker; only its proposer or the executor may redeem it.",
+        )
+        seams.repo.claim_executing.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("current", "state"),
+        [(LedgerState.EXECUTING, LedgerState.EXECUTING), (None, LedgerState.APPROVED)],
+        ids=["another-redeemer", "row-vanished"],
+    )
+    async def test_a_lost_claim_reports_the_rows_state(
+        self, seams: LedgerSeams, current: LedgerState | None, state: LedgerState
+    ) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.APPROVED)
+
+        async def _lose(_: str) -> bool:
+            if current is None:
+                seams.rows.pop("ap_1")
+            else:
+                seams.rows["ap_1"] = _doc(state=current)
+            return False
+
+        seams.repo.claim_executing.side_effect = _lose
+
+        assert await self._redeem() == RedeemResult(
+            ok=False,
+            approval_id="ap_1",
+            state=state,
+            detail=f"Already {state.value}; report that instead of retrying.",
+        )
+        seams.dispatch.assert_not_awaited()
+
+    async def test_an_ownerless_row_dispatches_with_no_user(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.APPROVED, user_id="")
+        seams.dispatch.return_value = MagicMock(ok=True, output="ok", error=None)
+
+        await redeem_approved("ap_1", user_id="", conversation_id="conv-1", caller="executor_c")
+
+        assert seams.dispatch.await_args.kwargs["user_id"] is None
+
+    async def test_a_raised_dispatch_lands_unknown_and_says_why(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.APPROVED)
+        seams.dispatch.side_effect = RuntimeError("socket closed")
+
+        result = await self._redeem()
+
+        assert result == RedeemResult(
+            ok=False,
+            approval_id="ap_1",
+            state=LedgerState.UNKNOWN,
+            detail="RuntimeError: socket closed",
+        )
+        assert _warned(seams.log.error)[
+            f"{LogTag.HIL} Ticket redeem raised; reconciled as UNKNOWN, never retried"
+        ] == {"approval_id": "ap_1", "error_type": "RuntimeError"}
+        seams.sync_flag.assert_awaited_once_with("conv-1", "u1")
+
+    async def test_a_provider_timeout_is_unknown_never_retried(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.APPROVED)
+        error = MagicMock(kind=DispatchErrorKind.TIMEOUT, detail="slow")
+        seams.dispatch.return_value = MagicMock(ok=False, output=None, error=error)
+
+        result = await self._redeem()
+
+        assert result.detail == "provider timed out; may or may not have run — never auto-retried"
+        assert result.state is LedgerState.UNKNOWN
+
+    async def test_a_failure_without_detail_still_has_words(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.APPROVED)
+        seams.dispatch.return_value = MagicMock(ok=False, output=None, error=None)
+
+        result = await self._redeem()
+
+        assert (result.state, result.detail) == (LedgerState.FAILED, "unknown error")
+
+    async def test_a_lost_receipt_reports_the_reconcilers_verdict(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.APPROVED)
+        seams.dispatch.return_value = MagicMock(ok=True, output="sent", error=None)
+
+        async def _reconciled(approval_id: str, *_: object, **__: object) -> bool:
+            seams.rows[approval_id] = _doc(state=LedgerState.UNKNOWN)
+            return False
+
+        seams.repo.transition.side_effect = _reconciled
+
+        result = await self._redeem()
+
+        assert result == RedeemResult(
+            ok=False,
+            approval_id="ap_1",
+            state=LedgerState.UNKNOWN,
+            detail="Already unknown; report that instead of retrying.",
+        )
+        assert _warned(seams.log.error)[
+            f"{LogTag.HIL} Ticket receipt lost its CAS; reporting actual state"
+        ] == {"approval_id": "ap_1", "attempted": "executed", "actual": "unknown"}
+
+
+@pytest.mark.unit
+class TestRevokeMessages:
+    async def _revoke(self, caller: str = "gmail_conv-1") -> str:
+        return await revoke_ticket("ap_1", user_id="u1", conversation_id="conv-1", caller=caller)
+
+    async def test_a_decided_row_cannot_be_revoked(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc(state=LedgerState.APPROVED)
+
+        assert await self._revoke() == (
+            "Cannot revoke 'ap_1': already approved. Report that to the user instead of retrying."
+        )
+        seams.repo.get_by_approval_id.assert_awaited_once_with("ap_1")
+
+    async def test_another_worker_cannot_revoke(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc()
+
+        assert await self._revoke(caller="slack_conv-1") == (
+            "Cannot revoke 'ap_1': it belongs to another worker. "
+            "Only its proposer or the executor can withdraw it."
+        )
+
+    @pytest.mark.parametrize(
+        ("current", "said"),
+        [(LedgerState.APPROVED, "approved"), (None, "gone")],
+        ids=["decided-meanwhile", "row-vanished"],
+    )
+    async def test_a_lost_revoke_race_says_what_happened(
+        self, seams: LedgerSeams, current: LedgerState | None, said: str
+    ) -> None:
+        seams.rows["ap_1"] = _doc()
+
+        async def _lose(*_: object, **__: object) -> bool:
+            if current is None:
+                seams.rows.pop("ap_1")
+            else:
+                seams.rows["ap_1"] = _doc(state=current)
+            return False
+
+        seams.repo.transition.side_effect = _lose
+
+        assert await self._revoke() == f"Cannot revoke 'ap_1': already {said}."
+
+    async def test_a_revoke_tombstones_the_card_it_withdrew(self, seams: LedgerSeams) -> None:
+        seams.rows["ap_1"] = _doc()
+
+        async def _revoked(approval_id: str, *_: object, **__: object) -> bool:
+            seams.rows[approval_id] = _doc(state=LedgerState.REVOKED, proposing_run_id="stream-9")
+            return True
+
+        seams.repo.transition.side_effect = _revoked
+
+        await self._revoke()
+
+        seams.settle_frame.assert_called_once_with(
+            "stream-9", "ap_1", "revoked", drop_if_unpublished=True
+        )
+
+
+@pytest.mark.unit
+class TestCancelLedgerApprovalsSweep:
+    async def test_only_the_users_pending_rows_are_withdrawn_and_each_is_counted(
+        self, seams: LedgerSeams
+    ) -> None:
+        rows = [
+            _doc(approval_id="ap_ok", state=LedgerState.APPROVED),
+            _doc(approval_id="ap_other", user_id="u2"),
+            _doc(approval_id="ap_lost"),
+            _doc(approval_id="ap_1", v=7),
+        ]
+        seams.repo.list_open.return_value = rows
+        seams.rows["ap_1"] = _doc(v=8, state=LedgerState.REVOKED, proposing_run_id="stream-2")
+        seams.repo.transition.side_effect = lambda approval_id, *_: approval_id == "ap_1"
+
+        cancelled = await cancel_ledger_approvals("conv-1", "u1")
+
+        assert cancelled == ["ap_1"]
+        seams.repo.list_open.assert_awaited_once_with("conv-1")
+        seams.settle_frame.assert_called_once_with(
+            "stream-2", "ap_1", "revoked", drop_if_unpublished=True
+        )
+        seams.capture.assert_called_once_with(
+            "u1",
+            AnalyticsEvents.HIL_REVOKED,
+            {"approval_id": "ap_1", "ledger_version": 8, "revoker": "cancelled-run"},
+        )
+        seams.sync_flag.assert_awaited_once_with("conv-1", "u1")
+
+
+@pytest.mark.unit
+class TestReconcileStalled:
+    async def test_a_stalled_row_goes_unknown_settles_and_wakes_with_a_warning(
+        self, seams: LedgerSeams
+    ) -> None:
+        stalled = _doc(state=LedgerState.EXECUTING, user_id="u9", proposing_run_id="stream-3")
+        seams.repo.list_stalled_executing.return_value = [stalled]
+
+        await reconcile_conversation_ledger("conv-1")
+
+        cutoff = seams.repo.list_stalled_executing.await_args.args[0]
+        assert cutoff.tzinfo is UTC
+        assert _warned(seams.log.error) == {
+            f"{LogTag.HIL} Ledger execution stalled; reconciled as UNKNOWN, never retried": {
+                "approval_id": "ap_1"
+            }
+        }
+        seams.settle_frame.assert_called_once_with("stream-3", "ap_1", "unknown")
+        assert _inbox_lines(seams) == [
+            (
+                "conv-1",
+                "DECISIONS: ap_1=UNKNOWN Send it :: stalled execution reconciled; never "
+                "retried. The action may or may not have run — verify before re-proposing, "
+                "never blind-retry.",
+                AgentTag.HIL_DECISION,
+            )
+        ]
+        seams.sync_flag.assert_awaited_once_with("conv-1", "u9")

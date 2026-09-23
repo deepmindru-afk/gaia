@@ -76,23 +76,33 @@ class _TextBlock(TypedDict, total=False):
 # --- reading the request ---------------------------------------------------------------
 
 
-def unpack_tool_call(request: ToolCallRequest) -> GatedCall:
-    """Read the pending call, whether the framework handed it over as a dict or object.
-
-    Execute-proxied calls are unwrapped to their real tool; id stays the proxy
-    call's id, since that is the tool_call a refusal must answer.
-    """
+def raw_tool_call(request: ToolCallRequest) -> GatedCall:
+    """Read the pending call as handed over, dict- or object-shaped, before any unwrapping."""
     tool_call: ToolCall = request.tool_call
     # tool_call is typed ToolCall (a dict), but dataclass fields aren't runtime-
     # validated and some call paths hand over an object with .name/.id/.args.
     # Widen to object so that branch stays a reachable fallback, not dead code.
     if isinstance(cast(object, tool_call), dict):
-        name, args = unwrap_execute_call(tool_call.get("name", ""), tool_call.get("args", {}) or {})
-        return GatedCall(name=name, id=tool_call.get("id", ""), args=args)
-    name, args = unwrap_execute_call(
-        getattr(tool_call, "name", ""), getattr(tool_call, "args", None) or {}
+        return GatedCall(
+            name=tool_call.get("name", ""),
+            id=tool_call.get("id", ""),
+            args=tool_call.get("args", {}) or {},
+        )
+    return GatedCall(
+        name=getattr(tool_call, "name", ""),
+        id=getattr(tool_call, "id", ""),
+        args=getattr(tool_call, "args", None) or {},
     )
-    return GatedCall(name=name, id=getattr(tool_call, "id", ""), args=args)
+
+
+def unpack_tool_call(request: ToolCallRequest) -> GatedCall:
+    """Read the pending call, with an execute-proxied call unwrapped to its real tool.
+
+    The id stays the proxy call's id, since that is the tool_call a refusal must answer.
+    """
+    raw = raw_tool_call(request)
+    name, args = unwrap_execute_call(raw.name, raw.args)
+    return GatedCall(name=name, id=raw.id, args=args)
 
 
 def tool_of(request: ToolCallRequest) -> BaseTool | None:
@@ -140,9 +150,9 @@ def prior_tool_calls(state: object, exclude_id: str) -> list[PriorCall]:
     ]
     calls = [
         PriorCall(
-            name=call.get("name", ""),
+            name=call["name"],
             args=call.get("args", {}) or {},
-            output=outputs.get(call.get("id", ""), ""),
+            output=outputs.get(call_id, "") if (call_id := call.get("id")) else "",
         )
         for call in made
         if call.get("name") and call.get("id") != exclude_id
@@ -197,12 +207,12 @@ def _is_ai_message(message: object) -> bool:
     """
     if isinstance(message, dict):
         as_dict: _DictMessage = cast(_DictMessage, message)
-        kind = str(as_dict.get("type") or as_dict.get("role") or "").lower()
-        return kind in ("ai", "assistant")
-    kind = str(getattr(message, "type", "") or "").lower()
+        role = as_dict.get("type") or as_dict.get("role")
+        return isinstance(role, str) and role.lower() in ("ai", "assistant")
+    kind = getattr(message, "type", None)
     if kind:
-        return kind == "ai"
-    return type(message).__name__ in ("AIMessage",)
+        return str(kind).lower() == "ai"
+    return type(message).__name__ == "AIMessage"
 
 
 def _message_text(message: object) -> str:
@@ -258,7 +268,9 @@ def render_prior_calls(calls: list[PriorCall]) -> str:
         if call.output.strip():
             # JSON-encoded like args: a result containing a quote or newline
             # must not break out of its line and read as prompt structure.
-            line += f" => {clip_text(json.dumps(call.output, default=str), HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS + 2)}"
+            line += (
+                f" => {clip_text(json.dumps(call.output), HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS + 2)}"
+            )
         lines.append(line)
     return "\n".join(lines) or "(none)"
 

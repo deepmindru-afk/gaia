@@ -24,6 +24,7 @@ from app.services.hil.resolution import (
     ApprovalNotResumableError,
     ApprovalRequestForbiddenError,
     ApprovalRequestNotFoundError,
+    _dispatch_resume,
     _observe_hil_dispatch_lag,
     _observe_hil_user_wait,
     _resolve_or_close,
@@ -833,3 +834,127 @@ class TestHILWaitBenchmarks:
             _observe_hil_dispatch_lag(record)
 
         assert REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) == lag_before + 1
+
+
+class TestResolutionEdges:
+    async def test_whitespace_feedback_is_no_condition(self, resume: Any) -> None:
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=make_record())),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)) as decided,
+        ):
+            await resolve_approval(
+                approval_id="appr-1", user_id=USER_ID, kind="approve", feedback="   "
+            )
+
+        assert decided.await_args.args[1] == HILApprovalStatus.APPROVED
+
+    async def test_an_unresumable_approve_settles_its_card_on_the_request_stream(
+        self, resume: Any
+    ) -> None:
+        record = make_record(resume_item=None, stream_id="stream-original")
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
+            patch(f"{MODULE}.publish_decision", new=AsyncMock()) as settle,
+            pytest.raises(ApprovalNotResumableError),
+        ):
+            await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+        settle.assert_awaited_once_with(
+            record,
+            HILApprovalStatus.ABANDONED,
+            stream_id="stream-original",
+            feedback="The paused task cannot be resumed.",
+        )
+
+    async def test_a_failed_card_settle_still_refuses_as_unresumable(self, resume: Any) -> None:
+        with (
+            patch(
+                f"{MODULE}.get_approval",
+                new=AsyncMock(return_value=make_record(resume_item=None)),
+            ),
+            patch(f"{MODULE}.publish_decision", new=AsyncMock(side_effect=RuntimeError("down"))),
+            pytest.raises(ApprovalNotResumableError),
+        ):
+            await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+    async def test_the_resume_rebuilds_the_run_from_the_stored_item(self, resume: Any) -> None:
+        item = {"task": "send the deck", "stream_id": "stream-1"}
+        with (
+            patch(
+                f"{MODULE}.get_approval", new=AsyncMock(return_value=make_record(resume_item=item))
+            ),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+        ):
+            await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+        assert resume.prepare.await_args.args == (CONVERSATION_ID, item)
+
+    async def test_a_subagent_parked_dispatch_refusal_is_reported(self, resume: Any) -> None:
+        record = make_record(subagent_thread_id="gmail_executor_conv-1", integration_name="Gmail")
+        with patch(f"{MODULE}.log") as log, pytest.raises(ApprovalNotResumableError):
+            await _dispatch_resume(record, resume_status="approved", feedback=None, scope="once")
+
+        log.error.assert_called_once()
+        assert "cannot resume without the join" in log.error.call_args.args[0]
+        assert log.error.call_args.kwargs == {
+            "approval_id": "appr-1",
+            "integration_name": "Gmail",
+        }
+
+
+class TestSweepAccounting:
+    async def test_every_subagent_park_is_counted_reported_and_the_rest_still_redispatch(
+        self,
+    ) -> None:
+        parked = [
+            make_record(
+                approval_id=f"appr-{i}",
+                status="approved",
+                subagent_thread_id="gmail_executor_conv-1",
+                integration_name="Gmail",
+            )
+            for i in (1, 2)
+        ]
+        normal = make_record(approval_id="appr-3", status="approved")
+        with (
+            patch(f"{MODULE}.list_expired_pending", new=AsyncMock(return_value=[])),
+            patch(
+                f"{MODULE}.list_decided_unresumed",
+                new=AsyncMock(return_value=[*parked, normal]),
+            ),
+            patch(f"{MODULE}._dispatch_resume", new=AsyncMock()) as dispatch,
+            patch(f"{MODULE}.log") as log,
+        ):
+            result = await sweep_approvals()
+
+        assert result == {"expired": 0, "redispatched": 1, "deferred_subagent": 2}
+        assert [c.args[0].approval_id for c in dispatch.await_args_list] == ["appr-3"]
+        assert [c.kwargs for c in log.warning.call_args_list] == [
+            {"approval_id": "appr-1", "integration_name": "Gmail"},
+            {"approval_id": "appr-2", "integration_name": "Gmail"},
+        ]
+        assert "Sweep deferring subagent-parked approval" in log.warning.call_args.args[0]
+
+    @pytest.mark.parametrize(
+        ("expired", "unresumed", "reported"),
+        [
+            ([], [], False),
+            ([make_record(approval_id="appr-e")], [], True),
+            ([], [make_record(approval_id="appr-r", status="approved")], True),
+            ([], [make_record(status="approved", subagent_thread_id="t")], True),
+        ],
+        ids=["idle", "expired-only", "redispatched-only", "deferred-only"],
+    )
+    async def test_a_sweep_reports_only_when_it_did_something(
+        self, resume: Any, expired: list[Any], unresumed: list[Any], reported: bool
+    ) -> None:
+        with (
+            patch(f"{MODULE}.list_expired_pending", new=AsyncMock(return_value=expired)),
+            patch(f"{MODULE}.list_decided_unresumed", new=AsyncMock(return_value=unresumed)),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.log") as log,
+        ):
+            await sweep_approvals()
+
+        sweep_reports = [c for c in log.info.call_args_list if "Approval sweep" in c.args[0]]
+        assert bool(sweep_reports) is reported

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 from httpx import AsyncClient
 
-from app.models.hil_models import HILMode, HILPreferences, LedgerState
+from app.models.hil_models import ApprovalLedgerDocument, HILMode, HILPreferences, LedgerState
 from app.schemas.hil_schemas import BatchDecisionOutcome
 from app.services.hil.ledger_decide import LedgerDecision
 from app.services.hil.resolution import (
@@ -351,18 +351,22 @@ class TestLedgerDecisionRouting:
             prior_state=LedgerState.PENDING,
             state=LedgerState.APPROVED,
         )
-        resp = await client.post(
-            f"{APPROVALS_BASE}/ap_1/decision", json={"decision": "approve", "v": 3}
-        )
+        with patch("app.api.v1.endpoints.approvals.log") as log:
+            resp = await client.post(
+                f"{APPROVALS_BASE}/ap_1/decision",
+                json={"decision": "approve", "feedback": "go ahead", "v": 3},
+            )
         assert resp.status_code == 200
         assert resp.json() == {"success": True, "reason": None, "status": "approved"}
+        mock_flag.assert_awaited_once_with(USER_ID)
         mock_decide.assert_awaited_once_with(
             "ap_1",
             user_id=USER_ID,
             kind="approve",
-            feedback=None,
+            feedback="go ahead",
             v=3,
         )
+        log.set.assert_any_call(hil={"resolved": True})
         mock_resolve.assert_not_awaited()
 
     @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
@@ -407,22 +411,25 @@ class TestLedgerDecisionRouting:
                 state=LedgerState.APPROVED,
             ),
         ]
-        resp = await client.post(
-            f"{APPROVALS_BASE}/batch-decision",
-            json={
-                "decisions": [
-                    {"approval_id": "ap_1", "decision": "approve", "v": 1},
-                    {"approval_id": "ap_2", "decision": "approve", "v": 0},
-                ]
-            },
-        )
+        with patch("app.api.v1.endpoints.approvals.log") as log:
+            resp = await client.post(
+                f"{APPROVALS_BASE}/batch-decision",
+                json={
+                    "decisions": [
+                        {"approval_id": "ap_1", "decision": "approve", "v": 1},
+                        {"approval_id": "ap_2", "decision": "approve", "v": 0},
+                    ]
+                },
+            )
         assert resp.status_code == 200
         outcomes = resp.json()["outcomes"]
         assert outcomes[0]["approval_id"] == "ap_1"
         assert outcomes[0]["resolved"] is True
         assert outcomes[1]["resolved"] is False
         mock_batch.assert_not_awaited()
-        assert mock_decide.await_count == 2
+        mock_flag.assert_awaited_once_with(USER_ID)
+        assert [c.kwargs["user_id"] for c in mock_decide.await_args_list] == [USER_ID, USER_ID]
+        log.set.assert_any_call(hil={"resolved": 1})
 
 
 class TestLedgerAutoPolicyParity:
@@ -474,3 +481,100 @@ class TestLedgerStaleVersionHonesty:
         )
         assert resp.status_code == 200
         assert resp.json() == {"success": False, "reason": "not_found", "status": "approved"}
+
+
+def _ledger_row(tool_name: str = "gmail_send") -> ApprovalLedgerDocument:
+    return ApprovalLedgerDocument(
+        approval_id="ap_1", conversation_id="c1", fingerprint="fp", tool_name=tool_name
+    )
+
+
+def _decision(state: LedgerState, *, committed: bool = True) -> LedgerDecision:
+    return LedgerDecision(
+        committed=committed, approval_id="ap_1", prior_state=LedgerState.PENDING, state=state
+    )
+
+
+@patch("app.api.v1.endpoints.approvals.set_tool_override", new_callable=AsyncMock)
+@patch(
+    "app.api.v1.endpoints.approvals.approval_ledger_repository.get_by_approval_id",
+    new_callable=AsyncMock,
+)
+@patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
+@patch(
+    "app.api.v1.endpoints.approvals.is_hil_ledger_enabled",
+    new_callable=AsyncMock,
+    return_value=True,
+)
+class TestLedgerAlwaysToolScope:
+    """On the ledger path, an approved "always" tap stops future asks for that row's tool."""
+
+    async def test_committed_approval_turns_the_tool_override_off(
+        self,
+        mock_flag: AsyncMock,
+        mock_decide: AsyncMock,
+        mock_get_row: AsyncMock,
+        mock_set_override: AsyncMock,
+        client: AsyncClient,
+    ):
+        mock_decide.return_value = _decision(LedgerState.APPROVED)
+        mock_get_row.return_value = _ledger_row("gmail_send")
+        resp = await client.post(
+            f"{APPROVALS_BASE}/ap_1/decision",
+            json={"decision": "approve", "scope": "always_tool", "v": 0},
+        )
+        assert resp.json() == {"success": True, "reason": None, "status": "approved"}
+        mock_get_row.assert_awaited_once_with("ap_1")
+        mock_set_override.assert_awaited_once_with(USER_ID, "gmail_send", False)
+
+    async def test_denial_never_touches_the_override(
+        self,
+        mock_flag: AsyncMock,
+        mock_decide: AsyncMock,
+        mock_get_row: AsyncMock,
+        mock_set_override: AsyncMock,
+        client: AsyncClient,
+    ):
+        mock_decide.return_value = _decision(LedgerState.DENIED)
+        mock_get_row.return_value = _ledger_row()
+        resp = await client.post(
+            f"{APPROVALS_BASE}/ap_1/decision",
+            json={"decision": "deny", "scope": "always_tool", "v": 0},
+        )
+        assert resp.json()["success"] is True
+        mock_set_override.assert_not_awaited()
+
+    async def test_once_scope_never_touches_the_override(
+        self,
+        mock_flag: AsyncMock,
+        mock_decide: AsyncMock,
+        mock_get_row: AsyncMock,
+        mock_set_override: AsyncMock,
+        client: AsyncClient,
+    ):
+        mock_decide.return_value = _decision(LedgerState.APPROVED)
+        mock_get_row.return_value = _ledger_row()
+        await client.post(f"{APPROVALS_BASE}/ap_1/decision", json={"decision": "approve", "v": 0})
+        mock_set_override.assert_not_awaited()
+
+    async def test_vanished_row_skips_the_override_and_logs_an_error(
+        self,
+        mock_flag: AsyncMock,
+        mock_decide: AsyncMock,
+        mock_get_row: AsyncMock,
+        mock_set_override: AsyncMock,
+        client: AsyncClient,
+    ):
+        mock_decide.return_value = _decision(LedgerState.APPROVED)
+        mock_get_row.return_value = None
+        with patch("app.api.v1.endpoints.approvals.log") as log:
+            resp = await client.post(
+                f"{APPROVALS_BASE}/ap_1/decision",
+                json={"decision": "approve", "scope": "always_tool", "v": 0},
+            )
+        assert resp.json()["success"] is True
+        mock_set_override.assert_not_awaited()
+        log.error.assert_called_once()
+        message = log.error.call_args.args[0]
+        assert "tool override skipped" in message
+        assert log.error.call_args.kwargs == {"approval_id": "ap_1"}
