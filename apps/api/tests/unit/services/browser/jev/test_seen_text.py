@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.constants.browser import JEV_SEEN_TEXT_MAX_CHARS
 from app.services.browser.jev.seen_text import SeenText
 
 pytestmark = pytest.mark.unit
@@ -84,3 +85,43 @@ def test_a_new_document_on_the_same_url_is_not_read_to_the_end_until_its_own_bot
     assert memory.pages == [
         {"url": "https://q.test/questions", "title": "Newest Questions", "read": "top part only"}
     ]
+
+
+@pytest.mark.regression
+def test_the_last_page_of_a_long_research_run_still_reaches_the_closing_answer() -> None:
+    """Regression: the pages read first spent the whole budget.
+
+    A two-site run read the Hacker News front page and three articles, then the
+    Wikipedia article; its lines were dropped at the cap, and the closing answer
+    said the article "does not state who introduced the Transformer".
+    """
+    memory = SeenText()
+    memory.record("https://news.ycombinator.com/", _lines("story", 60, 80))
+    for article in (
+        "https://blog.google/tts",
+        "https://drivingbench.com/",
+        "https://stripe.dev/kai",
+    ):
+        memory.record(article, _lines(article, 40, 90))
+    memory.record(
+        "https://en.wikipedia.org/wiki/Transformer_(deep_learning)",
+        "The transformer was introduced in 2017 by Vaswani et al. at Google.",
+    )
+
+    closing_input = memory.all_text
+
+    assert "introduced in 2017 by Vaswani" in closing_input
+    assert len(closing_input) <= JEV_SEEN_TEXT_MAX_CHARS + 500  # headers ride on top
+    for page in memory.pages:
+        assert f"## {page['url']}\n" in closing_input
+
+
+def test_a_page_read_alone_keeps_the_whole_budget() -> None:
+    memory = SeenText()
+    memory.record("https://news.ycombinator.com/", _lines("story", 100, 120))
+
+    assert JEV_SEEN_TEXT_MAX_CHARS - 120 <= len(memory.all_text) <= JEV_SEEN_TEXT_MAX_CHARS + 50
+
+
+def _lines(prefix: str, count: int, width: int) -> str:
+    return "\n".join(f"{prefix} {i}: ".ljust(width, "x") for i in range(count))

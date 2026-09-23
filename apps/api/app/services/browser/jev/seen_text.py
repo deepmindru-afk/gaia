@@ -5,6 +5,10 @@ its first screenful, or a task that reads several pages, would otherwise be
 answered from whatever happens to be showing at the end. This keeps every line
 read on each page, in the order it was read and without repeats, and keeps the
 pages in the order the run opened them.
+
+The closing answer's budget is shared between the pages rather than spent in
+reading order: a research run's first pages once used all of it, and the page
+the task's last part was answered on reached the answer empty.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ class SeenText:
         self._titles: dict[str, str] = {}
         self._seen: dict[str, set[str]] = {}
         self._to_the_end: set[str] = set()
-        self._length = 0
+        self._lengths: dict[str, int] = {}
 
     def record(self, url: str, text: str, title: str = "", *, at_bottom: bool = False) -> None:
         """Add this screen's lines to its page's memory; a page returned to keeps what it had."""
@@ -40,15 +44,17 @@ class SeenText:
             self._to_the_end.add(self._page)
         lines = self._lines.setdefault(self._page, [])
         seen = self._seen.setdefault(self._page, set())
+        length = self._lengths.get(self._page, 0)
         for line in text.splitlines():
             stripped = line.strip()
             if not stripped or stripped in seen:
                 continue
-            if self._length + len(stripped) + 1 > JEV_SEEN_TEXT_MAX_CHARS:
-                return
+            if length + len(stripped) + 1 > JEV_SEEN_TEXT_MAX_CHARS:
+                break
             seen.add(stripped)
             lines.append(stripped)
-            self._length += len(stripped) + 1
+            length += len(stripped) + 1
+        self._lengths[self._page] = length
 
     @property
     def text(self) -> str:
@@ -74,10 +80,40 @@ class SeenText:
 
     @property
     def all_text(self) -> str:
-        """What was read on every page, each under its URL, for the closing answer."""
+        """What was read on every page, each under its URL, within the one budget for them all.
+
+        A page shorter than an equal share keeps all of it; the longer pages split
+        what is left equally, each cut to its first lines.
+        """
+        pages = [page for page, lines in self._lines.items() if lines]
+        shares = _fair_shares([self._lengths[page] for page in pages], JEV_SEEN_TEXT_MAX_CHARS)
         return "\n\n".join(
-            f"## {page}\n" + "\n".join(lines) for page, lines in self._lines.items() if lines
+            f"## {page}\n" + "\n".join(_first_lines(self._lines[page], share))
+            for page, share in zip(pages, shares, strict=True)
         )
+
+
+def _fair_shares(sizes: list[int], budget: int) -> list[int]:
+    """Split budget so no size gets more than it needs and the rest share alike."""
+    shares = [0] * len(sizes)
+    left = budget
+    by_size = sorted(range(len(sizes)), key=sizes.__getitem__)
+    for taken, index in enumerate(by_size):
+        shares[index] = min(sizes[index], left // (len(sizes) - taken))
+        left -= shares[index]
+    return shares
+
+
+def _first_lines(lines: list[str], chars: int) -> list[str]:
+    """Return the leading lines that fit in chars, a newline counted after each."""
+    kept: list[str] = []
+    used = 0
+    for line in lines:
+        used += len(line) + 1
+        if used > chars:
+            break
+        kept.append(line)
+    return kept
 
 
 __all__ = ["SeenText"]
