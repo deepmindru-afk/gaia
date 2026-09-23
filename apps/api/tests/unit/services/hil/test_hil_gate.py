@@ -15,7 +15,8 @@ from langchain_core.messages import ToolMessage
 from langgraph.errors import GraphInterrupt
 import pytest
 
-from app.constants.hil import HIL_STATUS_KWARG
+from app.constants.hil import HIL_STATUS_KWARG, SUBAGENT_RESUME_CONFIG_KEY
+from app.models.agent_config import SubagentKind, SubagentResumeItem
 from app.models.hil_models import HILApprovalStatus
 from app.services.hil.approvals_store import approval_id_for
 from app.services.hil.bridge import ApprovalOutcome
@@ -184,6 +185,49 @@ class TestGateContext:
         context = read_gate_context(request)
         assert context is not None
         assert context.conversation_id == CONVERSATION_ID
+
+    def test_a_background_subagent_run_carries_its_thread_and_recipe(self) -> None:
+        # The approval it raises is what a decision rebuilds the parked subagent from.
+        recipe = SubagentResumeItem(
+            kind=SubagentKind.SPAWN,
+            tool_call_id="handoff-1",
+            task="triage the inbox",
+            context="",
+            integration_id="",
+            inherited_tool_names=[],
+            parent_configurable={"user_id": USER_ID},
+        )
+        request = make_request(
+            configurable={
+                "stream_id": STREAM_ID,
+                "user_id": USER_ID,
+                "conversation_id": CONVERSATION_ID,
+                "thread_id": f"spawn_{CONVERSATION_ID}_handoff-1",
+                SUBAGENT_RESUME_CONFIG_KEY: recipe,
+            }
+        )
+
+        context = read_gate_context(request)
+
+        assert context is not None
+        assert context.subagent_thread_id == f"spawn_{CONVERSATION_ID}_handoff-1"
+        assert context.subagent_resume == recipe
+
+    def test_a_run_without_a_recipe_is_not_a_parked_subagent(self) -> None:
+        # thread_id here is the executor's own; stamping it would park the executor as a subagent.
+        request = make_request(
+            configurable={
+                "stream_id": STREAM_ID,
+                "user_id": USER_ID,
+                "conversation_id": CONVERSATION_ID,
+                "thread_id": f"executor_{CONVERSATION_ID}",
+            }
+        )
+
+        context = read_gate_context(request)
+
+        assert context is not None
+        assert (context.subagent_thread_id, context.subagent_resume) == (None, None)
 
     @pytest.mark.parametrize("raw", ["not a list", None, 42, {"a": 1}])
     def test_malformed_user_messages_degrade_to_no_turns(self, raw: Any) -> None:
