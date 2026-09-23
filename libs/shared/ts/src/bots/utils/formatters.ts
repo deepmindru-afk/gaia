@@ -527,7 +527,7 @@ function serverMessage(error: unknown): string | null {
 }
 
 /** The actionable reply when the platform account has no GAIA user behind it. */
-export function buildAccountNotLinkedMessage(platform?: PlatformName): string {
+function buildAccountNotLinkedMessage(platform?: PlatformName): string {
   const account = platform
     ? `Your ${PLATFORM_DISPLAY_NAMES[platform]} account`
     : "Your account";

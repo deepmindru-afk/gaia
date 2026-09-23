@@ -7,7 +7,7 @@ import { getApiErrorCode, getHttpStatus } from "./logger";
 import { wideLog } from "./wide-events";
 
 /** API error codes the bots act on; mirrors apps/api/app/constants/error_codes.py. */
-export const API_ERROR_CODE = {
+const API_ERROR_CODE = {
   NOT_AUTHENTICATED: "NOT_AUTHENTICATED",
   BOT_ACCOUNT_NOT_LINKED: "BOT_ACCOUNT_NOT_LINKED",
   BOT_API_KEY_INVALID: "BOT_API_KEY_INVALID",

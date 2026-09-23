@@ -69,7 +69,7 @@ import {
 export const WIDE_EVENT_MESSAGE = "bot_event";
 
 /** The boundary `outcome` values, shared with `wide_task()` in libs/shared/py/wide_events.py. */
-export const WIDE_EVENT_OUTCOME = {
+const WIDE_EVENT_OUTCOME = {
   SUCCESS: "success",
   FAILED: "failed",
 } as const;
