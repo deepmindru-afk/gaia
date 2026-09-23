@@ -383,9 +383,7 @@ async def browser_job_world(
         if chunk_stream_id == stream_id:
             world.chunks.append(chunk)
 
-    async def _outbound_message(
-        platform: Any, user_id: str, blocks: list[str], **kwargs: Any
-    ) -> bool:
+    async def _outbound_message(platform: Any, user_id: str, blocks: list[str]) -> bool:
         world.bot_messages.extend(blocks)
         return True
 
@@ -471,10 +469,6 @@ async def browser_job_world(
             lambda image, session_id, index: _shot_url(index),
         ),
         patch("app.services.browser.runner.create_replay_link", AsyncMock(return_value=REPLAY_URL)),
-        # A DM conversation: its bot session names no channel.
-        patch(
-            "app.services.browser.job_runner.resolve_channel_target", AsyncMock(return_value=None)
-        ),
         patch("app.services.browser.bot_delivery.publish_outbound_message", _outbound_message),
         patch("app.services.browser.bot_delivery.publish_outbound_photo", _outbound_photo),
         patch(

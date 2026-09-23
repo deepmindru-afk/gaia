@@ -441,8 +441,6 @@ def _install(
         return RecordingDelivery(h)
 
     monkeypatch.setattr(jr, "BotProgressDelivery", _delivery)
-    # A DM conversation: its bot session names no channel.
-    monkeypatch.setattr(jr, "resolve_channel_target", AsyncMock(return_value=None))
 
     async def _create_pending(*args: Any) -> None:
         h.handoffs_created.append(args)
@@ -1211,7 +1209,6 @@ async def test_bot_delivery_is_built_for_the_originating_platform(
             "user_id": "u1",
             "conversation_id": "c1",
             "stream_screenshots": False,
-            "channel": None,
         }
     ]
 

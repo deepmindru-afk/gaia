@@ -21,7 +21,7 @@ from app.agents.core.background import redis_writer as rw
 from app.agents.core.background.executor_capture import drain_executor_tool_data
 from app.agents.core.background.redis_writer import STREAM_PUBLISH_TASK_NAME
 from app.agents.core.background.session import RunKind, create_session
-from app.constants.browser import BROWSER_TASK_EVENT, BrowserSessionStatus
+from app.constants.browser import BROWSER_TASK_EVENT, BrowserSessionStatus, HandoffStatus
 from app.constants.chat import SourceCategory
 from app.models.bot_models import BotSessionDocument
 from app.models.chat_models import ConversationSource
@@ -29,6 +29,7 @@ from app.schemas.browser import (
     BrowserAction,
     BrowserActionOutput,
     BrowserCardSnapshot,
+    BrowserHandoffSnapshot,
     BrowserResultSnapshot,
     BrowserSessionSnapshot,
     BrowserStepSnapshot,
@@ -148,7 +149,7 @@ def outbound(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     """Capture the bot platform's queue: what a Discord user would actually receive."""
     sent: dict[str, list[Any]] = {"messages": [], "photos": []}
 
-    async def _message(platform: Any, user_id: str, blocks: list[str], **kwargs: Any) -> bool:
+    async def _message(platform: Any, user_id: str, blocks: list[str]) -> bool:
         sent["messages"].append((platform, user_id, list(blocks)))
         return True
 
@@ -158,12 +159,6 @@ def outbound(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
 
     monkeypatch.setattr(bot_mod, "publish_outbound_message", _message)
     monkeypatch.setattr(bot_mod, "publish_outbound_photo", _photo)
-    # A conversation with no bot session row: delivery falls back to the DM.
-    monkeypatch.setattr(
-        platform_message_service.bot_session_repository,
-        "get_by_conversation_id",
-        AsyncMock(return_value=None),
-    )
     monkeypatch.setattr(bot_mod, "create_live_view_link", AsyncMock(return_value=LIVE_VIEW_LINK))
     return sent
 
@@ -331,15 +326,30 @@ def _bot_session(channel_id: str | None) -> BotSessionDocument:
     )
 
 
-@pytest.mark.regression
-async def test_a_run_asked_for_in_a_group_sends_its_progress_back_to_that_group(
+class _ScriptedBrowserWithHandoff(_ScriptedBrowser):
+    """The scripted run, pausing once for the user to take over before it finishes."""
+
+    async def run(self, task: str) -> BrowserResultSnapshot:
+        await self._callbacks.emit(
+            BrowserHandoffSnapshot(
+                handoff_id="handoff-7",
+                reason="Sign in to finish the booking.",
+                session_id=self.session.session_id,
+                status=HandoffStatus.PENDING,
+            )
+        )
+        return await super().run(task)
+
+
+async def test_a_run_asked_for_in_a_group_keeps_its_live_link_and_photos_in_the_requesters_dm(
     redis: FakeRedisCache,
     chunks: list[str],
     queue: list[dict[str, Any]],
     browser: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The step photos and lines went to the user's DM while the group that asked sat in silence; the final answer already found the group through the conversation's bot session."""
+    """The live link drives the user's browser and a step photo can show a signed-in page, so a group that asked sees neither; only the final answer goes back there."""
+    monkeypatch.setattr(jr, "BrowserTaskRunner", _ScriptedBrowserWithHandoff)
     monkeypatch.setattr(
         platform_message_service.bot_session_repository,
         "get_by_conversation_id",
@@ -354,36 +364,7 @@ async def test_a_run_asked_for_in_a_group_sends_its_progress_back_to_that_group(
         )
     )
 
-    assert [(e["destination_id"], e["is_channel"]) for e in queue] == [
-        (GROUP_CHANNEL_ID, True),
-        (GROUP_CHANNEL_ID, True),
-    ]
-    assert queue[0]["attachment"]["url"] == SHOT_URL
-    assert queue[1]["text"] == STALL_NOTE
-
-
-async def test_a_run_asked_for_in_a_dm_sends_its_progress_to_that_dm(
-    redis: FakeRedisCache,
-    chunks: list[str],
-    queue: list[dict[str, Any]],
-    browser: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        platform_message_service.bot_session_repository,
-        "get_by_conversation_id",
-        AsyncMock(return_value=_bot_session(None)),
-    )
-    create_session(STREAM_ID, RunKind.LIVE)
-
-    await _run_and_relay(
-        _request(
-            source_category=SourceCategory.BOT.value,
-            conversation_source=ConversationSource.DISCORD,
-        )
-    )
-
-    assert [(e["destination_id"], e["is_channel"]) for e in queue] == [
-        (DM_ID, False),
-        (DM_ID, False),
-    ]
+    assert [(e["destination_id"], e["is_channel"]) for e in queue] == [(DM_ID, False)] * 3
+    assert any(LIVE_VIEW_LINK in part for part in queue[0]["text_parts"])
+    assert queue[1]["attachment"]["url"] == SHOT_URL
+    assert queue[2]["text"] == STALL_NOTE

@@ -71,7 +71,6 @@ from app.services.browser.session import (
 )
 from app.services.browser.tasks import BrowserTaskRecord, record_browser_task
 from app.services.chat.chunks import normalize_custom_event
-from app.services.platform_message_service import resolve_channel_target
 from app.utils.agent_utils import (
     SubagentStartDetails,
     format_browser_action_entry,
@@ -263,12 +262,8 @@ class BrowserThreadMirror:
         self._group_id = None
 
 
-async def _build_bot_delivery(request: BrowserJobRequest) -> BotProgressDelivery | None:
-    """Mirror the run to the bot chat that asked for it, or None for a run from any other surface.
-
-    Addressed from the conversation's bot session, the same record the run's
-    final answer is delivered by, so progress and answer land in one chat.
-    """
+def _build_bot_delivery(request: BrowserJobRequest) -> BotProgressDelivery | None:
+    """Mirror a bot-asked run to the requester's DM, never a group: its live link and shots are private."""
     is_bot = request.source_category == SourceCategory.BOT.value
     if not (is_bot and request.user_id and request.conversation_id):
         return None
@@ -279,7 +274,6 @@ async def _build_bot_delivery(request: BrowserJobRequest) -> BotProgressDelivery
         user_id=request.user_id,
         conversation_id=request.conversation_id,
         stream_screenshots=settings.BROWSER_USE_STREAM_SCREENSHOTS,
-        channel=await resolve_channel_target(request.conversation_id),
     )
 
 
@@ -543,7 +537,7 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
     emitter = ProgressEmitter(
         emit_frame,
         thread_mirror,
-        await _build_bot_delivery(request),
+        _build_bot_delivery(request),
     )
 
     try:

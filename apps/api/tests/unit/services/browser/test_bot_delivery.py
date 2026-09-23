@@ -215,8 +215,6 @@ class TestBotProgressDeliveryStep:
                 "https://cdn.example.com/shot.png",
                 filename="browser-step-1.png",
                 caption="Step 1 · Clicking",
-                destination_override=None,
-                is_channel=False,
             )
             mock_text.assert_not_awaited()
 
@@ -328,11 +326,7 @@ class TestBotProgressDeliveryStep:
             await delivery.step(snap)
             mp.assert_not_awaited()
             mm.assert_awaited_once_with(
-                ConversationSource.TELEGRAM,
-                "user-1",
-                ["Step 1 · Clicking"],
-                destination_override=None,
-                is_channel=False,
+                ConversationSource.TELEGRAM, "user-1", ["Step 1 · Clicking"]
             )
 
     async def test_stream_screenshots_disabled_always_text(self, delivery_no_screenshots):
@@ -634,7 +628,7 @@ async def test_the_first_step_the_user_sees_is_step_one(delivery, monkeypatch) -
     """The blank-tab navigate sends its label as text (no photo to show), so numbering still opens at Step 1."""
     sent: list[str] = []
 
-    async def _message(platform, user_id, blocks, **kwargs) -> bool:
+    async def _message(platform, user_id, blocks) -> bool:
         sent.extend(blocks)
         return True
 
@@ -652,7 +646,7 @@ async def test_a_run_of_identical_steps_reaches_the_user_once(delivery, monkeypa
     """Reading a long list sent 24 photos in a row captioned "Scrolling", one a second."""
     sent: list[str] = []
 
-    async def _message(platform, user_id, blocks, **kwargs) -> bool:
+    async def _message(platform, user_id, blocks) -> bool:
         sent.extend(blocks)
         return True
 
