@@ -415,3 +415,13 @@ class TestLogConfig:
         assert "console" in LOG_CONFIG["format"]
         assert "file" in LOG_CONFIG["format"]
         assert "json" in LOG_CONFIG["format"]
+
+
+class TestHashLogIdentifier:
+    """Same digest as hashLogIdentifier in the bots, so user_hash joins across surfaces."""
+
+    def test_a_keyed_hash_matches_the_bots(self) -> None:
+        assert logging_mod.hash_log_identifier("123456789", "s3cret") == "h_d374762a95f913ec"
+
+    def test_an_unkeyed_hash_matches_the_bots(self) -> None:
+        assert logging_mod.hash_log_identifier(123456789, None) == "h_15e2b0d3c33891eb"

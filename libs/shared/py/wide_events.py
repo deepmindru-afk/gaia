@@ -531,6 +531,9 @@ class DevContext(TypedDict, total=False):
     subagent_id: str
 
 
+OUTCOME_FAILED = "failed"
+
+
 class WideEventFields(TypedDict, total=False):
     """Canonical schema for wide event fields set via log.set().
 
@@ -574,7 +577,11 @@ class WideEventFields(TypedDict, total=False):
     # Top-level convenience fields used across endpoints
     operation: str
     outcome: str
+    # Why the unit of work failed or was refused — a closed code set per domain.
+    reason: str
     platform: str
+    # A hashed platform user id (hash_log_identifier), the bots' user_hash.
+    user_hash: str
     # Which module/service-layer function produced the context. Named to match
     # the bots' `component` field so one query reads both surfaces; distinct
     # from the reserved `service`, which is the process's Promtail identity.
@@ -664,6 +671,14 @@ class WideEventLogger:
                 fields[key] = {**existing, **value}
             else:
                 fields[key] = value
+
+    def fail(self, reason: str, /, **kwargs: Any) -> None:
+        """Mark the event failed with a reason, for a failure the body caught and answered.
+
+        wide_task/log_context keep it instead of stamping success on a normal
+        return. Same method as wideLog.fail in the bots' wide-events.ts.
+        """
+        self.set(**kwargs, outcome=OUTCOME_FAILED, reason=reason)
 
     def set_ns(self, namespace: str, **kwargs: Any) -> None:
         """Merge kwargs into a nested namespace dict on the wide event.
@@ -835,7 +850,8 @@ async def _wide_event_boundary(
     failure: Exception | None = None
     try:
         yield log
-        log.set(outcome="success")
+        if log.get().get("outcome") != OUTCOME_FAILED:
+            log.set(outcome="success")
     except asyncio.CancelledError:
         # Shutdown and client disconnects cancel long-lived work: a clean exit,
         # not a failure. Record it (an outcome-less event reads as "still
@@ -844,7 +860,7 @@ async def _wide_event_boundary(
         raise
     except Exception as exc:
         failure = exc
-        log.set(outcome="failed")
+        log.set(outcome=OUTCOME_FAILED)
         raise
     finally:
         if failure is not None:

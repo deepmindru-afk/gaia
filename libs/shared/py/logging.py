@@ -65,6 +65,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 import functools
+import hashlib
+import hmac
 import json as _json
 import logging
 from math import isfinite
@@ -146,6 +148,26 @@ MAX_JSON_LINE_BYTES = 200_000
 # and the gaia-*.log sink, so local structured files age out at the same rate.
 STRUCTURED_LOG_RETENTION_DAYS = 30
 _TRUNCATED_MESSAGE_MAX_CHARS = 10_000
+
+
+_LOG_IDENTIFIER_PREFIX = "h_"
+_LOG_IDENTIFIER_HEX_CHARS = 16
+
+
+def hash_log_identifier(value: str | int, secret: str | None) -> str:
+    """Hash a person-identifying id (platform user/chat id, phone) for a log field.
+
+    Same digest as hashLogIdentifier in libs/shared/ts/src/bots/utils/logger.ts, so
+    an API line and a bot line for one person share one user_hash. Unkeyed when no
+    secret is configured, exactly as the bots fall back.
+    """
+    data = str(value).encode()
+    digest = (
+        hmac.new(secret.encode(), data, hashlib.sha256).hexdigest()
+        if secret
+        else hashlib.sha256(data).hexdigest()
+    )
+    return f"{_LOG_IDENTIFIER_PREFIX}{digest[:_LOG_IDENTIFIER_HEX_CHARS]}"
 
 
 @functools.lru_cache(maxsize=1)
