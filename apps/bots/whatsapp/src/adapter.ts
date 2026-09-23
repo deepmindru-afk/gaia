@@ -33,6 +33,7 @@ import {
   type LinkState,
   MEDIA_READ_TIMEOUT_MS,
   type OutboundAttachment,
+  type OutboundReaction,
   type PlatformName,
   type RichMessage,
   type RichMessageTarget,
@@ -573,7 +574,7 @@ export class WhatsAppAdapter extends BaseBotAdapter {
             await this.sendWhatsAppText(waId, "Usage: /gaia <your message>");
             return;
           }
-          await this.handleStreamingMessage(waId, rest);
+          await this.handleStreamingMessage(waId, rest, messageId);
           return;
         }
 
@@ -588,7 +589,7 @@ export class WhatsAppAdapter extends BaseBotAdapter {
         return;
       }
 
-      await this.handleStreamingMessage(waId, chatText);
+      await this.handleStreamingMessage(waId, chatText, messageId);
     } finally {
       typing.stop();
     }
@@ -604,6 +605,7 @@ export class WhatsAppAdapter extends BaseBotAdapter {
   private async handleStreamingMessage(
     waId: string,
     text: string,
+    messageId: string,
     attachments: BotFileData[] = [],
   ): Promise<void> {
     if (!text.trim() && attachments.length === 0) {
@@ -626,6 +628,7 @@ export class WhatsAppAdapter extends BaseBotAdapter {
           platformUserId: waId,
           channelId: waId,
           isDm: true,
+          platformMessageId: messageId,
           ...(attachments.length > 0
             ? {
                 fileIds: attachments.map((a) => a.fileId),
@@ -775,6 +778,7 @@ export class WhatsAppAdapter extends BaseBotAdapter {
         await this.handleStreamingMessage(
           waId,
           outcome.text,
+          messageId,
           outcome.attachments,
         );
       }
@@ -928,6 +932,40 @@ export class WhatsAppAdapter extends BaseBotAdapter {
         ...sanitizeErrorForLog(err),
       });
       await this.sendNotificationTemplate(destinationId, text);
+    }
+  }
+
+  protected override async deliverOutboundReaction(
+    destinationId: string,
+    reaction: OutboundReaction,
+    _isChannel: boolean,
+  ): Promise<void> {
+    // WhatsApp (Kapso) has no group/channel outbound model — destinationId is
+    // always a wa_id, same addressing as deliverOutbound.
+    try {
+      await this.whatsAppClient.messages.sendReaction({
+        phoneNumberId: this.whatsAppConfig.kapsoPhoneNumberId,
+        to: `+${destinationId}`,
+        reaction: {
+          messageId: reaction.target_platform_message_id,
+          emoji: reaction.emoji,
+        },
+      });
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "native" },
+      );
+    } catch (err) {
+      this.adapterLogger.warn("outbound_reaction_attach_failed", {
+        ...sanitizeErrorForLog(err),
+      });
+      await this.deliverOutbound(destinationId, reaction.emoji, _isChannel);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "fallback_text", reason: "attach_failed" },
+      );
     }
   }
 

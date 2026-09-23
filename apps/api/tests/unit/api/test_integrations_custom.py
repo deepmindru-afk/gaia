@@ -314,10 +314,7 @@ class TestPublishIntegration:
     @pytest.mark.asyncio
     async def test_happy_path(self, client: AsyncClient) -> None:
         with patch(f"{_CUSTOM}.publish_custom_integration", new_callable=AsyncMock) as mock_publish:
-            mock_publish.return_value = {
-                "integration_id": "i1",
-                "public_url": "/marketplace/my-tool",
-            }
+            mock_publish.return_value = "/marketplace/my-tool"
             resp = await client.post(f"{BASE}/i1/publish")
 
         assert resp.status_code == 200
@@ -373,7 +370,6 @@ class TestUnpublishIntegration:
         with patch(
             f"{_CUSTOM}.unpublish_custom_integration", new_callable=AsyncMock
         ) as mock_unpublish:
-            mock_unpublish.return_value = {"integration_id": "i1"}
             resp = await client.post(f"{BASE}/i1/unpublish")
 
         assert resp.status_code == 200

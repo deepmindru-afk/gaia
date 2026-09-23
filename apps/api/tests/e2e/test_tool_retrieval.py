@@ -273,11 +273,15 @@ class TestRetrievalContract:
             f"the correction never reached the model: {response!r}"
         )
 
-    async def test_asking_for_a_subagent_by_name_explains_how_to_reach_it(self):
-        """Subagents aren't bindable tools; retrieval must name the handoff route instead of returning an empty bind list."""
+    async def test_binding_a_subagent_name_is_rejected_and_sends_the_model_back_to_discovery(self):
+        """A subagent: entry is never bindable; echoing it back as bound would loop the model bind->reject."""
         async with executor_graph([retrieve("subagent:gmail"), "ok"]) as graph:
             run = await run_graph(graph, "check my mail")
 
         assert run.bound_tools() == []
-        response = " ".join(run.results_from(SELECT_NODE))
-        assert "handoff" in response, f"no route to the subagent was offered: {response!r}"
+        assert run.results_from(SELECT_NODE) == [
+            (
+                "Not found, nothing bound: subagent:gmail. Do not retry these names; "
+                "run retrieve_tools(query=...) to find what actually exists."
+            )
+        ]

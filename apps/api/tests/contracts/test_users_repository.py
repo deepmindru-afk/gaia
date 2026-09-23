@@ -657,6 +657,15 @@ class TestHilPreferenceWrites:
         assert got is not None
         assert got.hil_preferences == {"mode": "auto", "tool_overrides": {}}
 
+    async def test_never_auto_tools_is_written_beside_the_other_fields(self, repo, make_user):
+        user = await repo.create(make_user(hil_preferences={"mode": "auto"}))
+
+        await repo.set_hil_preference_fields(user.id, never_auto_tools=["send_email"])
+
+        got = await repo.get(user.id)
+        assert got is not None
+        assert got.hil_preferences == {"mode": "auto", "never_auto_tools": ["send_email"]}
+
     async def test_supplying_nothing_writes_nothing(self, repo, make_user):
         user = await repo.create(make_user(hil_preferences={"mode": "auto"}))
 

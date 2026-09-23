@@ -6,12 +6,14 @@ import math
 import time
 from typing import Any, TypedDict, TypeVar, cast
 
+import httpx
 from langchain_core.callbacks import BaseCallbackHandler, UsageMetadataCallbackHandler
 from langchain_core.language_models import LanguageModelInput, LanguageModelLike
 from langchain_core.language_models.chat_models import (
     BaseChatModel,
 )
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, InvalidToolCall, ToolCall
+from langchain_core.messages.ai import InputTokenDetails, OutputTokenDetails, UsageMetadata
 from langchain_core.outputs import LLMResult
 from langchain_core.runnables import (
     Runnable,
@@ -23,9 +25,10 @@ from langchain_core.runnables import (
 from langchain_core.runnables.utils import ConfigurableField
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_openrouter import ChatOpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
 
 from app.agents.llm.exceptions import (
     LLM_FALLBACK_EXCEPTIONS,
@@ -42,6 +45,7 @@ from app.constants.llm import (
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_NAME,
+    DEV_LLM_BROWSER_HEADERS,
     DEV_LLM_MAX_OUTPUT_TOKENS,
     HELPER_MAX_OUTPUT_TOKENS,
     LLM_INVOKE_TIMEOUT_SECONDS,
@@ -68,6 +72,7 @@ from app.constants.llm import (
 )
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider, providers
+from app.models.agent_config import AgentConfigurable
 from app.models.agent_models import agent_configurable
 from app.services.llm_metering import (
     LLMCallContext,
@@ -79,20 +84,32 @@ from app.services.llm_metering import (
     record_llm_call,
     resolve_channel,
 )
+from app.services.llm_usage_analytics import capture_auxiliary_llm_call
 from shared.py.wide_events import log
 
 _StructuredT = TypeVar("_StructuredT", bound=BaseModel)
 _ResultT = TypeVar("_ResultT")
+# The custom lane runs ChatOpenAI, every other lane ChatOpenRouter; both are
+# BaseChatModel. Identity-preserving so each caller keeps its concrete type.
+_LLMT = TypeVar("_LLMT", bound=BaseChatModel)
 
 
-def without_sdk_retry(llm: ChatOpenRouter) -> ChatOpenRouter:
-    """Leave retrying to :func:with_llm_retry.
+# NOSONAR justification: intentional pass-through -- normalizes retries in place and returns the same client for chaining
+def without_sdk_retry(llm: _LLMT) -> _LLMT:  # NOSONAR python:S3516
+    """Disable the SDK's own retry loop so with_llm_retry is the only one.
 
-    The SDK's own retry loop nests under ours and turned 3 attempts into 40
-    requests. max_retries=0 does NOT disable it — the SDK then applies a
-    one-hour default; only this does.
+    The SDK loop nests under ours and turned 3 attempts into 40 requests.
+    max_retries=0 does NOT disable it (the SDK then applies a one-hour
+    default); only clearing retry_config does.
     """
-    llm.client.sdk_configuration.retry_config = RetryConfig(
+    sdk_client = getattr(llm, "client", None)
+    sdk_config = getattr(sdk_client, "sdk_configuration", None)
+    if sdk_config is None:
+        # Not an OpenRouter-SDK client (e.g. ChatOpenAI on the custom lane):
+        # nothing SDK-side to disable, retries are already ours alone.
+        return llm
+    # Equivalent to a None retry_config, which the SDK also runs without retrying.
+    sdk_config.retry_config = RetryConfig(
         # Any strategy but "backoff" skips the retry path, so the (required)
         # backoff values below are never read.
         strategy="none",
@@ -100,7 +117,7 @@ def without_sdk_retry(llm: ChatOpenRouter) -> ChatOpenRouter:
             initial_interval=0, max_interval=0, exponent=1.0, max_elapsed_time=0
         ),
         retry_connection_errors=False,
-    )
+    )  # pragma: no mutate
     return llm
 
 
@@ -132,8 +149,13 @@ PROVIDER_PRIORITY: dict[int, LLMProviderName] = {
 }
 
 
+def _secret_or_none(api_key: str | None) -> SecretStr | None:
+    """Wrap an API key exactly as pydantic coerces one into a SecretStr | None field."""
+    return None if api_key is None else SecretStr(api_key)
+
+
 @cache
-def _sim_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
+def _sim_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Build the one model used for EVERYTHING under GAIA_SIM_MODE.
 
     An OpenAI-wire client pointed at the local scripted stub (tools/llm-stub).
@@ -259,7 +281,7 @@ def init_openrouter_llm() -> LanguageModelLike:
             # Output cap; must stay well under the model's shared input+output context
             # window (see OPENROUTER_MAX_OUTPUT_TOKENS) or OpenRouter rejects the request.
             max_tokens=OPENROUTER_MAX_OUTPUT_TOKENS,
-            api_key=settings.OPENROUTER_API_KEY,
+            api_key=_secret_or_none(settings.OPENROUTER_API_KEY),
             # App attribution → OpenRouter rankings/analytics. ChatOpenRouter exposes
             # these as dedicated params (NOT `default_headers`, which it forwards to
             # send_async and crashes on). https://openrouter.ai/docs/app-attribution
@@ -296,25 +318,39 @@ def init_custom_llm() -> LanguageModelLike:
     """
     if settings.GAIA_SIM_MODE:
         return _sim_llm()
-    return _openrouter_wire_configurables(_build_custom_llm())
+    # Only the model pin: the custom lane runs ChatOpenAI (no reasoning field to
+    # bind, binding keys omit reasoning/model_kwargs). model_name is the field id
+    # both ChatOpenAI and ChatOpenRouter expose (see _MODEL_FIELD).
+    return _build_custom_llm().configurable_fields(model_name=_MODEL_FIELD)
 
 
-def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
+def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
     """Build the bare custom-endpoint chat model, before the configurable wiring.
 
-    Split out because a structured one-shot needs the model itself:
-    with_structured_output lives on the chat model, not on the configurable
-    wrapper init_custom_llm hands back.
+    Split out because a structured one-shot needs the model itself, which the
+    configurable wrapper init_custom_llm hides. ChatOpenAI not ChatOpenRouter:
+    the openrouter SDK requires a system_fingerprint that OpenAI-compatible
+    lanes omit, failing every call; the openai SDK tolerates it.
     """
+    # ChatOpenAI takes the browser headers on its httpx clients directly
+    # (ChatOpenRouter's default_headers path crashes — see init_openrouter_llm).
     llm = without_sdk_retry(
-        ChatOpenRouter(
+        ChatOpenAI(
             model=PROVIDER_MODELS[LLMProviderName.CUSTOM],
             temperature=temperature,
             streaming=True,
             stream_usage=True,
-            max_tokens=DEV_LLM_MAX_OUTPUT_TOKENS,
-            api_key=settings.DEV_LLM_API_KEY,
+            # Field name is max_tokens, but ChatOpenAI aliases it to
+            # max_completion_tokens at construction; langchain still sends it as
+            # max_tokens on the wire (compatible with the OpenAI-style lanes).
+            max_completion_tokens=DEV_LLM_MAX_OUTPUT_TOKENS,
+            # Unlike the OpenRouter SDK (see without_sdk_retry), the OpenAI
+            # SDK honors max_retries=0, so retries stay solely with with_llm_retry.
+            max_retries=0,
+            api_key=_secret_or_none(settings.DEV_LLM_API_KEY),
             base_url=settings.DEV_LLM_BASE_URL,
+            http_client=httpx.Client(headers=DEV_LLM_BROWSER_HEADERS),
+            http_async_client=httpx.AsyncClient(headers=DEV_LLM_BROWSER_HEADERS),
         )
     )
     # Fractional-window middleware resolves the window from the model profile at
@@ -364,8 +400,8 @@ def init_llm(
 
     log.set(
         llm={
-            "model": PROVIDER_MODELS.get(primary_provider["name"], primary_provider["name"]),
-            "provider": primary_provider["name"],
+            "model": PROVIDER_MODELS.get(primary_provider.name, primary_provider.name),
+            "provider": primary_provider.name,
             "is_free": False,
         }
     )
@@ -449,16 +485,16 @@ def _create_configurable_llm(
     """Create a configurable LLM instance with fallback alternatives."""
     if not alternatives:
         # Return primary instance directly if no alternatives
-        return primary["instance"]
+        return primary.instance
 
     # Keyword-expanded below, so the keys must be plain str, not enum members.
-    alternatives_mapping = {str(alt["name"]): alt["instance"] for alt in alternatives}
+    alternatives_mapping = {str(alt.name): alt.instance for alt in alternatives}
 
-    primary_instance = primary["instance"]
+    primary_instance = primary.instance
 
     return primary_instance.configurable_alternatives(
         ConfigurableField(id="provider"),
-        default_key=primary["name"],
+        default_key=primary.name,
         prefix_keys=False,
         **alternatives_mapping,
     )
@@ -475,7 +511,7 @@ def register_llm_providers() -> None:
         init_custom_llm()
 
 
-def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
+def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Build the single factory for the default model (DEFAULT_MODEL_NAME, over OpenRouter).
 
     Used by EVERY auxiliary LLM task -- the paid model is reserved for the main chat
@@ -501,7 +537,7 @@ def _custom_lane_configured() -> bool:
 
 
 @cache
-def _build_custom_default_llm(temperature: float) -> BaseChatModel:
+def _build_custom_default_llm(temperature: float) -> ChatOpenRouter:
     """Return the auxiliary-task model served by the custom endpoint (DEV_LLM_*)."""
     llm = without_sdk_retry(
         ChatOpenRouter(
@@ -510,7 +546,7 @@ def _build_custom_default_llm(temperature: float) -> BaseChatModel:
             streaming=True,
             stream_usage=True,
             max_tokens=DEV_LLM_MAX_OUTPUT_TOKENS,
-            api_key=settings.DEV_LLM_API_KEY,
+            api_key=_secret_or_none(settings.DEV_LLM_API_KEY),
             base_url=settings.DEV_LLM_BASE_URL,
         )
     )
@@ -520,7 +556,30 @@ def _build_custom_default_llm(temperature: float) -> BaseChatModel:
     return llm
 
 
-def _provider_order_kwargs() -> dict[str, Any]:
+class _ProviderRouting(TypedDict):
+    """OpenRouter's provider-routing preference block."""
+
+    order: list[str]
+    allow_fallbacks: bool
+
+
+class _ProviderModelKwargs(TypedDict):
+    """The model_kwargs payload carrying the routing block."""
+
+    provider: _ProviderRouting
+
+
+class _ProviderOrderKwargs(TypedDict, total=False):
+    """Constructor kwargs for a routed client; empty when no order is configured.
+
+    model_kwargs is the shape ChatOpenRouter declares (dict[str, Any]); the
+    routing block it carries is _ProviderModelKwargs, built below.
+    """
+
+    model_kwargs: dict[str, Any]
+
+
+def _provider_order_kwargs() -> _ProviderOrderKwargs:
     """OpenRouter provider-routing preference, from OPENROUTER_PROVIDER_ORDER.
 
     allow_fallbacks=False binds the order, so OpenRouter raises for with_llm_retry rather than
@@ -533,11 +592,12 @@ def _provider_order_kwargs() -> dict[str, Any]:
     order = [slug.strip() for slug in raw.split(",") if slug.strip()]
     if not order:
         return {}
-    return {"model_kwargs": {"provider": {"order": order, "allow_fallbacks": False}}}
+    routing: _ProviderModelKwargs = {"provider": {"order": order, "allow_fallbacks": False}}
+    return {"model_kwargs": dict(routing)}
 
 
 @cache
-def _build_default_llm(temperature: float) -> BaseChatModel:
+def _build_default_llm(temperature: float) -> ChatOpenRouter:
     llm = without_sdk_retry(
         ChatOpenRouter(
             model=DEFAULT_MODEL_NAME,
@@ -547,7 +607,7 @@ def _build_default_llm(temperature: float) -> BaseChatModel:
             streaming=True,
             stream_usage=True,
             max_tokens=OPENROUTER_MAX_OUTPUT_TOKENS,
-            api_key=settings.OPENROUTER_API_KEY,
+            api_key=_secret_or_none(settings.OPENROUTER_API_KEY),
             **_app_attribution(),
             **_provider_order_kwargs(),
         )
@@ -559,7 +619,7 @@ def _build_default_llm(temperature: float) -> BaseChatModel:
     return llm
 
 
-def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
+def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Return get_default_llm capped to HELPER_MAX_OUTPUT_TOKENS.
 
     For one-shot helpers whose output is small. The graph-adjacent consumers
@@ -570,7 +630,7 @@ def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatM
     llm = get_default_llm(temperature=temperature)
     if settings.GAIA_SIM_MODE:
         return llm
-    return cast(BaseChatModel, llm.model_copy(update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS}))
+    return llm.model_copy(update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS})
 
 
 def get_vision_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
@@ -710,7 +770,8 @@ def _sticky_session_id(config: RunnableConfig | None, *, auxiliary: bool) -> str
     resolve through here, so a fallback cannot quietly drop the suffix and re-pin the
     conversation.
     """
-    session_id = agent_configurable(config).get("session_id")
+    configurable: AgentConfigurable = agent_configurable(config)
+    session_id = configurable.get("session_id")
     if not session_id:
         return None
     return f"{session_id}{AUX_SESSION_SUFFIX}" if auxiliary else str(session_id)
@@ -743,7 +804,7 @@ def _invoke_context(
     Shared by the auxiliary success path and the failure path so a call that
     fails is described the same way as one that succeeds.
     """
-    configurable = agent_configurable(config)
+    configurable: AgentConfigurable = agent_configurable(config)
     conversation_id = configurable.get("conversation_id")
     thread_id = configurable.get("thread_id")
     workflow_id = configurable.get("workflow_id")
@@ -788,6 +849,12 @@ class StructuredCallOptions:
     timeout: float | None = LLM_INVOKE_TIMEOUT_SECONDS
     #: None keeps the model's default; OpenRouter lane only (the Gemini fallback ignores it).
     reasoning: OpenRouterReasoning | None = None
+    # Model override for this one-shot only (None = the aux default). Rides
+    # model_kwargs like the provider order, not .bind (bind_tools drops it).
+    model_name: str | None = None
+    # OpenRouter `models`-array fallback, tried in order on transport errors —
+    # never on verdicts. Empty = no fallback.
+    fallback_model_names: tuple[str, ...] = ()
 
 
 _DEFAULT_STRUCTURED_OPTIONS = StructuredCallOptions()
@@ -818,7 +885,8 @@ async def ainvoke_llm(
     )
     usage_handler = UsageMetadataCallbackHandler() if opts.meter_auxiliary else None
     generation_handler = _GenerationIdCallback() if opts.meter_auxiliary else None
-    user_id = (config or {}).get("configurable", {}).get("user_id")
+    call_configurable: AgentConfigurable = agent_configurable(config)
+    user_id = call_configurable.get("user_id")
     # Wall time of the whole provider interaction, including retries and the
     # fallback attempt. Started before the timeout scope so a killed call still
     # reports how long it burned.
@@ -958,6 +1026,31 @@ def silent_metered_config(user_id: str) -> RunnableConfig:
     )
 
 
+class _TokenUsageOutput(TypedDict, total=False):
+    """The token_usage sub-dict of an LLMResult.llm_output, as OpenRouter fills it."""
+
+    cost: object
+
+
+class _LLMOutput(TypedDict, total=False):
+    """The provider-owned llm_output bag, limited to the keys this module reads.
+
+    total=False throughout: every key is absent on some lane (streaming leaves
+    token_usage on the message instead, and only OpenRouter reports a price).
+    """
+
+    id: object
+    cost: object
+    token_usage: _TokenUsageOutput
+
+
+class _GenerationInfo(TypedDict, total=False):
+    """The generation_info bag of one Generation, limited to the keys read here."""
+
+    id: object
+    finish_reason: object
+
+
 def _reported_cost(response: LLMResult) -> float | None:
     """Return what OpenRouter charged for this call, from whichever shape carries it.
 
@@ -965,15 +1058,15 @@ def _reported_cost(response: LLMResult) -> float | None:
     message's response_metadata. None means the lane reported no price and the
     caller falls back to the pricing table.
     """
-    llm_output = response.llm_output or {}
-    token_usage = llm_output.get("token_usage") or {}
+    llm_output: _LLMOutput = cast(_LLMOutput, response.llm_output or {})
+    token_usage: _TokenUsageOutput = llm_output.get("token_usage") or {}
     for candidate in (llm_output.get("cost"), token_usage.get("cost")):
         if candidate is not None:
             # A price that won't parse, is negative, or non-finite is skipped
             # rather than failing an already-succeeded call — the next shape
             # (then the table) answers instead.
             with suppress(TypeError, ValueError):
-                parsed = float(candidate)
+                parsed = float(cast(str | float, candidate))
                 if math.isfinite(parsed) and parsed >= 0.0:
                     return parsed
     for generations in response.generations:
@@ -1055,13 +1148,13 @@ class _GenerationIdCallback(BaseCallbackHandler):
             self._priced_attempts += 1
             self._cost_total += reported
         self._read_response_facts(response)
-        llm_output = response.llm_output or {}
+        llm_output: _LLMOutput = cast(_LLMOutput, response.llm_output or {})
         if llm_output.get("id"):
             self.generation_id = str(llm_output["id"])
             return
         for generations in response.generations or []:
             for generation in generations:
-                info = getattr(generation, "generation_info", None) or {}
+                info: _GenerationInfo = cast(_GenerationInfo, generation.generation_info or {})
                 if info.get("id"):
                     self.generation_id = str(info["id"])
                     return
@@ -1090,7 +1183,7 @@ class _GenerationIdCallback(BaseCallbackHandler):
                 # ``generation_info`` is where the NON-streaming path leaves the
                 # finish reason — it never reaches the message, so it wins as
                 # the more specific source.
-                info = generation.generation_info or {}
+                info: _GenerationInfo = cast(_GenerationInfo, generation.generation_info or {})
                 if info.get("finish_reason"):
                     self.finish_reason = str(info["finish_reason"])
 
@@ -1101,9 +1194,9 @@ def _with_call_label(config: RunnableConfig | None, label: str) -> RunnableConfi
     Never mutates the caller's object; TTFT callbacks attribute per-call
     samples by that label.
     """
-    merged: dict[str, Any] = dict(config) if config else {}
+    merged: RunnableConfig = cast(RunnableConfig, dict(config) if config else {})
     merged["metadata"] = {**(merged.get("metadata") or {}), LLM_LABEL_METADATA_KEY: label}
-    return cast(RunnableConfig, merged)
+    return merged
 
 
 def _with_usage_handler(
@@ -1117,7 +1210,7 @@ def _with_usage_handler(
     """
     if handler is None:
         return config if config is not None else RunnableConfig()
-    merged: dict[str, Any] = dict(config) if config else {}
+    merged: RunnableConfig = cast(RunnableConfig, dict(config) if config else {})
     existing = merged.get("callbacks")
     if existing is None:
         merged["callbacks"] = [handler]
@@ -1127,7 +1220,7 @@ def _with_usage_handler(
         manager = existing.copy()
         manager.add_handler(handler, inherit=True)
         merged["callbacks"] = manager
-    return cast(RunnableConfig, merged)
+    return merged
 
 
 async def _record_auxiliary_usage(
@@ -1154,14 +1247,15 @@ async def _record_auxiliary_usage(
     # Same rule for the upstream: a fan-out cannot say which model any one
     # provider served, and naming the wrong one is worse than naming none.
     booked_provider = facts.provider if attributable else None
-    for model_name, usage in handler.usage_metadata.items():
+    for model_name, model_usage in handler.usage_metadata.items():
+        usage: UsageMetadata = model_usage
         input_tokens = int(usage.get("input_tokens", 0) or 0)
         output_tokens = int(usage.get("output_tokens", 0) or 0)
         if not (input_tokens or output_tokens):
             continue
-        details = usage.get("input_token_details") or {}
+        details: InputTokenDetails = usage.get("input_token_details") or {}
         cached_tokens = int(details.get("cache_read", 0) or 0)
-        output_details = usage.get("output_token_details") or {}
+        output_details: OutputTokenDetails = usage.get("output_token_details") or {}
         reasoning_tokens = int(output_details.get("reasoning", 0) or 0)
 
         if user_id is None:
@@ -1212,6 +1306,47 @@ async def _record_auxiliary_usage(
             reasoning_tokens=reasoning_tokens,
             cost_usd=cost,
         )
+        capture_auxiliary_llm_call(
+            user_id=user_id,
+            label=label,
+            model_name=model_name,
+            usage=TokenUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_tokens=cached_tokens,
+                reasoning_tokens=reasoning_tokens,
+            ),
+            cost_usd=cost,
+        )
+
+
+class _OpenAIFunctionSpec(BaseModel):
+    """The function block of an OpenAI tool spec, read for the name the model calls."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+
+
+class _OpenAIToolSpec(BaseModel):
+    """An OpenAI tool spec as convert_to_openai_tool builds it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    function: _OpenAIFunctionSpec
+
+
+class _ReplyMetadata(BaseModel):
+    """A reply's response_metadata, read for why generation stopped."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    finish_reason: str | None = None
+
+
+def _structured_tool_name(schema: type[BaseModel]) -> str:
+    """Return the tool name a structured schema is offered to the model under."""
+    return _OpenAIToolSpec.model_validate(convert_to_openai_tool(schema)).function.name
 
 
 def _parse_structured_reply(message: BaseMessage, schema: type[_StructuredT]) -> _StructuredT:
@@ -1220,26 +1355,29 @@ def _parse_structured_reply(message: BaseMessage, schema: type[_StructuredT]) ->
     Needs an unstreamed reply: its arguments went through json.loads, while a
     streamed one went through partial-JSON repair, which keeps whatever prefix parses.
     """
-    name = convert_to_openai_tool(schema)["function"]["name"]
+    name = _structured_tool_name(schema)
     if not isinstance(message, AIMessage):
         raise MalformedStructuredOutputError(
             f"{name}: expected an AI reply, got {type(message).__name__}"
         )
-    if message.response_metadata.get("finish_reason") == "length":
+    if _ReplyMetadata.model_validate(message.response_metadata).finish_reason == "length":
         raise MalformedStructuredOutputError(f"{name}: reply stopped at the output cap")
     if message.invalid_tool_calls:
-        raw = str(message.invalid_tool_calls[0].get("args"))
+        invalid: InvalidToolCall = message.invalid_tool_calls[0]
+        raw = str(invalid.get("args"))
         raise MalformedStructuredOutputError(
             f"{name}: tool-call arguments are not valid JSON: {raw[:300]!r}", llm_output=raw
         )
-    calls = [call for call in message.tool_calls if call["name"] == name]
+    tool_calls: list[ToolCall] = message.tool_calls
+    calls = [call for call in tool_calls if call["name"] == name]
     if not calls:
         raise MalformedStructuredOutputError(
             f"{name}: reply made no {name} tool call (content: {str(message.content)[:200]!r})",
             llm_output=str(message.content),
         )
     try:
-        return schema.model_validate(calls[0]["args"])
+        chosen: ToolCall = calls[0]
+        return schema.model_validate(chosen["args"])
     except ValidationError as error:
         raise MalformedStructuredOutputError(
             f"{name}: tool-call arguments do not fit the schema: {error}"
@@ -1268,7 +1406,8 @@ def _structured_tool_runnable(llm: BaseChatModel, schema: type[_StructuredT]) ->
         },
     )
     return bound | RunnableLambda(
-        lambda message: _parse_structured_reply(message, schema), name=tool["function"]["name"]
+        lambda message: _parse_structured_reply(message, schema),
+        name=_structured_tool_name(schema),
     )
 
 
@@ -1276,23 +1415,32 @@ def _aux_structured_runnable(
     schema: type[_StructuredT],
     temperature: float,
     config: RunnableConfig | None,
+    *,
     reasoning: OpenRouterReasoning | None = None,
+    model_name: str | None = None,
+    fallback_model_names: tuple[str, ...] = (),
 ) -> Runnable:
     """Build the structured runnable every auxiliary one-shot runs on.
 
-    The helper LLM re-pointed at :data:AUX_MODEL_NAME, with the aux
-    sticky-routing session.
+    The helper LLM re-pointed at model_name (default AUX_MODEL_NAME), with the
+    aux sticky-routing session. fallback_model_names rides the OpenRouter models
+    array: same primary first, tried in order on rate limits/downtime — verdicts
+    never trigger it.
     """
     # The alias must be set via model_copy, NOT .bind(model=...):
     # bind_tools rebuilds the binding, which drops a bound alias — every aux
     # call then served DEFAULT_MODEL_NAME (measured).
-    update: dict[str, object] = {"model_name": AUX_MODEL_NAME}
+    resolved = model_name or AUX_MODEL_NAME
+    base = get_helper_llm(temperature=temperature)
+    update: dict[str, object] = {"model_name": resolved}
     if reasoning is not None:
         update["reasoning"] = dict(reasoning)
-    structured = _structured_tool_runnable(
-        get_helper_llm(temperature=temperature).model_copy(update=update),
-        schema,
-    )
+    if fallback_model_names:
+        update["model_kwargs"] = {
+            **(base.model_kwargs or {}),
+            "models": [resolved, *fallback_model_names],
+        }
+    structured = _structured_tool_runnable(base.model_copy(update=update), schema)
     # Bound AFTER bind_tools (which drops outer bindings). Aux
     # one-shots get their OWN suffixed sticky session — sharing the
     # conversation's session_id re-pinned its provider (measured: rotation dips).
@@ -1348,7 +1496,12 @@ async def ainvoke_structured(
         _StructuredT,
         await ainvoke_llm(
             _aux_structured_runnable(
-                schema, options.temperature, config, reasoning=options.reasoning
+                schema,
+                options.temperature,
+                config,
+                reasoning=options.reasoning,
+                model_name=options.model_name,
+                fallback_model_names=options.fallback_model_names,
             ),
             prompt,
             config=config,

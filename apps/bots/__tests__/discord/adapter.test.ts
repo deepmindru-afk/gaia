@@ -1306,3 +1306,89 @@ describe("DiscordAdapter - client errors", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// deliverOutboundReaction — native attach with text fallback
+// ---------------------------------------------------------------------------
+
+describe("DiscordAdapter - deliverOutboundReaction", () => {
+  type Reactor = {
+    deliverOutboundReaction: (
+      destinationId: string,
+      reaction: { target_platform_message_id: string; emoji: string },
+      isChannel: boolean,
+    ) => Promise<void>;
+    analytics: { capture: (...args: unknown[]) => void };
+    client: unknown;
+  };
+
+  function makeReactor(channel: unknown, user: unknown) {
+    const adapter = new DiscordAdapter() as unknown as Reactor;
+    adapter.analytics = { capture: vi.fn() };
+    adapter.client = {
+      channels: { fetch: vi.fn().mockResolvedValue(channel) },
+      users: { fetch: vi.fn().mockResolvedValue(user) },
+    };
+    return adapter;
+  }
+
+  it("reacts to the target message in a channel", async () => {
+    const react = vi.fn().mockResolvedValue(undefined);
+    const adapter = makeReactor(
+      {
+        isTextBased: () => true,
+        messages: { fetch: vi.fn().mockResolvedValue({ react }) },
+      },
+      {},
+    );
+
+    await adapter.deliverOutboundReaction(
+      "chan-1",
+      { target_platform_message_id: "msg-7", emoji: "👍" },
+      true,
+    );
+
+    expect(react).toHaveBeenCalledWith("👍");
+  });
+
+  it("reacts via the user's DM channel when not a channel", async () => {
+    const react = vi.fn().mockResolvedValue(undefined);
+    const dmChannel = {
+      isTextBased: () => true,
+      messages: { fetch: vi.fn().mockResolvedValue({ react }) },
+    };
+    const adapter = makeReactor(null, {
+      createDM: vi.fn().mockResolvedValue(dmChannel),
+    });
+
+    await adapter.deliverOutboundReaction(
+      "user-1",
+      { target_platform_message_id: "msg-7", emoji: "👍" },
+      false,
+    );
+
+    expect(react).toHaveBeenCalledWith("👍");
+  });
+
+  it("falls back to a text send when the target cannot be fetched", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const adapter = makeReactor(
+      {
+        isTextBased: () => true,
+        messages: {
+          fetch: vi.fn().mockRejectedValue(new Error("Unknown Message")),
+        },
+        send,
+      },
+      {},
+    );
+
+    await adapter.deliverOutboundReaction(
+      "chan-1",
+      { target_platform_message_id: "msg-7", emoji: "👍" },
+      true,
+    );
+
+    expect(send).toHaveBeenCalledWith("👍");
+  });
+});

@@ -63,7 +63,7 @@ behavior belongs in `test:real`, not in the default run.
   `git cat-file -e origin/master:<path>` before reaching for the mark.
 - **Hermetic paths**: never hardcode `~` or absolute paths — the `_hermetic_environment` fence owns env (it blanks real credentials at session start); any env a test needs is provisioned by fixtures, not read from the developer's machine.
 - **Fixtures catalog** — search before you build:
-  - `tests/conftest.py` — env fence, `client` / `unauthed_client` (ASGITransport), `fake_user` / `fake_user_2`
+  - `tests/conftest.py` — env fence, `client` / `unauthed_client` (ASGITransport), `fake_user` / `fake_user_2`, `fake_redis` (per-test fakeredis behind `redis_cache`; any tier whose code path touches Redis without a real-services fixture)
   - `tests/helpers.py` — `create_fake_llm`, `create_fake_llm_with_tool_calls`, auth middlewares, `worker_redis_url` / `worker_mongo_db_name`
   - `tests/factories.py` — `make_user`, `make_conversation`, `make_state`, `make_config`
   - `tests/unit/conftest.py` — `mock_mongodb`, `mock_redis`

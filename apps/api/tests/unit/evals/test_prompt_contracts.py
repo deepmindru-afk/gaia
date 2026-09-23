@@ -200,6 +200,17 @@ def test_a_line_clause_is_exactly_one_line() -> None:
     assert "never before the user has used one first" in text
 
 
+def test_the_bubble_clause_stops_at_the_end_of_the_bubble_section() -> None:
+    """Bubble evals are judged against this span, so the next sections' doctrine must stay out."""
+    text = resolve("comms.bubble_splitting")
+
+    assert text.startswith("## Chat Bubbles")
+    assert "ONE RULE: conversational beats become separate bubbles" in text
+    assert "## Rich UI Components" not in text
+    assert ":::openui" not in text
+    assert "## Actions (call_executor)" not in text
+
+
 def test_clause_helper_matches_resolve() -> None:
     assert clause("comms", "tone_mirroring") == resolve(TONE_REF)
 

@@ -123,6 +123,7 @@ postman/
 .agents/prod-convos/
 .agents/recording/
 .agents/sim/
+.agents/scratch/
 
 # whatsapp-web.js
 .wwebjs_auth/

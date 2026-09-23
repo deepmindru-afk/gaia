@@ -39,16 +39,33 @@ EXECUTOR_APPROVAL_LOST_MESSAGE = (
     "I couldn't set up the approval for that action, so I've stopped. Please try again."
 )
 
-# Task text for the wake-up turn queued when background-subagent work lands
-# after the executor rested. SubagentJoinMiddleware backstops it if the model
-# tries to end without collecting.
-EXECUTOR_COLLECTION_TASK = (
-    "Background subagent work has finished or is waiting for the user's approval. "
-    "Call wait_for_subagents() to collect the outcomes, then report them to the user."
+# User-facing text when comms narration of a finished run is unavailable. The
+# executor's own terminal text is never substituted: it is internal monologue,
+# and on the error path can be a raw exception string.
+EXECUTOR_NARRATION_FAILED_MESSAGE = (
+    "I finished that task, but I couldn't write up the result. Please ask me again."
+)
+EXECUTOR_NARRATION_FAILED_ERROR_MESSAGE = (
+    "That task didn't finish, and I couldn't write up what went wrong. Please try again."
 )
 
-# Dedup marker: at most one queued collection turn per conversation at a time.
-# Set when a collection run is enqueued; cleared when a join actually runs. TTL
-# is crash insurance so a lost run can't suppress wake-ups forever.
-EXECUTOR_COLLECT_MARKER_PREFIX = "executor:collect_queued:"
-EXECUTOR_COLLECT_MARKER_TTL = 600
+# Seed task for a run started for inbox work no live run will absorb (late work, a
+# subagent landing on a rested executor). The entries arrive through the drain hook;
+# this only has to get the run to its first model call.
+EXECUTOR_CARRY_TASK = (
+    "New work arrived in this conversation after your previous turn ended. Read it and act on it."
+)
+
+
+# Stamped onto an injected inbox message so a later drain pass recognises it as
+# already committed to the thread — the drain's whole basis of idempotency: the
+# thread is the record of what was delivered, so no cursor is kept in sync.
+INBOX_ENTRY_ID = "inbox_entry_id"
+
+# What a stopped run tells the run that follows it. Carries no instruction of its
+# own, which is why it never counts as work (see ``ExecutorInbox.announce_interruption``).
+INTERRUPTION_NOTICE = (
+    "The task you were working on was INTERRUPTED by the user. Do not "
+    "resume it, retry it, or finish what it left half-done unless the "
+    "user asks for it again."
+)

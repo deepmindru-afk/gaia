@@ -14,23 +14,33 @@ The bridge is what the user actually sees, and what stops them being asked twice
 """
 
 import asyncio
+from collections.abc import Iterator
 import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.constants.hil import HIL_SUMMARY_MAX_ARG_CHARS, HIL_SUMMARY_MAX_ARGS
+from app.constants.hil import (
+    APPROVAL_REQUEST_TOOL_NAME,
+    HIL_SUMMARY_MAX_ARG_CHARS,
+    HIL_SUMMARY_MAX_ARGS,
+)
 from app.constants.log_tags import LogTag
-from app.models.hil_models import HILApprovalStatus
+from app.models.hil_models import ApprovalLedgerDocument, HILApprovalStatus, LedgerState
+from app.services.analytics_service import AnalyticsEvents
 from app.services.hil.bridge import (
     ApprovalOutcome,
     GatedApproval,
     build_summary,
+    flush_held_approval_cards,
     publish_approval_request,
     publish_decision,
+    publish_ledger_request,
     recall_declined_call,
     remember_declined_call,
+    settle_session_approval_frame,
+    sync_conversation_approval_flag,
 )
 from app.services.hil.utils import GatedCall
 from app.utils.general_utils import ELLIPSIS
@@ -400,6 +410,27 @@ class TestDeclineMemory:
             await recall_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"}) is None
         )
 
+    async def test_an_auto_refusal_round_trips_its_provenance(self) -> None:
+        # The retry message differs ("auto declined" vs "the user declined"), so
+        # the provenance must survive the Redis round trip.
+        await remember_declined_call(
+            STREAM_ID, "send_email", {"to": "bob@example.com"}, "stop spamming", auto=True
+        )
+
+        outcome = await recall_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"})
+
+        assert outcome is not None
+        assert outcome.auto is True
+        assert outcome.feedback == "stop spamming"
+
+    async def test_a_user_decline_still_reads_as_user_made(self) -> None:
+        await remember_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"}, "no")
+
+        outcome = await recall_declined_call(STREAM_ID, "send_email", {"to": "bob@example.com"})
+
+        assert outcome is not None
+        assert outcome.auto is False
+
     async def test_unserializable_arguments_do_not_crash_the_gate(self) -> None:
         # Tool args come from an LLM and are only loosely typed. A key derivation that
         # raises here would fail the gate closed on every call carrying an odd value.
@@ -578,3 +609,500 @@ class TestBrowserTaskSummary:
 
         assert summary == f"Start a browser task{SEPARATOR}{'y' * 140}"
         assert ELLIPSIS not in summary
+
+
+class TestCardShownEvent:
+    async def test_register_emits_card_shown_with_user_id(self, bridge: dict) -> None:
+        """The funnel's first event must attribute to the row's user — the bridge carries no request context, so an inferred id is unavailable and an anonymous capture would strand it."""
+        with patch(f"{MODULE}.capture_event") as capture:
+            await publish_ledger_request(
+                GatedApproval(
+                    approval_id="ap_1",
+                    stream_id=STREAM_ID,
+                    user_id=USER_ID,
+                    conversation_id=CONVERSATION_ID,
+                    tool_call=TOOL_CALL,
+                    summary="Send it",
+                    integration_name="Gmail",
+                ),
+            )
+
+        capture.assert_called_once_with(
+            USER_ID,
+            AnalyticsEvents.HIL_CARD_SHOWN,
+            {
+                "approval_id": "ap_1",
+                "tool_name": "send_email",
+                "ledger_version": 0,
+                "background": False,
+            },
+        )
+
+    async def test_background_register_marks_background(self, bridge: dict) -> None:
+        with patch(f"{MODULE}.capture_event") as capture:
+            await publish_ledger_request(
+                GatedApproval(
+                    approval_id="ap_1",
+                    stream_id=STREAM_ID,
+                    user_id=USER_ID,
+                    conversation_id=CONVERSATION_ID,
+                    tool_call=TOOL_CALL,
+                    summary="Send it",
+                    integration_name="Gmail",
+                ),
+                live=False,
+            )
+
+        assert capture.call_args.args[2]["background"] is True
+
+
+class TestBackgroundFlagSync:
+    async def test_publish_with_owner_marks_the_conversation(self, bridge: dict) -> None:
+        with (
+            patch(f"{MODULE}.capture_event"),
+            patch(
+                f"{MODULE}.conversation_repository.mark_background_with_live_approval",
+                new=AsyncMock(return_value=True),
+            ) as mark,
+        ):
+            await publish_ledger_request(
+                GatedApproval(
+                    approval_id="ap_1",
+                    stream_id=STREAM_ID,
+                    user_id=USER_ID,
+                    conversation_id=CONVERSATION_ID,
+                    tool_call=TOOL_CALL,
+                    summary="Send it",
+                    integration_name="Gmail",
+                ),
+                owner_run_type="todo",
+                owner_id="todo-9",
+            )
+
+        mark.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID)
+
+    async def test_publish_without_owner_touches_no_flag(self, bridge: dict) -> None:
+        with (
+            patch(f"{MODULE}.capture_event"),
+            patch(
+                f"{MODULE}.conversation_repository.mark_background_with_live_approval",
+                new=AsyncMock(),
+            ) as mark,
+        ):
+            await publish_ledger_request(
+                GatedApproval(
+                    approval_id="ap_1",
+                    stream_id=STREAM_ID,
+                    user_id=USER_ID,
+                    conversation_id=CONVERSATION_ID,
+                    tool_call=TOOL_CALL,
+                    summary="Send it",
+                    integration_name="Gmail",
+                ),
+            )
+
+        mark.assert_not_called()
+
+    async def test_sync_sets_flag_from_live_rows(self) -> None:
+        from app.models.hil_models import LedgerState
+        from app.services.hil.bridge import sync_conversation_approval_flag
+
+        live = MagicMock()
+        live.user_id = USER_ID
+        live.state = LedgerState.PENDING
+        dead = MagicMock()
+        dead.user_id = USER_ID
+        dead.state = LedgerState.DENIED
+        foreign = MagicMock()
+        foreign.user_id = "someone-else"
+        foreign.state = LedgerState.PENDING
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(return_value=[live, dead, foreign]),
+            ),
+            patch(
+                f"{MODULE}.conversation_repository.refresh_live_approval_flag",
+                new=AsyncMock(),
+            ) as refresh,
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+        refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=True)
+
+    async def test_sync_clears_flag_when_nothing_live(self) -> None:
+        from app.services.hil.bridge import sync_conversation_approval_flag
+
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                f"{MODULE}.conversation_repository.refresh_live_approval_flag",
+                new=AsyncMock(),
+            ) as refresh,
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+        refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=False)
+
+    async def test_approved_ticket_keeps_no_sidebar_row(self) -> None:
+        """Decided means nothing left to tap: the sidebar flag is PENDING-only."""
+        from app.models.hil_models import LedgerState
+        from app.services.hil.bridge import sync_conversation_approval_flag
+
+        approved = MagicMock()
+        approved.user_id = USER_ID
+        approved.state = LedgerState.APPROVED
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(return_value=[approved]),
+            ),
+            patch(
+                f"{MODULE}.conversation_repository.refresh_live_approval_flag",
+                new=AsyncMock(),
+            ) as refresh,
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+        refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=False)
+
+    async def test_sync_failure_never_breaks_the_gate(self) -> None:
+        from app.services.hil.bridge import sync_conversation_approval_flag
+
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(side_effect=RuntimeError("mongo down")),
+            ),
+            patch(f"{MODULE}.log"),
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+
+async def publish_ledger(**overrides: Any) -> None:
+    approval = GatedApproval(
+        approval_id="ap_1",
+        stream_id=STREAM_ID,
+        user_id=USER_ID,
+        conversation_id=CONVERSATION_ID,
+        tool_call=TOOL_CALL,
+        summary="Send it",
+        integration_name="Gmail",
+    )
+    kwargs: dict[str, Any] = {"live": False}
+    with patch(f"{MODULE}.capture_event"):
+        await publish_ledger_request(approval, **{**kwargs, **overrides})
+    await asyncio.sleep(0)  # let the fire-and-forget notify task start
+
+
+class TestLedgerCardPublish:
+    async def test_the_ledger_card_carries_the_why_and_a_fresh_version(self, bridge: dict) -> None:
+        await publish_ledger(rationale="user asked to send it", auto_reason="judge said ask")
+
+        bridge["stream"].publish_chunk.assert_awaited_once()
+        assert bridge["stream"].publish_chunk.await_args.args[0] == STREAM_ID
+        data = published_frame(bridge)["data"]
+        assert data["integration_name"] == "Gmail"
+        assert data["rationale"] == "user asked to send it"
+        assert data["auto_reason"] == "judge said ask"
+        assert data["age_seconds"] == 0
+        assert data["ledger_version"] == 0
+
+    async def test_an_unheld_card_wakes_the_user_about_the_right_approval(
+        self, bridge: dict
+    ) -> None:
+        await publish_ledger()
+
+        bridge["notify"].assert_awaited_once_with(USER_ID, CONVERSATION_ID, "ap_1", "Send it")
+
+    async def test_the_wide_event_names_the_approval_tool_and_stream(self, bridge: dict) -> None:
+        await publish_ledger()
+
+        bridge["log"].set.assert_any_call(
+            hil={"approval_id": "ap_1", "tool": "send_email", "stream_id": STREAM_ID}
+        )
+
+    @pytest.mark.parametrize(
+        "owner", [{"owner_run_type": "todo"}, {"owner_id": "todo-9"}], ids=["type", "id"]
+    )
+    async def test_half_an_owner_never_marks_the_conversation(
+        self, bridge: dict, owner: dict[str, str]
+    ) -> None:
+        bridge["conversations"].mark_background_with_live_approval = AsyncMock()
+
+        await publish_ledger(**owner)
+
+        bridge["conversations"].mark_background_with_live_approval.assert_not_awaited()
+
+
+class TestApprovalFlagSyncScope:
+    async def test_only_the_users_own_pending_rows_raise_the_flag(self) -> None:
+        foreign = ApprovalLedgerDocument(
+            approval_id="ap_x",
+            conversation_id=CONVERSATION_ID,
+            user_id="someone-else",
+            fingerprint="fp",
+            tool_name="send_email",
+        )
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(return_value=[foreign]),
+            ) as list_open,
+            patch(
+                f"{MODULE}.conversation_repository.refresh_live_approval_flag", new=AsyncMock()
+            ) as refresh,
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+        list_open.assert_awaited_once_with(CONVERSATION_ID)
+        refresh.assert_awaited_once_with(CONVERSATION_ID, user_id=USER_ID, live=False)
+
+    async def test_a_failed_sync_is_reported_on_the_wide_event(self) -> None:
+        with (
+            patch(
+                f"{MODULE}.approval_ledger_repository.list_open",
+                new=AsyncMock(side_effect=RuntimeError("mongo down")),
+            ),
+            patch(f"{MODULE}.log") as log,
+        ):
+            await sync_conversation_approval_flag(CONVERSATION_ID, USER_ID)
+
+        log.warning.assert_called_once()
+        assert "approval-flag sync failed" in log.warning.call_args.args[0]
+        assert log.warning.call_args.kwargs == {
+            "conversation_id": CONVERSATION_ID,
+            "error": "mongo down",
+            "error_type": "RuntimeError",
+        }
+
+
+class TestDeclineMemoryLegacyRecord:
+    async def test_a_record_without_provenance_reads_as_the_users_own_decline(self) -> None:
+        with patch(f"{MODULE}.redis_cache") as cache:
+            cache.redis = MagicMock()
+            cache.get = AsyncMock(return_value={"feedback": "no"})
+
+            outcome = await recall_declined_call(STREAM_ID, "send_email", {"to": "bob"})
+
+        assert outcome is not None
+        assert outcome.auto is False
+        assert outcome.feedback == "no"
+
+
+def _card_frame(approval_id: str, *, held: bool = False, **data: object) -> dict[str, object]:
+    frame: dict[str, object] = {
+        "tool_data": {
+            "tool_name": APPROVAL_REQUEST_TOOL_NAME,
+            "data": {"approval_id": approval_id, "status": "pending", **data},
+        }
+    }
+    if held:
+        frame["_held_approval"] = True
+    return frame
+
+
+def _ledger_row(
+    approval_id: str, state: LedgerState = LedgerState.PENDING
+) -> ApprovalLedgerDocument:
+    return ApprovalLedgerDocument(
+        approval_id=approval_id,
+        conversation_id=CONVERSATION_ID,
+        user_id=USER_ID,
+        fingerprint=f"fp-{approval_id}",
+        tool_name="send_email",
+        summary=f"summary {approval_id}",
+        state=state,
+    )
+
+
+class TestSettleSessionApprovalFrame:
+    """Settling flips the matching card in place and leaves every other frame exactly as it was."""
+
+    def test_only_the_matching_card_is_settled_and_nothing_else_moves(self, bridge: dict) -> None:
+        other_event = {"text": "hello"}
+        other_tool = {"tool_data": {"tool_name": "web_search", "data": {"q": "x"}}}
+        dataless_card = {"tool_data": {"tool_name": APPROVAL_REQUEST_TOOL_NAME}}
+        other_card = _card_frame("ap_other")
+        target = _card_frame("ap_1", held=True)
+        events: list[object] = [other_event, other_tool, dataless_card, other_card, target]
+        bridge["session"].tool_events = events
+
+        settled = settle_session_approval_frame(STREAM_ID, "ap_1", "denied", "wrong person")
+
+        assert settled is True
+        assert bridge["session"].tool_events == [
+            {"text": "hello"},
+            {"tool_data": {"tool_name": "web_search", "data": {"q": "x"}}},
+            {"tool_data": {"tool_name": APPROVAL_REQUEST_TOOL_NAME}},
+            _card_frame("ap_other"),
+            _card_frame("ap_1", held=True, status="denied", feedback="wrong person"),
+        ]
+
+    def test_settling_without_feedback_adds_no_feedback(self, bridge: dict) -> None:
+        bridge["session"].tool_events = [_card_frame("ap_1")]
+
+        assert settle_session_approval_frame(STREAM_ID, "ap_1", "approved") is True
+
+        assert bridge["session"].tool_events == [
+            {
+                "tool_data": {
+                    "tool_name": APPROVAL_REQUEST_TOOL_NAME,
+                    "data": {"approval_id": "ap_1", "status": "approved"},
+                }
+            }
+        ]
+
+    def test_drop_if_unpublished_removes_a_held_card_but_settles_a_shown_one(
+        self, bridge: dict
+    ) -> None:
+        bridge["session"].tool_events = [_card_frame("ap_1", held=True), _card_frame("ap_2")]
+
+        dropped = settle_session_approval_frame(
+            STREAM_ID, "ap_1", "revoked", drop_if_unpublished=True
+        )
+        settled = settle_session_approval_frame(
+            STREAM_ID, "ap_2", "revoked", drop_if_unpublished=True
+        )
+
+        assert (dropped, settled) == (True, True)
+        assert bridge["session"].tool_events == [_card_frame("ap_2", status="revoked")]
+
+    def test_no_matching_card_settles_nothing(self, bridge: dict) -> None:
+        bridge["session"].tool_events = [_card_frame("ap_other")]
+
+        assert settle_session_approval_frame(STREAM_ID, "ap_1", "approved") is False
+        assert bridge["session"].tool_events == [_card_frame("ap_other")]
+
+    def test_no_session_settles_nothing(self, bridge: dict) -> None:
+        bridge["get_session"].return_value = None
+
+        assert settle_session_approval_frame(STREAM_ID, "ap_1", "approved") is False
+
+    def test_a_settle_failure_is_reported_and_reads_as_unsettled(self, bridge: dict) -> None:
+        bridge["get_session"].side_effect = RuntimeError("session store gone")
+
+        assert settle_session_approval_frame(STREAM_ID, "ap_1", "approved") is False
+        bridge["log"].warning.assert_called_once()
+        assert "Approval frame settle failed" in bridge["log"].warning.call_args.args[0]
+        assert bridge["log"].warning.call_args.kwargs == {
+            "approval_id": "ap_1",
+            "error_type": "RuntimeError",
+        }
+
+
+class TestFlushHeldApprovalCardsDelivery:
+    """Run end publishes every still-live held card, keeps the rest of the session intact."""
+
+    @pytest.fixture
+    def rows(self) -> Iterator[dict[str, ApprovalLedgerDocument]]:
+        found: dict[str, ApprovalLedgerDocument] = {}
+
+        async def _get(approval_id: str) -> ApprovalLedgerDocument | None:
+            return found.get(approval_id)
+
+        with patch(
+            f"{MODULE}.approval_ledger_repository.get_by_approval_id",
+            new=AsyncMock(side_effect=_get),
+        ):
+            yield found
+
+    def published(self, bridge: dict) -> list[tuple[str, dict[str, Any]]]:
+        out = []
+        for call in bridge["stream"].publish_chunk.await_args_list:
+            stream_id, raw = call.args
+            assert raw.startswith("data: ") and raw.endswith("\n\n")
+            out.append((stream_id, json.loads(raw[len("data: ") :])))
+        return out
+
+    async def test_every_live_held_card_is_published_and_unmarked(
+        self, bridge: dict, rows: dict[str, ApprovalLedgerDocument]
+    ) -> None:
+        rows["ap_1"] = _ledger_row("ap_1")
+        rows["ap_2"] = _ledger_row("ap_2", LedgerState.APPROVED)
+        rows["ap_gone"] = _ledger_row("ap_gone", LedgerState.REVOKED)
+        bridge["session"].tool_events = [
+            "not-a-frame",
+            {"text": "hello"},
+            _card_frame("ap_gone", held=True),
+            _card_frame("ap_1", held=True),
+            _card_frame("ap_2", held=True),
+        ]
+
+        flushed = await flush_held_approval_cards(STREAM_ID)
+        await asyncio.sleep(0)
+
+        assert flushed == 2
+        card_1 = {"tool_data": _card_frame("ap_1")["tool_data"]}
+        card_2 = {"tool_data": _card_frame("ap_2")["tool_data"]}
+        assert self.published(bridge) == [(STREAM_ID, card_1), (STREAM_ID, card_2)]
+        assert bridge["session"].tool_events == ["not-a-frame", {"text": "hello"}, card_1, card_2]
+        assert [c.args for c in bridge["notify"].await_args_list] == [
+            (USER_ID, CONVERSATION_ID, "ap_1", "summary ap_1"),
+            (USER_ID, CONVERSATION_ID, "ap_2", "summary ap_2"),
+        ]
+
+    async def test_an_unreadable_row_keeps_its_card_held_is_reported_and_the_rest_still_flush(
+        self, bridge: dict
+    ) -> None:
+        async def _get(approval_id: str) -> ApprovalLedgerDocument:
+            if approval_id == "ap_1":
+                raise RuntimeError("mongo down")
+            return _ledger_row(approval_id)
+
+        bridge["session"].tool_events = [
+            _card_frame("ap_1", held=True),
+            _card_frame("ap_2", held=True),
+        ]
+
+        with patch(
+            f"{MODULE}.approval_ledger_repository.get_by_approval_id",
+            new=AsyncMock(side_effect=_get),
+        ):
+            assert await flush_held_approval_cards(STREAM_ID) == 1
+
+        assert bridge["session"].tool_events == [
+            _card_frame("ap_1", held=True),
+            {"tool_data": _card_frame("ap_2")["tool_data"]},
+        ]
+        bridge["log"].error.assert_called_once()
+        assert "Held card ledger read failed" in bridge["log"].error.call_args.args[0]
+        assert bridge["log"].error.call_args.kwargs == {
+            "approval_id": "ap_1",
+            "error_type": "RuntimeError",
+        }
+
+    async def test_a_missed_publish_keeps_its_card_held_and_the_rest_still_flush(
+        self, bridge: dict, rows: dict[str, ApprovalLedgerDocument]
+    ) -> None:
+        rows["ap_1"] = _ledger_row("ap_1")
+        rows["ap_2"] = _ledger_row("ap_2")
+        bridge["session"].tool_events = [
+            _card_frame("ap_1", held=True),
+            _card_frame("ap_2", held=True),
+        ]
+        bridge["stream"].publish_chunk.side_effect = [RuntimeError("redis down"), None]
+
+        assert await flush_held_approval_cards(STREAM_ID) == 1
+
+        assert bridge["session"].tool_events == [
+            _card_frame("ap_1", held=True),
+            {"tool_data": _card_frame("ap_2")["tool_data"]},
+        ]
+        bridge["log"].warning.assert_called_once()
+        assert "Held card flush missed its stream" in bridge["log"].warning.call_args.args[0]
+        assert bridge["log"].warning.call_args.kwargs == {
+            "approval_id": "ap_1",
+            "error_type": "RuntimeError",
+        }
+
+    async def test_a_session_failure_propagates_to_the_finalize_handler(self, bridge: dict) -> None:
+        bridge["get_session"].side_effect = RuntimeError("session store gone")
+
+        with pytest.raises(RuntimeError, match="session store gone"):
+            await flush_held_approval_cards(STREAM_ID)
+
+        bridge["stream"].publish_chunk.assert_not_awaited()

@@ -4,7 +4,7 @@ A gated call inside a spawn used to fail closed — refused with the unpausable
 denial and the user never asked. Drives the real path against real Postgres
 (genuine interrupt/checkpoint/replay), MongoDB (approvals/preferences) and Redis.
 
-Real: the compiled spawn graph, SubagentMiddleware._run_spawn/_drive, the
+Real: the compiled spawn graph, the spawn_subagent tool (blocking) on the delegation runner, the
 middleware stack, the HIL gate. Substituted, only: the LLM (deterministic, so
 a replay behaves identically) and the gated tool's side effect (a counter,
 since "exactly once" is the claim under test).
@@ -237,12 +237,18 @@ class SpawnDriver:
 
         async def tool_node(_state: MessagesState, config: RunnableConfig) -> dict:
             texts = [
-                await middleware._run_spawn(
-                    task=task,
-                    context="",
-                    config=config,
-                    tool_call_id=tool_call_id,
-                    inherited_tool_names=[],
+                str(
+                    (
+                        await middleware.tools[0].coroutine(
+                            task=task,
+                            tool_call_id=tool_call_id,
+                            selected_tool_ids=[],
+                            config=config,
+                            background=False,
+                        )
+                    )
+                    .update["messages"][0]
+                    .content
                 )
                 for task, tool_call_id in tasks
             ]

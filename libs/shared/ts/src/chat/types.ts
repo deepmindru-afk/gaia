@@ -5,7 +5,7 @@
 // Core message types
 // ---------------------------------------------------------------------------
 
-import type { RecurrenceData, ToolDataEntry } from "../api/generated";
+import type { ToolDataEntry } from "../api/generated";
 
 export type {
   RecurrenceData,
@@ -281,25 +281,6 @@ export interface SameDayEvent {
   calendarTitle?: string;
   background_color?: string;
 }
-
-export interface CalendarOptions {
-  summary: string;
-  description?: string;
-  start?: string;
-  end?: string;
-  calendar_id?: string;
-  calendar_name?: string;
-  background_color?: string;
-  is_all_day?: boolean;
-  recurrence?: RecurrenceData;
-  attendees?: string[];
-  create_meeting_room?: boolean;
-  same_day_events?: SameDayEvent[];
-  // Additional fields from mobile usage
-  title?: string;
-  location?: string;
-}
-
 export interface CalendarDeleteOptions {
   action: "delete";
   event_id: string;
@@ -795,7 +776,6 @@ export type ToolName =
   | "email_fetch_data"
   | "email_thread_data"
   | "weather_data"
-  | "calendar_options"
   | "calendar_delete_options"
   | "calendar_edit_options"
   | "calendar_fetch_data"
@@ -834,7 +814,6 @@ export interface ToolDataMap {
   email_fetch_data: EmailFetchData[];
   email_thread_data: EmailThreadData;
   weather_data: WeatherData;
-  calendar_options: CalendarOptions[];
   calendar_delete_options: CalendarDeleteOptions[];
   calendar_edit_options: CalendarEditOptions[];
   calendar_fetch_data: CalendarFetchData[];
@@ -873,7 +852,6 @@ export function isKnownTool(name: string): name is ToolName {
     "email_fetch_data",
     "email_thread_data",
     "weather_data",
-    "calendar_options",
     "calendar_delete_options",
     "calendar_edit_options",
     "calendar_fetch_data",

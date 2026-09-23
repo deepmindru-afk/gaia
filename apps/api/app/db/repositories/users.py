@@ -17,6 +17,7 @@ stale last_active_at; nothing reads that field off a cached path.
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import cast
 
 from bson import ObjectId
 
@@ -210,7 +211,8 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
         for doc in docs:
             entry = (doc.platform_links or {}).get(platform)
             if isinstance(entry, dict):
-                platform_user_id = entry.get("id")
+                link: PlatformLinkRecord = cast(PlatformLinkRecord, entry)
+                platform_user_id = link.get("id")
                 if isinstance(platform_user_id, str):
                     ids.append(platform_user_id)
         return ids
@@ -358,6 +360,7 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
         *,
         mode: str | None = None,
         tool_overrides: dict[str, bool] | None = None,
+        never_auto_tools: list[str] | None = None,
     ) -> None:
         """$set the provided hil_preferences fields, leaving the rest alone."""
         set_fields: dict[str, object] = {}
@@ -365,6 +368,8 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
             set_fields["hil_preferences.mode"] = mode
         if tool_overrides is not None:
             set_fields["hil_preferences.tool_overrides"] = tool_overrides
+        if never_auto_tools is not None:
+            set_fields["hil_preferences.never_auto_tools"] = never_auto_tools
         if not set_fields:
             return
         await self._apply_raw_update(

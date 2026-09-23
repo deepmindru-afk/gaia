@@ -11,6 +11,7 @@ import {
 import { shouldShowTextBubble } from "@/features/chat/utils/messageContentUtils";
 import { parseThinkingFromText } from "@/features/chat/utils/thinkingParser";
 import type { ChatBubbleBotProps } from "@/types/features/chatBubbleTypes";
+import { MessageReactions } from "../MessageReactions";
 import { BotBubbleAvatar, BotBubbleFooter } from "./BotBubbleChrome";
 import { describeBotBubbleContent } from "./botBubbleContent";
 import ImageBubble from "./ImageBubble";
@@ -41,6 +42,7 @@ export default function ChatBubbleBot(
     systemPurpose,
     follow_up_actions,
     error,
+    reactions,
     disableActions = false,
     hideAvatar = false,
     isGroupedWithNext = false,
@@ -95,9 +97,9 @@ export default function ChatBubbleBot(
     emailProcessingPurpose: SystemPurpose.EMAIL_PROCESSING,
   });
 
-  // Don't render the full bubble structure if only loading with no content
-  // Let ChatRenderer's loading indicator handle it
-  if (loading && !hasContent) return null;
+  // Nothing to show yet (or at all): ChatRenderer's loading indicator covers
+  // a turn that is still waiting for its first content.
+  if (!hasContent) return null;
 
   // The error bubble gets the same chrome as a text bubble (avatar + actions,
   // so Retry is reachable).
@@ -105,59 +107,58 @@ export default function ChatBubbleBot(
   const showAvatar = !hideAvatar && !isGroupedWithNext && showBubbleChrome;
 
   return (
-    (loading || hasContent) && (
-      <div
-        id={message_id}
-        onMouseOver={handleMouseOver}
-        onMouseOut={handleMouseOut}
-        onFocus={handleMouseOver}
-        onBlur={handleMouseOut}
-        className={`relative flex flex-col ${isGroupedWithPrev ? "mt-1.5" : ""}`}
-      >
-        {/*
-          Alignment is structural, not per-message. Every bot bubble reserves
-          the avatar lane via a constant left pad (same width as the `ml-10.75`
-          actions row below), so grouped bubbles can never drift sideways. The
-          logo is an absolute overlay pinned to that lane — it never affects
-          layout flow — and only the last bubble of a consecutive group (i.e.
-          not grouped-with-next) actually renders it.
-        */}
-        <div className="relative">
-          {showAvatar && <BotBubbleAvatar delaySeconds={logoDelay} />}
+    <div
+      id={message_id}
+      onMouseOver={handleMouseOver}
+      onMouseOut={handleMouseOut}
+      onFocus={handleMouseOver}
+      onBlur={handleMouseOut}
+      className={`relative flex flex-col ${isGroupedWithPrev ? "mt-1.5" : ""}`}
+    >
+      {/*
+        Alignment is structural, not per-message. Every bot bubble reserves
+        the avatar lane via a constant left pad (same width as the `ml-10.75`
+        actions row below), so grouped bubbles can never drift sideways. The
+        logo is an absolute overlay pinned to that lane — it never affects
+        layout flow — and only the last bubble of a consecutive group (i.e.
+        not grouped-with-next) actually renders it.
+      */}
+      <div className="relative">
+        {showAvatar && <BotBubbleAvatar delaySeconds={logoDelay} />}
 
-          <div
-            className={`chatbubblebot_parent ${hideAvatar ? "" : "pl-10.75"}`}
-          >
-            <div className="flex w-full flex-col gap-2">
-              {memory_data && onOpenMemoryModal && (
-                <MemoryIndicator
-                  memoryData={memory_data}
-                  onOpenModal={onOpenMemoryModal}
-                />
-              )}
-              <div className="chat_bubble_container">{renderedComponent}</div>
-            </div>
+        <div className={`chatbubblebot_parent ${hideAvatar ? "" : "pl-10.75"}`}>
+          <div className="flex w-full flex-col gap-2">
+            {memory_data && onOpenMemoryModal && (
+              <MemoryIndicator
+                memoryData={memory_data}
+                onOpenModal={onOpenMemoryModal}
+              />
+            )}
+            <div className="chat_bubble_container">{renderedComponent}</div>
+            {reactions && (
+              <MessageReactions reactions={reactions} align="start" />
+            )}
           </div>
         </div>
-
-        {showBubbleChrome && (
-          <BotBubbleFooter
-            actionsRef={actionsRef}
-            loading={!!loading}
-            disableActions={disableActions}
-            follow_up_actions={follow_up_actions}
-            date={date}
-            image_data={image_data}
-            message_id={message_id}
-            pinned={pinned}
-            text={text}
-            onRetry={onRetry}
-            isRetrying={isRetrying}
-          />
-        )}
-
-        {children}
       </div>
-    )
+
+      {showBubbleChrome && (
+        <BotBubbleFooter
+          actionsRef={actionsRef}
+          loading={!!loading}
+          disableActions={disableActions}
+          follow_up_actions={follow_up_actions}
+          date={date}
+          image_data={image_data}
+          message_id={message_id}
+          pinned={pinned}
+          text={text}
+          onRetry={onRetry}
+          isRetrying={isRetrying}
+        />
+      )}
+
+      {children}
+    </div>
   );
 }

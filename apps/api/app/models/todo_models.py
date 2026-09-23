@@ -119,6 +119,15 @@ class TodoUpdateRequest(BaseModel):
 
 
 # For responses with ID and user_id
+class PendingApprovalRef(BaseModel):
+    """A live approval parked against this todo — the UI's jump link to the
+    conversation holding the card. Oldest live row wins; terminal rows never
+    appear here."""
+
+    approval_id: str = Field(..., description="Ledger approval id (ap_*)")
+    conversation_id: str = Field(..., description="Conversation holding the card")
+
+
 class TodoResponse(TodoBase, ResponseModel):
     """Complete todo response with all fields"""
 
@@ -137,16 +146,29 @@ class TodoResponse(TodoBase, ResponseModel):
         default_factory=list,
         description="Read-only; subscriptions are written by trigger registration, not by clients",
     )
+    pending_approval: PendingApprovalRef | None = Field(
+        default=None,
+        description="Oldest live approval parked against this todo, if any — the UI's jump link to the card's conversation",
+    )
 
     @classmethod
     def from_document(
-        cls, doc: "TodoDocument", *, workflow_categories: list[str] | None = None
+        cls,
+        doc: "TodoDocument",
+        *,
+        workflow_categories: list[str] | None = None,
+        pending_approval: PendingApprovalRef | None = None,
     ) -> "TodoResponse":
         """Project a stored ``TodoDocument`` onto the API response shape. The
         tracked-only fields (canvas/log content, retry state) are dropped by
-        ``extra="ignore"``; ``workflow_categories`` is enrichment, not stored."""
+        ``extra="ignore"``; ``workflow_categories`` and ``pending_approval``
+        are enrichment, not stored."""
         return cls.model_validate(
-            {**doc.model_dump(), "workflow_categories": workflow_categories or []}
+            {
+                **doc.model_dump(),
+                "workflow_categories": workflow_categories or [],
+                "pending_approval": pending_approval,
+            }
         )
 
 

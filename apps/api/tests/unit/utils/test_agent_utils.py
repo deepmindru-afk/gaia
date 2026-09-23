@@ -187,6 +187,27 @@ class TestFormatToolCallEntry:
         assert result["data"]["show_category"] is False
 
     @pytest.mark.asyncio
+    async def test_activate_integration_is_categorised_not_unknown(self) -> None:
+        # Bound straight into the graph, so it is in no registry category: without
+        # a _SPECIAL_TOOLS entry the card read "unknown: activate integration".
+        tool_call = {"name": "activate_integration", "args": {}, "id": "tc3"}
+        mock_registry = MagicMock()
+        mock_registry.get_category_of_tool.return_value = "unknown"
+        mock_registry.get_all_tools_for_search.return_value = []
+        with patch(
+            "app.utils.agent_utils.get_tool_registry",
+            new_callable=AsyncMock,
+            return_value=mock_registry,
+        ):
+            result = await format_tool_call_entry(tool_call)  # type: ignore[arg-type]  # hand-built dict stands in for a ToolCall
+
+        assert result is not None
+        # "integrations" is the frontend icon-config key carrying ConnectIcon.
+        assert result["data"]["tool_category"] == "integrations"
+        assert result["data"]["message"] == "Activating integration"
+        assert result["data"]["show_category"] is False
+
+    @pytest.mark.asyncio
     async def test_handoff_tool(self) -> None:
         tool_call = {
             "name": "handoff",

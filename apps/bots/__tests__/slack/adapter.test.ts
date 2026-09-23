@@ -989,3 +989,111 @@ describe("SlackAdapter - runtime errors", () => {
     expect(JSON.stringify(events[0])).not.toContain('"U123"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// deliverOutboundReaction — native attach with text fallback
+// ---------------------------------------------------------------------------
+
+describe("SlackAdapter - deliverOutboundReaction", () => {
+  type Reactor = {
+    deliverOutboundReaction: (
+      destinationId: string,
+      reaction: { target_platform_message_id: string; emoji: string },
+      isChannel: boolean,
+    ) => Promise<void>;
+    analytics: { capture: (...args: unknown[]) => void };
+    app: unknown;
+  };
+
+  function makeReactor(reactionsAdd: unknown) {
+    const adapter = new SlackAdapter() as unknown as Reactor;
+    adapter.analytics = { capture: vi.fn() };
+    adapter.app = {
+      client: {
+        chat: { postMessage: vi.fn().mockResolvedValue({ ts: "1.1" }) },
+        conversations: {
+          open: vi.fn().mockResolvedValue({ channel: { id: "D-dm" } }),
+        },
+        reactions: { add: reactionsAdd },
+      },
+    };
+    return adapter;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("attaches via reactions.add with the shortcode in a channel", async () => {
+    const add = vi.fn().mockResolvedValue({});
+    const adapter = makeReactor(add);
+
+    await adapter.deliverOutboundReaction(
+      "C-group",
+      { target_platform_message_id: "123.456", emoji: "👍" },
+      true,
+    );
+
+    expect(add).toHaveBeenCalledWith({
+      channel: "C-group",
+      timestamp: "123.456",
+      name: "thumbsup",
+    });
+  });
+
+  it("resolves the DM channel for user destinations", async () => {
+    const add = vi.fn().mockResolvedValue({});
+    const adapter = makeReactor(add);
+
+    await adapter.deliverOutboundReaction(
+      "U-user",
+      { target_platform_message_id: "123.456", emoji: "✅" },
+      false,
+    );
+
+    expect(add).toHaveBeenCalledWith({
+      channel: "D-dm",
+      timestamp: "123.456",
+      name: "white_check_mark",
+    });
+  });
+
+  it("falls back to text for an unmapped emoji", async () => {
+    const add = vi.fn().mockResolvedValue({});
+    const adapter = makeReactor(add);
+
+    await adapter.deliverOutboundReaction(
+      "C-group",
+      { target_platform_message_id: "123.456", emoji: "🦄" },
+      true,
+    );
+
+    expect(add).not.toHaveBeenCalled();
+    const app = adapter.app as {
+      client: { chat: { postMessage: ReturnType<typeof vi.fn> } };
+    };
+    expect(app.client.chat.postMessage).toHaveBeenCalledWith({
+      channel: "C-group",
+      text: "🦄",
+    });
+  });
+
+  it("falls back to text when attach fails", async () => {
+    const add = vi.fn().mockRejectedValue(new Error("message_not_found"));
+    const adapter = makeReactor(add);
+
+    await adapter.deliverOutboundReaction(
+      "C-group",
+      { target_platform_message_id: "123.456", emoji: "👍" },
+      true,
+    );
+
+    const app = adapter.app as {
+      client: { chat: { postMessage: ReturnType<typeof vi.fn> } };
+    };
+    expect(app.client.chat.postMessage).toHaveBeenCalledWith({
+      channel: "C-group",
+      text: "👍",
+    });
+  });
+});

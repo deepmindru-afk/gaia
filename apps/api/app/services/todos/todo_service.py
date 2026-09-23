@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import math
 import uuid
 
+from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.db.repositories.projects import project_repository
 from app.db.repositories.todos import todo_repository
 from app.db.repositories.workflows import workflow_repository
@@ -11,6 +12,7 @@ from app.models.todo_models import (
     BulkOperationResponse,
     BulkUpdateRequest,
     PaginationMeta,
+    PendingApprovalRef,
     Priority,
     ProjectCreate,
     ProjectDocument,
@@ -69,6 +71,27 @@ async def _get_workflow_categories_for_todos(
         if todo.workflow_id and todo.workflow_id in workflow_categories:
             result[todo.id] = workflow_categories[todo.workflow_id]
     return result
+
+
+async def _get_pending_approvals_for_todos(
+    todos: list[TodoDocument],
+) -> dict[str, PendingApprovalRef]:
+    """Oldest live approval parked per todo, for the list/detail jump link.
+
+    One query per page, not per row (same shape as the workflow-categories
+    enrichment above). Cross-domain read via the ledger repository.
+    """
+    todo_ids = [todo.id for todo in todos if todo.id]
+    if not todo_ids:
+        return {}
+    rows = await approval_ledger_repository.list_live_by_owners("todo", todo_ids)
+    refs: dict[str, PendingApprovalRef] = {}
+    for row in rows:
+        if row.owner_id not in refs:
+            refs[row.owner_id] = PendingApprovalRef(
+                approval_id=row.approval_id, conversation_id=row.conversation_id
+            )
+    return refs
 
 
 def _ensure_subtask_ids(subtasks: list[SubTask]) -> list[SubTask]:
@@ -235,9 +258,12 @@ class TodoService:
         if todo.workflow_id:
             workflow_categories = await _get_workflow_categories_for_todos([todo], user_id)
             return TodoResponse.from_document(
-                todo, workflow_categories=workflow_categories.get(todo.id, [])
+                todo,
+                workflow_categories=workflow_categories.get(todo.id),
+                pending_approval=(await _get_pending_approvals_for_todos([todo])).get(todo.id),
             )
-        return TodoResponse.from_document(todo)
+        pending = await _get_pending_approvals_for_todos([todo])
+        return TodoResponse.from_document(todo, pending_approval=pending.get(todo.id))
 
     @classmethod
     async def list_todos(cls, user_id: str, params: TodoSearchParams) -> TodoListResponse:
@@ -254,9 +280,12 @@ class TodoService:
         )
 
         workflow_categories = await _get_workflow_categories_for_todos(page.items, user_id)
+        pending_approvals = await _get_pending_approvals_for_todos(page.items)
         data = [
             TodoResponse.from_document(
-                todo, workflow_categories=workflow_categories.get(todo.id, [])
+                todo,
+                workflow_categories=workflow_categories.get(todo.id),
+                pending_approval=pending_approvals.get(todo.id),
             )
             for todo in page.items
         ]

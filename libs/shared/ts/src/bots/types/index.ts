@@ -55,6 +55,13 @@ export interface ChatRequest {
    */
   fileIds?: string[];
   /**
+   * Platform-native id of the user's inbound message (WhatsApp wamid, Telegram
+   * message_id, Discord id, Slack ts, iMessage id). Persisted server-side so a
+   * later background reaction can anchor to the exact platform message.
+   * Absent when the trigger has no message id (slash-command interactions).
+   */
+  platformMessageId?: string;
+  /**
    * Full file metadata for the attached files. Sent alongside `fileIds` so
    * the agent can resolve URLs/filenames without an extra DB lookup, matching
    * the web app's chat payload shape.

@@ -1685,7 +1685,7 @@ def _special_tools(recorder: _Recorder) -> dict[str, BaseTool]:
         """Produce a report too large to return inline, and offload it to a file.
 
         Carries the same structured marker the compaction middleware stamps on a
-        message it offloads, which is the one shape ``read_offload`` reads.
+        message it offloads, which is the one shape read_offload reads.
         """
         recorder.calls.append(("big_report", {"query": query}))
         return ToolMessage(

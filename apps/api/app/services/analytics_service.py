@@ -91,6 +91,14 @@ class AnalyticsEvents(StrEnum):
     # Executor-leg timings ride on agent:run_completed, HIL waits on the wide event.
     CHAT_MESSAGE_COMPLETED = "chat:message_completed"
     CHAT_MESSAGE_CANCELLED = "chat:message_cancelled"
+    # How comms resolved a background executor update: message, one-emoji react,
+    # or silence. Property `outcome` (plus `emoji` on a react, plus `delivery`
+    # saying how the ack reached the user). Outcome + emoji only, never the text.
+    CHAT_BACKGROUND_UPDATE_RESOLVED = "chat:background_update_resolved"
+    # An interactive (non-executor) turn whose comms reply resolved to a
+    # one-emoji ``REACT`` ack instead of a message. Property `emoji` only,
+    # never the surrounding text.
+    CHAT_TURN_REACTED = "chat:turn_reacted"
     CHAT_MESSAGE_PINNED = "chat:message_pinned"
     CHAT_MESSAGE_UNPINNED = "chat:message_unpinned"
     # A comms reply scored dirty against the AI-ism detectors and was
@@ -232,6 +240,13 @@ class AnalyticsEvents(StrEnum):
 
     # Human-in-the-loop approvals
     APPROVAL_DECIDED = "approval:decided"
+    # Ledger approval cards. Server-owned, one event per transition — the
+    # funnel behind time-to-decision, batch-vs-inline share, and revoke rate.
+    # Props carry approval_id, tool_name, ledger_version, and counts only.
+    HIL_CARD_SHOWN = "hil:card_shown"
+    HIL_DECISION_SUBMITTED = "hil:decision_submitted"
+    HIL_REVOKED = "hil:revoked"
+    HIL_RESUMED = "hil:resumed"
 
     # Worker / agent lifecycle. AGENT_RUN_COMPLETED/FAILED carry executor
     # timing props when measured: queue_wait_ms, executor_ttft_ms,
@@ -240,8 +255,99 @@ class AnalyticsEvents(StrEnum):
     AGENT_RUN_COMPLETED = "agent:run_completed"
     AGENT_RUN_FAILED = "agent:run_failed"
     TOOL_USED = "tool:used"
+    # A proxied dispatch that failed BEFORE the tool ran (unknown_tool /
+    # invalid_args). Ratio against TOOL_USED{via=execute} = retries per
+    # successful proxied action — the health metric of the execute migration.
+    EXECUTE_TOOL_FAILED = "tool:execute_failed"
 
     USAGE_QUERIED = "usage:queried"
+
+    # Fallback exposure for unevaluated flags (complement of $feature_flag_called).
+    # Props: {flag, enabled, fallback_reason}; deduplicated per user/flag/day to
+    # tell served control apart from PostHog down.
+    FEATURE_FLAG_EVALUATED = "feature_flag:evaluated"
+    # Background spend only; agent-graph calls are covered by $ai_generation.
+    AI_LLM_CALL_COMPLETED = "ai:llm_call_completed"
+
+
+class AIFeature(StrEnum):
+    """The product capability a metered model call was made on behalf of.
+
+    Each member owns the auxiliary label values that roll up to it, so there is
+    no second table to keep in sync; test_every_feature_is_reachable fails on a
+    member declared with none. Coarser than the labels on purpose: the
+    onboarding one-shots roll up to ONBOARDING while keeping their own labels.
+    Which integration ran is agent_name, an open string not ours to close.
+    """
+
+    _labels: tuple[str, ...]
+
+    def __new__(cls, value: str, labels: tuple[str, ...] = ()) -> "AIFeature":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member._labels = labels
+        return member
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """The auxiliary call labels booked to this feature."""
+        return self._labels
+
+    @classmethod
+    def for_label(cls, label: str) -> "AIFeature":
+        """Return the feature a one-shot's label belongs to, or UNATTRIBUTED."""
+        return _FEATURE_BY_LABEL.get(label, cls.UNATTRIBUTED)
+
+    # Graph-tier spend; attributed from the agent, not from a label.
+    CHAT = "chat"
+    INTEGRATION = "integration"
+
+    WORKFLOW = "workflow", ("playbook_ask_fill", "playbook_narration")
+    MEMORY = "memory", ("profile_extraction",)
+    VISION = "vision", ("image_to_text", "tool_media_vision", "vision_fallback")
+    MAIL = "mail", ("mail_compose",)
+    HIL = (
+        "hil",
+        (
+            "hil_conversational_resolve",
+            "hil_conversational_resolve_batch",
+            "hil_intent_judge",
+            "hil_tool_classification",
+        ),
+    )
+    ONBOARDING = (
+        "onboarding",
+        (
+            "onboarding_first_question",
+            "onboarding_inbox_triage",
+            "onboarding_social_profile",
+            "onboarding_writing_style",
+            "onboarding_writing_style_example",
+        ),
+    )
+    PROFILE = "profile", ("holo_card",)
+    INTEGRATION_INFERENCE = (
+        "integration_inference",
+        (
+            "integration_category",
+            "integration_content",
+        ),
+    )
+    WORKFLOW_GENERATION = "workflow_generation", ("workflow_generation", "workflow_prompt")
+    FILE_EXTRACTION = "file_extraction", ("file_image_summary", "file_text_summary")
+    FOLLOW_UPS = "follow_ups", ("follow_up_actions",)
+    RESEARCH = "research", ("research_queries",)
+    MODERATION = "moderation", ("profanity",)
+    TITLE_GENERATION = "title_generation", ("chatbot",)
+    # The browser loop also builds f"browser_{output}" labels at runtime; see feature_for_label.
+    BROWSER = "browser", ("browser_done_check", "browser_handoff_conversational_resolve")
+    # A caller whose label no member claims.
+    UNATTRIBUTED = "unattributed"
+
+
+_FEATURE_BY_LABEL: dict[str, AIFeature] = {
+    label: feature for feature in AIFeature for label in feature.labels
+}
 
 
 #: Event and person properties: counts, enums, durations, booleans and ids.

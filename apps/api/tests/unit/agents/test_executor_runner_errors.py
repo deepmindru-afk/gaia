@@ -7,13 +7,16 @@ invitation to re-run work that may have half-landed.
 """
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from langgraph.errors import GraphRecursionError
 import pytest
 
 from app.agents.core.background import executor_runner as er
+from app.agents.core.background.session import ExecutorRun, RunKind
 from app.constants.executor import EXECUTOR_STEP_LIMIT_MESSAGE
+from app.models.user_models import AuthenticatedUser
 from app.services.browser import jobs as jobs_mod
 from tests._harness.redis_fakes import FakeRedisCache
 
@@ -22,12 +25,22 @@ async def _run_with(
     side_effect: BaseException, conversation_id: str = "conv-1"
 ) -> er._ExecutorResult:
     """Run _execute_executor with the graph execution raising side_effect."""
+    ctx = SimpleNamespace(config={}, configurable={})
+    run = ExecutorRun(
+        stream_id="stream-1",
+        conversation_id=conversation_id,
+        user=AuthenticatedUser(user_id="u1"),
+        kind=RunKind.LIVE,
+        task_id="task-1",
+        user_message_id=None,
+        bot_message_id=None,
+    )
     with (
-        patch.object(er, "prepare_executor_execution", AsyncMock(return_value=(object(), None))),
+        patch.object(er, "prepare_executor_execution", AsyncMock(return_value=(ctx, None))),
         patch.object(er, "make_redis_stream_writer", lambda _sid: None),
         patch.object(er, "execute_subagent_stream", AsyncMock(side_effect=side_effect)),
     ):
-        return await er._execute_executor("do the thing", {}, "stream-1", conversation_id)
+        return await er._execute_executor("do the thing", {}, run, None)
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ import type { ApprovalRequestData } from "../../chat";
 import { NEW_MESSAGE_BREAK_TOKEN } from "../../utils/messageBreakUtils";
 import type { ChatRequest } from "../types";
 import { getHttpStatus } from "../utils/logger";
+import { couldBecomeReactDirective } from "../utils/react-directive";
 import { wideLog } from "../utils/wide-events";
 import type {
   ApprovalUpdateHandler,
@@ -127,6 +128,7 @@ interface SseFrame {
   notice?: { text: string };
   text?: string;
   message_boundary?: MessageBoundary;
+  emoji_ack?: { emoji: string; reacts_to_message_id?: string };
   done?: boolean;
   conversation_id?: string;
 }
@@ -163,15 +165,76 @@ async function streamChatOnce(
   // confirms the message was a real reply (a handoff preamble streams first and can be
   // retracted). `fullText` is the whole reply on render-at-end platforms (Discord/WhatsApp/iMessage).
   let pendingText = "";
+  // How much of `pendingText` has already been forwarded via `onChunk`. Text
+  // held back as a possible REACT directive lags the buffered whole.
+  let forwardedLength = 0;
+  // Held text from already-kept messages, still owed to `onChunk` unless an
+  // `emoji_ack` replaces the turn.
+  let heldKeptText = "";
   let conversationId = "";
   let streamError: Error | null = null;
 
+  /** The turn as the backend's complete_message sees it: kept messages plus the one in flight. */
+  const joinTurn = (kept: string, inFlight: string): string =>
+    kept ? `${kept}${NEW_MESSAGE_BREAK_TOKEN}${inFlight}` : inFlight;
+
   const keepPendingText = (): void => {
-    if (!pendingText) return;
-    fullText = fullText
-      ? `${fullText}${NEW_MESSAGE_BREAK_TOKEN}${pendingText}`
-      : pendingText;
+    heldKeptText += pendingText.slice(forwardedLength);
+    if (pendingText) fullText = joinTurn(fullText, pendingText);
     pendingText = "";
+    forwardedLength = 0;
+  };
+
+  /** Forward every held-back chunk — the turn is proven not to be a REACT directive. */
+  const releaseHeldText = async (): Promise<void> => {
+    const held = heldKeptText + pendingText.slice(forwardedLength);
+    heldKeptText = "";
+    forwardedLength = pendingText.length;
+    if (held) await onChunk(held);
+  };
+
+  /** End of turn with no `emoji_ack`: whatever was held is an ordinary reply. */
+  const settleTurnText = async (): Promise<void> => {
+    await releaseHeldText();
+    keepPendingText();
+  };
+
+  // Held while the turn could still be the REACT control line, so per-chunk
+  // adapters never paint the directive; a lookalike (`Real…`) flushes whole
+  // once the next frame disambiguates it.
+  const applyText = async (text: string): Promise<void> => {
+    pendingText += text;
+    if (!couldBecomeReactDirective(joinTurn(fullText, pendingText))) {
+      await releaseHeldText();
+    }
+  };
+
+  // The `REACT: <emoji>` ack: the delivered message is the bare emoji, not the
+  // raw directive, which was never forwarded — so the emoji is the turn's one
+  // chunk, or streaming platforms (rendering from onChunk) would show nothing.
+  const applyEmojiAck = async (emoji: string): Promise<void> => {
+    pendingText = "";
+    forwardedLength = 0;
+    heldKeptText = "";
+    fullText = emoji;
+    if (fullText) await onChunk(fullText);
+  };
+
+  const applyMessageBoundary = async (discarded: boolean): Promise<void> => {
+    if (discarded) {
+      pendingText = "";
+      forwardedLength = 0;
+    } else {
+      keepPendingText();
+      // Whatever follows joins after a break, so this decides it now.
+      if (!couldBecomeReactDirective(joinTurn(fullText, ""))) {
+        await releaseHeldText();
+      }
+    }
+    // A kept boundary tells a streaming platform its message is final and may now be
+    // split into bubbles — announcing any earlier would leave nothing for a retraction
+    // arriving next to take back.
+    await onMessageBoundary?.(discarded);
   };
 
   const ctx = {
@@ -189,6 +252,9 @@ async function streamChatOnce(
         platform_user_id: request.platformUserId,
         channel_id: request.channelId,
         is_dm: request.isDm ?? false,
+        ...(request.platformMessageId
+          ? { platform_message_id: request.platformMessageId }
+          : {}),
         ...(request.fileIds && request.fileIds.length > 0
           ? { file_ids: request.fileIds }
           : {}),
@@ -218,7 +284,7 @@ async function streamChatOnce(
         if (!finished) {
           finished = true;
           stream.destroy();
-          keepPendingText();
+          await settleTurnText();
           if (fullText) {
             // If we got some content, consider it a success
             await onDone(fullText, conversationId);
@@ -255,21 +321,10 @@ async function streamChatOnce(
         if (frame.notice) {
           await onNotice?.(frame.notice.text);
         }
-        if (frame.text) {
-          pendingText += frame.text;
-          await onChunk(frame.text);
-        }
+        if (frame.text) await applyText(frame.text);
+        if (frame.emoji_ack) await applyEmojiAck(frame.emoji_ack.emoji);
         if (frame.message_boundary) {
-          const { discarded } = frame.message_boundary;
-          if (discarded) {
-            pendingText = "";
-          } else {
-            keepPendingText();
-          }
-          // A kept boundary tells a streaming platform its message is final and may now be
-          // split into bubbles — announcing any earlier would leave nothing for a retraction
-          // arriving next to take back.
-          await onMessageBoundary?.(discarded);
+          await applyMessageBoundary(frame.message_boundary.discarded);
         }
       };
 
@@ -294,7 +349,7 @@ async function streamChatOnce(
         await applyFrameUpdate(frame);
         if (frame.done) {
           finish();
-          keepPendingText();
+          await settleTurnText();
           conversationId = frame.conversation_id || "";
           await onDone(fullText, conversationId);
           return true;
@@ -306,7 +361,7 @@ async function streamChatOnce(
       // signalling the caller to resolve and stop reading.
       const processLine = async (line: string): Promise<boolean> => {
         const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data: ")) return false;
+        if (!trimmed.startsWith("data: ")) return false;
         const raw = trimmed.slice(6);
         if (raw === "[DONE]") return false;
 
@@ -373,7 +428,7 @@ async function streamChatOnce(
         try {
           if (!finished) {
             finished = true;
-            keepPendingText();
+            await settleTurnText();
             if (fullText) {
               // Got partial response - return what we have
               await onDone(fullText, conversationId);
@@ -410,7 +465,7 @@ async function streamChatOnce(
         try {
           if (!finished) {
             finished = true;
-            keepPendingText();
+            await settleTurnText();
             const isRetryable = RETRYABLE_ERRORS.some((retryableErr) =>
               err.message.includes(retryableErr),
             );

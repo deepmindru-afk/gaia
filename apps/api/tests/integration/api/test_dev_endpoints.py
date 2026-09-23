@@ -265,8 +265,8 @@ class TestDevRouterMounting:
 
         assert exec_response.status_code == 200
         assert sub_response.status_code == 200
-        mock_exec.assert_awaited_once_with(DEV_EMAIL, "noop", None)
-        mock_sub.assert_awaited_once_with(DEV_EMAIL, "some_agent", "noop", None)
+        mock_exec.assert_awaited_once_with(DEV_EMAIL, "noop", None, None)
+        mock_sub.assert_awaited_once_with(DEV_EMAIL, "some_agent", "noop", None, None)
 
     async def test_seed_endpoint_forwards_payload(self, monkeypatch):
         from app.config.settings import settings as app_settings

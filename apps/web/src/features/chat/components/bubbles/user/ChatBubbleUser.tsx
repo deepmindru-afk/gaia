@@ -10,6 +10,7 @@ import { useChatBubbleUser } from "@/features/chat/hooks/useChatBubbleUser";
 import type { ChatBubbleUserProps } from "@/types/features/chatBubbleTypes";
 import type { AttachedFileData } from "@/types/shared/fileTypes";
 
+import { MessageReactions } from "../MessageReactions";
 import ChatBubbleFilePreview from "./ChatBubbleFilePreview";
 import { ChatBubbleUserFooter } from "./ChatBubbleUserFooter";
 
@@ -93,6 +94,7 @@ export default function ChatBubbleUser({
   replyToMessage,
   queued,
   failed,
+  reactions,
   disableActions = false,
   onRetry,
   isRetrying,
@@ -171,6 +173,12 @@ export default function ChatBubbleUser({
             </div>
           )}
         </div>
+
+        {reactions && reactions.length > 0 && (
+          <div className="flex justify-end pr-1">
+            <MessageReactions reactions={reactions} align="end" />
+          </div>
+        )}
 
         <ChatBubbleUserFooter
           text={text}

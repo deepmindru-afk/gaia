@@ -32,6 +32,7 @@ from app.agents.core.background.executor_capture import (
     teardown_executor_capture,
 )
 from app.agents.core.background.session import get_session
+from app.agents.core.comms_directive import interpret_comms_output
 from app.constants.artifacts import ARTIFACT_FORWARDER_SUBSCRIBE_TIMEOUT
 from app.constants.cache import EXECUTOR_WAIT_TIMEOUT, VOICE_EXECUTOR_RESULT_TIMEOUT_S
 from app.constants.chat import (
@@ -39,20 +40,27 @@ from app.constants.chat import (
     GENERIC_TURN_ERROR,
     RECURSION_LIMIT_MESSAGE,
 )
+from app.constants.comms import CommsDirectiveKind
 from app.constants.hil import HIL_ACK_APPROVED, HIL_ACK_DENIED, HIL_CLASSIFIER_HISTORY_TURNS
 from app.constants.log_tags import LogTag
 from app.core.stream_manager import stream_manager
 from app.db.repositories.conversations import conversation_repository
-from app.models.chat_models import ToolDataEntry
+from app.models.chat_models import MessageKind, ToolDataEntry
 from app.models.message_models import MessageDict, MessageRequestWithHistory
 from app.models.stream_events import (
     ConversationDescriptionFrame,
     ConversationInitializedFrame,
+    EmojiAckFrame,
+    EmojiAckPayload,
     ErrorFrame,
     MainResponseCompleteFrame,
 )
 from app.models.user_models import AuthenticatedUser
-from app.services.analytics_service import AnalyticsEvents, capture_event
+from app.services.analytics_service import (
+    AnalyticsEvents,
+    AnalyticsProperties,
+    capture_event,
+)
 from app.services.browser.resolution import resolve_handoff_from_message
 from app.services.chat.artifact_forwarder import forward_artifact_events
 from app.services.chat.chunks import ChunkAccumulators, extract_response_text, process_data_chunk
@@ -194,7 +202,9 @@ class _StreamState:
         "error",
         "follow_up_actions",
         "is_cancelled",
+        "message_kind",
         "queued",
+        "reacts_to_message_id",
         "saved",
         "t0_perf",
         "todo_progress_accumulated",
@@ -234,6 +244,11 @@ class _StreamState:
         # to reconcile after a reload. Bots get a server-minted id instead.
         self.user_message_id: str = turn_id or str(uuid4())
         self.bot_message_id: str = str(uuid4())
+        # When comms resolved the turn to a ``REACT: <emoji>`` ack (see
+        # resolve_turn_emoji_ack), the stamp that renders the saved reply as a reaction
+        # badge. Unmutated: _persist_turn overwrites both before anything reads them.
+        self.message_kind: MessageKind = MessageKind.TEXT  # pragma: no mutate
+        self.reacts_to_message_id: str | None = None  # pragma: no mutate
         # When comms finished — stamped before any voice-mode executor wait so
         # the saved user/comms messages keep timestamps EARLIER than a delegated
         # executor's answer (saved mid-wait). The frontend sorts by createdAt.
@@ -317,9 +332,7 @@ async def _run_chat_stream(
         # "stop") resolves its live-view handoff — the text-channel equivalent of
         # the card's Continue/Cancel buttons, working on web and bots alike.
         # Always falls through to the normal turn: comms voices the ack itself.
-        await _resolve_pending_browser_handoff_turn(
-            body, user, conversation_id, stream_id, state
-        )
+        await _resolve_pending_browser_handoff_turn(body, user, conversation_id, stream_id, state)
 
         # Starts only after the conversation row exists (_publish_init_chunk);
         # starting earlier races the insert and the $set description update can
@@ -356,6 +369,24 @@ async def _run_chat_stream(
         await _note_cancellation(stream_id, state)
 
         await _finalize_description(description_task, stream_id)
+        # Unmutated: resolve_turn_emoji_ack sets kind and target together, so and/or agree.
+        if (
+            state.message_kind is MessageKind.EMOJI_ACK  # pragma: no mutate
+            and state.reacts_to_message_id
+        ):
+            # The client streamed the raw directive as text; the frame tells it to
+            # take that back and attach the emoji as a reaction badge instead.
+            await stream_manager.publish_chunk(
+                stream_id,
+                format_sse_data(
+                    EmojiAckFrame(
+                        emoji_ack=EmojiAckPayload(
+                            emoji=state.complete_message,
+                            reacts_to_message_id=state.reacts_to_message_id,
+                        )
+                    ).model_dump()
+                ),
+            )
         await stream_manager.publish_chunk(
             stream_id,
             format_sse_data(
@@ -378,24 +409,6 @@ async def _run_chat_stream(
             status="cancelled" if state.is_cancelled else "success",
         )
         if user_id:
-            # Latency props are omitted, not sent as null, when a stage never ran.
-            latencies = (
-                ("ttft_ms", state.ttft_ms),
-                ("e2e_ack_ms", state.e2e_ack_ms),
-                ("e2e_full_ms", state.e2e_full_ms),
-            )
-            event_props: dict[str, Any] = {
-                "conversation_id": conversation_id,
-                "voice_mode": body.voice_mode,
-                "is_new_conversation": is_new_conversation,
-                "delegated": state.delegated,
-                "queued": state.queued,
-                **{name: value for name, value in latencies if value is not None},
-            }
-            # Source is falsy-checked, not None-checked: a bot platform is a bare
-            # str, and a blank one is no source rather than an empty-string one.
-            if source:
-                event_props["source"] = source
             capture_event(
                 user_id,
                 (
@@ -403,7 +416,9 @@ async def _run_chat_stream(
                     if state.is_cancelled
                     else AnalyticsEvents.CHAT_MESSAGE_COMPLETED
                 ),
-                event_props,
+                _turn_completion_props(
+                    body, state, conversation_id, source, is_new_conversation=is_new_conversation
+                ),
                 dedupe_key=stream_id,
             )
 
@@ -418,6 +433,33 @@ async def _run_chat_stream(
         )
     finally:
         await _finalize_stream(stream_id, body, user, conversation_id, state, artifact_task)
+
+
+def _turn_completion_props(
+    body: MessageRequestWithHistory,
+    state: _StreamState,
+    conversation_id: str,
+    source: str | None,
+    *,
+    is_new_conversation: bool,
+) -> AnalyticsProperties:
+    """Properties for the turn's terminal analytics event; timings only once measured."""
+    props: dict[str, object] = {
+        "conversation_id": conversation_id,
+        "voice_mode": body.voice_mode,
+        "is_new_conversation": is_new_conversation,
+        "delegated": state.delegated,
+        "queued": state.queued,
+    }
+    if state.ttft_ms is not None:
+        props["ttft_ms"] = state.ttft_ms
+    if state.e2e_ack_ms is not None:
+        props["e2e_ack_ms"] = state.e2e_ack_ms
+    if state.e2e_full_ms is not None:
+        props["e2e_full_ms"] = state.e2e_full_ms
+    if source:
+        props["source"] = source
+    return props
 
 
 def _recent_history(messages: list[MessageDict]) -> list[MessageDict]:
@@ -801,12 +843,15 @@ def _stamp_turn_latencies(state: _StreamState) -> None:
 
 
 def _executor_delegation(stream_id: str) -> tuple[bool, bool]:
-    """Return (delegated, queued) for a turn from its executor session."""
+    """Return (delegated, queued) for a turn from its executor session.
+
+    Dispatch has no queue: work that arrives while an executor is busy goes to
+    the live run's inbox, never a queue, so a delegation is never queued.
+    """
     session = get_session(stream_id)
     if session is None:
         return False, False
-    queued = session.executor_queued_task_id is not None
-    return (session.executor_spawned or queued, queued)
+    return session.executor_spawned, False
 
 
 def _close_turn_timings(
@@ -923,6 +968,22 @@ async def _handle_stream_error(
     return user_error
 
 
+def resolve_turn_emoji_ack(
+    complete_message: str, user_message_id: str
+) -> tuple[str, MessageKind, str | None]:
+    """Reduce comms' final message to the stamp the saved turn should carry.
+
+    A whole-reply REACT control line becomes a one-emoji acknowledgment
+    stamped emoji_ack with the user message as target. SILENCE is never
+    applied here: a live turn must not vanish; anything else passes through
+    unchanged.
+    """
+    directive = interpret_comms_output(complete_message)
+    if directive.kind is CommsDirectiveKind.REACT:
+        return directive.payload, MessageKind.EMOJI_ACK, user_message_id
+    return complete_message, MessageKind.TEXT, None
+
+
 async def _substitute_empty_completion(stream_id: str, state: _StreamState) -> None:
     """Replace a contentless turn with one honest line, and record why.
 
@@ -965,6 +1026,12 @@ async def _persist_turn(
     state.complete_message, state.tool_data = await recover_stream_state(
         stream_id, state.complete_message, state.tool_data
     )
+    # A comms REACT directive resolves this turn to a one-emoji ack of the
+    # user's message; stamp the saved message so reload/sync fold it into a
+    # reaction badge (the live client learns the same from the emoji_ack frame).
+    state.complete_message, state.message_kind, state.reacts_to_message_id = resolve_turn_emoji_ack(
+        state.complete_message, state.user_message_id
+    )
     merge_tool_outputs(state.tool_data, state.tool_outputs)
     inject_todo_progress(state.tool_data, state.todo_progress_accumulated)
     reconstruct_subagent_groups(state.tool_data)
@@ -981,7 +1048,15 @@ async def _persist_turn(
         bot_timestamp=state.turn_completed_at,
         error=state.error or None,
         follow_up_actions=state.follow_up_actions or None,
+        kind=state.message_kind,
+        reacts_to_message_id=state.reacts_to_message_id,
     )
+    if state.message_kind is MessageKind.EMOJI_ACK:
+        capture_event(
+            user.user_id,
+            AnalyticsEvents.CHAT_TURN_REACTED,
+            {"emoji": state.complete_message},
+        )
     state.saved = True
 
 

@@ -6,7 +6,7 @@ import inspect
 from typing import Any, NotRequired, Protocol, TypedDict, cast
 
 from chromadb.api.models.AsyncCollection import AsyncCollection
-from chromadb.api.types import Where
+from chromadb.api.types import GetResult, Where
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langgraph.store.base import PutOp
 
@@ -61,12 +61,26 @@ class IndexedToolEntry(TypedDict):
     and description for subagent entries — _build_put_operations
     discriminates on which one is there; rows read back from Chroma carry
     neither, since only the hash matters for the diff.
+
+    source/name/integration_id ride along on subagent entries only: the
+    PutOp value persists them so retrieval can tell a static MCP pointer
+    (source "mcp") from a custom MCP pointer (source "custom") instead of
+    dropping everything without source "custom" as stale.
     """
 
     hash: str
     namespace: str
     tool: NotRequired[IndexableTool]
     description: NotRequired[str]
+    source: NotRequired[str]
+    name: NotRequired[str]
+    integration_id: NotRequired[str]
+
+
+class IndexedToolMetadata(TypedDict, total=False):
+    """The Chroma metadata key the diff reads back; ChromaStore._upsert_item writes it."""
+
+    tool_hash: str
 
 
 def _namespace_equals(namespace: str) -> Where:
@@ -125,14 +139,18 @@ def _get_current_tools_with_hashes(
 
 
 def _get_subagent_tools() -> dict[str, IndexedToolEntry]:
-    """Get subagent tools with their hashes.
+    """Get MCP subagent pointers with their hashes.
 
-    Returns:
-        Dictionary mapping subagent tool names to their hash and namespace info
+    Only MCP-managed integrations are indexed: their tools are issued per user
+    in namespaces discovery never enters, so the pointer doc is the only way the
+    model learns their id to hand off. Provider/built-in integrations surface as
+    their own tools, so indexing them would resurrect the removed discovery surface.
     """
     subagent_tools: dict[str, IndexedToolEntry] = {}
 
     for subagent in all_subagents():
+        if subagent.managed_by != "mcp":
+            continue
         cfg = subagent.config
         provider_name = subagent.name
         short_name = subagent.short_name or subagent.id
@@ -149,7 +167,12 @@ def _get_subagent_tools() -> dict[str, IndexedToolEntry]:
         subagent_hash = hashlib.sha256(description.encode()).hexdigest()
 
         subagent_tools[f"subagents::subagent:{subagent.id}"] = IndexedToolEntry(
-            hash=subagent_hash, namespace="subagents", description=description
+            hash=subagent_hash,
+            namespace="subagents",
+            description=description,
+            source="mcp",
+            name=provider_name,
+            integration_id=subagent.id,
         )
 
     return subagent_tools
@@ -177,7 +200,7 @@ async def _get_existing_tools_from_chroma(
             else:
                 return existing_tools
 
-        existing_data = (
+        existing_data: GetResult = (
             await collection.get(include=["metadatas"], where=where_filter)
             if where_filter
             else await collection.get(include=["metadatas"])
@@ -185,12 +208,13 @@ async def _get_existing_tools_from_chroma(
         if existing_data and existing_data.get("ids") and existing_data.get("metadatas"):
             for doc_id, metadata in zip(existing_data["ids"], existing_data["metadatas"] or []):
                 if metadata and "::" in doc_id:
+                    tool_metadata: IndexedToolMetadata = cast(IndexedToolMetadata, metadata)
                     parts = doc_id.split("::")
                     namespace = parts[0] if len(parts) > 1 else "default"
 
                     # Use full doc_id as composite key to prevent collisions
                     existing_tools[doc_id] = IndexedToolEntry(
-                        hash=str(metadata.get("tool_hash", "")),
+                        hash=str(tool_metadata.get("tool_hash", "")),
                         namespace=namespace,
                     )
     except Exception as e:
@@ -235,7 +259,7 @@ def _compute_tool_diff(
 
     # Find new or modified tools
     for tool_name, tool_data in current_tools.items():
-        existing = existing_tools.get(tool_name)
+        existing: IndexedToolEntry | None = existing_tools.get(tool_name)
         existing_hash = existing["hash"] if existing else None
         if existing_hash != tool_data["hash"]:
             tools_to_upsert.append((tool_name, tool_data))
@@ -254,6 +278,57 @@ def _compute_tool_diff(
     return tools_to_upsert, tools_to_delete
 
 
+def _tool_name_from_key(composite_key: str) -> str:
+    """Return the tool name half of a "namespace::tool_name" composite key."""
+    _, separator, tool_name = composite_key.partition("::")
+    return tool_name if separator else composite_key
+
+
+def _put_value(tool_data: IndexedToolEntry) -> dict[str, str]:
+    """Build the persisted value for one tool: description + hash, plus subagent provenance."""
+    # Handle regular tools vs subagent tools
+    if "tool" in tool_data:
+        tool = tool_data["tool"]
+        return {
+            "description": tool.description,
+            "tool_hash": tool_data["hash"],
+        }
+    # Subagent tool: carry source/name/integration_id so retrieval can
+    # tell static ("mcp") from custom ("custom") pointers. Absent keys
+    # stay absent (legacy entries predate them).
+    value = {
+        "description": tool_data["description"],
+        "tool_hash": tool_data["hash"],
+    }
+    if "source" in tool_data:
+        value["source"] = tool_data["source"]
+    if "name" in tool_data:
+        value["name"] = tool_data["name"]
+    if "integration_id" in tool_data:
+        value["integration_id"] = tool_data["integration_id"]
+    return value
+
+
+def _upsert_op(composite_key: str, tool_data: IndexedToolEntry) -> PutOp:
+    """One upsert PutOp; the key is the tool name half of the composite key."""
+    # Extract actual tool name from composite key (namespace::tool_name)
+    return PutOp(
+        namespace=(tool_data["namespace"],),
+        key=_tool_name_from_key(composite_key),
+        value=_put_value(tool_data),
+        index=["description"],
+    )
+
+
+def _delete_op(composite_key: str, namespace: str) -> PutOp:
+    """One delete PutOp (a value-None tombstone) for a removed tool."""
+    return PutOp(
+        namespace=(namespace,),
+        key=_tool_name_from_key(composite_key),
+        value=None,
+    )
+
+
 def _build_put_operations(
     tools_to_upsert: list[tuple[str, IndexedToolEntry]],
     tools_to_delete: list[tuple[str, str]],
@@ -262,43 +337,10 @@ def _build_put_operations(
 
     composite_key format is "namespace::tool_name".
     """
-    put_ops: list[PutOp] = []
-
-    # Add upsert operations
-    for composite_key, tool_data in tools_to_upsert:
-        # Extract actual tool name from composite key (namespace::tool_name)
-        tool_name = composite_key.split("::", 1)[-1] if "::" in composite_key else composite_key
-
-        # Handle regular tools vs subagent tools
-        if "tool" in tool_data:
-            tool = tool_data["tool"]
-            description = tool.description
-        else:
-            # Subagent tool
-            description = tool_data["description"]
-        put_ops.append(
-            PutOp(
-                namespace=(tool_data["namespace"],),
-                key=tool_name,
-                value={
-                    "description": description,
-                    "tool_hash": tool_data["hash"],
-                },
-                index=["description"],
-            )
-        )
-
-    # Add delete operations
-    for composite_key, namespace in tools_to_delete:
-        tool_name = composite_key.split("::", 1)[-1] if "::" in composite_key else composite_key
-        put_ops.append(
-            PutOp(
-                namespace=(namespace,),
-                key=tool_name,
-                value=None,
-            )
-        )
-
+    put_ops = [_upsert_op(composite_key, tool_data) for composite_key, tool_data in tools_to_upsert]
+    put_ops.extend(
+        _delete_op(composite_key, namespace) for composite_key, namespace in tools_to_delete
+    )
     return put_ops
 
 
@@ -454,7 +496,7 @@ async def delete_tools_by_namespace(namespace: str) -> int:
     collection = await store._get_collection()
 
     # Use ChromaDB metadata filter to avoid a full collection scan.
-    results = await collection.get(where=_namespace_equals(namespace), include=[])
+    results: GetResult = await collection.get(where=_namespace_equals(namespace), include=[])
     ids_to_delete = results.get("ids", [])
     log.set_ns("vector", result_count=len(ids_to_delete))
 
@@ -508,7 +550,7 @@ async def initialize_chroma_tools_store() -> ChromaStore:
     async def _seed() -> None:
         # Re-read existing inside the lease so a follower that waited out a leader
         # replica's seed sees the leader's writes and embeds nothing.
-        current_tools = _get_current_tools_with_hashes(tool_registry)
+        current_tools: dict[str, IndexedToolEntry] = _get_current_tools_with_hashes(tool_registry)
         managed_namespaces = {tool_data["namespace"] for tool_data in current_tools.values()}
         log.set(vector=VectorContext(operation="upsert", collection="langgraph_tools_store"))
         log.info(

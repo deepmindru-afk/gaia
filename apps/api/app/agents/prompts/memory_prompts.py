@@ -1,8 +1,8 @@
 """
-Memory Extraction Prompts for Subagents.
+Memory Extraction Prompts for integrations.
 
 This module contains integration-specific prompts that tell the memory engine WHAT to extract
-and remember from agent conversations. Each subagent has its own prompt tailored
+and remember from agent conversations. Each integration has its own prompt tailored
 to the entities, patterns, and preferences relevant to that integration.
 
 Memory Categories:

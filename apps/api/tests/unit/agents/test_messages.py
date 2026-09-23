@@ -710,3 +710,30 @@ class TestTheClockIsRenderedInTheUsersTimezone:
             )
 
         clock.assert_called_once_with(user_timezone="Asia/Kolkata")
+
+
+class TestOpenuiVariantReachesTheModel:
+    """The static per-channel prompt selection runs for real here (the real create_system_message is not patched), so the test proves the variant that reaches the model, not just that a selector was called."""
+
+    @pytest.mark.asyncio
+    async def test_web_serves_the_openui_variant(self) -> None:
+        p = _patches()
+        with p["build_dynamic"], p["format_files"]:
+            result = await construct_langchain_messages(
+                messages=[{"role": "user", "content": "hi"}],
+                scope=MessageScope(user_id="uid-1", source="web"),
+            )
+
+        assert "---OpenUI Lang (Rich UI Components)---" in result[0].content
+
+    @pytest.mark.asyncio
+    async def test_text_channel_serves_the_platform_variant(self) -> None:
+        p = _patches()
+        with p["build_dynamic"], p["format_files"]:
+            result = await construct_langchain_messages(
+                messages=[{"role": "user", "content": "hi"}],
+                scope=MessageScope(user_id="uid-1", source="whatsapp"),
+            )
+
+        assert "Platform Context" in result[0].content
+        assert "---OpenUI Lang (Rich UI Components)---" not in result[0].content

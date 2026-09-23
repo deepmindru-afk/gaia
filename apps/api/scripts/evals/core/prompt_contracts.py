@@ -292,7 +292,7 @@ CLAUSES: tuple[Clause, ...] = (
         name="risky_writes_draft_first",
         source="executor",
         starts_at="RISKY WRITES: DRAFT AND CONFIRM FIRST",
-        ends_before="TWO TASK SYSTEMS (do not confuse)",
+        ends_before="THREE STORES (one job each, never confused)",
         governs="emails always go through the draft flow; nothing auto-sends or auto-deletes",
         depends_on=("data/capability/gmail.yaml", "suites/hil.py"),
     ),

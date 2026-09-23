@@ -4,12 +4,14 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 import pytest
 
 from app.agents.tools.skill_tools import (
     LearnedSkillSpec,
     _compose_learned_skill_md,
+    _get_user_id,
     save_learned_skill,
 )
 from shared.py.wide_events import log
@@ -92,6 +94,10 @@ class TestGetUserId:
 
         with pytest.raises(ValueError, match="User ID not found"):
             _get_user_id(_cfg_no_user())  # type: ignore[arg-type]  # tests pass a plain dict where RunnableConfig is declared
+
+    def test_config_without_metadata_raises(self) -> None:
+        with pytest.raises(ValueError, match="User ID not found"):
+            _get_user_id(cast(RunnableConfig, {"configurable": {}}))
 
     def test_none_config(self) -> None:
         from app.agents.tools.skill_tools import _get_user_id

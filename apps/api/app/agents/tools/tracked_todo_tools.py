@@ -29,6 +29,7 @@ from app.models.trigger_subscription_models import (
     TriggerSubscriptionStatus,
 )
 from app.services.storage._vfs_common import folder_name
+from app.services.todo_canvas_storage import read_canvas, write_canvas
 from app.services.tracked_todo_service import tracked_todo_service
 from app.services.triggers.matchable_fields import MATCHABLE_TRIGGERS, get_matchable_trigger
 from app.services.triggers.scope_catalog import scope_fields_for
@@ -829,6 +830,47 @@ async def update_tracked_todo(
 
 
 @tool
+async def update_tracked_todo_canvas(
+    config: RunnableConfig,
+    todo_id: Annotated[str, "ID of the tracked todo whose canvas to update"],
+    content: Annotated[
+        str,
+        "New canvas content (mode='replace') or text to add at the end (mode='append')",
+    ],
+    mode: Annotated[
+        str,
+        "How to apply the update: 'replace' overwrites the whole canvas, "
+        "'append' adds to the end of it.",
+    ] = "replace",  # pragma: no mutate: mode is strip().lower()-normalized before any use
+) -> str:
+    """Update a tracked todo's working-memory canvas.
+
+    Use this to record progress, outcomes, IDs, learnings, or follow-ups that
+    must survive this turn. Prefer 'append' for progress notes; use 'replace'
+    when rewriting the canvas to reflect what is true right now.
+    """
+    user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
+    if not user_id:
+        return _ERR_NO_USER_ID
+
+    normalized = mode.strip().lower()
+    if normalized not in ("replace", "append"):
+        return f"Error: invalid mode '{mode}'. Use 'replace' or 'append'."
+    if normalized == "append":
+        current = await read_canvas(todo_id, user_id)
+        if current is None:
+            return f"Error: tracked todo {todo_id} not found."
+        if current:
+            suffix = content if content.startswith("\n") else f"\n{content}"
+            content = f"{current}{suffix}"
+
+    ok = await write_canvas(todo_id, user_id, content)
+    if not ok:
+        return f"Error: tracked todo {todo_id} not found."
+    return f"Canvas updated for tracked todo {todo_id} (mode: {normalized})."
+
+
+@tool
 async def list_tracked_todos(
     config: RunnableConfig,
 ) -> str:
@@ -1056,6 +1098,7 @@ tools = [
     search_todo_context,
     complete_tracked_todo,
     update_tracked_todo,
+    update_tracked_todo_canvas,
     list_tracked_todos,
     list_trigger_fields,
     subscribe_todo_to_trigger,

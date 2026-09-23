@@ -95,6 +95,30 @@ class TestDrain:
         assert entries[0]["tool_name"] == "tool_calls_data"
         assert entries[0]["data"]["output"] == "42 results"
 
+    def test_drain_backfills_outputs_only_into_tool_call_entries(self) -> None:
+        """An approval card shares its gated call's tool_call_id but must not absorb that call's output."""
+        session = create_session("s1", RunKind.QUEUED)
+        session.tool_events.append(_tool_call_event("tc-1"))
+        session.tool_events.append(
+            {
+                "tool_data": {
+                    "tool_name": "approval_request",
+                    "data": {"approval_id": "ap-1", "tool_call_id": "tc-1", "status": "pending"},
+                }
+            }
+        )
+        session.tool_events.append({"tool_output": {"tool_call_id": "tc-1", "output": "sent"}})
+
+        entries = drain_executor_tool_data("s1")
+
+        call, approval = entries
+        assert call["data"]["output"] == "sent"
+        assert approval["data"] == {
+            "approval_id": "ap-1",
+            "tool_call_id": "tc-1",
+            "status": "pending",
+        }
+
     def test_drain_groups_subagent_events(self) -> None:
         session = create_session("s1", RunKind.QUEUED)
         session.tool_events.append(

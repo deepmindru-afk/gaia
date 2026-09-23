@@ -833,27 +833,6 @@ class TestMaintenanceSweep:
 
 @pytest.mark.unit
 class TestHealthCheckAgentCall:
-    async def test_a_queued_dispatch_is_not_a_health_check_result(self) -> None:
-        # The executor was busy, so the request was queued and answered with an
-        # acknowledgement; returning that text as the check's verdict marked a
-        # todo healthy on the strength of work that had not happened.
-        agent = AsyncMock(
-            return_value=SilentRunResult(
-                message="That task is queued behind the one already running.",
-                tool_data=[],
-                queued_task_id="task-9",
-            )
-        )
-        with (
-            patch(f"{MODULE}.call_agent_silent", agent),
-            patch(f"{MODULE}.load_user_context", AsyncMock(return_value=None)),
-        ):
-            result = await _call_health_check_agent("todo-1", "user-1", "is this todo alive?")
-
-        assert result.startswith("NEEDS_ATTENTION")
-        assert "queued" in result
-        assert "already running" not in result
-
     async def test_the_run_is_tagged_as_a_maintenance_health_check(self) -> None:
         # The trigger context tells the agent stack this is a background health
         # check (not chat) and carries the todo the verdict belongs to. A dropped
@@ -887,62 +866,6 @@ class TestHealthCheckAgentCall:
             "trigger_type": "maintenance_health_check",
             "todo_id": "todo-7",
         }
-
-    async def _user_the_check_runs_as(self, load_user_context: AsyncMock) -> object:
-        agent = AsyncMock(return_value=SilentRunResult(message="ok", tool_data=[]))
-        with (
-            patch(f"{MODULE}.call_agent_silent", agent),
-            patch(f"{MODULE}.load_user_context", load_user_context),
-            patch(f"{MODULE}.log") as log,
-        ):
-            await _call_health_check_agent("todo-7", "user-3", "is this todo alive?")
-        self.log = log
-        return agent.await_args.kwargs["user"]
-
-    async def test_the_check_runs_as_the_loaded_user(self) -> None:
-        loaded = AuthenticatedUser(user_id="user-3", name="Ada", timezone="Asia/Kolkata")
-        load = AsyncMock(return_value=loaded)
-
-        user = await self._user_the_check_runs_as(load)
-
-        assert user == loaded
-        load.assert_awaited_once_with("user-3")
-
-    async def test_a_user_with_no_record_runs_as_a_placeholder_without_a_warning(self) -> None:
-        user = await self._user_the_check_runs_as(AsyncMock(return_value=None))
-
-        assert user == AuthenticatedUser(user_id="user-3", name="User")
-        self.log.warning.assert_not_called()
-
-    async def test_a_failed_user_load_runs_as_a_placeholder(self) -> None:
-        user = await self._user_the_check_runs_as(AsyncMock(side_effect=RuntimeError("db down")))
-
-        assert user == AuthenticatedUser(user_id="user-3", name="User")
-
-    async def test_a_queued_dispatch_is_logged_with_the_todo_and_task_ids(self) -> None:
-        # The queued verdict is deliberately vague ("not run"), so the log line is
-        # the only place the operator learns WHICH todo was skipped and WHICH
-        # in-flight task blocked it. Losing either id makes the warning unactionable.
-        agent = AsyncMock(
-            return_value=SilentRunResult(
-                message="That task is queued behind the one already running.",
-                tool_data=[],
-                queued_task_id="task-9",
-            )
-        )
-        with (
-            patch(f"{MODULE}.call_agent_silent", agent),
-            patch(f"{MODULE}.load_user_context", AsyncMock(return_value=None)),
-            patch(f"{MODULE}.log") as log,
-        ):
-            result = await _call_health_check_agent("todo-1", "user-1", "is this todo alive?")
-
-        assert result == "NEEDS_ATTENTION: Health check queued behind an in-flight run; not run"
-        log.warning.assert_called_once_with(
-            "maintenance_sweep.health_check_queued",
-            todo_id="todo-1",
-            queued_task_id="task-9",
-        )
 
     async def test_an_empty_agent_message_is_an_empty_verdict(self) -> None:
         # The sweep classifies the verdict by reading its text; substituting any

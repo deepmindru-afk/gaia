@@ -420,7 +420,6 @@ class TestGetUserAvailableToolNamespaces:
         subagent = SubAgentConfig(
             agent_name="github_agent",
             tool_space="github",
-            handoff_tool_name="call_github",
             domain="code",
             capabilities="Git operations",
             use_cases="Code management",
@@ -2177,6 +2176,7 @@ class TestCreateAndConnectCustomIntegration:
 
         assert result_status["status"] == "requires_oauth"
         assert result_status["oauth_url"] == "https://auth.example.com"
+        mock_mcp_client.probe_connection.assert_awaited_once_with(SERVER_URL)
 
     @patch(
         "app.services.integrations.custom_crud.create_custom_integration",

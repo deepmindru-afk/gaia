@@ -87,7 +87,7 @@ class TestWrites:
 
         mock_get.assert_awaited_once_with(USER_ID)
         user_repo.set_hil_preference_fields.assert_awaited_once_with(
-            USER_ID, mode="auto", tool_overrides=None
+            USER_ID, mode="auto", tool_overrides=None, never_auto_tools=None
         )
         assert prefs.mode == "auto", "the caller gets the post-write state, not the input"
 
@@ -97,8 +97,18 @@ class TestWrites:
         await update_hil_preferences(USER_ID, tool_overrides={})
 
         user_repo.set_hil_preference_fields.assert_awaited_once_with(
-            USER_ID, mode=None, tool_overrides={}
+            USER_ID, mode=None, tool_overrides={}, never_auto_tools=None
         )
+
+    async def test_never_auto_tools_pass_through_and_read_back(self, user_repo) -> None:
+        user_repo.get.return_value = _user_with({"mode": "auto", "never_auto_tools": ["wipe_db"]})
+
+        prefs = await update_hil_preferences(USER_ID, never_auto_tools=["wipe_db"])
+
+        user_repo.set_hil_preference_fields.assert_awaited_once_with(
+            USER_ID, mode=None, tool_overrides=None, never_auto_tools=["wipe_db"]
+        )
+        assert prefs.never_auto_tools == ["wipe_db"]
 
     async def test_a_tool_override_passes_through_and_reads_back(self, user_repo) -> None:
         user_repo.get.return_value = _user_with({"tool_overrides": {"GMAIL_SEND_EMAIL": True}})

@@ -21,6 +21,7 @@
  * @module
  */
 
+import { BOT_EVENTS } from "@gaia/shared/analytics";
 import {
   BaseBotAdapter,
   type BotCommand,
@@ -37,6 +38,7 @@ import {
   MEDIA_READ_TIMEOUT_MS,
   type MediaKind,
   type OutboundAttachment,
+  type OutboundReaction,
   type PlatformName,
   type RichMessage,
   type RichMessageTarget,
@@ -49,7 +51,7 @@ import {
   sanitizeErrorForLog,
   withWideEvent,
 } from "@gaia/shared/bots";
-import type { Message } from "@grammyjs/types";
+import type { Message, ReactionType } from "@grammyjs/types";
 import { Bot, type Context, GrammyError, InputFile } from "grammy";
 
 /** Telegram's sendPhoto byte cap; larger images are sent as documents. */
@@ -466,6 +468,41 @@ export class TelegramAdapter extends BaseBotAdapter {
     );
   }
 
+  protected override async deliverOutboundReaction(
+    destinationId: string,
+    reaction: OutboundReaction,
+    _isChannel: boolean,
+  ): Promise<void> {
+    // Telegram accepts only a fixed emoji set and 400s anything else; an
+    // off-list emoji falls into the catch below and goes out as a text bubble.
+    const emoji = reaction.emoji as Extract<
+      ReactionType,
+      { type: "emoji" }
+    >["emoji"];
+    try {
+      await this.bot.api.setMessageReaction(
+        destinationId,
+        Number(reaction.target_platform_message_id),
+        [{ type: "emoji", emoji }],
+      );
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "native" },
+      );
+    } catch (err) {
+      this.adapterLogger.warn("outbound_reaction_attach_failed", {
+        ...sanitizeErrorForLog(err),
+      });
+      await this.deliverOutbound(destinationId, reaction.emoji, _isChannel);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "fallback_text", reason: "attach_failed" },
+      );
+    }
+  }
+
   /**
    * Delivers an agent-generated file artifact to a Telegram user. Fetches the
    * bytes from GAIA (bot-authenticated) and uploads them as a photo (for
@@ -587,6 +624,7 @@ export class TelegramAdapter extends BaseBotAdapter {
           platformUserId: userId,
           channelId: chatId.toString(),
           isDm: ctx.chat?.type === "private",
+          platformMessageId: ctx.msg?.message_id?.toString(),
           ...(attachments.length > 0
             ? {
                 fileIds: attachments.map((a) => a.fileId),

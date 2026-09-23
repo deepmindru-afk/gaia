@@ -24,7 +24,10 @@ const { connection, channel, connect } = vi.hoisted(() => {
 
 vi.mock("amqplib", () => ({ connect }));
 
-import type { OutboundAttachment } from "../../../../../libs/shared/ts/src/bots/consumer/envelope";
+import type {
+  OutboundAttachment,
+  OutboundReaction,
+} from "../../../../../libs/shared/ts/src/bots/consumer/envelope";
 import { OutboundConsumer } from "../../../../../libs/shared/ts/src/bots/consumer/outbound-consumer";
 import { hashLogIdentifier } from "../../../../../libs/shared/ts/src/bots/utils/logger";
 import { captureBotEvents } from "../helpers/capture-bot-event";
@@ -49,6 +52,11 @@ async function startAndCaptureHandler(
     attachment: OutboundAttachment,
   ) => Promise<void> = async () => undefined,
   gaiaApiUrl = "https://api.gaia.test",
+  deliverReaction: (
+    id: string,
+    reaction: OutboundReaction,
+    isChannel: boolean,
+  ) => Promise<void> = async () => undefined,
 ): Promise<Handler> {
   const consumer = new OutboundConsumer(
     platform,
@@ -56,6 +64,7 @@ async function startAndCaptureHandler(
     deliver,
     deliverFile,
     gaiaApiUrl,
+    deliverReaction,
   );
   await consumer.start();
   const calls = channel.consume.mock.calls;
@@ -519,6 +528,67 @@ describe("OutboundConsumer message handling", () => {
     expect(deliver).not.toHaveBeenCalled(); // text is not also sent as a message
     expect(channel.ack).toHaveBeenCalledWith(msg);
   });
+
+  it("routes a reaction to deliverReaction (not the text path) and acks", async () => {
+    const deliver = vi.fn().mockResolvedValue(undefined);
+    const deliverReaction = vi.fn().mockResolvedValue(undefined);
+    const handle = await startAndCaptureHandler(
+      "whatsapp",
+      deliver,
+      async () => undefined,
+      "https://api.gaia.test",
+      deliverReaction,
+    );
+    const msg = msgFor({
+      id: "1",
+      platform: "whatsapp",
+      destination_id: "1555",
+      reaction: { target_platform_message_id: "wamid.123", emoji: "👍" },
+      enqueued_at: "t",
+    });
+
+    await deliverMessage(handle, msg);
+
+    expect(deliverReaction).toHaveBeenCalledWith(
+      "1555",
+      { target_platform_message_id: "wamid.123", emoji: "👍" },
+      false,
+    );
+    expect(deliver).not.toHaveBeenCalled(); // no text bubble alongside the reaction
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+  });
+
+  it("dead-letters a failed reaction WITHOUT requeue, even on first attempt", async () => {
+    // Attaching is idempotent upstream, but a failure already means the ack
+    // did not land — retrying the whole envelope would re-drive the attach
+    // against a target the platform just rejected. Dead-letter for inspection.
+    const deliverReaction = vi
+      .fn()
+      .mockRejectedValue(new Error("attach failed"));
+    const handle = await startAndCaptureHandler(
+      "whatsapp",
+      vi.fn().mockResolvedValue(undefined),
+      async () => undefined,
+      "https://api.gaia.test",
+      deliverReaction,
+    );
+    const msg = msgFor(
+      {
+        id: "1",
+        platform: "whatsapp",
+        destination_id: "1555",
+        reaction: { target_platform_message_id: "wamid.123", emoji: "👍" },
+        enqueued_at: "t",
+      },
+      false, // first attempt — still no requeue on the reaction path
+    );
+
+    await deliverMessage(handle, msg);
+
+    expect(channel.nack).toHaveBeenCalledWith(msg, false, false);
+    expect(channel.ack).not.toHaveBeenCalled();
+  });
+
   it("delivers one chat's messages in published order while other chats proceed", async () => {
     const order: string[] = [];
     let releasePhoto: () => void = () => undefined;

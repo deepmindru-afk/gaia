@@ -31,6 +31,7 @@ from app.agents.context.fetchers import (
     build_gaia_knowledge_block,
     build_memory_recall_block,
     build_new_user_guidance_block,
+    build_open_pendings_block,
     build_tracked_todos_block,
     build_workspace_session_banner,
     format_active_todo_banner,
@@ -401,10 +402,11 @@ class TestConnectedIntegrationsManifest:
         with patch(
             "app.agents.context.fetchers.get_connected_integrations_named",
             AsyncMock(return_value=[{"id": "gmail", "name": "Gmail"}]),
-        ):
+        ) as named:
             manifest = await build_connected_integrations_manifest("u1", header="HEADER:")
 
         assert manifest == "HEADER:\n- Gmail (gmail)"
+        named.assert_awaited_once_with("u1")
 
     async def test_two_ids_for_one_provider_render_once_under_the_resolved_name(self) -> None:
         """A stale google_calendar beside today's googlecalendar rendered both, one a bare id resolving to no subagent."""
@@ -1306,3 +1308,124 @@ class TestNoVolatileSectionIsClipped:
             block = await build_tracked_todos_block(ctx(active_todo_id="todo-1"))
 
         assert block == "t" * 400
+
+
+@pytest.mark.unit
+class TestOpenPendingsBlock:
+    REVOKE_RULE = (
+        'If a step is no longer needed, withdraw it with execute(tool_name="revoke", '
+        'data={"id": "<id>"}).'
+    )
+
+    def _doc(
+        self,
+        approval_id: str = "ap_1",
+        summary: str = "Send it",
+        user_id: str = "u1",
+        created_at: object = None,
+    ) -> MagicMock:
+        doc = MagicMock()
+        doc.approval_id = approval_id
+        doc.tool_name = "GMAIL_SEND_EMAIL"
+        doc.summary = summary
+        doc.user_id = user_id
+        doc.created_at = datetime.now(UTC) - timedelta(days=3) if created_at is None else created_at
+        return doc
+
+    def _ctx(self, conversation_id: str | None = "c1") -> SectionContext:
+        return SectionContext(
+            tier=AgentTier.EXECUTOR, user_id="u1", conversation_id=conversation_id
+        )
+
+    async def _render(self, docs: list[MagicMock]) -> str:
+        with patch(
+            "app.agents.context.fetchers.approval_ledger_repository",
+        ) as ledger:
+            ledger.list_open = AsyncMock(return_value=docs)
+            text = await build_open_pendings_block(self._ctx())
+        ledger.list_open.assert_awaited_once_with("c1")
+        return text
+
+    async def test_renders_each_pending_with_age_and_revoke_rule(self) -> None:
+        text = await self._render([self._doc(), self._doc("ap_2", "File it")])
+
+        assert text == (
+            "OPEN PENDINGS (awaiting the user's decision):\n"
+            "- ap_1 | GMAIL_SEND_EMAIL | 3d | Send it\n"
+            "- ap_2 | GMAIL_SEND_EMAIL | 3d | File it\n" + self.REVOKE_RULE
+        )
+
+    @pytest.mark.parametrize(
+        ("age", "bucket"),
+        [
+            (timedelta(hours=1), "today"),
+            (timedelta(days=1, hours=1), "1d"),
+            (timedelta(days=4, hours=2), "4d"),
+        ],
+    )
+    async def test_age_is_bucketed_to_the_day(self, age: timedelta, bucket: str) -> None:
+        text = await self._render([self._doc(created_at=datetime.now(UTC) - age)])
+
+        assert f"- ap_1 | GMAIL_SEND_EMAIL | {bucket} | Send it" in text.splitlines()
+
+    async def test_a_row_without_a_timestamp_shows_an_unknown_age(self) -> None:
+        text = await self._render([self._doc(created_at="not-a-datetime")])
+
+        assert "- ap_1 | GMAIL_SEND_EMAIL | ? | Send it" in text.splitlines()
+
+    async def test_caps_at_ten_with_overflow_count(self) -> None:
+        docs = [self._doc(approval_id=f"ap_{i}", summary=f"s{i}") for i in range(12)]
+
+        lines = (await self._render(docs)).splitlines()
+
+        assert lines[-2:] == ["(+2 more open)", self.REVOKE_RULE]
+        assert [line.split(" | ")[0] for line in lines[1:11]] == [f"- ap_{i}" for i in range(10)]
+
+    async def test_exactly_ten_pendings_carry_no_overflow_line(self) -> None:
+        docs = [self._doc(approval_id=f"ap_{i}") for i in range(10)]
+
+        lines = (await self._render(docs)).splitlines()
+
+        assert len(lines) == 12
+        assert lines[-1] == self.REVOKE_RULE
+        assert not any("more open" in line for line in lines)
+
+    async def test_empty_and_missing_conversation_render_empty(self) -> None:
+        with patch(
+            "app.agents.context.fetchers.approval_ledger_repository",
+        ) as ledger:
+            ledger.list_open = AsyncMock(return_value=[])
+            assert await build_open_pendings_block(self._ctx()) == ""
+            assert await build_open_pendings_block(self._ctx(None)) == ""
+            ledger.list_open.assert_awaited_once()
+
+    async def test_ledger_failure_degrades_to_empty_and_is_logged(self) -> None:
+        async with captured_wide_event() as event:
+            with patch(
+                "app.agents.context.fetchers.approval_ledger_repository",
+            ) as ledger:
+                ledger.list_open = AsyncMock(side_effect=ConnectionError("mongo down"))
+                text = await build_open_pendings_block(self._ctx())
+
+        assert text == ""
+        assert event["warnings"] == [
+            {"msg": "open_pendings_fetch_failed", "error_type": "ConnectionError"}
+        ]
+
+    async def test_foreign_rows_never_render_into_this_users_context(self) -> None:
+        text = await self._render(
+            [
+                self._doc("ap_mine", "Mine"),
+                self._doc("ap_theirs", "Theirs", user_id="u2"),
+                self._doc("ap_legacy", "Legacy", user_id=""),
+            ]
+        )
+
+        assert "ap_mine" in text
+        assert "ap_theirs" not in text
+        assert "ap_legacy" in text
+
+    async def test_only_foreign_rows_render_nothing(self) -> None:
+        text = await self._render([self._doc("ap_theirs", "Theirs", user_id="u2")])
+
+        assert text == ""

@@ -1,5 +1,5 @@
 {
-  "$comment": "GAIA verify lanes \u2014 local mirror of CI quality gates (.github/workflows/code-quality.yml + main.yml). name matches the CI job/step (rows may be step-granular). scope = extended regex over changed paths; lane runs if ANY file matches (--all overrides). heavy=true needs --with-heavy. timeout_s hard cap; expiry -> status=timeout (exit 2). require_cmd: any missing -> skipped(missing-tool). command runs at repo root \u2014 keep byte-parity with the CI job's own repro line. Edit a workflow lane and this file in the SAME commit. INTENTIONALLY NOT MIRRORED (CI-only): build, build-images, coverage (combines the unit/integration/bridge slices; fail-under 80 on master, report-only on PRs), docker-image, regression-proof, validate-release-manifest, test-harness-tools, trivy-scan (advisory), changelog-sync (auto-fix PR job). Known deltas: py-tests mirrors via Dagger not byte-parity flake-gate slices; alert-rules needs locally installed pint/promtool (CI pins v0.87.0/v3.1.0 from release tarballs); whole-repo scopes are stricter than CI's changed-file scoping (safe direction). Post-merge note: master pinned bandit/xenon/interrogate and split ignore-ratchet into ignore-whys + ignore-staleness + tool-pins (2026-08 merge of origin/master).",
+  "$comment": "GAIA verify lanes — local mirror of CI quality gates (.github/workflows/code-quality.yml + main.yml). name matches the CI job/step (rows may be step-granular). scope = extended regex over changed paths; lane runs if ANY file matches (--all overrides). heavy=true needs --with-heavy. timeout_s hard cap; expiry -> status=timeout (exit 2). require_cmd: any missing -> skipped(missing-tool). command runs at repo root — keep byte-parity with the CI job's own repro line. Edit a workflow lane and this file in the SAME commit. INTENTIONALLY NOT MIRRORED (CI-only): build, build-images, coverage (combines the unit/integration/bridge slices; fail-under 80 on master, report-only on PRs), docker-image, regression-proof, validate-release-manifest, test-harness-tools, trivy-scan (advisory), changelog-sync (auto-fix PR job). Known deltas: py-tests mirrors via Dagger not byte-parity flake-gate slices; alert-rules needs locally installed pint/promtool (CI pins v0.87.0/v3.1.0 from release tarballs); whole-repo scopes are stricter than CI's changed-file scoping (safe direction). Post-merge note: master pinned bandit/xenon/interrogate and split ignore-ratchet into ignore-whys + ignore-staleness + tool-pins (2026-08 merge of origin/master).",
   "schema_version": 1,
   "lanes": [
     {
@@ -218,7 +218,7 @@
       "heavy": false,
       "timeout_s": 300,
       "require_cmd": [],
-      "command": "uvx --no-build bandit@1.9.4 -c pyproject.toml -r apps/api/app apps/voice-agent/src libs/shared/py --severity-level low --confidence-level low"
+      "command": "FILES=$(scripts/ci/changes.sh py-source); if [ \"$FILES\" = \"__FULL__\" ]; then uvx --no-build bandit@1.9.4 -c pyproject.toml -r apps/api/app apps/voice-agent/src libs/shared/py --severity-level low --confidence-level low; elif [ -z \"$FILES\" ]; then echo \"bandit: no changed Python source\"; else uvx --no-build bandit@1.9.4 -c pyproject.toml $FILES --severity-level low --confidence-level low; fi"
     },
     {
       "name": "pip-audit",
@@ -282,7 +282,7 @@
       "heavy": true,
       "timeout_s": 900,
       "require_cmd": ["docker"],
-      "command": "docker run --rm --volume \"$PWD:/src\" --workdir /src semgrep/semgrep@sha256:b68f9b68483955b85042dac7b4533757779625a02dcf91e470da4c2df1b430be semgrep scan --config tools/semgrep/p-python.yaml apps/api/app --error --metrics=off"
+      "command": "GITDIR=$(git rev-parse --path-format=absolute --git-common-dir) && docker run --rm --volume \"$PWD:/src\" --volume \"$GITDIR:$GITDIR\" --workdir /src semgrep/semgrep@sha256:b68f9b68483955b85042dac7b4533757779625a02dcf91e470da4c2df1b430be semgrep scan --config tools/semgrep/p-python.yaml apps/api/app --error --metrics=off"
     },
     {
       "name": "test-mutation",

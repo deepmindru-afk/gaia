@@ -1,5 +1,6 @@
 """Comprehensive tests for app/helpers/agent_helpers.py."""
 
+import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -27,6 +28,7 @@ from app.helpers.agent_helpers import (
     _record_interruption_quietly,
     _SilentAccumulators,
     _stamp_langfuse,
+    background_authorization,
     build_agent_config,
     build_initial_state,
     execute_graph_silent,
@@ -63,7 +65,6 @@ def _make_subagent(
         has_subagent=True,
         agent_name=f"{subagent_id}_agent",
         tool_space=f"{subagent_id}_space",
-        handoff_tool_name=f"call_{subagent_id}",
         domain=subagent_id,
         capabilities=f"{subagent_id} stuff",
         use_cases=f"{subagent_id} use",
@@ -917,6 +918,70 @@ class TestRecentUserMessages:
 
         assert recent_user_messages(history, "send it") == ["draft an email to Bob", "send it"]
 
+
+class TestBackgroundAuthorization:
+    """Schedule text authorizes background runs the way words authorize live turns."""
+
+    def test_interactive_runs_pass_through_untouched(self) -> None:
+        turns = ["send it"]
+        assert (
+            background_authorization(
+                turns,
+                execution_mode="interactive",
+                workflow_title="Morning briefing",
+                todo_title="Brief me",
+            )
+            is turns
+        )
+
+    def test_workflow_definition_is_appended_as_standing_authorization(self) -> None:
+        out = background_authorization(
+            ["Execute workflow: Morning briefing"],
+            execution_mode="background",
+            workflow_title="Morning briefing",
+            workflow_description="Emails my calendar and top emails",
+        )
+        assert out[0] == "Execute workflow: Morning briefing"
+        assert out[1] == "Scheduled workflow: Morning briefing. Emails my calendar and top emails"
+
+    @pytest.mark.parametrize(
+        ("title", "description", "expected"),
+        [
+            ("Morning briefing", "", "Scheduled workflow: Morning briefing"),
+            ("", "Emails my calendar", "Scheduled workflow. Emails my calendar"),
+        ],
+    )
+    def test_either_display_field_alone_still_authorizes(
+        self, title: str, description: str, expected: str
+    ) -> None:
+        out = background_authorization(
+            ["run it"],
+            execution_mode="background",
+            workflow_title=title,
+            workflow_description=description,
+        )
+        assert out == ["run it", expected]
+
+    def test_generated_content_never_authorizes(self) -> None:
+        # Steps and execution prompts may be LLM-generated (GeneratedStep), so the
+        # function does not even accept them — only human-written display fields
+        # travel. A generated step naming a recipient grounds nothing.
+        params = set(inspect.signature(background_authorization).parameters)
+        assert "workflow_steps" not in params
+        assert "workflow_prompt" not in params
+
+    def test_todo_title_is_added_unless_the_prompt_covers_it(self) -> None:
+        assert background_authorization(
+            ["check calendar and brief me"], execution_mode="background", todo_title="Brief me"
+        ) == ["check calendar and brief me", "Tracked todo: Brief me"]
+        assert background_authorization(
+            ["Brief me on today"], execution_mode="background", todo_title="Brief me"
+        ) == ["Brief me on today"]
+
+    def test_a_run_with_no_schedule_text_is_unchanged(self) -> None:
+        turns = ["health check"]
+        assert background_authorization(turns, execution_mode="background") is turns
+
     def test_with_all_selections(self):
         request = MagicMock()
         request.message = "Do stuff"
@@ -1475,6 +1540,40 @@ DEV_OPTION = {
 }
 
 
+class TestPostHogHandlerProperties:
+    """The properties stamped onto $ai_generation, without which charts lose their breakdown."""
+
+    def _handler_properties(self, agent_name: str, source: str | None, workflow_id: str | None):
+        client = MagicMock()
+        with (
+            patch("app.helpers.agent_helpers.providers") as mock_providers,
+            patch("app.helpers.agent_helpers.PostHogCallbackHandler") as handler,
+        ):
+            mock_providers.is_available.return_value = True
+            mock_providers.get.return_value = client
+            _build_agent_callbacks("conv-1", FAKE_USER, agent_name, source, workflow_id, None)
+        return handler.call_args.kwargs["properties"]
+
+    def test_a_chat_turn_carries_its_feature_and_surface(self):
+        props = self._handler_properties("comms_agent", "web", None)
+        assert props["conversation_id"] == "conv-1"
+        assert props["agent_name"] == "comms_agent"
+        assert props["feature"] == "chat"
+        assert props["surface"] == "ui"
+
+    def test_a_workflow_run_carries_its_workflow_id(self):
+        props = self._handler_properties("executor_agent", None, "wf-brief")
+        assert props["feature"] == "workflow"
+        assert props["workflow_id"] == "wf-brief"
+        assert props["surface"] == "bg"
+
+    def test_a_subagent_is_integration_spend(self):
+        assert self._handler_properties("gmail_agent", "web", None)["feature"] == "integration"
+
+    def test_a_bot_turn_reports_the_bot_surface(self):
+        assert self._handler_properties("comms_agent", "discord", None)["surface"] == "bot"
+
+
 class TestBuildAgentCallbacks:
     @patch("app.helpers.agent_helpers.build_langfuse_callback", return_value=None)
     @patch("app.helpers.agent_helpers.providers")
@@ -1483,7 +1582,7 @@ class TestBuildAgentCallbacks:
         mock_providers.is_available.return_value = False
         mock_providers.get.return_value = None
 
-        callbacks = _build_agent_callbacks(CONV_ID, FAKE_USER, "comms_agent", None)
+        callbacks = _build_agent_callbacks(CONV_ID, FAKE_USER, "comms_agent", None, None, None)
 
         assert len(callbacks) == 1
         assert isinstance(callbacks[0], LLMTtftCallback)
@@ -1513,8 +1612,94 @@ class TestBuildAgentConfigCallbackWiring:
             CONV_ID,
             USER_ID,
             "comms_agent",
+            None,
+            None,
             usage_cb,
         )
+
+    @patch("app.helpers.agent_helpers.resolve_lane", new_callable=AsyncMock)
+    @patch("app.helpers.agent_helpers._build_agent_callbacks")
+    async def test_a_top_level_workflow_fire_reaches_the_callbacks(
+        self, mock_build_callbacks, mock_resolve
+    ):
+        """Reading the id from the configurable alone left the callbacks with None."""
+        mock_resolve.return_value = (DEV_LANE, None)
+        mock_build_callbacks.return_value = []
+
+        await build_agent_config(
+            identity=AgentIdentity(
+                conversation_id=CONV_ID,
+                user=FAKE_USER,
+                agent_name="comms_agent",
+            ),
+            turn=AgentTurn(source="web", workflow_id="wf-morning-brief"),
+            tracing=AgentTracing(usage_metadata_callback=MagicMock()),
+        )
+
+        assert mock_build_callbacks.call_args.args[4] == "wf-morning-brief"
+
+    @patch("app.helpers.agent_helpers.resolve_lane", new_callable=AsyncMock)
+    @patch("app.helpers.agent_helpers._build_agent_callbacks")
+    async def test_a_child_run_inherits_its_parents_surface(
+        self, mock_build_callbacks, mock_resolve
+    ):
+        """Worker tiers carry no source, so the turn alone booked a web chat as background."""
+        mock_resolve.return_value = (DEV_LANE, None)
+        mock_build_callbacks.return_value = []
+
+        await build_agent_config(
+            identity=AgentIdentity(
+                conversation_id=CONV_ID,
+                user=FAKE_USER,
+                agent_name="executor_agent",
+            ),
+            thread=AgentThread(base_configurable={"conversation_source": "web"}),
+            turn=AgentTurn(),
+            tracing=AgentTracing(usage_metadata_callback=MagicMock()),
+        )
+
+        assert mock_build_callbacks.call_args.args[3] == "web"
+
+    @patch("app.helpers.agent_helpers.resolve_lane", new_callable=AsyncMock)
+    @patch("app.helpers.agent_helpers._build_agent_callbacks")
+    async def test_a_turns_own_source_wins_over_the_inherited_one(
+        self, mock_build_callbacks, mock_resolve
+    ):
+        mock_resolve.return_value = (DEV_LANE, None)
+        mock_build_callbacks.return_value = []
+
+        await build_agent_config(
+            identity=AgentIdentity(
+                conversation_id=CONV_ID,
+                user=FAKE_USER,
+                agent_name="comms_agent",
+            ),
+            thread=AgentThread(base_configurable={"conversation_source": "web"}),
+            turn=AgentTurn(source="discord"),
+            tracing=AgentTracing(usage_metadata_callback=MagicMock()),
+        )
+
+        assert mock_build_callbacks.call_args.args[3] == "discord"
+
+    @patch("app.helpers.agent_helpers.resolve_lane", new_callable=AsyncMock)
+    @patch("app.helpers.agent_helpers._build_agent_callbacks")
+    async def test_a_child_run_still_inherits_the_workflow_from_its_parent(
+        self, mock_build_callbacks, mock_resolve
+    ):
+        mock_resolve.return_value = (DEV_LANE, None)
+        mock_build_callbacks.return_value = []
+
+        await build_agent_config(
+            identity=AgentIdentity(
+                conversation_id=CONV_ID,
+                user=FAKE_USER,
+                agent_name="executor_agent",
+            ),
+            thread=AgentThread(base_configurable={"workflow_id": "wf-inherited"}),
+            tracing=AgentTracing(usage_metadata_callback=MagicMock()),
+        )
+
+        assert mock_build_callbacks.call_args.args[4] == "wf-inherited"
 
 
 class TestBuildAgentConfigLaneResolution:

@@ -16,7 +16,7 @@ Add env vars
 from functools import lru_cache
 import os
 import time
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, TypedDict, Unpack
 
 from dotenv import load_dotenv
 from pydantic import computed_field, field_validator
@@ -25,6 +25,7 @@ from pydantic_settings import SettingsConfigDict
 from app.config.browser_host_settings import BrowserHostSettings
 from app.config.secrets import inject_infisical_secrets
 from app.config.settings_validator import settings_validator
+from app.constants.execute import SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS
 from app.constants.log_tags import LogTag
 from app.constants.search import (
     CRAWL4AI_DEFAULT_MAX_BROWSERS,
@@ -33,6 +34,12 @@ from app.constants.search import (
 from shared.py.wide_events import log
 
 load_dotenv()
+
+
+class SettingsOverrides(TypedDict, total=False):
+    """Field values from_env forces over whatever the environment says."""
+
+    SHOW_MISSING_KEY_WARNINGS: bool
 
 
 class BaseAppSettings(BrowserHostSettings):
@@ -48,7 +55,7 @@ class BaseAppSettings(BrowserHostSettings):
 
     # For handling both normal env var loading and dict constructor
     @classmethod
-    def from_env(cls, **kwargs: Any) -> Self:  # noqa: ANN401 -- framework contract
+    def from_env(cls, **kwargs: Unpack[SettingsOverrides]) -> Self:
         """Create settings from environment variables."""
         try:
             return cls(**kwargs)
@@ -84,6 +91,8 @@ class CommonSettings(BaseAppSettings):
     # Where the scripted stub lives when sim mode is on; consumed only by
     # _sim_llm (defaults to SIM_STUB_BASE_URL when unset).
     OPENROUTER_BASE_URL: str | None = None
+    # Every request authenticates as this Mongo user with no WorkOS session.
+    DEV_AUTH_BYPASS_EMAIL: str | None = None
     # Comma-separated OpenRouter provider slugs to PREFER for the default-model
     # lane — fallbacks stay enabled. Set from the per-provider cache-hit table;
     # see _provider_order_kwargs in agents/llm/client.py.
@@ -117,6 +126,22 @@ class CommonSettings(BaseAppSettings):
     DUMMY_IP: str = "8.8.8.8"
     WORKER_TYPE: str = "unknown"
     ENABLE_LAZY_LOADING: bool = True
+    # Experiment: include the OpenUI component reference (~27k chars) in the comms
+    # prompt on renderable channels (web/mobile/desktop). Off swaps a markdown-only
+    # note so voice rules are not crowded out; text-only channels are unaffected.
+    ENABLE_COMMS_OPENUI: bool = True
+    # Experiment: code mode — bash-injected `gaia.execute` client letting
+    # sandbox scripts call GAIA tools back server-side. Off mints no token
+    # (bash itself still runs; scripts just get no GAIA_EXECUTE_* env).
+    ENABLE_CODE_MODE: bool = False
+    # Experiment: executor-free HIL ledger — gated calls register PENDING and
+    # return instead of parking the run on an interrupt. Off keeps the
+    # interrupt-and-resume barrier.
+    ENABLE_HIL_LEDGER: bool = False
+    # JEV choice judge for auto mode — a structured decision call classifies first
+    # (49/50 on the calibration set, zero dangerous accepts), LLM intent judge as
+    # the transport-failure fallback. On by default; a JEV outage never opens the gate.
+    ENABLE_HIL_JEV_JUDGE: bool = True
 
     @field_validator("HOST", "FRONTEND_URL", mode="after")
     @classmethod
@@ -340,6 +365,30 @@ class CommonSettings(BaseAppSettings):
     def SLACK_OAUTH_REDIRECT_URI(self) -> str:
         """Slack OAuth callback URL."""
         return f"{self.HOST}/api/v1/platform-auth/slack/callback"
+
+    # Code mode (sandbox scripts calling GAIA tools via /sandbox/execute).
+    # Both unset = code mode ships dark: bash injects no execute token. The callback
+    # URL must be reachable FROM the E2B sandbox (public API base in prod).
+    SANDBOX_EXECUTE_TOKEN_SECRET: str | None = None
+    SANDBOX_EXECUTE_CALLBACK_URL: str | None = None
+
+    # Rejected at startup rather than at mint time: the token's user_id is a
+    # claim nothing else binds, so a guessable secret means running any user's
+    # tools. A deploy that sets a short one must not boot.
+    @field_validator("SANDBOX_EXECUTE_TOKEN_SECRET", mode="after")
+    @classmethod
+    def _reject_weak_sandbox_execute_secret(cls, v: str | None) -> str | None:
+        # A blank value is how a templated deploy (compose, Infisical, k8s) spells
+        # "unset" — code mode then ships dark. Only a SHORT but present secret is
+        # worth refusing to boot for; failing on "" took the whole API down once.
+        if not v:
+            return None
+        if len(v) < SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS:
+            raise ValueError(
+                "SANDBOX_EXECUTE_TOKEN_SECRET must be at least "
+                f"{SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS} characters"
+            )
+        return v
 
     model_config = SettingsConfigDict(
         env_file_encoding="utf-8",
@@ -708,12 +757,8 @@ class DevelopmentSettings(CommonSettings):
     # ----------------------------------------------
     DEBUG_EMAIL_PROCESSING: bool = False
 
-    # Every request authenticates as this Mongo user with no WorkOS session;
-    # get_settings() refuses to start in production when this is set.
-    DEV_AUTH_BYPASS_EMAIL: str | None = None
-
-    # GAIA_SIM_MODE and OPENROUTER_BASE_URL are declared on CommonSettings (the
-    # production import path reads them) — see the note there.
+    # GAIA_SIM_MODE, OPENROUTER_BASE_URL and DEV_AUTH_BYPASS_EMAIL are declared on
+    # CommonSettings (the production import path reads them) — see the note there.
 
     # Default to show warnings in development environment
     SHOW_MISSING_KEY_WARNINGS: bool = True
@@ -780,13 +825,8 @@ def _ensure_infisical_loaded() -> None:
 
 
 @lru_cache(maxsize=1)
-def get_settings() -> Any:  # noqa: ANN401 -- framework contract
-    """Return the cached settings instance for the current environment.
-
-    The return stays Any: narrowing to CommonSettings produced 129 mypy errors
-    plus 4 more from from_env(**kwargs) — fixing that is a settings-model
-    redesign, not a typing fix.
-    """
+def get_settings() -> ProductionSettings | DevelopmentSettings:
+    """Return the cached settings instance for the current environment."""
     log.info(f"{LogTag.STARTUP} Starting settings initialization...")
 
     _ensure_infisical_loaded()

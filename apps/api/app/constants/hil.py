@@ -6,10 +6,11 @@ the tool registry (app/agents/tools/core/registry.py), the single source of trut
 for every tool in the app.
 """
 
+from enum import StrEnum
 from typing import Final, Literal
 
 from app.constants.cache import EXECUTOR_BUSY_TTL
-from app.constants.general import FINISH_TASK_NAME, WAIT_FOR_SUBAGENTS_NAME
+from app.constants.general import FINISH_TASK_NAME
 
 # The launch switch is ``HIL_DEFAULT_MODE`` in app/models/hil_models.py (the
 # default mode is a HILPreferences field default, so it lives with the model).
@@ -20,11 +21,20 @@ from app.constants.general import FINISH_TASK_NAME, WAIT_FOR_SUBAGENTS_NAME
 HIL_JUDGE_MAX_USER_TURNS = 6
 HIL_JUDGE_MAX_TURN_CHARS = 800
 
-# The pending call's arguments, and the run's earlier tool calls (the provenance for
-# arguments the agent derived rather than the user dictating).
+# The pending call's arguments, and the run's earlier tool calls (provenance for
+# args the agent derived, not the user). Prior outputs ride too, clipped small:
+# an id minted by an earlier call is only traceable through that output.
 HIL_JUDGE_MAX_ARGS_CHARS = 1500
 HIL_JUDGE_MAX_PRIOR_CALLS = 8
 HIL_JUDGE_MAX_PRIOR_ARGS_CHARS = 200
+HIL_JUDGE_MAX_PRIOR_OUTPUT_CHARS = 300
+
+# The pending tool's arg schema and the run's recent assistant messages: both
+# provenance for JEV, never authorization (the schema explains an opaque id, the
+# assistant's words say what it told the user). Bounded — prompts are not free.
+HIL_JUDGE_MAX_SCHEMA_CHARS = 2000
+HIL_JUDGE_MAX_ASSISTANT_TURNS = 3
+HIL_JUDGE_MAX_ASSISTANT_CHARS = 500
 
 # Bytes of randomness in the fence around untrusted content in the judge prompt. Fixed
 # tags are guessable from a leaked prompt and can simply be closed by an attacker.
@@ -39,6 +49,29 @@ HIL_JUDGE_MIN_QUOTE_WORDS = 3
 # conversational resolver) — these sit on user-blocking paths the
 # tool-execution timeout does not cover. Unbounded, a hung provider holds the executor's busy lock forever.
 HIL_LLM_TIMEOUT_SECONDS = 30
+
+# JEV choice judge (auto mode v2): model, endpoint, decision lines. Lines come
+# from the offline sweep (scripts/evals/sweep_hil_judge.py) — the 0.50 plateau
+# scored 49/50 with zero dangerous accepts. Retune via the eval, never by hand.
+HIL_JEV_MODEL_NAME = "typesafe/jev-1.13"
+HIL_JEV_URL = "https://openrouter.ai/api/alpha/decisions"
+HIL_JEV_TIMEOUT_SECONDS = 15
+HIL_JEV_ACCEPT_LINE = 0.50
+HIL_JEV_REJECT_FLOOR = 0.50
+
+
+# The forbid double-check itself failed; the verdict asks rather than trusting either way.
+JEV_FORBID_CHECK_FAILED = "unclear-forbid"
+
+
+class JevChoice(StrEnum):
+    """The choice labels the JEV questions offer (prompts.py criteria) and answers carry."""
+
+    AUTHORIZED = "authorized"
+    FORBIDDEN = "forbidden"
+    UNCLEAR = "unclear"
+    PERMITTED = "permitted"
+
 
 # The only statuses a `Command(resume=...)` payload may carry. Anything else
 # is treated as a denial. "abandoned" is absent: resolution.py maps it to a deny before sending.
@@ -63,7 +96,7 @@ HIL_CLASSIFIER_HISTORY_TURNS = 4  # recent {role, content} turns of context
 
 # Marks a synthetic ToolMessage the gate produced (rather than a real tool result).
 HIL_STATUS_KWARG = "hil_status"
-HILToolMessageStatus = Literal["denied", "timeout", "error", "already_ran"]
+HILToolMessageStatus = Literal["denied", "timeout", "error", "already_ran", "pending"]
 
 # How long an approval may sit unanswered before the sweep resolves it as a
 # timeout. Set by how long a human plausibly takes to answer a push
@@ -89,19 +122,20 @@ LANGGRAPH_INTERRUPT_KEY = "__interrupt__"
 # set, so fresh runs (the ~100% case) skip that per-handoff Postgres read.
 HIL_RESUME_CONFIG_KEY: Final = "hil_resume_replay"
 
+# configurable key a background subagent run carries its own rebuild recipe
+# under, so the gate files it on every approval the run raises and a decision
+# can resume the parked thread from any process.
+SUBAGENT_RESUME_CONFIG_KEY: Final = "subagent_resume"
+
 # Keyed by stream_id (unique per turn), so this only suppresses re-asks within
 # the same turn — a genuinely new request in a later turn still prompts.
 HIL_DECLINE_MEMORY_TTL_SECONDS = 1800
 
-# Background subagent results live in Redis, keyed by conversation (never
-# stream_id — it changes on resume): they must survive the executor's approval
-# pause, which the in-process session does not.
+# Background-dispatch claims (one per delegating tool call), keyed by conversation
+# (never stream_id — it changes on resume): a node replay after the executor's
+# approval pause must find the dispatch the first pass already made.
 HIL_BG_RESULTS_KEY_PREFIX = "hil:bg_results:"
 HIL_BG_RESULTS_TTL_SECONDS = 7200
-
-# Interrupt payload type for the wait_for_subagents join pause. Carries the whole
-# batch of parked-subagent approvals, unlike the gate's single "hil_approval".
-HIL_BATCH_INTERRUPT_TYPE = "hil_approval_batch"
 
 # Debounce: at most one executor resume dispatch per conversation at a time —
 # two LangGraph runs on one thread would corrupt its checkpoint. TTL is crash
@@ -110,8 +144,8 @@ HIL_RESUME_ACTIVE_KEY_PREFIX = "hil:resume_active:"
 HIL_RESUME_ACTIVE_TTL_SECONDS = 1800
 
 # Orchestration/plumbing tools that must never be gated (they don't touch the
-# outside world themselves; their inner tool calls are gated in the child graph).
-# These are the only names hardcoded here — everything else is registry-driven.
+# outside world; their inner calls are gated in the child graph). Ticket ops
+# (approve/revoke) are exempt too: the approval IS the gate, re-gating re-asks.
 HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
     {
         "retrieve_tools",
@@ -119,7 +153,8 @@ HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
         "cancel_executor",
         "handoff",
         "spawn_subagent",
-        WAIT_FOR_SUBAGENTS_NAME,
+        "approve",
+        "revoke",
         FINISH_TASK_NAME,
         "plan_tasks",
         "update_tasks",
@@ -128,12 +163,9 @@ HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# Exempt tools that can nonetheless PAUSE the run. A gated sibling of one of
-# these must never auto-run: the pause re-runs the whole tool node, so
-# anything already executed would run a second time (see policy.has_pausing_sibling).
-HIL_PAUSING_TOOLS: frozenset[str] = frozenset(
-    {"handoff", "spawn_subagent", WAIT_FOR_SUBAGENTS_NAME}
-)
+# Exempt tools that still PAUSE the run when called with background=False (they bubble
+# the child's gate up): a gated sibling must never auto-run, the replay would run it twice.
+HIL_PAUSING_TOOLS: frozenset[str] = frozenset({"handoff", "spawn_subagent"})
 
 # tool_data entry name for the approval card (mirrored in @gaia/shared/chat).
 APPROVAL_REQUEST_TOOL_NAME = "approval_request"

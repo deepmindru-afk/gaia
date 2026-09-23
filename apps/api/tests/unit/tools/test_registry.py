@@ -415,6 +415,7 @@ _EXPECTED_CATEGORY_METADATA: dict[str, tuple[str, bool, str | None, bool, bool]]
     "integrations": ("general", False, None, False, False),
     "integration_instructions": ("general", False, None, False, True),
     "development": ("general", False, None, False, True),
+    "execute": ("general", False, None, False, True),
     "creative": ("general", False, None, False, False),
     "weather": ("general", False, None, False, False),
     "browser": ("general", False, None, False, False),
@@ -471,6 +472,7 @@ def expected_category_tool_names() -> dict[str, set[str]]:
         webpage_tool,
         workflow_tool,
     )
+    from app.agents.tools.execute import execute_tool, schema_tool
 
     return {
         "search": {
@@ -496,6 +498,7 @@ def expected_category_tool_names() -> dict[str, set[str]]:
         "integrations": {t.name for t in integration_tool.tools},
         "integration_instructions": {t.name for t in integration_instructions_tools.tools},
         "development": {t.name for t in coding.tools},
+        "execute": {execute_tool.execute.name, schema_tool.get_tool_schema.name},
         "creative": {image_tool.generate_image.name, flowchart_tool.create_flowchart.name},
         "weather": {weather_tool.get_weather.name},
         "browser": {
@@ -934,6 +937,7 @@ class TestInitializedCategoryContract:
         "integrations": {},
         "integration_instructions": {"internal": True},
         "development": {"internal": True},
+        "execute": {"internal": True},
         "creative": {},
         "weather": {},
         "browser": {},
@@ -956,10 +960,10 @@ class TestInitializedCategoryContract:
     def test_single_purpose_categories_hold_exactly_their_tools(
         self, registry: ToolRegistry
     ) -> None:
-        """These four categories are registered on one line each, so a dropped tools= argument leaves a silently empty category behind."""
+        """These categories are registered on one line each, so a dropped tools= argument leaves a silently empty category behind."""
         names = {
             name: {tool.name for tool in registry._categories[name].tools}
-            for name in ("manual", "memory", "weather", "context")
+            for name in ("manual", "memory", "weather", "context", "execute")
         }
 
         assert names == {
@@ -977,6 +981,7 @@ class TestInitializedCategoryContract:
             },
             "weather": {"get_weather"},
             "context": {"gather_context"},
+            "execute": {"execute", "get_tool_schema"},
         }
 
     def test_the_two_destructive_built_ins_are_stamped_alone(self, registry: ToolRegistry) -> None:

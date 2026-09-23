@@ -8,6 +8,7 @@ and the ProjectService guards.
 """
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, patch
 
 from bson import ObjectId
@@ -17,6 +18,7 @@ import pytest
 from app.models.todo_models import (
     BulkMoveRequest,
     BulkUpdateRequest,
+    PendingApprovalRef,
     Priority,
     ProjectCreate,
     ProjectDocument,
@@ -24,6 +26,7 @@ from app.models.todo_models import (
     SearchMode,
     TodoDocument,
     TodoModel,
+    TodoPage,
     TodoResponse,
     TodoSearchParams,
     TodoStats,
@@ -72,6 +75,16 @@ def _no_analytics():
     with (
         patch("app.services.todos.todo_service.capture_event"),
         patch("app.services.todos.todo_bulk_service.capture_event"),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _no_pending_approvals():
+    """Neutralize the cross-domain ledger read; no live approvals by default."""
+    with patch(
+        "app.services.todos.todo_service.approval_ledger_repository.list_live_by_owners",
+        new=AsyncMock(return_value=[]),
     ):
         yield
 
@@ -365,13 +378,30 @@ class TestGetTodo:
         result = await TodoService.get_todo(FAKE_TODO_ID, FAKE_USER_ID)
         assert result.workflow_categories == ["email"]
 
+    async def test_a_workflow_linked_todo_still_carries_its_pending_approval(
+        self, mock_todo_repo, mock_project_repo, mock_workflow_repo
+    ):
+        mock_todo_repo.get = AsyncMock(
+            return_value=_make_todo_doc(todo_id=FAKE_TODO_ID, workflow_id="wf1")
+        )
+        mock_workflow_repo.return_value = [_workflow_doc("wf1", ["email"])]
+        live_row = SimpleNamespace(
+            owner_id=FAKE_TODO_ID, approval_id="ap_1", conversation_id="conv-9"
+        )
+        with patch(
+            "app.services.todos.todo_service.approval_ledger_repository.list_live_by_owners",
+            new=AsyncMock(return_value=[live_row]),
+        ):
+            result = await TodoService.get_todo(FAKE_TODO_ID, FAKE_USER_ID)
+        assert result.pending_approval == PendingApprovalRef(
+            approval_id="ap_1", conversation_id="conv-9"
+        )
+
 
 class TestListTodos:
     async def test_delegates_to_list_page(
         self, mock_todo_repo, mock_project_repo, mock_workflow_repo
     ):
-        from app.models.todo_models import TodoPage
-
         mock_todo_repo.list_page = AsyncMock(
             return_value=TodoPage(items=[_make_todo_doc(), _make_todo_doc()], total=2)
         )
@@ -379,6 +409,19 @@ class TestListTodos:
         result = await TodoService.list_todos(FAKE_USER_ID, params)
         assert result.meta.total == 2
         assert len(result.data) == 2
+
+    async def test_each_listed_todo_carries_its_own_workflow_categories(
+        self, mock_todo_repo, mock_project_repo, mock_workflow_repo
+    ):
+        linked = _make_todo_doc(workflow_id="wf1")
+        plain = _make_todo_doc()
+        mock_todo_repo.list_page = AsyncMock(return_value=TodoPage(items=[linked, plain], total=2))
+        mock_workflow_repo.return_value = [_workflow_doc("wf1", ["email"])]
+        params = TodoSearchParams(mode=SearchMode.TEXT, page=1, per_page=50)
+        result = await TodoService.list_todos(FAKE_USER_ID, params)
+        by_id = {item.id: item for item in result.data}
+        assert by_id[linked.id].workflow_categories == ["email"]
+        assert by_id[plain.id].workflow_categories == []
 
     async def test_semantic_route_uses_vector_search(
         self, mock_todo_repo, mock_project_repo, mock_vector_utils
@@ -730,8 +773,6 @@ class TestCompatibilityWrappers:
     async def test_get_all_todos_wrapper(
         self, mock_todo_repo, mock_project_repo, mock_workflow_repo
     ):
-        from app.models.todo_models import TodoPage
-
         mock_todo_repo.list_page = AsyncMock(
             return_value=TodoPage(items=[_make_todo_doc()], total=1)
         )

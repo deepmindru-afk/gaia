@@ -14,6 +14,7 @@ The LLM is mocked at ainvoke_structured (the real boundary); everything between 
 verdict and resolve_approval is the production code under test.
 """
 
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -21,7 +22,10 @@ import pytest
 
 from app.agents.llm.client import StructuredCallOptions
 from app.constants.hil import HIL_LLM_TIMEOUT_SECONDS
+from app.models.hil_models import ApprovalLedgerDocument, LedgerState
+from app.models.message_models import MessageDict
 from app.services.hil.conversational import (
+    LEDGER_OUTCOME_TEXT,
     UNRELATED_FEEDBACK,
     BatchDecisionResult,
     BatchItemDecision,
@@ -30,9 +34,14 @@ from app.services.hil.conversational import (
     _prompt,
     interpret_batch_decision_message,
     interpret_decision_message,
+    ledger_outcome_text,
     resolve_pending_from_message,
 )
-from app.services.hil.resolution import ApprovalRequestNotFoundError
+from app.services.hil.ledger_decide import LedgerDecision
+from app.services.hil.resolution import (
+    ApprovalRequestForbiddenError,
+    ApprovalRequestNotFoundError,
+)
 
 from .conftest import CONVERSATION_ID, USER_ID, make_record
 
@@ -52,7 +61,9 @@ def resolver():
         patch(f"{MODULE}.resolve_approval", new=AsyncMock()) as resolve,
         patch(f"{MODULE}.abandon_conversation_approvals", new=AsyncMock()) as abandon,
         patch(f"{MODULE}.ainvoke_structured", new=AsyncMock()) as llm,
+        patch(f"{MODULE}.approval_ledger_repository") as ledger,
     ):
+        ledger.list_open = AsyncMock(return_value=[])
         yield {"resolve": resolve, "abandon": abandon, "llm": llm}
 
 
@@ -560,3 +571,294 @@ class TestTheBatchPromptStatesItsRules:
             "the correction in its `feedback`). The assistant cannot edit an action's "
             "arguments"
         ) in self._text()
+
+
+HISTORY: list[MessageDict] = [{"role": "user", "content": "draft the quarterly deck email"}]
+
+
+class TestTheClassifierSeesTheReplyAndItsContext:
+    """Both barrier paths hand the classifier the user's actual reply and the recent turns."""
+
+    async def test_single_prompt_carries_reply_and_history_and_decides_as_the_user(
+        self, resolver: dict
+    ) -> None:
+        resolver["llm"].return_value = DecisionResult(action="approve")
+        with pending("Send email"):
+            await resolve_pending_from_message(
+                CONVERSATION_ID, USER_ID, "sure thing", history=HISTORY
+            )
+
+        text = prompt_of(resolver["llm"])
+        assert "'sure thing'" in text
+        assert "draft the quarterly deck email" in text
+        assert resolver["resolve"].await_args.kwargs["user_id"] == USER_ID
+
+    async def test_batch_prompt_carries_reply_and_history_and_decides_as_the_user(
+        self, resolver: dict
+    ) -> None:
+        resolver["llm"].return_value = BatchDecisionResult(
+            unrelated=False,
+            decisions=[
+                BatchItemDecision(index=1, action="approve"),
+                BatchItemDecision(index=2, action="deny"),
+            ],
+        )
+        with pending("Send email", "Post to Slack"):
+            await resolve_pending_from_message(
+                CONVERSATION_ID, USER_ID, "first yes second no", history=HISTORY
+            )
+
+        text = prompt_of(resolver["llm"])
+        assert "'first yes second no'" in text
+        assert "draft the quarterly deck email" in text
+        assert [c.kwargs["user_id"] for c in resolver["resolve"].await_args_list] == [
+            USER_ID,
+            USER_ID,
+        ]
+
+    async def test_moving_on_from_a_batch_abandons_it_with_the_moved_on_reason(
+        self, resolver: dict
+    ) -> None:
+        resolver["llm"].return_value = BatchDecisionResult(unrelated=True)
+        with pending("Send email", "Post to Slack"):
+            await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "book a flight")
+
+        resolver["abandon"].assert_awaited_once_with(CONVERSATION_ID, USER_ID, UNRELATED_FEEDBACK)
+
+
+def _ledger_row(
+    approval_id: str, state: LedgerState = LedgerState.PENDING
+) -> ApprovalLedgerDocument:
+    return ApprovalLedgerDocument(
+        approval_id=approval_id,
+        conversation_id=CONVERSATION_ID,
+        user_id=USER_ID,
+        fingerprint=f"fp-{approval_id}",
+        tool_name="send_email",
+        summary=f"Send email {approval_id}",
+        state=state,
+    )
+
+
+def _committed(approval_id: str, state: LedgerState) -> LedgerDecision:
+    return LedgerDecision(
+        committed=True, approval_id=approval_id, prior_state=LedgerState.PENDING, state=state
+    )
+
+
+def decided(decide: AsyncMock) -> list[tuple[str, str, str | None]]:
+    """Each ledger decision as (approval_id, kind, feedback)."""
+    return [(c.args[0], c.kwargs["kind"], c.kwargs["feedback"]) for c in decide.await_args_list]
+
+
+def assert_abandoned_as_the_user(ledger: dict[str, AsyncMock]) -> None:
+    """Moved-on denials read this conversation's rows and carry no row version."""
+    assert {c.args for c in ledger["list_open"].await_args_list} == {(CONVERSATION_ID,)}
+    assert {(c.kwargs["user_id"], c.kwargs["v"]) for c in ledger["decide"].await_args_list} == {
+        (USER_ID, None)
+    }
+
+
+class TestLedgerRows:
+    """Ledger-enabled users' approvals live in approval_ledger; a chat reply decides them there."""
+
+    @pytest.fixture
+    def ledger(self, resolver: dict) -> Iterator[dict[str, AsyncMock]]:
+        with (
+            patch(f"{MODULE}.list_pending_for_conversation", new=AsyncMock(return_value=[])),
+            patch(f"{MODULE}.approval_ledger_repository") as repo,
+            patch(f"{MODULE}.decide_ledger", new=AsyncMock()) as decide,
+        ):
+            repo.list_open = AsyncMock(return_value=[])
+            decide.side_effect = lambda approval_id, **kw: _committed(
+                approval_id, LedgerState.APPROVED if kw["kind"] == "approve" else LedgerState.DENIED
+            )
+            yield {"list_open": repo.list_open, "decide": decide, **resolver}
+
+    async def test_a_single_pending_row_is_decided_by_the_reply(
+        self, ledger: dict[str, AsyncMock]
+    ) -> None:
+        ledger["list_open"].return_value = [
+            _ledger_row("ap_1"),
+            _ledger_row("ap_q", LedgerState.APPROVED),
+        ]
+        ledger["llm"].return_value = DecisionResult(action="approve")
+
+        action = await resolve_pending_from_message(
+            CONVERSATION_ID, USER_ID, "yes send it", history=HISTORY
+        )
+
+        assert action == "approve"
+        ledger["list_open"].assert_awaited_once_with(CONVERSATION_ID)
+        ledger["decide"].assert_awaited_once_with(
+            "ap_1", user_id=USER_ID, kind="approve", feedback=None, v=None
+        )
+        text = prompt_of(ledger["llm"])
+        assert "Send email ap_1" in text
+        assert "'yes send it'" in text
+        assert "draft the quarterly deck email" in text
+        ledger["resolve"].assert_not_awaited()
+
+    async def test_an_approval_with_a_change_denies_the_row_with_that_change(
+        self, ledger: dict[str, AsyncMock]
+    ) -> None:
+        ledger["list_open"].return_value = [_ledger_row("ap_1")]
+        ledger["llm"].return_value = DecisionResult(action="approve", feedback="cc finance")
+
+        action = await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes but cc finance")
+
+        assert action == "deny"
+        assert decided(ledger["decide"]) == [("ap_1", "deny", "cc finance")]
+
+    async def test_moving_on_denies_every_pending_row_and_skips_queued_ones(
+        self, ledger: dict[str, AsyncMock]
+    ) -> None:
+        ledger["list_open"].return_value = [
+            _ledger_row("ap_1"),
+            _ledger_row("ap_q", LedgerState.APPROVED),
+        ]
+        ledger["llm"].return_value = DecisionResult(action="unrelated")
+
+        action = await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "what's the weather")
+
+        assert action == "unrelated"
+        assert decided(ledger["decide"]) == [("ap_1", "deny", UNRELATED_FEEDBACK)]
+        assert_abandoned_as_the_user(ledger)
+        ledger["abandon"].assert_not_awaited()
+
+    async def test_a_batch_of_rows_is_decided_per_item(self, ledger: dict[str, AsyncMock]) -> None:
+        ledger["list_open"].return_value = [_ledger_row("ap_1"), _ledger_row("ap_2")]
+        ledger["llm"].return_value = BatchDecisionResult(
+            unrelated=False,
+            decisions=[
+                BatchItemDecision(index=1, action="approve"),
+                BatchItemDecision(index=2, action="deny", feedback="not that channel"),
+            ],
+        )
+
+        action = await resolve_pending_from_message(
+            CONVERSATION_ID, USER_ID, "first yes, second no", history=HISTORY
+        )
+
+        assert action == "approve"
+        assert decided(ledger["decide"]) == [
+            ("ap_1", "approve", None),
+            ("ap_2", "deny", "not that channel"),
+        ]
+        assert all(c.kwargs["user_id"] == USER_ID for c in ledger["decide"].await_args_list)
+        text = prompt_of(ledger["llm"])
+        assert "1. Send email ap_1" in text and "2. Send email ap_2" in text
+        assert "'first yes, second no'" in text
+        assert "draft the quarterly deck email" in text
+
+    async def test_moving_on_from_a_batch_of_rows_denies_them_all(
+        self, ledger: dict[str, AsyncMock]
+    ) -> None:
+        ledger["list_open"].return_value = [_ledger_row("ap_1"), _ledger_row("ap_2")]
+        ledger["llm"].return_value = BatchDecisionResult(unrelated=True)
+
+        action = await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "book a flight")
+
+        assert action == "unrelated"
+        assert decided(ledger["decide"]) == [
+            ("ap_1", "deny", UNRELATED_FEEDBACK),
+            ("ap_2", "deny", UNRELATED_FEEDBACK),
+        ]
+        assert_abandoned_as_the_user(ledger)
+        ledger["abandon"].assert_not_awaited()
+
+    async def test_nothing_pending_in_the_ledger_costs_no_llm_call(
+        self, ledger: dict[str, AsyncMock]
+    ) -> None:
+        ledger["list_open"].return_value = [_ledger_row("ap_q", LedgerState.APPROVED)]
+
+        assert await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "hey") is None
+        ledger["llm"].assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "error",
+        [ApprovalRequestNotFoundError(), ApprovalRequestForbiddenError()],
+        ids=["gone", "foreign"],
+    )
+    async def test_an_undecidable_row_does_not_stop_the_rest_being_abandoned(
+        self, ledger: dict[str, AsyncMock], error: Exception
+    ) -> None:
+        ledger["list_open"].return_value = [_ledger_row("ap_1"), _ledger_row("ap_2")]
+        ledger["llm"].return_value = BatchDecisionResult(unrelated=True)
+        ledger["decide"].side_effect = [
+            error,
+            _committed("ap_2", LedgerState.DENIED),
+        ]
+
+        assert (
+            await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "new topic") == "unrelated"
+        )
+        assert [c.args[0] for c in ledger["decide"].await_args_list] == ["ap_1", "ap_2"]
+
+    @pytest.mark.parametrize(
+        "error",
+        [ApprovalRequestNotFoundError(), ApprovalRequestForbiddenError()],
+        ids=["gone", "foreign"],
+    )
+    async def test_an_undecidable_row_is_tolerated(
+        self, ledger: dict[str, AsyncMock], error: Exception
+    ) -> None:
+        ledger["list_open"].return_value = [_ledger_row("ap_1")]
+        ledger["llm"].return_value = DecisionResult(action="approve")
+        ledger["decide"].side_effect = error
+
+        assert await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes") == "approve"
+
+    async def test_a_lost_race_is_reported_with_the_rows_real_outcome(
+        self, ledger: dict[str, AsyncMock]
+    ) -> None:
+        ledger["list_open"].return_value = [_ledger_row("ap_1")]
+        ledger["llm"].return_value = DecisionResult(action="approve")
+        ledger["decide"].side_effect = None
+        ledger["decide"].return_value = LedgerDecision(
+            committed=False,
+            approval_id="ap_1",
+            prior_state=LedgerState.DENIED,
+            state=LedgerState.DENIED,
+        )
+
+        with patch(f"{MODULE}.log") as log:
+            await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes")
+
+        log.warning.assert_called_once()
+        assert "lost the race" in log.warning.call_args.args[0]
+        assert log.warning.call_args.kwargs == {
+            "approval_id": "ap_1",
+            "state": "denied",
+            "outcome": LEDGER_OUTCOME_TEXT[LedgerState.DENIED],
+        }
+
+    async def test_a_committed_decision_reports_nothing(self, ledger: dict[str, AsyncMock]) -> None:
+        ledger["list_open"].return_value = [_ledger_row("ap_1")]
+        ledger["llm"].return_value = DecisionResult(action="approve")
+
+        with patch(f"{MODULE}.log") as log:
+            await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes")
+
+        log.warning.assert_not_called()
+
+
+class TestLedgerOutcomeText:
+    def test_a_settled_state_reads_as_its_ground_truth(self) -> None:
+        assert (
+            ledger_outcome_text(LedgerState.EXECUTED) == LEDGER_OUTCOME_TEXT[LedgerState.EXECUTED]
+        )
+
+    def test_a_state_with_no_narration_falls_back_to_its_name(self) -> None:
+        assert ledger_outcome_text(LedgerState.EXECUTING) == "executing"
+
+
+class TestNoHistory:
+    async def test_a_reply_with_no_history_sends_no_conversation_section(
+        self, resolver: dict
+    ) -> None:
+        resolver["llm"].return_value = DecisionResult(action="approve")
+        with pending("Send email"):
+            await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes")
+
+        assert "RECENT CONVERSATION" not in prompt_of(resolver["llm"])

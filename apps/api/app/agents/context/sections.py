@@ -24,6 +24,8 @@ from app.agents.context.fetchers import (
     build_gaia_knowledge_block,
     build_memory_recall_block,
     build_new_user_guidance_block,
+    build_open_pendings_block,
+    build_provider_metadata_block,
     build_tracked_todos_block,
     build_workspace_session_banner,
 )
@@ -32,8 +34,8 @@ from app.agents.context.slots import PromptSlot
 from app.agents.context.text import (
     CONNECTED_DEVICES_HEADER,
     CONNECTED_INTEGRATIONS_HEADER,
+    EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER,
     EXECUTOR_CONNECTED_DEVICES_HEADER,
-    EXECUTOR_CONNECTED_INTEGRATIONS_HEADER,
 )
 from app.agents.context.tiers import ALL_TIERS, WORKER_TIERS, AgentTier
 from app.agents.skills.discovery import get_available_skills_text
@@ -44,7 +46,6 @@ from app.constants.log_tags import LogTag
 from app.constants.skills import EXECUTOR_SUBAGENT_ID
 from app.models.chat_models import BOT_CONVERSATION_SOURCES, ConversationSource
 from app.services.integration_instructions_service import get_instructions
-from app.services.provider_metadata_service import get_provider_metadata
 from app.utils.user_preferences_utils import format_user_preferences_for_agent
 from shared.py.wide_events import log
 
@@ -122,11 +123,10 @@ async def _user_prefs(ctx: SectionContext) -> str:
 async def _integrations_manifest(ctx: SectionContext) -> str:
     if not ctx.user_id:
         return ""
-    header = (
-        EXECUTOR_CONNECTED_INTEGRATIONS_HEADER
-        if ctx.tier is AgentTier.EXECUTOR
-        else CONNECTED_INTEGRATIONS_HEADER
-    )
+    if ctx.tier is not AgentTier.EXECUTOR:
+        header = CONNECTED_INTEGRATIONS_HEADER
+    else:
+        header = EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER
     return await build_connected_integrations_manifest(ctx.user_id, header=header)
 
 
@@ -142,27 +142,7 @@ async def _connected_devices(ctx: SectionContext) -> str:
 
 
 async def _provider_metadata(ctx: SectionContext) -> str:
-    """Who the user is on this provider — GitHub login, Gmail address, etc."""
-    if not (ctx.integration_id and ctx.user_id):
-        return ""
-    integration = get_integration_by_id(ctx.integration_id)
-    if not integration or not integration.provider:
-        return ""
-    try:
-        metadata = await get_provider_metadata(ctx.user_id, integration.provider)
-    except Exception as e:
-        log.warning(
-            f"{LogTag.AGENT} Failed to fetch provider metadata",
-            provider=integration.provider,
-            user_id=ctx.user_id,
-            error_type=type(e).__name__,
-            error=str(e),
-        )
-        return ""
-    if not metadata:
-        return ""
-    lines = "\n".join(f"- {key}: {value}" for key, value in metadata.items())
-    return f"USER CONTEXT FOR {integration.name.upper()}:\n{lines}"
+    return await build_provider_metadata_block(ctx.integration_id, ctx.user_id)
 
 
 async def _custom_instructions(ctx: SectionContext) -> str:
@@ -282,6 +262,11 @@ SECTIONS: tuple[Section, ...] = (
     # cached 12h (was re-read every worker call in the volatile slot). Same
     # once-per-change prefix-invalidation trade integrations_manifest makes.
     Section("skills", PromptSlot.DYNAMIC_STABLE, WORKER_TIERS, 70, _skills),
+    # Open approval pendings: ledger state that changes on user/agent decisions,
+    # not per turn — same stability trade as integrations_manifest above.
+    Section(
+        "open_pendings", PromptSlot.DYNAMIC_STABLE, WORKER_TIERS, 75, build_open_pendings_block
+    ),
     # The memory core's documents, not the whole core: the agenda and the
     # activity journal are split off into their own volatile section, because
     # they are rewritten every turn and would otherwise churn the cached prefix.

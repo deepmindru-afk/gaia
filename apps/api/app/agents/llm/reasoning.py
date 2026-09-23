@@ -36,7 +36,12 @@ def extract_reasoning_delta(chunk: AIMessage) -> str:
     Returns "" when the chunk carries no thinking (e.g. non-reasoning models), so
     the caller emits nothing for them.
     """
-    blocks = [_ContentBlock.model_validate(block) for block in chunk.content_blocks]
+    # a v1 content list may hold bare strings beside its block dicts; they carry no thinking
+    blocks = [
+        _ContentBlock.model_validate(block)
+        for block in chunk.content_blocks
+        if not isinstance(block, str)
+    ]
     parts = [block.reasoning for block in blocks if block.type == "reasoning" and block.reasoning]
     if not parts:
         fallback = _ProviderExtras.model_validate(chunk.additional_kwargs).reasoning_content

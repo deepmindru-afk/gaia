@@ -21,7 +21,7 @@ from datetime import datetime
 
 from bson import ObjectId
 
-from app.constants.chat import USER_MESSAGE_TYPE
+from app.constants.chat import SUBAGENT_GROUP_TOOL_NAME, USER_MESSAGE_TYPE
 from app.db.repositories.base import UserScopedRepository
 from app.models.artifact_models import ArtifactRegistryEntry
 from app.models.chat_models import (
@@ -29,6 +29,7 @@ from app.models.chat_models import (
     ConversationSource,
     ConversationSyncItem,
     MessageModel,
+    SavedSubagentGroup,
     SystemPurpose,
     ToolDataEntry,
 )
@@ -55,6 +56,7 @@ _SUMMARY_PROJECTION: dict[str, object] = {
     "system_purpose": 1,
     "is_unread": 1,
     "source": 1,
+    "has_live_approval": 1,
     "createdAt": 1,
     "updatedAt": 1,
 }
@@ -201,6 +203,53 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
         )
         return matched > 0
 
+    async def mark_background_with_live_approval(
+        self, conversation_id: str, *, user_id: str
+    ) -> bool:
+        """Flag a background run's conversation while it holds a live approval.
+
+        Stamps source BACKGROUND only when unset (never overwrites a real
+        channel), and raises the sidebar flag. No-op when the conversation
+        does not exist yet — the later persist carries no source either way,
+        and the next register/publish for the same owner retries the stamp.
+        """
+        matched = await self._apply_raw_update_unfetched(
+            {"conversation_id": conversation_id},
+            {"$set": {"has_live_approval": True}},
+            scope=user_id,
+            doc_id=conversation_id,
+            extra_filter={"user_id": user_id},
+        )
+        if matched:
+            # pragma: no mutate start — scope/doc_id repeat the eviction the write above just
+            # made, so no read can observe them; mutmut cannot pragma a single argument.
+            await self._apply_raw_update_unfetched(
+                {"conversation_id": conversation_id, "source": {"$exists": False}},
+                {"$set": {"source": ConversationSource.BACKGROUND.value}},
+                scope=user_id,
+                doc_id=conversation_id,
+                extra_filter={"user_id": user_id},
+            )
+            # pragma: no mutate end
+        return matched > 0
+
+    async def refresh_live_approval_flag(
+        self, conversation_id: str, *, user_id: str, live: bool
+    ) -> bool:
+        """Rewrite the sidebar flag from a fresh live-rows read (ledger side).
+
+        Plain setter by design: the caller (bridge sync helper) owns the
+        ledger read, this owns the conversation write — one collection each.
+        """
+        matched = await self._apply_raw_update_unfetched(
+            {"conversation_id": conversation_id},
+            {"$set": {"has_live_approval": live}},
+            scope=user_id,
+            doc_id=conversation_id,
+            extra_filter={"user_id": user_id},
+        )
+        return matched > 0
+
     # ---- message-array writes ----
 
     async def append_messages(
@@ -220,8 +269,7 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
         message_ids: list[str] = []
         for message in messages:
             data = {k: v for k, v in message.model_dump().items() if v is not None}
-            existing = data.get("message_id")
-            message_id = str(existing) if existing is not None else str(ObjectId())
+            message_id = message.message_id if message.message_id is not None else str(ObjectId())
             data["message_id"] = message_id
             message_ids.append(message_id)
             docs.append(data)
@@ -319,6 +367,37 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
         )
         return matched > 0
 
+    async def extend_subagent_group(
+        self, conversation_id: str, *, user_id: str, message_id: str, group: SavedSubagentGroup
+    ) -> bool:
+        """Append calls to one saved subagent group in place and stamp its end; False when absent."""
+        path = "messages.$[msg].tool_data.$[group].data"
+        matched = await self._apply_raw_update_unfetched(
+            {
+                "conversation_id": conversation_id,
+                "messages.message_id": message_id,
+                "messages.tool_data.data.subagent_id": group.subagent_id,
+            },
+            {
+                "$push": {f"{path}.tool_calls": {"$each": group.tool_calls}},
+                "$set": {
+                    f"{path}.completed_at": group.completed_at,
+                    f"{path}.duration_ms": group.duration_ms,
+                },
+            },
+            scope=user_id,
+            doc_id=conversation_id,
+            extra_filter={"user_id": user_id},
+            array_filters=[
+                {"msg.message_id": message_id},
+                {
+                    "group.tool_name": SUBAGENT_GROUP_TOOL_NAME,
+                    "group.data.subagent_id": group.subagent_id,
+                },
+            ],
+        )
+        return matched > 0
+
     async def set_message_response(
         self, conversation_id: str, *, user_id: str, message_id: str, response: str
     ) -> bool:
@@ -348,10 +427,11 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
     async def set_message_approval_status(
         self, conversation_id: str, *, user_id: str, approval_id: str, status: str
     ) -> bool:
-        """Settle a persisted approval_request frame's status wherever it lives in the array.
+        """Settle a persisted approval_request frame's status wherever it lives in the messages array.
 
         Returns whether the frame was there to settle. Does not advance updatedAt.
         """
+        update: dict[str, object] = {"messages.$[msg].tool_data.$[entry].data.status": status}
         matched = await self._apply_raw_update_unfetched(
             # The approval must also be in the match: array filters alone pick which
             # element to write but don't narrow `matched`, so matching on the
@@ -360,7 +440,7 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
                 "conversation_id": conversation_id,
                 "messages.tool_data.data.approval_id": approval_id,
             },
-            {"$set": {"messages.$[msg].tool_data.$[entry].data.status": status}},
+            {"$set": update},
             scope=user_id,
             doc_id=conversation_id,
             extra_filter={"user_id": user_id},
@@ -580,9 +660,25 @@ class ConversationRepository(UserScopedRepository[ConversationDocument, Conversa
         return {"source": {"$nin": _BOT_SOURCE_VALUES}}
 
     def _active_filter(self, user_id: str) -> dict[str, object]:
+        # Background runs stay out of the sidebar unless one holds a live approval
+        # (its card is the only way to reach it). Sourceless legacy rows match $ne
+        # and stay visible; {starred: null} matches a null AND a missing starred.
         return {
             "user_id": user_id,
-            "$or": [{"starred": {"$exists": False}}, {"starred": False}],
+            "$and": [
+                {
+                    "$or": [
+                        {"starred": False},
+                        {"starred": None},
+                    ]
+                },
+                {
+                    "$or": [
+                        {"source": {"$ne": ConversationSource.BACKGROUND.value}},
+                        {"has_live_approval": True},
+                    ]
+                },
+            ],
             **self._non_bot(),
         }
 

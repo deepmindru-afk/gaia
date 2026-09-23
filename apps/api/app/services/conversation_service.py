@@ -453,6 +453,7 @@ async def batch_sync_conversations(
                 active_stream_id=await stream_manager.get_resumable_stream_id(
                     user_id, document.conversation_id
                 ),
+                has_live_approval=document.has_live_approval,
             )
         )
 

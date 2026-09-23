@@ -220,12 +220,13 @@ export class ImessageAdapter extends BaseBotAdapter {
     if (content.type === "text" || content.type === "markdown") {
       const text = content.type === "text" ? content.text : content.markdown;
       this.enqueueForUser(handle, () =>
-        this.handleIncomingMessage(handle, space, text).catch((err) =>
-          this.adapterLogger.error("incoming_message_processing_failed", {
-            user_hash: handleHash,
-            message_id: message.id,
-            ...sanitizeErrorForLog(err),
-          }),
+        this.handleIncomingMessage(handle, space, text, message.id).catch(
+          (err) =>
+            this.adapterLogger.error("incoming_message_processing_failed", {
+              user_hash: handleHash,
+              message_id: message.id,
+              ...sanitizeErrorForLog(err),
+            }),
         ),
       );
       return;
@@ -295,6 +296,7 @@ export class ImessageAdapter extends BaseBotAdapter {
     handle: string,
     space: Space,
     text: string,
+    messageId?: string,
   ): Promise<void> {
     const handleHash = hashLogIdentifier(handle);
     this.adapterLogger.info("incoming_message_started", {
@@ -345,7 +347,7 @@ export class ImessageAdapter extends BaseBotAdapter {
             await this.sendImessageText(space, "Usage: /gaia <your message>");
             return;
           }
-          await this.handleStreamingMessage(handle, space, rest);
+          await this.handleStreamingMessage(handle, space, rest, messageId);
           return;
         }
 
@@ -359,7 +361,7 @@ export class ImessageAdapter extends BaseBotAdapter {
         return;
       }
 
-      await this.handleStreamingMessage(handle, space, chatText);
+      await this.handleStreamingMessage(handle, space, chatText, messageId);
     } finally {
       await space.stopTyping().catch(() => undefined);
     }
@@ -369,6 +371,7 @@ export class ImessageAdapter extends BaseBotAdapter {
     handle: string,
     space: Space,
     text: string,
+    messageId?: string,
     attachments: BotFileData[] = [],
   ): Promise<void> {
     if (!text.trim() && attachments.length === 0) {
@@ -392,6 +395,7 @@ export class ImessageAdapter extends BaseBotAdapter {
           channelId: space.id,
           // iMessage handles DMs only; group spaces are ignored upstream.
           isDm: true,
+          platformMessageId: messageId,
           ...(attachments.length > 0
             ? {
                 fileIds: attachments.map((a) => a.fileId),
@@ -623,7 +627,15 @@ export class ImessageAdapter extends BaseBotAdapter {
       const text =
         transcripts.length > 0 ? transcripts.join("\n\n") : filePrompt;
       if (uploaded.length > 0 || text) {
-        await this.handleStreamingMessage(handle, space, text, uploaded);
+        // Media turns carry no inbound message id (the media pipeline drops
+        // it), so a later reaction to one falls back to a text bubble.
+        await this.handleStreamingMessage(
+          handle,
+          space,
+          text,
+          undefined,
+          uploaded,
+        );
       }
     } catch (err) {
       this.adapterLogger.error("media_message_failed", {

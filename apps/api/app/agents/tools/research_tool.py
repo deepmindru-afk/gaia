@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Annotated
+from typing import Annotated, cast
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
@@ -226,7 +226,7 @@ async def deep_research(
 
     # ── Phase 0: Full-result cache check ────────────────────────────────────
     cache_key = build_research_cache_key(query, scope, focus_areas, depth)
-    cached_result: dict[str, object] | None = await get_cache(cache_key)
+    cached_result = cast("dict[str, object] | None", await get_cache(cache_key))
     if cached_result:
         writer({"progress": "Loaded research from cache!"})
         writer({"research_data": cached_result})

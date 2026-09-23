@@ -17,6 +17,7 @@
  * @module
  */
 
+import { BOT_EVENTS } from "@gaia/shared/analytics";
 import {
   BaseBotAdapter,
   type BotCommand,
@@ -30,6 +31,7 @@ import {
   type IncomingMedia,
   type MediaOutcome,
   type OutboundAttachment,
+  type OutboundReaction,
   type PlatformName,
   type RichMessage,
   type RichMessageTarget,
@@ -246,6 +248,44 @@ export class DiscordAdapter extends BaseBotAdapter {
       content: attachment.caption ?? undefined,
       files: [{ attachment: artifact.data, name: attachment.filename }],
     });
+  }
+
+  protected override async deliverOutboundReaction(
+    destinationId: string,
+    reaction: OutboundReaction,
+    isChannel: boolean,
+  ): Promise<void> {
+    try {
+      const channel = isChannel
+        ? await this.client.channels.fetch(destinationId)
+        : await (await this.client.users.fetch(destinationId)).createDM();
+      if (!channel?.isTextBased() || !("messages" in channel)) {
+        throw new Error(
+          `Discord destination ${destinationId} has no fetchable messages`,
+        );
+      }
+      const message = await channel.messages.fetch(
+        reaction.target_platform_message_id,
+      );
+      await message.react(reaction.emoji);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "native" },
+      );
+    } catch (err) {
+      this.adapterLogger.warn("outbound_reaction_attach_failed", {
+        ...(err instanceof Error
+          ? { error_type: err.name, error: err.message }
+          : { error: String(err) }),
+      });
+      await this.deliverOutbound(destinationId, reaction.emoji, isChannel);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "fallback_text", reason: "attach_failed" },
+      );
+    }
   }
 
   /**
@@ -483,6 +523,7 @@ export class DiscordAdapter extends BaseBotAdapter {
         platformUserId: userId,
         channelId,
         isDm: !interaction.guild,
+        platformMessageId: interaction.targetMessage.id,
       },
       async (text: string) => {
         replied = true;
@@ -628,6 +669,7 @@ export class DiscordAdapter extends BaseBotAdapter {
           platformUserId: userId,
           channelId: message.channelId,
           isDm: true,
+          platformMessageId: message.id,
           ...(attachments.length > 0
             ? {
                 fileIds: attachments.map((a) => a.fileId),
@@ -886,6 +928,7 @@ export class DiscordAdapter extends BaseBotAdapter {
           platformUserId: message.author.id,
           channelId: message.channelId,
           isDm: !message.guild,
+          platformMessageId: message.id,
           ...(attachments.length > 0
             ? {
                 fileIds: attachments.map((a) => a.fileId),
