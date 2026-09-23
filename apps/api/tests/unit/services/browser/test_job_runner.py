@@ -773,12 +773,14 @@ async def test_start_url_is_appended_to_the_task_and_opened(
         "host_url": PRIMARY_HOST,
         "start_url": "https://resy.com",
     }
+    assert h.runner_kwargs["config"].start_url == "https://resy.com"
 
 
 async def test_blank_start_url_is_not_appended(monkeypatch: pytest.MonkeyPatch) -> None:
     h = _install(monkeypatch)
     await _run(h, _request(task="book a table", start_url=""))
     assert h.run_task == "book a table"
+    assert h.runner_kwargs["config"].start_url is None
 
 
 # ---------------------------------------------------------------------------

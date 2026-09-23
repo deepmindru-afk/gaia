@@ -612,6 +612,7 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
                     stream_screenshots=settings.BROWSER_USE_STREAM_SCREENSHOTS,
                     solve_captcha=settings.BROWSER_USE_SOLVE_CAPTCHA,
                     flash_mode=settings.BROWSER_USE_FLASH_MODE,
+                    start_url=request.start_url or None,
                 ),
                 user_id=request.user_id or None,
                 root_request_id=request.root_request_id,

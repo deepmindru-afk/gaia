@@ -179,6 +179,7 @@ class _RunnerOverrides:
     # identity sentinel rather than constructing a real BaseChatModel.
     llm: Any = None
     action_results: ActionResultsFn | None = None
+    start_url: str | None = None
 
 
 def _make_runner(*, emit, request_handoff=None, is_cancelled=None, overrides=_RunnerOverrides()):
@@ -202,6 +203,7 @@ def _make_runner(*, emit, request_handoff=None, is_cancelled=None, overrides=_Ru
             handoff_timeout_seconds=0,
             stream_screenshots=overrides.stream_screenshots,
             solve_captcha=False,
+            start_url=overrides.start_url,
         ),
         user_id=overrides.user_id,
         root_request_id=overrides.root_request_id,
@@ -1609,6 +1611,27 @@ async def test_browser_uses_own_judge_is_off(patch_browser) -> None:
     assert FakeAgent.last_kwargs["use_judge"] is False
 
 
+async def test_the_start_url_is_opened_before_the_first_decision(patch_browser) -> None:
+    """Browser-Use finds a start URL in the task only when it holds one; the books task named three and began on about:blank."""
+    _, emit = _collector()
+    start = "https://books.toscrape.com/"
+    task = f"Open {start}, go to {start}catalogue/category/books/travel_2/index.html\n\nStart at: {start}"
+
+    await _make_runner(emit=emit, overrides=_RunnerOverrides(start_url=start)).run(task)
+
+    assert FakeAgent.last_kwargs["initial_actions"] == [
+        {"navigate": {"url": start, "new_tab": False}}
+    ]
+
+
+async def test_a_run_with_no_start_url_adds_no_first_action(patch_browser) -> None:
+    _, emit = _collector()
+
+    await _make_runner(emit=emit).run("x")
+
+    assert "initial_actions" not in FakeAgent.last_kwargs
+
+
 async def test_a_jev_model_is_bound_to_the_session_and_its_helper_extracts(patch_browser) -> None:
     """Jev reads the observation off the session Browser-Use drives, gets the raw task (not the takeover preamble), and its text helper is what Browser-Use meters and extracts with."""
     from app.services.browser.jev import JevChatModel
@@ -1917,6 +1940,7 @@ def _fallback_runner(
     is_cancelled: AsyncMock | None = None,
     request_handoff: AsyncMock | None = None,
     task_timeout: float = 30,
+    start_url: str | None = None,
 ) -> BrowserTaskRunner:
     _AgentRunThatBlocksOnce.runs = []
     monkeypatch.setattr(runner_mod, "BrowserAgentRun", agent_run)
@@ -1937,6 +1961,7 @@ def _fallback_runner(
             handoff_timeout_seconds=0,
             stream_screenshots=False,
             solve_captcha=False,
+            start_url=start_url,
         ),
     )
 
@@ -1988,6 +2013,35 @@ async def test_a_run_blocked_with_no_fallback_engine_ends_on_its_first_outcome(
         False,
         "blocked on the primary",
     )
+
+
+class _AgentRunRecordingStart(_AgentRunThatBlocksOnce):
+    """The blocking stand-in, recording the start URL each run was built to open."""
+
+    starts: ClassVar[list[str | None]] = []
+
+    def __init__(self, *, config: BrowserRunConfig, **kwargs: Any) -> None:
+        super().__init__(config=config, **kwargs)
+        type(self).starts.append(config.start_url)
+
+
+async def test_a_run_resumed_on_the_fallback_at_its_page_does_not_reopen_the_start_url(
+    monkeypatch,
+) -> None:
+    """Jev reopens the page it gave up on; opening the start URL first as well navigated twice."""
+    _, emit = _collector()
+    _AgentRunRecordingStart.starts = []
+    runner = _fallback_runner(
+        monkeypatch,
+        emit,
+        AsyncMock(return_value=_fallback_session()),
+        agent_run=_AgentRunRecordingStart,
+        start_url="https://flights.example.com/",
+    )
+
+    await runner.run("find fares")
+
+    assert _AgentRunRecordingStart.starts == ["https://flights.example.com/", None]
 
 
 # ---------------------------------------------------------------------------

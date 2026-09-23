@@ -306,6 +306,9 @@ class BrowserTaskRunner:
     ) -> RunOutcome:
         """Open the fallback engine where the run left off and finish the task there, keeping plan, findings and history."""
         url = route.jev.fallback_url
+        if url is not None:
+            # Jev's first step there reopens that page; a run with no page yet starts over.
+            self._config = replace(self._config, start_url=None)
         log.info(
             f"{LogTag.BROWSER} Browser run moving to the fallback engine for "
             f"{(url or 'the start of the task')[:120]}",

@@ -40,6 +40,7 @@ import {
   type PlatformName,
   type RichMessage,
   type RichMessageTarget,
+  recordBotFailure,
   redeemLinkCode,
   renderForPlatform,
   richMessageToMarkdown,
@@ -203,9 +204,18 @@ export class TelegramAdapter extends BaseBotAdapter {
     this.token = token;
 
     this.bot = new Bot(this.token);
-    // grammY's terminal error handler: anything an uncaught middleware throws ends
-    // here. Treated as its own unit of work so it gets a canonical event (update,
-    // sender, cause) instead of a lone error line with no trace_id.
+    this.registerErrorHandler();
+    // Cache the bot username upfront to avoid calling getMe() on every message
+    const botInfo = await this.bot.api.getMe();
+    this.botUsername = botInfo.username;
+  }
+
+  /**
+   * Installs grammY's terminal error handler: anything an uncaught middleware
+   * throws ends here, recorded as its own failed bot_runtime_error unit of work
+   * with the failure's reason and the hashed sender and chat, like Slack's app.error.
+   */
+  private registerErrorHandler(): void {
     this.bot.catch((err) =>
       withWideEvent(
         "bot_runtime_error",
@@ -217,18 +227,10 @@ export class TelegramAdapter extends BaseBotAdapter {
           update_id: err.ctx?.update?.update_id,
         },
         async () => {
-          // Re-thrown so the boundary marks the event failed and records the
-          // real error in errors[]; a handler-reports-success event here would
-          // hide every middleware crash.
-          throw err.error;
+          recordBotFailure("telegram_runtime_error", err.error);
         },
-        // This IS the last-resort handler — the error is already emitted, and
-        // letting it escape would take the bot process down.
-      ).catch(() => undefined),
+      ),
     );
-    // Cache the bot username upfront to avoid calling getMe() on every message
-    const botInfo = await this.bot.api.getMe();
-    this.botUsername = botInfo.username;
   }
 
   /**

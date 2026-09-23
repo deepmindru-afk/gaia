@@ -1771,6 +1771,30 @@ async def test_a_one_page_category_read_to_its_bottom_answers_the_cheapest_book(
     }
 
 
+async def test_a_part_on_the_site_the_run_started_on_is_not_navigated_to_again() -> None:
+    """The start URL is opened before Jev's first step; the plan opening its part there as well loaded the site twice."""
+    home = make_state({40: FakeNode("BUTTON", text="Travel")}, url="https://books.toscrape.com/")
+
+    async def writer(schema, prompt, *, label, timeout=None, reasoning=None):
+        if prompt[0].content.startswith(PLAN_STEPS):
+            return schema.model_validate(
+                {
+                    "steps": [
+                        {"goal": "Find the cheapest book in Travel", "url": _TRAVEL},
+                        {"goal": "Look it up on Wikipedia", "url": "https://en.wikipedia.org"},
+                    ]
+                }
+            )
+        return await FakeTextModel().structured(schema, prompt, label=label, timeout=timeout)
+
+    model, gateway, _ = _writer_model(home, [("WAIT", None)], writer)
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert "navigate" not in _action(result.completion)
+    assert len(gateway.requests) == 1
+
+
 class _SlowJudgeFastCheck:
     """Part judgements hang until released; the DONE evidence check answers at once."""
 

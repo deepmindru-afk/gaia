@@ -28,7 +28,7 @@ GuidanceFn = Callable[[AgentGuidanceRequest], Awaitable[str]]
 
 @dataclass(frozen=True)
 class BrowserRunConfig:
-    """One browser run's tuning knobs; every field is a BROWSER_USE_* setting."""
+    """One browser run's settings: the BROWSER_USE_* knobs, and the page it starts on."""
 
     max_steps: int
     max_actions_per_step: int
@@ -38,6 +38,9 @@ class BrowserRunConfig:
     stream_screenshots: bool
     solve_captcha: bool
     flash_mode: bool = True
+    #: Opened before the first decision; Browser-Use's own find of a URL in the
+    #: task gives up when the task names more than one.
+    start_url: str | None = None
 
 
 @dataclass(frozen=True)

@@ -74,6 +74,7 @@ vi.mock("discord.js", () => {
       ClientReady: "ready",
       InteractionCreate: "interactionCreate",
       MessageCreate: "messageCreate",
+      Error: "error",
     },
     GatewayIntentBits: {
       Guilds: 1,
@@ -96,7 +97,13 @@ vi.mock("discord.js", () => {
 // Mock @gaia/shared so we control handleStreamingChat.
 // ---------------------------------------------------------------------------
 
-vi.mock("@gaia/shared/bots", () => {
+vi.mock("@gaia/shared/bots", async () => {
+  // The real boundary and failure recorder, so the client-error test reads the
+  // bot_event the adapter really prints.
+  const actual =
+    await vi.importActual<typeof import("@gaia/shared/bots")>(
+      "@gaia/shared/bots",
+    );
   const BaseBotAdapter = class {
     platform = "discord";
     gaia = {};
@@ -191,6 +198,8 @@ vi.mock("@gaia/shared/bots", () => {
 
   return {
     BaseBotAdapter,
+    withWideEvent: actual.withWideEvent,
+    recordBotFailure: actual.recordBotFailure,
     createBotLogger: vi.fn(() => ({
       debug: vi.fn(),
       info: vi.fn(),
@@ -230,6 +239,7 @@ vi.mock("@gaia/shared/bots", () => {
 
 import { handleStreamingChat } from "@gaia/shared/bots";
 import { DiscordAdapter } from "../../discord/src/adapter";
+import { captureBotEvents } from "../shared/helpers/capture-bot-event";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1263,5 +1273,36 @@ describe("DiscordAdapter - deliverOutbound channel routing", () => {
     expect(client.users.fetch).toHaveBeenCalledWith("user-1");
     expect(userSend).toHaveBeenCalledWith("hi");
     expect(client.channels.fetch).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// client errors — an unhandled 'error' event would crash the process
+// ---------------------------------------------------------------------------
+
+describe("DiscordAdapter - client errors", () => {
+  it("records a client error as a failed bot_runtime_error with its reason", async () => {
+    const adapter = new DiscordAdapter();
+    const client = { on: vi.fn(), once: vi.fn() };
+    (adapter as unknown as { client: typeof client }).client = client;
+    await (
+      adapter as unknown as { registerEvents: () => Promise<void> }
+    ).registerEvents();
+    const listener = client.on.mock.calls.find(
+      ([event]) => event === "error",
+    )?.[1] as ((error: Error) => void) | undefined;
+    expect(listener).toBeDefined();
+
+    const events = await captureBotEvents("bot_runtime_error", async () => {
+      listener?.(new Error("read ECONNRESET"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      platform: "discord",
+      outcome: "failed",
+      reason: "backend_unreachable",
+    });
   });
 });

@@ -259,6 +259,10 @@ class BrowserAgentRun:
                 handle_guidance=self._guidance,
             ),
         }
+        if self._config.start_url:
+            agent_kwargs["initial_actions"] = [
+                {"navigate": {"url": self._config.start_url, "new_tab": False}}
+            ]
         if isinstance(self._llm, JevChatModel):
             # Jev reads the structured observation from the session itself, with the
             # raw task (not the takeover preamble) as its goal. Its text helper is the

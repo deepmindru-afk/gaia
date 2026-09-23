@@ -33,6 +33,7 @@ import {
   type PlatformName,
   type RichMessage,
   type RichMessageTarget,
+  recordBotFailure,
   renderForPlatform,
   type SentMessage,
   STREAMING_DEFAULTS,
@@ -130,6 +131,18 @@ export class DiscordAdapter extends BaseBotAdapter {
           // (no type/recipients), so an uncached channel drops DMs after a
           // restart; pre-warm each linked user's DM to cache it.
           await this.prewarmDmChannels();
+        },
+      );
+    });
+
+    // discord.js emits gateway and websocket failures as 'error'; with no listener
+    // the EventEmitter throws and takes the bot down. Recorded like Slack's app.error.
+    this.client.on(Events.Error, (error) => {
+      void withWideEvent(
+        "bot_runtime_error",
+        { platform: this.platform, component: "adapter" },
+        async () => {
+          recordBotFailure("discord_client_error", error);
         },
       );
     });
