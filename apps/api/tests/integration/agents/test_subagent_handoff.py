@@ -818,6 +818,7 @@ async def _async_iter(items):
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("fake_redis")
 class TestHandoffFunctionDirectly:
     """Call the handoff() coroutine directly and verify it returns and passes state correctly."""
 
@@ -968,6 +969,7 @@ class TestHandoffFunctionDirectly:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("fake_redis")
 class TestCustomMCPPath:
     """A dict integration (MongoDB custom MCP) must route through create_subagent_for_user."""
 
@@ -1169,6 +1171,7 @@ class TestCustomMCPPath:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("fake_redis")
 class TestHandoffThreadIsolation:
     """Verify handoffs to different subagents produce different thread IDs, with no state bleeding."""
 
@@ -1327,6 +1330,7 @@ class TestHandoffThreadIsolation:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("fake_redis")
 class TestHandoffWithToolCallArgs:
     """Verify subagent_id and task from the tool call are correctly forwarded through handoff."""
 
@@ -1674,6 +1678,7 @@ class _ExecutorDriver:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("fake_redis")
 class TestHandoffHILPauseResume:
     """A gated tool inside a handed-off subagent must pause the executor and resume from checkpoint."""
 

@@ -1,16 +1,14 @@
 """Shared fixtures for unit tests."""
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import fakeredis.aioredis
 from langchain_core.language_models.fake_chat_models import (
     FakeMessagesListChatModel,
 )
 import pytest
 
 from app.agents.core.background import session as stream_session
-from app.db.redis import redis_cache
 from tests.factories import make_config, make_state, make_user
 from tests.helpers import create_fake_llm, create_fake_llm_with_tool_calls
 
@@ -88,18 +86,6 @@ def mock_redis():
         mock_cache.delete = AsyncMock()
         mock_cache.redis = MagicMock()
         yield mock_cache
-
-
-@pytest.fixture
-async def fake_redis(
-    monkeypatch: pytest.MonkeyPatch,
-) -> AsyncIterator[fakeredis.aioredis.FakeRedis]:
-    """Back the redis_cache singleton with a per-test fakeredis, for real key/TTL semantics."""
-    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    monkeypatch.setattr(redis_cache, "redis", client)
-    yield client
-    await client.flushall()
-    await client.connection_pool.disconnect()
 
 
 @pytest.fixture

@@ -9,7 +9,7 @@ Provides:
 """
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
 import contextlib
 from contextlib import asynccontextmanager
 import importlib
@@ -17,6 +17,7 @@ import os
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import fakeredis.aioredis
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from hypothesis import HealthCheck, settings as _hypothesis_settings
@@ -52,6 +53,7 @@ import tests.offline_env  # isort: skip  # noqa: F401 -- imported for its side e
 # time; without ENV set first that resolves to ProductionSettings and fails.
 from app.config.posthog import init_posthog
 from app.core.lazy_loader import MissingKeyStrategy, providers
+from app.db.redis import redis_cache
 from app.models.payment_models import (
     PlanType,
     SubscriptionStatus,
@@ -329,6 +331,18 @@ def _hermetic_allowed_keys() -> frozenset[str]:
 _HERMETIC_FAKE_KEYS = {
     "GOOGLE_API_KEY": "sk-hermetic-test-key-not-real",  # pragma: allowlist secret
 }
+
+
+@pytest.fixture
+async def fake_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[fakeredis.aioredis.FakeRedis]:
+    """Back the redis_cache singleton with a per-test fakeredis, for real key/TTL semantics."""
+    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(redis_cache, "redis", client)
+    yield client
+    await client.flushall()
+    await client.connection_pool.disconnect()
 
 
 @pytest.fixture(scope="session", autouse=True)
