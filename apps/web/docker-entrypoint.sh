@@ -11,7 +11,7 @@
 # required-server-files.json runtime config. All of these need patching.
 set -e
 
-PLACEHOLDER="http://preview.placeholder.buildtime/api/v1/"
+PLACEHOLDER="https://preview.placeholder.buildtime/api/v1/"
 
 if [ -n "${NEXT_PUBLIC_APP_URL:-}" ]; then
   REAL_URL="${NEXT_PUBLIC_APP_URL%/}/api/v1/"

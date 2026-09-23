@@ -51,7 +51,7 @@ COPY . .
 # Build-time API URL baked into the JS bundle. At container startup,
 # docker-entrypoint.sh replaces this placeholder with the real URL
 # derived from NEXT_PUBLIC_APP_URL, so one image works on any port.
-ARG NEXT_PUBLIC_API_BASE_URL=http://preview.placeholder.buildtime/api/v1/
+ARG NEXT_PUBLIC_API_BASE_URL=https://preview.placeholder.buildtime/api/v1/
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
 WORKDIR /app/apps/web
@@ -76,8 +76,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static     ./apps/web/.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public            ./apps/web/public
 
-COPY --chown=nextjs:nodejs apps/web/docker-entrypoint.sh ./docker-entrypoint.sh
-RUN chmod +x ./docker-entrypoint.sh
+# Root-owned and read-only to nextjs: the process it launches must not be able to rewrite it.
+COPY --chmod=0755 apps/web/docker-entrypoint.sh ./docker-entrypoint.sh
 
 USER nextjs
 
