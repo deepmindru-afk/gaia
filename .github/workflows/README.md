@@ -84,6 +84,11 @@ flowchart TD
   DESKTOP_BUILD --> DESKTOP_UPLOAD["Upload assets + mark desktop-v* as Latest"]:::release
 
   RELEASE_EVT["release.published (desktop-v*)"]:::event --> DESKTOP_BUILD
+
+  OBSCURA_EVT["nightly schedule / dispatch /<br/>PR touching the Obscura build or probe"]:::event --> OBSCURA_COMPAT["obscura-compat.yml<br/>build Obscura, probe common sites vs Chrome<br/>(informational, not a required check)"]:::ci
+  OBSCURA_COMPAT --> OBSCURA_GATE{"gap at a site outside<br/>the baseline?"}:::decision
+  OBSCURA_GATE -- "Yes" --> OBSCURA_FAIL["Run fails"]:::terminal
+  OBSCURA_GATE -- "No" --> OBSCURA_PASS["Run passes; baseline sites that<br/>now match Chrome printed as removable"]:::terminal
 ```
 
 ## Per-Workflow Steps
@@ -156,6 +161,11 @@ Two independent jobs, so one CLI release ships both halves:
 1. Trigger on PR open/edit/synchronize.
 2. Validate PR title against configured semantic type list.
 
+### `.github/workflows/obscura-compat.yml`
+1. Triggers on a nightly `schedule`, `workflow_dispatch`, and `pull_request` limited to paths `apps/api/obscura-patches/**`, `apps/api/Dockerfile`, `apps/api/scripts/obscura_compat_probe.py`, `scripts/ci/baselines/obscura-compat.txt` and the workflow itself. `permissions: contents: read`. Not a required check and not wired into any gate: it loads live third-party sites.
+2. Builds only the `obscura-bin` stage of `apps/api/Dockerfile` (the same `obscura-builder` the api image ships: pinned `OBSCURA_COMMIT` + the `obscura-patches` series) with `docker/build-push-action`, exported as files (`outputs: type=local`). GHA cache `scope=obscura-bin`, `mode=min`: only the two binaries are cached, so an unchanged build is a full hit and a patch change rebuilds.
+3. Runs `apps/api/scripts/obscura_compat_probe.py --baseline scripts/ci/baselines/obscura-compat.txt` via `uv run --project apps/api --frozen --group backend`, with `CHROMIUM_BIN` set to the runner image's `google-chrome`. Fails only on a gap at a site not in the baseline; baseline sites that now match Chrome are printed as removable and do not fail the run (the baseline only ever shrinks). The probe output goes to the job summary.
+
 ## File Map
 - `.github/workflows/main.yml` ("Quality Checks"): THE CI correctness gate (build + tests + coverage + docker image + harness tooling + trivy + regression-proof + docker release trigger), home-runner-first with GitHub fallback. Python tests run runner-native against live service containers, split into four slices: `unit-a`, `unit-b`, `integration`, `bridge`.
 - `.github/workflows/code-quality.yml`: code-hygiene lanes (lint/type/dead-code/complexity/security) behind the `Quality gate (required)` check.
@@ -166,3 +176,4 @@ Two independent jobs, so one CLI release ships both halves:
 - `.github/workflows/publish-cli.yml`: CLI package validation/build/publish workflow.
 - `.github/workflows/desktop-release.yml`: desktop installer build and release-asset upload.
 - `.github/workflows/pr-naming-conventions.yml`: PR title convention enforcement.
+- `.github/workflows/obscura-compat.yml`: nightly Obscura-vs-Chrome compatibility probe over common sites, ratcheted against `scripts/ci/baselines/obscura-compat.txt`; informational, never required.

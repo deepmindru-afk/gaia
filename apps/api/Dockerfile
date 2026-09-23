@@ -106,6 +106,12 @@ RUN git clone https://github.com/h4ckf0r0day/obscura /obscura \
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cd /obscura && cargo build --locked --release -p obscura-cli --bins --features render,stealth
 
+# Just the two binaries, for `--target obscura-bin --output type=local`: the
+# nightly compat probe (.github/workflows/obscura-compat.yml) runs this exact build.
+FROM scratch AS obscura-bin
+COPY --from=obscura-builder /obscura/target/release/obscura /obscura
+COPY --from=obscura-builder /obscura/target/release/obscura-worker /obscura-worker
+
 # ---- Runtime: minimal production image ----
 FROM python:3.12-slim AS runtime
 WORKDIR /app
