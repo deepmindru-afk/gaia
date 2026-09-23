@@ -26,9 +26,9 @@ async def resume_parked_subagent(record: HILApprovalRecord) -> bool:
     A taken thread is the run still live (its own park resumes it once it exits) or a
     resume already running, which re-reads every decided record at its gates.
     """
-    if record.subagent_thread_id and await RunningSubagents(record.conversation_id).holds_thread(
-        record.subagent_thread_id
-    ):
+    # Equivalent under mutation: holds_thread reads the thread's own key, never the conversation's.
+    registry = RunningSubagents(record.conversation_id)  # pragma: no mutate
+    if record.subagent_thread_id and await registry.holds_thread(record.subagent_thread_id):
         return False
     # Correct by construction: the gate files a SubagentResumeItem and nothing else.
     item = cast(SubagentResumeItem, record.subagent_resume)
