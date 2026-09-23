@@ -102,7 +102,8 @@ const getTimeBasedGreeting = (
     greetings = nightGreetings;
   }
 
-  const randomIndex = Math.floor(Math.random() * greetings.length);
+  // picks a cosmetic greeting; nothing security-relevant
+  const randomIndex = Math.floor(Math.random() * greetings.length); // NOSONAR typescript:S2245
   const template = greetings[randomIndex];
 
   if (!includeName || !userName || userName.trim() === "") {
