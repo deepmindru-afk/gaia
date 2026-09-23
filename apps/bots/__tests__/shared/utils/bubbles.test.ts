@@ -97,7 +97,7 @@ describe("segmentIntoBubbles", () => {
 
   it("merges a fragment too small to be its own message", () => {
     const bubbles = segmentIntoBubbles(
-      "ok." + BREAK + "Here is the actual answer, which is long enough.",
+      `ok.${BREAK}Here is the actual answer, which is long enough.`,
     );
 
     expect(bubbles).toHaveLength(1);
@@ -110,12 +110,8 @@ describe("segmentIntoBubbles", () => {
   });
 
   it("ships a sentinel-free production reply as one bubble, word for word", () => {
-    // The model owns the splits: the only sentinels in this 4,358-character
-    // reply are a doubled token at the very end (an empty segment that drops
-    // out), so it ships as ONE bubble. Had the model emitted interior tokens
-    // there would be more. That is the documented tradeoff of
-    // model-controlled breaks, and the prompt (Chat Bubbles) is where it is
-    // fixed when the model forgets the token, not here.
+    // Its only sentinels are a doubled token at the very end, an empty segment
+    // that drops out; a forgotten token is fixed in the prompt, not here.
     const bubbles = segmentIntoBubbles(PROD_REPLY);
 
     expect(bubbles).toHaveLength(1);

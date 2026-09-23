@@ -49,10 +49,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 async function startAndCaptureHandler(
   deliver: (id: string, text: string) => Promise<void>,
-  deliverFile: (
-    id: string,
-    attachment: OutboundAttachment,
-  ) => Promise<void>,
+  deliverFile: (id: string, attachment: OutboundAttachment) => Promise<void>,
 ): Promise<Handler> {
   const consumer = new OutboundConsumer(
     "discord",
@@ -159,9 +156,9 @@ describe("a browser run delivered to a bot user", () => {
     // Session + handoff + result bubbles ride the text path.
     const texts = deliver.mock.calls.map((call) => call[1] as string);
     expect(texts.some((text) => text.includes(LIVE_LINK))).toBe(true);
-    expect(
-      texts.some((text) => text.includes("sign in and come back")),
-    ).toBe(true);
+    expect(texts.some((text) => text.includes("sign in and come back"))).toBe(
+      true,
+    );
     // The result's sentinel became two sends, never a visible token.
     expect(texts.some((text) => text.includes("ABC123"))).toBe(true);
     expect(texts.some((text) => text.includes("confirmed twice"))).toBe(true);

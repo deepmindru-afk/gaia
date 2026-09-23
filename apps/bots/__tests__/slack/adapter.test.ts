@@ -936,9 +936,8 @@ describe("SlackAdapter - deliverOutbound channel routing", () => {
 // app.error — Bolt's last-resort handler
 // ---------------------------------------------------------------------------
 
-// The adapter resolves @slack/bolt from apps/bots/slack, which the mock above
-// does not reach, so initialize() builds a real Bolt App: a listener that
-// throws goes through Bolt's own dispatch into the adapter's error handler.
+// The mock above does not reach apps/bots/slack's @slack/bolt, so this is a real
+// Bolt App dispatching a throwing listener into the adapter's error handler;
 // app_uninstalled skips Bolt's authorize step, so no Slack API call is made.
 describe("SlackAdapter - runtime errors", () => {
   interface RealBoltApp {
