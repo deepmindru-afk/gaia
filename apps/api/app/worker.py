@@ -110,10 +110,9 @@ _sync_workflows_for_subscription_state = func(
     name=SUBSCRIPTION_WORKFLOW_SYNC_TASK,
 )
 
-# One run per conversation is enforced by the browser slot lease, not by ARQ,
-# and a browser run is not idempotent — it may already have submitted a form.
-# Its deadline is derived from the settings that bound a run: handoffs alone can
-# hold a legitimate run for hours, far past the default job cap.
+# One run per conversation is enforced by the browser slot lease, not by ARQ; a
+# run is not idempotent (it may already have submitted a form), and handoffs
+# alone can hold a legitimate one for hours, past the default job cap.
 _run_browser_job = arq_function(
     run_browser_job,
     name=BROWSER_JOB_TASK,

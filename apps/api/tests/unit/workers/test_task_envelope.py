@@ -1,8 +1,8 @@
 """The ARQ task envelope's deadline: a job cut off at its time limit says so.
 
 ARQ enforces a job timeout by cancelling the task, which a wide-event boundary
-records as a clean ``cancelled``. The envelope owns each task's deadline so the
-cut-off reads as a failure with reason ``task_timeout``, and ARQ's own timeout
+records as a clean cancel. The envelope owns each task's deadline so the
+cut-off reads as a failure with reason task_timeout, and ARQ's own timeout
 sits past it as a backstop only.
 """
 
