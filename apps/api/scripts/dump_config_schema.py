@@ -5,7 +5,8 @@ import sys
 
 
 def extract_settings_validator(file_path):
-    with Path(file_path).open() as f:
+    # dev tool that parses the settings module the operator points it at; no trust boundary crossed
+    with Path(file_path).open() as f:  # NOSONAR pythonsecurity:S8707
         tree = ast.parse(f.read())
 
     groups = []
@@ -64,7 +65,8 @@ def extract_settings_validator(file_path):
 
 
 def extract_settings(file_path):
-    with Path(file_path).open() as f:
+    # dev tool that parses the settings module the operator points it at; no trust boundary crossed
+    with Path(file_path).open() as f:  # NOSONAR pythonsecurity:S8707
         tree = ast.parse(f.read())
 
     required_in_dev = set()

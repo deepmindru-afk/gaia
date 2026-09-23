@@ -18,7 +18,8 @@ ssr_dir = chunks_dir / "ssr"
 
 
 def analyze_chunk(filepath: str) -> str:
-    text = Path(filepath).read_text(errors="ignore")
+    # local bundle-analysis tool reading the chunk the developer names; no trust boundary crossed
+    text = Path(filepath).read_text(errors="ignore")  # NOSONAR pythonsecurity:S8707
     size_kb = len(text) / 1024
 
     # Turbopack embeds paths like:
