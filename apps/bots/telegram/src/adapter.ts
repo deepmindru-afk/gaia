@@ -442,9 +442,10 @@ export class TelegramAdapter extends BaseBotAdapter {
       if (!isTelegramHtmlParseError(error)) throw error;
       // Telegram rejected the HTML (usually an unbalanced entity). Recover by
       // sending plain text, but log it — silent fallback hides markdown bugs.
-      this.adapterLogger.warn("telegram_html_parse_fallback", {
-        reason: error instanceof Error ? error.message : String(error),
-      });
+      this.adapterLogger.warn(
+        "telegram_html_parse_fallback",
+        sanitizeErrorForLog(error),
+      );
       return await send(htmlToPlainText(html));
     }
   }
@@ -515,9 +516,10 @@ export class TelegramAdapter extends BaseBotAdapter {
         onError(e);
         throw e;
       }
-      this.adapterLogger.warn("telegram_html_parse_fallback", {
-        reason: e instanceof Error ? e.message : String(e),
-      });
+      this.adapterLogger.warn(
+        "telegram_html_parse_fallback",
+        sanitizeErrorForLog(e),
+      );
       try {
         await edit(htmlToPlainText(html));
       } catch (err) {

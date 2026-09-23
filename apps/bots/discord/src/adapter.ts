@@ -36,6 +36,7 @@ import {
   renderForPlatform,
   type SentMessage,
   STREAMING_DEFAULTS,
+  sanitizeErrorForLog,
   wideLog,
   withWideEvent,
 } from "@gaia/shared/bots";
@@ -366,7 +367,8 @@ export class DiscordAdapter extends BaseBotAdapter {
           } else if (lastFollowUp) {
             await lastFollowUp.edit({ content: publicContent });
           }
-        } catch {
+        } catch (dmError) {
+          wideLog.warning("auth_dm_failed", sanitizeErrorForLog(dmError));
           await interaction.followUp({
             content: renderForPlatform(
               buildAuthLinkMessage(authUrl),
@@ -494,14 +496,16 @@ export class DiscordAdapter extends BaseBotAdapter {
             ),
           });
           replied = true;
-        } catch {
+        } catch (replyError) {
+          wideLog.warning("auth_reply_failed", sanitizeErrorForLog(replyError));
           try {
             await interaction.user.send(
               renderForPlatform(buildAuthLinkMessage(authUrl), "discord"),
             );
             replied = true;
-          } catch {
-            // both deliveries failed — leave replied false so error callback can run
+          } catch (dmError) {
+            // Neither the reply nor the DM reached the user: the link is lost.
+            wideLog.error("auth_link_undelivered", undefined, dmError);
           }
         }
       },
@@ -827,8 +831,9 @@ export class DiscordAdapter extends BaseBotAdapter {
         renderForPlatform(buildAuthLinkMessage(authUrl), "discord"),
       );
       dmSent = true;
-    } catch {
-      // DM failed — public message below will instruct the user
+    } catch (dmError) {
+      // The public message below tells the user to open their DMs.
+      wideLog.warning("auth_dm_failed", sanitizeErrorForLog(dmError));
     }
     await send(
       dmSent

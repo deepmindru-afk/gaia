@@ -46,11 +46,13 @@ import type {
   PlatformName,
   RichMessageTarget,
 } from "../types";
+import { BOT_FAILURE_REASON, recordBotFailure } from "../utils/failure-reasons";
 import { formatBotError, renderForPlatform } from "../utils/formatters";
 import {
   type BotLogger,
   createBotLogger,
   hashLogIdentifier,
+  sanitizeErrorForLog,
 } from "../utils/logger";
 import {
   type IncomingMedia,
@@ -343,6 +345,7 @@ export abstract class BaseBotAdapter {
         bytes: artifact.data.length,
         limit,
       });
+      wideLog.fail(BOT_FAILURE_REASON.FILE_TOO_LARGE);
       // A generated artifact the user never receives. Captured, not just
       // logged: this is a product failure with a per-platform size cause, and
       // its rate is the signal for raising a limit or chunking the output.
@@ -477,17 +480,10 @@ export abstract class BaseBotAdapter {
         } catch (error) {
           const durationMs = Date.now() - startMs;
           const errorType = error instanceof Error ? error.name : "Unknown";
-          wideLog.error(
-            "command_dispatch_failed",
-            {
-              command: name,
-              user_hash: userHash,
-              channel_hash: channelHash,
-              duration_ms: durationMs,
-              error_type: errorType,
-            },
-            error,
-          );
+          recordBotFailure("command_dispatch_failed", error, {
+            command: name,
+            duration_ms: durationMs,
+          });
           // Capture only the error class name. Raw messages can contain file
           // paths, request IDs, or upstream-echoed tokens — never ship them.
           this.analytics.capture(distinctId, BOT_EVENTS.COMMAND_EXECUTED, {
@@ -500,12 +496,15 @@ export abstract class BaseBotAdapter {
             context: `command:${name}`,
             error_type: errorType,
           });
-          const errMsg = formatBotError(error);
+          const errMsg = formatBotError(error, this.platform);
           try {
             await target.sendEphemeral(errMsg);
-          } catch {
+          } catch (sendError) {
             // Target may be expired (e.g. Discord interaction timeout).
-            wideLog.warning("error_notice_send_failed", { command: name });
+            wideLog.warning("error_notice_send_failed", {
+              command: name,
+              ...sanitizeErrorForLog(sendError),
+            });
           }
         }
       },

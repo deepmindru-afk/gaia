@@ -12,8 +12,13 @@
 import { type Channel, type ConsumeMessage, connect } from "amqplib";
 import type { PlatformName } from "../types";
 import { segmentIntoBubbles } from "../utils/bubbles";
+import { BOT_FAILURE_REASON, recordBotFailure } from "../utils/failure-reasons";
 import { renderForPlatform } from "../utils/formatters";
-import { type BotLogger, createBotLogger } from "../utils/logger";
+import {
+  type BotLogger,
+  createBotLogger,
+  hashLogIdentifier,
+} from "../utils/logger";
 import { chunkResponse } from "../utils/text";
 import { wideLog, withWideEvent } from "../utils/wide-events";
 import {
@@ -212,6 +217,7 @@ export class OutboundConsumer {
 
         wideLog.set({
           envelope_id: env.id,
+          destination_hash: hashLogIdentifier(env.destination_id),
           has_attachment: Boolean(env.attachment),
         });
 
@@ -254,6 +260,7 @@ export class OutboundConsumer {
       wideLog.warning("outbound_envelope_unparseable", {
         bytes: msg.content.length,
       });
+      wideLog.fail(BOT_FAILURE_REASON.ENVELOPE_REJECTED);
       this.settle(channel, () => channel.nack(msg, false, false)); // unparseable → DLQ
       return null;
     }
@@ -261,7 +268,11 @@ export class OutboundConsumer {
     if (!parsed.success) {
       wideLog.warning("outbound_envelope_invalid", {
         issues: parsed.error.issues.length,
+        invalid_fields: parsed.error.issues.map((issue) =>
+          issue.path.join("."),
+        ),
       });
+      wideLog.fail(BOT_FAILURE_REASON.ENVELOPE_REJECTED);
       this.settle(channel, () => channel.nack(msg, false, false)); // schema mismatch → DLQ
       return null;
     }
@@ -275,6 +286,7 @@ export class OutboundConsumer {
         expected: this.platform,
         got: env.platform,
       });
+      wideLog.fail(BOT_FAILURE_REASON.ENVELOPE_REJECTED);
       this.settle(channel, () => channel.nack(msg, false, false)); // wrong platform → DLQ
       return null;
     }
@@ -298,11 +310,10 @@ export class OutboundConsumer {
       await this.deliverFile(destinationId, attachment);
       this.settle(channel, () => channel.ack(msg));
     } catch (err) {
-      wideLog.error(
-        "outbound_file_delivery_failed",
-        { envelope_id: id, redelivered: msg.fields.redelivered },
-        err,
-      );
+      recordBotFailure("outbound_file_delivery_failed", err, {
+        envelope_id: id,
+        redelivered: msg.fields.redelivered,
+      });
       // Never requeue a file: deliverFile fetches AND uploads, so a failure can surface after
       // the platform already accepted the upload. We can't tell a pre-send from a post-send
       // failure, so requeueing risks a duplicate; dead-letter instead for manual replay.
@@ -328,6 +339,7 @@ export class OutboundConsumer {
     const sources = resolveSources(text, textParts);
     if (sources.length === 0) {
       wideLog.warning("outbound_envelope_empty", { envelope_id: id });
+      wideLog.fail(BOT_FAILURE_REASON.ENVELOPE_REJECTED);
       this.settle(channel, () => channel.nack(msg, false, false)); // nothing to send → DLQ
       return;
     }
@@ -347,21 +359,18 @@ export class OutboundConsumer {
       // it so the dropped message is visible for inspection.
       if (progress.delivered === 0) {
         wideLog.warning("outbound_text_rendered_empty", { envelope_id: id });
+        wideLog.fail(BOT_FAILURE_REASON.ENVELOPE_REJECTED);
         this.settle(channel, () => channel.nack(msg, false, false));
         return;
       }
       this.settle(channel, () => channel.ack(msg));
     } catch (err) {
       wideLog.set({ delivered_count: progress.delivered });
-      wideLog.error(
-        "outbound_delivery_failed",
-        {
-          envelope_id: id,
-          delivered: progress.delivered,
-          redelivered: msg.fields.redelivered,
-        },
-        err,
-      );
+      recordBotFailure("outbound_delivery_failed", err, {
+        envelope_id: id,
+        delivered: progress.delivered,
+        redelivered: msg.fields.redelivered,
+      });
       // Requeue for one retry ONLY if nothing was sent yet: requeue re-delivers the WHOLE
       // envelope, so once any chunk is out, retrying would re-send delivered chunks. After a
       // partial send (or a second attempt) dead-letter instead, to avoid duplicating the user.

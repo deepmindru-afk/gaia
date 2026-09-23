@@ -34,6 +34,8 @@ export {
   handleWorkflowList,
 } from "./commands";
 export { sendChunked } from "./delivery";
+export type { BotFailureReason } from "./failure-reasons";
+export { BOT_FAILURE_REASON, classifyBotFailure } from "./failure-reasons";
 export { fetchBytesCapped, readResponseBytesCapped } from "./fetch-bytes";
 export {
   buildAuthLinkMessage,

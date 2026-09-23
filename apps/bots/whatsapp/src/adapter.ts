@@ -922,8 +922,8 @@ export class WhatsAppAdapter extends BaseBotAdapter {
     } catch (err) {
       // Free-form send failed — usually the 24-hour window is closed. Fall back to
       // the approved template (sendable any time); a template failure rethrows so
-      // the consumer dead-letters it. Original error logged for visibility.
-      this.adapterLogger.info("outbound_template_fallback", {
+      // the consumer dead-letters it. A warning, because a 401/5xx lands here too.
+      wideLog.warning("outbound_template_fallback", {
         user_hash: hashLogIdentifier(destinationId),
         ...sanitizeErrorForLog(err),
       });

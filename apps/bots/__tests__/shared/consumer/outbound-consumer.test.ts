@@ -27,6 +27,8 @@ vi.mock("amqplib", () => ({
 
 import type { OutboundAttachment } from "../../../../../libs/shared/ts/src/bots/consumer/envelope";
 import { OutboundConsumer } from "../../../../../libs/shared/ts/src/bots/consumer/outbound-consumer";
+import { hashLogIdentifier } from "../../../../../libs/shared/ts/src/bots/utils/logger";
+import { captureBotEvents } from "../helpers/capture-bot-event";
 
 type Handler = (msg: unknown) => unknown;
 
@@ -41,7 +43,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Boots a consumer and returns the message handler it registered with consume(). */
 async function startAndCaptureHandler(
-  platform: "whatsapp" | "discord",
+  platform: "whatsapp" | "discord" | "telegram",
   deliver: (id: string, text: string) => Promise<void>,
   deliverFile: (
     id: string,
@@ -179,6 +181,51 @@ describe("OutboundConsumer message handling", () => {
 
     expect(channel.nack).toHaveBeenCalledWith(msg, false, true); // requeue
     expect(channel.ack).not.toHaveBeenCalled();
+  });
+
+  it("a send the platform rejects is a failed outbound event naming the reason and the hashed chat", async () => {
+    // grammY's GrammyError: Telegram's status in error_code, its reason in description.
+    const chatNotFound = Object.assign(
+      new Error(
+        "Call to 'sendMessage' failed! (400: Bad Request: chat not found)",
+      ),
+      {
+        name: "GrammyError",
+        error_code: 400,
+        description: "Bad Request: chat not found",
+      },
+    );
+    const handle = await startAndCaptureHandler(
+      "telegram",
+      vi.fn().mockRejectedValue(chatNotFound),
+    );
+    const msg = msgFor({
+      id: "env-1",
+      platform: "telegram",
+      destination_id: "5550001",
+      text: "hi",
+      enqueued_at: "t",
+    });
+
+    const [event] = await captureBotEvents("outbound_message", () =>
+      deliverMessage(handle, msg),
+    );
+
+    expect(event).toMatchObject({
+      outcome: "failed",
+      reason: "destination_not_found",
+      http_status: 400,
+      envelope_id: "env-1",
+      destination_hash: hashLogIdentifier("5550001"),
+    });
+    expect(JSON.stringify(event)).not.toContain("5550001");
+    expect(event.errors).toEqual([
+      expect.objectContaining({
+        msg: "outbound_delivery_failed",
+        error_type: "GrammyError",
+        http_status: 400,
+      }),
+    ]);
   });
 
   it("dead-letters when delivery fails again after redelivery", async () => {
