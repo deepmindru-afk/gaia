@@ -690,9 +690,13 @@ class ChromiumHost:
             await cdp_call(mux, "Target.detachFromTarget", {"sessionId": page_session})
 
     async def _dump_storage_state(self, session: HostSession) -> StorageState:
-        """Cookies (whole context) + localStorage (per open page) as storage_state."""
+        """Cookies (whole context) + localStorage (per open page) as storage_state.
+
+        Raises EngineUnresponsiveError on a down engine: an empty state there is
+        not the context's, and would be saved over the user's login.
+        """
         if not self.chromium_up:
-            return {"cookies": [], "origins": []}
+            raise EngineUnresponsiveError(session.session_id)
         raw = await cdp_call(
             session.mux, "Storage.getCookies", {"browserContextId": session.context_id}
         )

@@ -660,3 +660,28 @@ async def test_reading_a_sessions_storage_state_leaves_it_running() -> None:
 async def test_reading_the_storage_state_of_a_gone_session_raises_not_found() -> None:
     with pytest.raises(chromium.SessionNotFoundError):
         await make_host().storage_state("ghost")
+
+
+@pytest.mark.unit
+async def test_reading_the_storage_state_of_a_session_whose_engine_is_down_raises() -> None:
+    """A down engine read as an empty state, which the fallback then saved over the user's login."""
+    host = make_host()
+    host._sessions["s1"] = make_session()
+    host._proc = MagicMock(returncode=-11)
+
+    with pytest.raises(chromium.EngineUnresponsiveError):
+        await host.storage_state("s1")
+
+
+@pytest.mark.unit
+async def test_disposing_a_session_whose_engine_is_down_raises_and_still_frees_it() -> None:
+    """The dispose's empty dump was saved over a seeded run's login just the same."""
+    host = make_host()
+    session = make_session()
+    host._sessions["s1"] = session
+    host._proc = MagicMock(returncode=-11)
+
+    with pytest.raises(chromium.EngineUnresponsiveError):
+        await host.dispose_context("s1")
+
+    assert host.get("s1") is None

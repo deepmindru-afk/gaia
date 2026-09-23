@@ -149,6 +149,11 @@ def _session_not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="session not found")
 
 
+def _engine_unresponsive() -> HTTPException:
+    log.fail(HostRequestFailure.ENGINE_UNRESPONSIVE)
+    return HTTPException(status_code=503, detail="browser engine unresponsive")
+
+
 _ALLOWED_WS_ORIGIN_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -256,13 +261,15 @@ async def create_session(request: Request, payload: CreateSessionRequest) -> Cre
 
 @app.delete("/sessions/{session_id}")
 async def delete_session(request: Request, session_id: str) -> DeleteSessionResponse:
-    """Dispose the context and return the storage state to persist."""
+    """Dispose the context and return the storage state to persist; 503 when its engine is down."""
     _require_host_key(request)
     log.set(browser={"session_id": session_id, "operation": "delete"})
     try:
         storage_state = await _host.dispose_context(session_id)
     except SessionNotFoundError as exc:
         raise _session_not_found() from exc
+    except EngineUnresponsiveError as exc:
+        raise _engine_unresponsive() from exc
     return DeleteSessionResponse(storage_state=storage_state)
 
 
@@ -277,9 +284,8 @@ async def get_session_storage_state(
         storage_state = await _host.storage_state(session_id)
     except SessionNotFoundError as exc:
         raise _session_not_found() from exc
-    except CDPTimeoutError as exc:
-        log.fail(HostRequestFailure.ENGINE_UNRESPONSIVE)
-        raise HTTPException(status_code=503, detail="browser engine unresponsive") from exc
+    except (EngineUnresponsiveError, CDPTimeoutError) as exc:
+        raise _engine_unresponsive() from exc
     return SessionStorageStateResponse(storage_state=storage_state)
 
 
@@ -309,8 +315,7 @@ async def get_session(request: Request, session_id: str) -> SessionInfoResponse:
     except SessionNotFoundError as exc:
         raise _session_not_found() from exc
     except EngineUnresponsiveError as exc:
-        log.fail(HostRequestFailure.ENGINE_UNRESPONSIVE)
-        raise HTTPException(status_code=503, detail="browser engine unresponsive") from exc
+        raise _engine_unresponsive() from exc
     return SessionInfoResponse.model_validate(info)
 
 

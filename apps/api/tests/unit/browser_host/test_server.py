@@ -167,6 +167,20 @@ def test_the_storage_state_of_a_gone_session_is_404(client) -> None:
     assert resp.status_code == 404
 
 
+def test_the_storage_state_of_a_session_whose_engine_is_down_is_503(client) -> None:
+    _, host = client
+    host.storage_state.side_effect = chromium.EngineUnresponsiveError("s1")
+    resp = client[0].get("/sessions/s1/storage-state")
+    assert resp.status_code == 503
+
+
+def test_disposing_a_session_whose_engine_is_down_is_503(client) -> None:
+    _, host = client
+    host.dispose_context.side_effect = chromium.EngineUnresponsiveError("s1")
+    resp = client[0].delete("/sessions/s1")
+    assert resp.status_code == 503
+
+
 def test_the_storage_state_of_a_wedged_engine_is_503(client) -> None:
     _, host = client
     host.storage_state.side_effect = chromium.CDPTimeoutError("Storage.getCookies timed out")
