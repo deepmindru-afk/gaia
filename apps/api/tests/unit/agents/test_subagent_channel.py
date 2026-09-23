@@ -21,6 +21,8 @@ from app.agents.core.background.subagent_channel import (
 )
 from app.constants.agents import AgentTag
 from app.constants.executor import INBOX_ENTRY_ID
+from app.constants.log_tags import LogTag
+from tests.helpers import captured_wide_event
 
 pytestmark = pytest.mark.unit
 
@@ -79,6 +81,39 @@ class TestDrainHook:
         )
         assert state["messages"] == [committed]  # not injected a second time
         assert await inbox.read() == []  # dropped from the mailbox
+
+    async def test_the_injection_is_counted_on_the_subagents_wide_event(self, redis) -> None:
+        await SubagentInbox(THREAD_A).append("m1", "narrow to Q1 2024")
+
+        async with captured_wide_event() as event:
+            await drain_subagent_inbox_hook({"messages": []}, _config(THREAD_A), store=None)
+
+        assert event["subagent_inbox_injected"] == 1
+
+    async def test_a_run_with_no_thread_is_left_alone_and_says_so(self, redis) -> None:
+        state = {"messages": [HumanMessage(content="hi")]}
+
+        async with captured_wide_event() as event:
+            drained = await drain_subagent_inbox_hook(
+                state, {"configurable": {"conversation_id": "conv-1"}}, store=None
+            )
+
+        assert drained is state
+        assert [w["msg"] for w in event["warnings"]] == [
+            f"{LogTag.AGENT} drain_subagent_inbox_hook: run carries no thread_id"
+        ]
+
+    async def test_an_unreadable_mailbox_never_breaks_the_turn(self, redis) -> None:
+        state = {"messages": [HumanMessage(content="hi")]}
+
+        with patch.object(redis, "lrange", side_effect=ConnectionError("redis down")):
+            async with captured_wide_event() as event:
+                drained = await drain_subagent_inbox_hook(state, _config(THREAD_A), store=None)
+
+        assert drained is state
+        (error,) = event["errors"]
+        assert error["msg"] == f"{LogTag.AGENT} drain_subagent_inbox_hook failed"
+        assert error["error_type"] == "ConnectionError"
 
 
 class TestSubagentCancel:

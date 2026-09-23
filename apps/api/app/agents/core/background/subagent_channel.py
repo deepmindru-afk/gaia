@@ -42,7 +42,6 @@ class SubagentInbox(RedisInbox):
     default_tag = AgentTag.SUBAGENT_INTERJECTION
 
     def __init__(self, subagent_thread_id: str) -> None:
-        self.subagent_thread_id = subagent_thread_id
         super().__init__(f"{SUBAGENT_INBOX_PREFIX}{subagent_thread_id}")
 
 
@@ -60,7 +59,12 @@ class SubagentCancel:
     async def request(self) -> None:
         """Ask the subagent to stop at its next stream event."""
         if redis_cache.client:
-            await redis_cache.client.setex(self._key, SUBAGENT_CANCEL_TTL, "1")
+            # Equivalent under mutation: is_requested() reads only the flag's truthiness.
+            await redis_cache.client.setex(
+                self._key,
+                SUBAGENT_CANCEL_TTL,
+                "1",  # pragma: no mutate
+            )
 
     async def is_requested(self) -> bool:
         """Whether a stop has been asked for."""
