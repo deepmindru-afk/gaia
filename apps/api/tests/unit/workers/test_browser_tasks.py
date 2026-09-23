@@ -6,26 +6,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.config.settings import settings
 from app.constants.browser import (
-    BROWSER_AGENT_GUIDANCE_MAX,
-    BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS,
     BROWSER_JOB_HEARTBEAT_SECONDS,
     BROWSER_JOB_JOINER_LEASE_SECONDS,
     BROWSER_JOB_JOINER_REFRESH_SECONDS,
-    BROWSER_JOB_TASK,
     BROWSER_TASK_EVENT,
-    MAX_HANDOFFS_PER_TASK,
     BrowserSessionStatus,
 )
 from app.schemas.browser import BrowserResultSnapshot
 from app.schemas.browser_job import BrowserJobRequest, BrowserJobState, BrowserJobStatus
 from app.services.browser.job_events import JOB_TERMINAL_FRAME
 from app.services.browser.job_runner import agent_result_message
-from app.workers.config.worker_settings import (
-    ARQ_BACKSTOP_GRACE_SECONDS,
-    WORKER_JOB_TIMEOUT_SECONDS,
-)
 from app.workers.tasks import browser_tasks as tasks_mod
 
 pytestmark = pytest.mark.unit
@@ -303,44 +294,3 @@ async def test_a_run_with_no_cards_still_delivers_its_answer(
 
     assert w.delivered[0]["tool_data"] == []
     assert w.delivered[0]["text"] == "Booked it for you."
-
-
-# ---------------------------------------------------------------------------
-# how long the worker lets a run take
-# ---------------------------------------------------------------------------
-
-
-def test_the_job_deadline_outlasts_every_window_a_run_may_legitimately_wait_in() -> None:
-    longest_legitimate_run = (
-        settings.BROWSER_USE_TASK_TIMEOUT_SECONDS
-        + MAX_HANDOFFS_PER_TASK * settings.BROWSER_USE_HANDOFF_TIMEOUT_SECONDS
-        + BROWSER_AGENT_GUIDANCE_MAX * BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS
-    )
-
-    assert tasks_mod.browser_job_timeout_seconds() > longest_legitimate_run
-    assert tasks_mod.browser_job_timeout_seconds() > WORKER_JOB_TIMEOUT_SECONDS
-
-
-def test_the_job_deadline_follows_the_settings_that_bound_a_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    before = tasks_mod.browser_job_timeout_seconds()
-    monkeypatch.setattr(
-        settings,
-        "BROWSER_USE_HANDOFF_TIMEOUT_SECONDS",
-        settings.BROWSER_USE_HANDOFF_TIMEOUT_SECONDS + 100,
-    )
-    monkeypatch.setattr(
-        settings, "BROWSER_USE_TASK_TIMEOUT_SECONDS", settings.BROWSER_USE_TASK_TIMEOUT_SECONDS + 7
-    )
-
-    assert tasks_mod.browser_job_timeout_seconds() == before + MAX_HANDOFFS_PER_TASK * 100 + 7
-
-
-def test_the_worker_registers_the_browser_job_with_its_own_deadline() -> None:
-    # Read off the module, not WorkerSettings.functions: other tests reset that
-    # registry, and a test must not depend on which ran first.
-    from app.worker import _run_browser_job as job
-
-    assert job.name == BROWSER_JOB_TASK
-    assert job.timeout_s == tasks_mod.browser_job_timeout_seconds() + ARQ_BACKSTOP_GRACE_SECONDS

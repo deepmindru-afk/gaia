@@ -9,9 +9,9 @@ import pytest
 from app.constants.browser import (
     BROWSER_JOB_EVENTS_MAXLEN,
     BROWSER_JOB_EVENTS_PREFIX,
-    BROWSER_JOB_TTL_SECONDS,
 )
 from app.services.browser import job_events as job_events_mod
+from app.services.browser.job_lifetime import browser_job_ttl_seconds
 from tests._harness.redis_fakes import FakeRedisClient
 
 
@@ -59,7 +59,7 @@ async def test_the_feed_is_capped_and_expires_with_the_job(fake_client: FakeRedi
 
     key = f"{BROWSER_JOB_EVENTS_PREFIX}job-1"
     assert fake_client.xadd_calls == [(key, BROWSER_JOB_EVENTS_MAXLEN, True)]
-    assert fake_client.expire_calls == [(key, BROWSER_JOB_TTL_SECONDS)]
+    assert fake_client.expire_calls == [(key, browser_job_ttl_seconds())]
 
 
 @pytest.mark.unit

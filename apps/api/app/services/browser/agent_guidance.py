@@ -9,10 +9,10 @@ request at every later join. The key exists exactly while the run is waiting.
 
 from app.constants.browser import (
     BROWSER_JOB_GUIDANCE_PREFIX,
-    BROWSER_JOB_TTL_SECONDS,
 )
 from app.db.redis import redis_cache
 from app.schemas.browser import AgentGuidanceRequest, PendingAgentGuidance
+from app.services.browser.job_lifetime import browser_job_ttl_seconds
 
 
 def _key(job_id: str) -> str:
@@ -22,7 +22,7 @@ def _key(job_id: str) -> str:
 async def put_guidance_request(job_id: str, pending: PendingAgentGuidance) -> None:
     """Publish the request a joined agent may answer, for as long as the run waits on it."""
     await redis_cache.set(
-        _key(job_id), pending, ttl=BROWSER_JOB_TTL_SECONDS, model=PendingAgentGuidance
+        _key(job_id), pending, ttl=browser_job_ttl_seconds(), model=PendingAgentGuidance
     )
 
 

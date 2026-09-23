@@ -9,12 +9,12 @@ from app.constants.browser import (
     BROWSER_JOB_LOCK_PREFIX,
     BROWSER_JOB_LOCK_TTL_SECONDS,
     BROWSER_JOB_STATE_PREFIX,
-    BROWSER_JOB_TTL_SECONDS,
     BrowserSessionStatus,
 )
 from app.schemas.browser import BrowserResultSnapshot
 from app.schemas.browser_job import BrowserJobState, BrowserJobStatus
 from app.services.browser import jobs as jobs_mod
+from app.services.browser.job_lifetime import browser_job_ttl_seconds
 from tests._harness.redis_fakes import FakeRedisCache
 
 
@@ -94,7 +94,7 @@ async def test_job_state_round_trips_with_its_result(fake_cache: FakeRedisCache)
     )
     await jobs_mod.put_job_state(state)
     assert fake_cache.set_calls == [
-        (f"{BROWSER_JOB_STATE_PREFIX}job-1", BROWSER_JOB_TTL_SECONDS, BrowserJobState)
+        (f"{BROWSER_JOB_STATE_PREFIX}job-1", browser_job_ttl_seconds(), BrowserJobState)
     ]
     loaded = await jobs_mod.get_job_state("job-1")
     assert loaded is not None
@@ -139,7 +139,7 @@ async def test_cancel_is_requested_per_job_and_unset_for_every_other_job(
     await jobs_mod.request_job_cancel("job-1")
     assert await jobs_mod.job_cancel_requested("job-1") is True
     assert await jobs_mod.job_cancel_requested("job-2") is False
-    assert fake_cache.client.ttls[f"{BROWSER_JOB_CANCEL_PREFIX}job-1"] == BROWSER_JOB_TTL_SECONDS
+    assert fake_cache.client.ttls[f"{BROWSER_JOB_CANCEL_PREFIX}job-1"] == browser_job_ttl_seconds()
 
 
 @pytest.mark.unit

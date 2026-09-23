@@ -12,10 +12,10 @@ from typing import TypedDict
 from app.constants.browser import (
     BROWSER_JOB_EVENTS_MAXLEN,
     BROWSER_JOB_EVENTS_PREFIX,
-    BROWSER_JOB_TTL_SECONDS,
 )
 from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache
+from app.services.browser.job_lifetime import browser_job_ttl_seconds
 from shared.py.wide_events import log
 
 #: Closes a job's feed. Not a card: the relay stops on it without having to
@@ -42,7 +42,7 @@ async def publish_job_event(job_id: str, payload: dict[str, object]) -> None:
         maxlen=BROWSER_JOB_EVENTS_MAXLEN,
         approximate=True,
     )
-    await redis_cache.client.expire(key, BROWSER_JOB_TTL_SECONDS)
+    await redis_cache.client.expire(key, browser_job_ttl_seconds())
 
 
 async def read_job_events(

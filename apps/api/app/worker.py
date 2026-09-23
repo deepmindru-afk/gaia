@@ -14,6 +14,7 @@ from app.constants.payments import SUBSCRIPTION_WORKFLOW_SYNC_TASK
 # custom tools 500 with "Missing user_id in auth_credentials" because the
 # CustomTool user_id-injection patch never loads here.
 import app.patches  # noqa: F401 -- applies monkeypatches on import; must run before the patched SDKs are used
+from app.services.browser.job_lifetime import browser_job_deadline_seconds
 from app.workers.config.worker_settings import WorkerSettings
 from app.workers.lifecycle import shutdown, startup
 from app.workers.task_envelope import arq_function, arq_task
@@ -40,7 +41,7 @@ from app.workers.tasks import (
     sweep_idle_sandboxes,
     sweep_undelivered_signup_emails,
 )
-from app.workers.tasks.browser_tasks import browser_job_timeout_seconds, run_browser_job
+from app.workers.tasks.browser_tasks import run_browser_job
 from app.workers.tasks.device_tasks import warm_device_servers
 from app.workers.tasks.hil_sweep_tasks import sweep_hil_approvals
 from app.workers.tasks.maintenance_sweep_tasks import maintenance_sweep_tracked_todos
@@ -116,7 +117,7 @@ _sync_workflows_for_subscription_state = func(
 _run_browser_job = arq_function(
     run_browser_job,
     name=BROWSER_JOB_TASK,
-    timeout_seconds=browser_job_timeout_seconds(),
+    timeout_seconds=browser_job_deadline_seconds(),
     max_tries=1,
     keep_result=0,
 )

@@ -10,11 +10,11 @@ cards would vanish on reload.
 from time import monotonic
 
 from app.agents.core.background.redis_writer import make_redis_stream_writer
-from app.config.settings import settings
 from app.constants.browser import BROWSER_JOB_RELAY_BLOCK_MS
 from app.constants.log_tags import LogTag
 from app.core.stream_manager import stream_manager
 from app.services.browser.job_events import JOB_TERMINAL_FRAME, read_job_events
+from app.services.browser.job_lifetime import browser_job_ttl_seconds
 from shared.py.wide_events import log
 
 
@@ -26,10 +26,9 @@ async def relay_job_events(job_id: str, stream_id: str) -> None:
     """
     writer = make_redis_stream_writer(stream_id)
     cursor = "0-0"
-    # The longest a run can legitimately take: its own budget plus one handoff.
-    budget = (
-        settings.BROWSER_USE_TASK_TIMEOUT_SECONDS + settings.BROWSER_USE_HANDOFF_TIMEOUT_SECONDS
-    )
+    # Until the feed itself expires: past the latest the worker lets the job end,
+    # so the relay never gives up on a run that is still allowed to finish.
+    budget = browser_job_ttl_seconds()
     deadline = monotonic() + budget
     log.set(browser={"job_id": job_id})
     try:

@@ -397,9 +397,15 @@ BROWSER_JOB_LOCK_TTL_SECONDS = 120
 BROWSER_JOB_HEARTBEAT_SECONDS = 30
 
 # The job's durable state: what the joiner reads and what a restarted API needs
-# to answer "is it still running?". Outlives the turn.
+# to answer "is it still running?". Outlives the turn; its TTL is
+# app.services.browser.job_lifetime.browser_job_ttl_seconds.
 BROWSER_JOB_STATE_PREFIX = "browser:job:"
-BROWSER_JOB_TTL_SECONDS = 7200
+# A job's time outside the run's own clock: opening the session (and the fallback
+# engine's), the terminal writes, the wait for a joiner and narrating the result.
+BROWSER_JOB_OVERHEAD_SECONDS = 300
+# How long a finished job's state, feed and flags stay readable after the latest
+# the job could have ended.
+BROWSER_JOB_RETENTION_SECONDS = 3600
 
 # Replayable card feed, one Redis stream per job. The relay XREADs it from 0-0,
 # so a relay started late (or restarted) still shows every card from step 1.

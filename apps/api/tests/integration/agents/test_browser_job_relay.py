@@ -20,6 +20,7 @@ from app.constants.browser import BROWSER_TASK_EVENT, BrowserSessionStatus
 from app.schemas.browser import BrowserSessionSnapshot, BrowserStepSnapshot
 from app.services.browser import job_events as job_events_mod, job_relay as relay_mod
 from app.services.browser.job_events import JOB_TERMINAL_FRAME, publish_job_event
+from app.services.browser.job_lifetime import browser_job_deadline_seconds
 from app.services.browser.job_relay import relay_job_events
 from app.services.browser.job_runner import publish_frame_to_job
 from app.utils import background_tasks
@@ -164,3 +165,28 @@ async def test_a_feed_that_cannot_be_read_never_takes_the_turn_down_with_it(
 
     fake_log.error.assert_called_once()
     assert chunks == []
+
+
+async def test_the_relay_waits_out_the_longest_run_the_worker_allows(
+    feed: FakeRedisClient, chunks: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that sat in handoffs for hours still ends on the turn: the relay must not give up while the worker would still let it run."""
+    create_session(STREAM_ID, RunKind.LIVE)
+    clock = [0.0]
+    monkeypatch.setattr(relay_mod, "monotonic", lambda: clock[0])
+    read_feed = relay_mod.read_job_events
+
+    async def _read_after_a_long_wait(job_id: str, cursor: str, block_ms: int) -> Any:
+        if clock[0] == 0.0:
+            # Nothing yet: the run is waiting on a human, almost as long as it may.
+            clock[0] = browser_job_deadline_seconds() - 1.0
+            return []
+        return await read_feed(job_id, cursor, block_ms)
+
+    monkeypatch.setattr(relay_mod, "read_job_events", _read_after_a_long_wait)
+    await _publish_a_run()
+
+    await asyncio.wait_for(relay_job_events(JOB_ID, STREAM_ID), timeout=5)
+    await _drain_publishes()
+
+    assert len(_frames(chunks)) == 2

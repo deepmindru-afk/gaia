@@ -13,10 +13,10 @@ from app.constants.browser import (
     BROWSER_JOB_LOCK_PREFIX,
     BROWSER_JOB_LOCK_TTL_SECONDS,
     BROWSER_JOB_STATE_PREFIX,
-    BROWSER_JOB_TTL_SECONDS,
 )
 from app.db.redis import redis_cache
 from app.schemas.browser_job import BrowserJobState
+from app.services.browser.job_lifetime import browser_job_ttl_seconds
 
 
 def _lock_key(conversation_id: str) -> str:
@@ -65,7 +65,7 @@ async def get_conversation_slot(conversation_id: str) -> str | None:
 async def put_job_state(state: BrowserJobState) -> None:
     """Write the job's durable state, replacing whatever the last transition left."""
     await redis_cache.set(
-        _state_key(state.job_id), state, ttl=BROWSER_JOB_TTL_SECONDS, model=BrowserJobState
+        _state_key(state.job_id), state, ttl=browser_job_ttl_seconds(), model=BrowserJobState
     )
 
 
@@ -100,7 +100,7 @@ async def joiner_lease_held(job_id: str) -> bool:
 
 async def request_job_cancel(job_id: str) -> None:
     """Flag a job as cancelled for a stop whose turn has already ended, where the stream's own signal is gone."""
-    await redis_cache.client.set(_cancel_key(job_id), "1", ex=BROWSER_JOB_TTL_SECONDS)
+    await redis_cache.client.set(_cancel_key(job_id), "1", ex=browser_job_ttl_seconds())
 
 
 async def job_cancel_requested(job_id: str) -> bool:
