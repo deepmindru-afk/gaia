@@ -74,13 +74,20 @@ def _one_final_message(outcome: RunOutcome) -> str:
     messages within a breath is one reply.
     """
     events = outcome.transcript.events
-    started = next(
-        (
-            i
-            for i, e in enumerate(events)
-            if e.get("type") in ("outbound-delivery", "rich", "outbound-attachment")
-        ),
-        len(events),
+    said = [i for i, e in enumerate(events) if e.get("type") == "inbound"]
+    # A "stop" or "done" the user sent mid-run is answered in its own words, and
+    # that answer is the outcome the user sees for a stopped run.
+    started = (
+        said[-1] + 1
+        if len(said) > 1
+        else next(
+            (
+                i
+                for i, e in enumerate(events)
+                if e.get("type") in ("outbound-delivery", "rich", "outbound-attachment")
+            ),
+            len(events),
+        )
     )
     texts = [
         e
@@ -97,8 +104,8 @@ def _one_final_message(outcome: RunOutcome) -> str:
     ]
     replies: list[list[dict]] = []
     for e in finals:
-        at = float(e.get("t") or 0.0) / 1000
-        if replies and at - float(replies[-1][-1].get("t") or 0.0) / 1000 <= _ONE_REPLY_SECONDS:
+        at = float(e["at"]) / 1000
+        if replies and at - float(replies[-1][-1]["at"]) / 1000 <= _ONE_REPLY_SECONDS:
             replies[-1].append(e)
         else:
             replies.append([e])
@@ -165,7 +172,9 @@ def test_a_two_site_research_task_reports_every_part(battery: Battery) -> None:
     assert "2017" in outcome.summary and re.search(r"Vaswani|Google", outcome.summary), (
         outcome.summary
     )
-    assert len(re.findall(r"\d+ points", outcome.summary)) >= 3, outcome.summary
+    # "56 points" or "Points: 56": each story's score, however the answer lays it out.
+    scores = re.findall(r"\b\d+\s+points\b|\bpoints\W{0,3}\d+", outcome.summary, re.I)
+    assert len(scores) >= 3, outcome.summary
     titles = hn_front_page_titles()
     named = [t for t in titles if len(t) > 12 and t.lower() in outcome.summary.lower()]
     assert len(named) >= 3, f"fewer than three real front-page stories named: {named}"

@@ -14,7 +14,7 @@ Requires the native dev stack (see the `driving-gaia` skill and
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass, field
 import html
 import json
@@ -238,6 +238,8 @@ class Battery:
         register_lazy_providers("main_app")
         self._loop = asyncio.new_event_loop()
         self.last_channel: str | None = None
+        #: The replies sent into the current run's conversation ("stop", "done").
+        self.replies: list[subprocess.Popen[str]] = []
 
     # -- sending -----------------------------------------------------------
 
@@ -327,17 +329,23 @@ class Battery:
         if proc.poll() is None:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
-    def transcript_of(self, proc: subprocess.Popen[str]) -> Transcript:
-        """Everything the sender saw that was meant for its own chat.
+    def transcript_of(
+        self, proc: subprocess.Popen[str], replies: Sequence[subprocess.Popen[str]] = ()
+    ) -> Transcript:
+        """Everything the conversation showed its user: the sender's chat and the replies sent into it.
 
         The sim consumes the whole Telegram outbound queue, so a delivery for
         another scenario's chat (an earlier run's late outcome) lands in this
-        transcript too; only this chat's and the user's DM count.
+        transcript too; only this chat's and the user's DM count. A reply's own
+        answer ("Stopped.") streams into that reply's sender, so the senders are
+        merged in wall-clock order.
         """
-        path: Path = proc.transcript_path  # type: ignore[attr-defined]
         channel: str = proc.channel  # type: ignore[attr-defined]
         events = []
-        if path.exists():
+        for sender in (proc, *replies):
+            path: Path = sender.transcript_path  # type: ignore[attr-defined]
+            if not path.exists():
+                continue
             for line in path.read_text().splitlines():
                 if not line.strip():
                     continue
@@ -346,7 +354,7 @@ class Battery:
                 if destination.startswith("battery-") and destination != channel:
                     continue
                 events.append(event)
-        return Transcript(events)
+        return Transcript(sorted(events, key=lambda event: float(event["at"])))
 
     # -- the account's quota --------------------------------------------------
 
@@ -500,6 +508,7 @@ class Battery:
         with the scenario's sender, the only consumer on the queue.
         """
         proc = self.send(message, settle_ms=0, channel=self.last_channel, consume_outbound=False)
+        self.replies.append(proc)
         try:
             proc.wait(timeout=REPLY_TIMEOUT_SECONDS)
         finally:
@@ -580,6 +589,8 @@ class Battery:
         """
         self.reset_browser_quota()
         self.forget_memories()
+        #: What the user says into this run's conversation while it runs.
+        self.replies = []
         started = time.monotonic()
         proc = self.send(message, settle_ms=int(SENDER_WINDOW_SECONDS * 1000))
         job_id = None
@@ -612,7 +623,9 @@ class Battery:
             if record:
                 break
             time.sleep(1)
-        return RunOutcome(job_id, state, record, self.transcript_of(proc), handoffs, seconds)
+        return RunOutcome(
+            job_id, state, record, self.transcript_of(proc, self.replies), handoffs, seconds
+        )
 
 
 def fetch_text(url: str) -> str:
