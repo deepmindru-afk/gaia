@@ -9,6 +9,7 @@ from app.constants.outbound import (
 )
 from app.models.chat_models import ConversationSource
 from app.services import outbound_delivery as od
+from app.utils.log_identifiers import hash_platform_user_id
 
 
 class TestPublishOutboundMessage:
@@ -27,7 +28,7 @@ class TestPublishOutboundMessage:
         # The DM destination is resolved for the real user, not a dropped id.
         linked.assert_awaited_once_with("user-1")
         # The skip is attributed to the operation that hit it.
-        assert mock_log.warning.call_args.kwargs["log_label"] == "publish_outbound_message"
+        assert mock_log.warning.call_args.kwargs["operation"] == "publish_outbound_message"
 
     async def test_no_non_blank_parts_is_skipped(self) -> None:
         with patch.object(
@@ -175,6 +176,29 @@ class TestPublishOutboundMessage:
         envelope = json.loads(body)
         assert envelope["destination_id"] == "-100999"
         assert envelope["is_channel"] is True
+
+    async def test_the_published_line_names_the_user_and_the_hashed_destination(self) -> None:
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value=_linked("telegram", "556677"),
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+            patch.object(od, "log") as logger,
+        ):
+            await od.publish_outbound_message(ConversationSource.TELEGRAM, "u1", ["hi"])
+
+        envelope = json.loads(publisher.publish_outbound.call_args.args[1])
+        fields = logger.info.call_args.kwargs
+        assert fields["user_id"] == "u1"
+        assert fields["envelope_id"] == envelope["id"]
+        assert fields["destination_hash"] == hash_platform_user_id("556677")
+        assert "556677" not in json.dumps(fields)
 
 
 def _linked(platform: str, platform_user_id: object) -> dict[str, dict[str, object]]:
@@ -419,8 +443,8 @@ class TestPublishOutboundPhoto:
         assert ok is False
         linked.assert_awaited_once_with("u-42")
         logger.warning.assert_called_once_with(
-            ": account not linked",
-            log_label="publish_outbound_photo",
+            "outbound publish skipped: account not linked",
+            operation="publish_outbound_photo",
             user_id="u-42",
             platform="telegram",
         )
@@ -445,9 +469,13 @@ class TestPublishOutboundPhoto:
             )
 
         assert ok is False
-        logger.error.assert_called_once_with(
-            "publish_outbound_photo: publish failed", platform="telegram", error="boom"
-        )
+        fields = logger.error.call_args.kwargs
+        assert logger.error.call_args.args == ("publish_outbound_photo: publish failed",)
+        assert fields["platform"] == "telegram"
+        assert fields["error"] == "boom"
+        assert fields["error_type"] == "RuntimeError"
+        assert fields["user_id"] == "u1"
+        assert fields["destination_hash"] == hash_platform_user_id("556677")
 
     async def test_success_enqueues_a_url_attachment_the_bot_will_fetch(self) -> None:
         publisher = AsyncMock()

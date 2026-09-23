@@ -1453,7 +1453,10 @@ class TestBotTranscribe:
             )
 
         assert response.status_code == 402
-        assert mock_log.set.call_args_list[-1].kwargs == {"outcome": "subscription_required"}
+        assert mock_log.set.call_args_list[-1].kwargs == {
+            "outcome": "subscription_required",
+            "reason": "subscription_required",
+        }
 
     @patch("app.api.v1.endpoints.bot.capture_event")
     @patch(

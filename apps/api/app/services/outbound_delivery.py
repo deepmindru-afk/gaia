@@ -21,6 +21,7 @@ from app.db.rabbitmq import RabbitMQPublisher, get_rabbitmq_publisher
 from app.models.chat_models import ConversationSource
 from app.schemas.outbound import OutboundAttachment, OutboundMessageEnvelope
 from app.services.platform_link_service import PlatformLinkService
+from app.utils.log_identifiers import hash_platform_user_id
 from app.utils.message_breaks import split_message_bubbles
 from shared.py.wide_events import log
 
@@ -37,6 +38,16 @@ class OutboundResult(StrEnum):
     PUBLISHED = "published"
     SKIPPED = "skipped"
     FAILED = "failed"
+
+
+def _envelope_fields(envelope: OutboundMessageEnvelope, user_id: str) -> dict[str, str]:
+    """Who and where an outbound log line is about; envelope_id joins the bot's line."""
+    return {
+        "platform": envelope.platform,
+        "user_id": user_id,
+        "envelope_id": envelope.id,
+        "destination_hash": hash_platform_user_id(envelope.destination_id),
+    }
 
 
 async def _resolve_destination(platform: ConversationSource, user_id: str) -> str | None:
@@ -66,15 +77,23 @@ async def _prepare(
     destination_id = destination_override or await _resolve_destination(platform, user_id)
     if not destination_id:
         log.warning(
-            ": account not linked", log_label=log_label, user_id=user_id, platform=platform.value
+            "outbound publish skipped: account not linked",
+            operation=log_label,
+            user_id=user_id,
+            platform=platform.value,
         )
         return OutboundResult.SKIPPED
 
     try:
         publisher = await get_rabbitmq_publisher()
-    except RuntimeError:
+    except RuntimeError as e:
         log.warning(
-            ": RabbitMQ unavailable", log_label=log_label, user_id=user_id, platform=platform.value
+            "outbound publish failed: RabbitMQ unavailable",
+            operation=log_label,
+            user_id=user_id,
+            platform=platform.value,
+            error=str(e),
+            error_type=type(e).__name__,
         )
         return OutboundResult.FAILED
 
@@ -131,15 +150,16 @@ async def publish_outbound_message(
     except Exception as e:
         log.error(
             "publish_outbound_message: publish failed",
-            platform=platform.value,
+            **_envelope_fields(envelope, user_id),
             error=str(e),
+            error_type=type(e).__name__,
             total=len(parts),
         )
         return OutboundResult.FAILED
 
     log.info(
         "outbound_message_published",
-        platform=platform.value,
+        **_envelope_fields(envelope, user_id),
         queue=queue_name,
         parts=len(parts),
     )
@@ -218,12 +238,17 @@ async def publish_outbound_file(
             queue_name, envelope.model_dump_json().encode(), expiration=OUTBOUND_TTL_SECONDS_DEFAULT
         )
     except Exception as e:
-        log.error("publish_outbound_file: publish failed", platform=platform.value, error=str(e))
+        log.error(
+            "publish_outbound_file: publish failed",
+            **_envelope_fields(envelope, user_id),
+            error=str(e),
+            error_type=type(e).__name__,
+        )
         return False
 
     log.info(
         "outbound_file_published",
-        platform=platform.value,
+        **_envelope_fields(envelope, user_id),
         queue=queue_name,
         filename=filename,
     )
@@ -257,18 +282,25 @@ async def publish_outbound_photo(
         log.warning(
             "publish_outbound_photo: attachment URL rejected",
             platform=platform.value,
+            user_id=user_id,
+            destination_hash=hash_platform_user_id(destination_id),
             filename=filename,
         )
         return False
     try:
         await publisher.publish_outbound(queue_name, envelope.model_dump_json().encode())
     except Exception as e:
-        log.error("publish_outbound_photo: publish failed", platform=platform.value, error=str(e))
+        log.error(
+            "publish_outbound_photo: publish failed",
+            **_envelope_fields(envelope, user_id),
+            error=str(e),
+            error_type=type(e).__name__,
+        )
         return False
 
     log.info(
         "outbound_photo_published",
-        platform=platform.value,
+        **_envelope_fields(envelope, user_id),
         queue=queue_name,
         filename=filename,
     )

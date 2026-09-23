@@ -92,6 +92,9 @@ class CommonSettings(BaseAppSettings):
     # of requests/day against a free-plan dev user, which 429s at 200/day
     # otherwise. get_settings() refuses production boot when set.
     DEV_UNLIMITED_RATE_LIMITS: bool = False
+    # The bots' HMAC key for hashed platform ids in logs; the same value here
+    # makes the API's user_hash join the bots'. Unset falls back like the bots.
+    BOT_LOG_HASH_SECRET: str | None = None
 
     # ----------------------------------------------
     # Database Connections
