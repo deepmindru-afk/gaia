@@ -190,6 +190,7 @@ class BrowserAgentRun:
         config: BrowserRunConfig,
         hooks: RunHooks,
         step_timeout: float,
+        steps_before: int = 0,
     ) -> None:
         self._session = session
         self._llm = llm
@@ -198,8 +199,9 @@ class BrowserAgentRun:
         self._step_timeout = step_timeout
         self._agent: Any = None
         self._clock = StepClock()
-        self._last_step = 0
-        self._frames = 0
+        # A run resumed on the fallback engine numbers on from the steps the user already saw.
+        self._last_step = steps_before
+        self._frames = steps_before
         self._framed = False
         self._step_started_at = 0.0
 
@@ -317,6 +319,7 @@ class BrowserAgentRun:
         self._hooks.step(
             StepFrame(
                 index=self._frames,
+                session_id=self._session.session_id,
                 goal=goal,
                 actions=actions,
                 url=getattr(state, "url", None),

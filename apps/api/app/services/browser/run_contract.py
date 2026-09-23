@@ -48,6 +48,8 @@ class StepFrame:
     """One executed step, captured off the agent's loop for a deferred emit."""
 
     index: int
+    #: The session it was captured on; by the deferred emit the run may be on the fallback's.
+    session_id: str
     goal: str
     actions: list[BrowserAction]
     url: str | None

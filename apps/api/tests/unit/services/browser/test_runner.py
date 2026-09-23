@@ -1286,9 +1286,10 @@ async def test_only_uploaded_screenshots_become_replay_frames(patch_browser, mon
 # ---------------------------------------------------------------------------
 
 
-def _shot_frame(raw: str | None, index: int = 1) -> StepFrame:
+def _shot_frame(raw: str | None, index: int = 1, session_id: str = "s1") -> StepFrame:
     return StepFrame(
         index=index,
+        session_id=session_id,
         goal="goal",
         actions=[],
         url="https://x",
@@ -1330,6 +1331,22 @@ async def test_screenshot_is_uploaded_under_the_session_and_step(
     assert url == "https://cdn.example.com/browser_steps/s1/step_4.png"
     # Keyed by session id (not conversation) so each run is its own replay folder.
     assert upload.await_args.args == (b"fake", "s1", 4)
+
+
+@pytest.mark.regression
+async def test_a_step_captured_before_a_switch_is_uploaded_under_the_session_it_was_on(
+    patch_browser, monkeypatch
+) -> None:
+    """Regression: the deferred upload read the runner's session, the fallback's once the run moved."""
+    upload = AsyncMock(return_value=None)
+    monkeypatch.setattr(runner_mod, "publish_step_screenshot", upload)
+    _, emit = _collector()
+    runner = _make_runner(emit=emit)
+    runner._session = _fallback_session()
+
+    await runner._render_screenshot(_shot_frame("ZmFrZQ==", 3, session_id="s1"))
+
+    assert upload.await_args.args == (b"fake", "s1", 3)
 
 
 async def test_screenshot_falls_back_to_an_inline_data_url(patch_browser) -> None:
@@ -1772,6 +1789,7 @@ async def test_a_step_card_carries_the_time_the_previous_step_took(patch_browser
     def _frame(since_prev_ms: int) -> object:
         return StepFrame(
             index=1,
+            session_id="s1",
             goal="goal",
             actions=[],
             url="https://x",
@@ -1916,7 +1934,7 @@ class _AgentRunThatBlocksOnce:
 
     runs: ClassVar[list[tuple[BrowserHostSession, bool]]] = []
 
-    def __init__(self, *, session, llm, config, hooks, step_timeout) -> None:
+    def __init__(self, *, session, llm, config, hooks, step_timeout, steps_before) -> None:
         self._session = session
         self._llm = llm
 
@@ -2088,7 +2106,7 @@ class _AgentRunOnFailingEngine:
     #: The page the run had read when its engine gave out; None when it never read one.
     last_page: ClassVar[str | None] = _LAST_PAGE
 
-    def __init__(self, *, session, llm, config, hooks, step_timeout) -> None:
+    def __init__(self, *, session, llm, config, hooks, step_timeout, steps_before) -> None:
         self._session = session
         self._llm = llm
         self._hooks = hooks
@@ -2306,3 +2324,157 @@ async def test_a_run_finished_on_the_fallback_bills_the_tokens_both_engines_spen
         for call in record.await_args_list
     }
     assert billed == {"jev": (1500, 50), "writer": (300, 20)}
+
+
+# ---------------------------------------------------------------------------
+# One run, two engines: the step count, the recap and the note span the switch
+# ---------------------------------------------------------------------------
+
+
+class _EngineAgent(FakeAgent):
+    """Browser-Use on each engine in turn: every run plays the next scripted run."""
+
+    runs: ClassVar[list[tuple[list[dict], _History]]] = []
+
+    async def run(self, max_steps: int, on_step_end=None):
+        script, history = type(self).runs.pop(0)
+        type(self).script = script
+        type(self).history = history
+        return await super().run(max_steps, on_step_end)
+
+
+def _steps(*goals: str) -> list[dict]:
+    return [
+        {
+            "goal": goal,
+            "actions": [("click", {"index": 1})],
+            "results": [{"extracted_content": goal}],
+        }
+        for goal in goals
+    ]
+
+
+@pytest.fixture
+def two_engines(patch_browser, monkeypatch):
+    """Jev on the real agent run, with the page reads it would make over CDP stubbed."""
+    monkeypatch.setattr(browser_use, "Agent", _EngineAgent)
+    monkeypatch.setattr(JevChatModel, "bind", lambda self, browser, task, gate: None)
+    monkeypatch.setattr(JevChatModel, "viewport_points", lambda self: {})
+    monkeypatch.setattr(JevChatModel, "take_step_screenshot", AsyncMock(return_value="ZmFrZQ=="))
+
+    async def _upload(image: bytes, session_id: str, index: int) -> str:
+        return f"https://cdn.test/{session_id}/{index}.png"
+
+    monkeypatch.setattr(runner_mod, "publish_step_screenshot", _upload)
+    _EngineAgent.runs = []
+
+
+def _two_engine_runner(
+    *,
+    emit,
+    note: AsyncMock | None = None,
+    action_results: ActionResultsFn | None = None,
+    is_cancelled: AsyncMock | None = None,
+) -> tuple[BrowserTaskRunner, AsyncMock]:
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    runner = BrowserTaskRunner(
+        session=_session(),
+        llm=JevChatModel(client=MagicMock(), text_model=MagicMock()),
+        callbacks=BrowserRunnerCallbacks(
+            emit=emit,
+            request_handoff=AsyncMock(),
+            is_cancelled=is_cancelled or AsyncMock(return_value=False),
+            action_results=action_results,
+            note=note,
+            open_fallback_session=open_fallback,
+        ),
+        config=BrowserRunConfig(
+            max_steps=10,
+            max_actions_per_step=5,
+            task_timeout_seconds=30,
+            step_timeout_seconds=180,
+            handoff_timeout_seconds=0,
+            stream_screenshots=True,
+            solve_captcha=False,
+        ),
+    )
+    return runner, open_fallback
+
+
+_GAVE_OUT = _History(done=False, successful=False, result=None)
+
+
+@pytest.mark.regression
+async def test_a_run_that_moves_engines_numbers_its_steps_on_from_where_the_primary_stopped(
+    two_engines, monkeypatch
+) -> None:
+    """Regression: the fallback run counted from 1 again, so its steps overwrote the primary's on the card and in the recap."""
+    replay = AsyncMock(return_value="https://gaia.test/replay/r")
+    monkeypatch.setattr(runner_mod, "create_replay_link", replay)
+    _host_answers(monkeypatch, _session_gone)
+    events, emit = _collector()
+    outputs: list[int] = []
+
+    async def _results(step: int, rows: list) -> None:
+        outputs.append(step)
+
+    _EngineAgent.runs = [
+        (_steps("open the story", "open comments", "scroll"), _GAVE_OUT),
+        (_steps("open comments again", "read the count"), _History()),
+    ]
+    runner, _ = _two_engine_runner(emit=emit, action_results=_results)
+
+    result = await runner.run("count the comments")
+
+    steps = [e for e in events if e.kind == BrowserEventKind.STEP]
+    assert [(s.index, s.url) for s in steps] == [(i, "https://x") for i in range(1, 6)]
+    assert outputs == [1, 2, 3, 4, 5]
+    assert result.steps == 5
+    assert replay.await_args.args == (
+        "s-fallback",
+        [
+            "https://cdn.test/s1/1.png",
+            "https://cdn.test/s1/2.png",
+            "https://cdn.test/s1/3.png",
+            "https://cdn.test/s-fallback/4.png",
+            "https://cdn.test/s-fallback/5.png",
+        ],
+    )
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("cause", ["engine_failed", "page_blocked"])
+async def test_a_run_that_moves_engines_tells_the_user_once(
+    two_engines, monkeypatch, cause
+) -> None:
+    """Regression: the user watched the steps start over with no word of why."""
+    from app.constants.browser import BROWSER_ENGINE_FALLBACK_NOTE
+
+    _host_answers(monkeypatch, _session_gone if cause == "engine_failed" else _session_live)
+    note = AsyncMock()
+    _, emit = _collector()
+    _EngineAgent.runs = [(_steps("open"), _GAVE_OUT), (_steps("read"), _History())]
+    runner, open_fallback = _two_engine_runner(emit=emit, note=note)
+    if cause == "page_blocked":
+        runner._llm.fallback_url = _BLOCKED_URL
+
+    await runner.run("count the comments")
+
+    open_fallback.assert_awaited_once()
+    note.assert_awaited_once_with(BROWSER_ENGINE_FALLBACK_NOTE)
+
+
+async def test_a_run_that_stays_on_its_engine_says_nothing_about_engines(
+    two_engines, monkeypatch
+) -> None:
+    _host_answers(monkeypatch, _session_live)
+    note = AsyncMock()
+    _, emit = _collector()
+    _EngineAgent.runs = [(_steps("open", "read"), _History())]
+    runner, open_fallback = _two_engine_runner(emit=emit, note=note)
+
+    result = await runner.run("count the comments")
+
+    open_fallback.assert_not_awaited()
+    note.assert_not_awaited()
+    assert result.steps == 2

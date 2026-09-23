@@ -15,6 +15,7 @@ import pytest
 from app.constants.browser import BROWSER_RUN_BLOCKED_SUMMARY, BrowserSessionStatus
 from app.constants.chat import SourceCategory
 from app.models.chat_models import ConversationSource
+from app.services.browser import job_runner
 from app.services.browser.jobs import get_conversation_slot
 from tests.e2e._harness.browser_job import (
     REPLAY_URL,
@@ -552,9 +553,16 @@ async def test_a_run_whose_engine_dies_mid_task_finishes_on_the_fallback_engine(
     ) as world:
         async with executor_graph([RETRIEVE, START, JOIN, "Booked."]) as graph:
             run = await _drive(graph, world)
+        history = job_runner.record_browser_task.await_args.kwargs
 
     sessions = [card["session_id"] for card in world.cards() if card["kind"] == "session"]
     assert sessions == ["sess-1", "sess-2"]
+    # One count across both engines: the fallback's first step follows the
+    # primary's last, so no step card, recap frame or history row is overwritten.
+    step_cards = [card for card in world.cards() if card["kind"] == "step"]
+    assert [card["index"] for card in step_cards] == [1, 2, 3]
+    assert history["step_screenshots"] == [SHOT_URL_TEMPLATE.format(index=i) for i in (1, 2, 3)]
+    assert all(history["step_goals"])
     assert [next(iter(action)) for action in _step_actions(world)] == [
         "input_text",
         "navigate",
@@ -562,8 +570,8 @@ async def test_a_run_whose_engine_dies_mid_task_finishes_on_the_fallback_engine(
     ]
     assert _step_actions(world)[1]["navigate"]["url"] == "https://example.test/book"
     results = [card for card in world.cards() if card["kind"] == "result"]
-    assert [(card["status"], card["success"]) for card in results] == [
-        (BrowserSessionStatus.COMPLETED.value, True)
+    assert [(card["status"], card["success"], card["steps"]) for card in results] == [
+        (BrowserSessionStatus.COMPLETED.value, True, 3)
     ]
     joined = run.result_for("wait_for_browser_task") or ""
     assert joined.startswith("The table is booked for 7pm on Friday.")

@@ -319,6 +319,12 @@ class JevNoteSource(StrEnum):
 BROWSER_STALL_NOTE_AFTER_SECONDS = 25.0
 BROWSER_STALL_NOTE = "Still waiting on the page, it's a slow one."
 
+# Said once when a run moves to the fallback engine, so the steps that follow
+# on another browser do not read as the run starting over.
+BROWSER_ENGINE_FALLBACK_NOTE = (
+    "That page didn't work in the fast browser, continuing in a full one."
+)
+
 # The host answers a liveness read inside its own budget, whatever the engine is
 # doing, and the client allows it a little more before calling it unanswered.
 BROWSER_HOST_LIVENESS_TIMEOUT_SECONDS = 3.0

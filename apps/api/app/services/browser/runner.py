@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.constants.browser import (
     BROWSER_AGENT_GUIDANCE_MAX,
+    BROWSER_ENGINE_FALLBACK_NOTE,
     BROWSER_RUN_BLOCKED_SUMMARY,
     BROWSER_RUN_HANDOFF_TIMED_OUT,
     BROWSER_STALL_NOTE,
@@ -192,6 +193,7 @@ class BrowserTaskRunner:
             config=self._config,
             hooks=hooks,
             step_timeout=self._step_timeout,
+            steps_before=self._last_step,
         )
 
     async def run(self, task: str) -> BrowserResultSnapshot:
@@ -325,7 +327,11 @@ class BrowserTaskRunner:
                 live_view_url=self._session.live_view_url,
             )
         )
+        if self._note is not None:
+            await self._note(BROWSER_ENGINE_FALLBACK_NOTE)
         route.jev.continue_on_fallback()
+        # Continues the step count, so the fallback's first step follows the
+        # primary's last on the card, in the recap and in the history.
         self._agent_run = self._build_agent_run()
         outcome = await self._agent_run.execute(task)
         return replace(outcome, usage=_merged_usage(spent, outcome.usage))
@@ -523,7 +529,7 @@ class BrowserTaskRunner:
         except (ValueError, TypeError):
             return None
         # Keyed by session id (not conversation) so each run is its own replay folder.
-        url = await publish_step_screenshot(image, self._session.session_id, frame.index)
+        url = await publish_step_screenshot(image, frame.session_id, frame.index)
         return url or f"data:image/png;base64,{raw_b64}"
 
     async def _finish(
