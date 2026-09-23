@@ -8,6 +8,9 @@ from langchain_core.tools import BaseTool
 from langgraph.errors import GraphInterrupt
 import pytest
 
+from app.agents.core.subagents.subagent_runner import subagent_row_id
+from app.models.agent_models import SubagentKind
+
 MODULE = "app.agents.middleware.subagent"
 DELEGATION = "app.agents.core.subagents.delegation"
 
@@ -568,6 +571,75 @@ class TestBuildContextWiring:
             user_id="u1",
             retrieval_query=self.TASK,
         )
+
+
+class TestBuildDelegation:
+    """build_delegation is also how a parked spawn is rebuilt, so its recipe must round-trip whole."""
+
+    async def test_the_delegation_carries_the_recipe_that_rebuilds_it(self):
+        mw = _ready_middleware(inherit_parent_tools=True)
+        parent = _make_spawn_config(conversation_id="conv-9")["configurable"]
+        with _context_harness() as h:
+            delegation = await mw.build_delegation(
+                task="draw the flowchart",
+                context="the user's notes",
+                parent_configurable=parent,
+                tool_call_id="call_abc",
+                inherited_tool_names=["create_flowchart"],
+            )
+
+        assert delegation.kind is SubagentKind.SPAWN
+        assert delegation.subagent_id == subagent_row_id("call_abc")
+        assert delegation.resume_item() == {
+            "kind": SubagentKind.SPAWN,
+            "tool_call_id": "call_abc",
+            "task": "draw the flowchart",
+            "context": "the user's notes",
+            "integration_id": "",
+            "inherited_tool_names": ["create_flowchart"],
+            "parent_configurable": parent,
+        }
+        assert h.task == "Context:\nthe user's notes\n\nTask:\ndraw the flowchart"
+        assert delegation.ctx.initial_state["selected_tool_ids"] == ["create_flowchart"]
+
+    async def test_no_inherited_tools_is_an_empty_recipe_entry(self):
+        mw = _ready_middleware()
+        with _context_harness():
+            delegation = await mw.build_delegation(
+                task="t",
+                context="",
+                parent_configurable=_make_spawn_config()["configurable"],
+                tool_call_id="call_abc",
+                inherited_tool_names=None,
+            )
+
+        assert delegation.inherited_tool_names == ()
+
+    @pytest.mark.parametrize(
+        ("task", "name"),
+        [
+            (
+                "Summarise the quarterly revenue report,  then draft the board memo",
+                "Summarise the quarterly revenue report,…",
+            ),
+            ("a" * 41, "a" * 40 + "…"),
+            ("a" * 40, "a" * 40),
+            ("", "Subagent"),
+        ],
+        ids=["long_task_truncates_and_trims", "one_past_the_limit", "at_the_limit", "no_task"],
+    )
+    async def test_the_row_is_named_after_its_task(self, task: str, name: str):
+        mw = _ready_middleware()
+        with _context_harness():
+            delegation = await mw.build_delegation(
+                task=task,
+                context="",
+                parent_configurable=_make_spawn_config()["configurable"],
+                tool_call_id="call_abc",
+                inherited_tool_names=None,
+            )
+
+        assert delegation.display.name == name
 
 
 class TestSpawnStartEvent:
