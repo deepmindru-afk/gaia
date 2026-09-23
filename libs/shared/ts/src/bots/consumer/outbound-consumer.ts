@@ -36,6 +36,8 @@ import {
 /** Messages prefetched per consumer — bounds in-flight work for backpressure. */
 const PREFETCH = 8;
 const RECONNECT_BASE_MS = 1_000;
+/** Lane for a message whose destination can't be read; handle() dead-letters it. */
+const UNREADABLE_LANE = "";
 const RECONNECT_MAX_MS = 30_000;
 
 /**
@@ -61,6 +63,8 @@ export class OutboundConsumer {
   private stopped = false;
   private reconnectDelayMs = RECONNECT_BASE_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Per-chat delivery chains, so one chat's messages go out in published order. */
+  private readonly lanes = new Map<string, Promise<void>>();
   private readonly logger: BotLogger;
   private readonly envelopeSchema: ReturnType<
     typeof outboundMessageEnvelopeSchemaFor
@@ -145,7 +149,7 @@ export class OutboundConsumer {
             arguments: workQueueArguments(queue),
           });
           await this.channel.prefetch(PREFETCH);
-          await this.channel.consume(queue, (msg) => void this.handle(msg));
+          await this.channel.consume(queue, (msg) => this.dispatch(msg));
 
           this.reconnectDelayMs = RECONNECT_BASE_MS;
         },
@@ -195,6 +199,25 @@ export class OutboundConsumer {
         reason: "channel replaced mid-handle",
       });
     }
+  }
+
+  /**
+   * Hands a message to its chat's lane. Prefetched messages run concurrently, so a
+   * slow photo upload let the text published after it arrive first; one chat's
+   * messages now go out in published order while other chats proceed.
+   */
+  private dispatch(msg: ConsumeMessage | null): void {
+    if (!msg) {
+      void this.handle(msg);
+      return;
+    }
+    const lane = laneKey(msg);
+    const previous = this.lanes.get(lane) ?? Promise.resolve();
+    const current = previous.then(() => this.handle(msg));
+    this.lanes.set(lane, current);
+    void current.finally(() => {
+      if (this.lanes.get(lane) === current) this.lanes.delete(lane);
+    });
   }
 
   private async handle(msg: ConsumeMessage | null): Promise<void> {
@@ -420,4 +443,17 @@ function resolveSources(
   if (textParts?.length) return textParts;
   if (text) return [text];
   return [];
+}
+
+/** The destination a message is delivered to, read before validation so it can pick a lane. */
+function laneKey(msg: ConsumeMessage): string {
+  try {
+    const parsed: unknown = JSON.parse(msg.content.toString());
+    if (parsed && typeof parsed === "object" && "destination_id" in parsed) {
+      return String(parsed.destination_id);
+    }
+  } catch {
+    // Unparseable: handle() dead-letters it; no chat order to keep.
+  }
+  return UNREADABLE_LANE;
 }

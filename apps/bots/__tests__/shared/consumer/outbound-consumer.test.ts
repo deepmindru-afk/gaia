@@ -448,4 +448,54 @@ describe("OutboundConsumer message handling", () => {
     expect(deliver).not.toHaveBeenCalled(); // text is not also sent as a message
     expect(channel.ack).toHaveBeenCalledWith(msg);
   });
+  it("delivers one chat's messages in published order while other chats proceed", async () => {
+    const order: string[] = [];
+    let releasePhoto: () => void = () => undefined;
+    const deliverFile = vi.fn(async (id: string) => {
+      await new Promise<void>((resolve) => {
+        releasePhoto = resolve;
+      });
+      order.push(`photo:${id}`);
+    });
+    const deliver = vi.fn(async (id: string) => {
+      order.push(`text:${id}`);
+    });
+    const handle = await startAndCaptureHandler(
+      "telegram",
+      deliver,
+      deliverFile,
+    );
+    const photo = msgFor({
+      id: "p",
+      platform: "telegram",
+      destination_id: "chat-a",
+      attachment: { url: "https://cdn.test/1.png", filename: "1.png" },
+      enqueued_at: "t",
+    });
+    const recap = msgFor({
+      id: "r",
+      platform: "telegram",
+      destination_id: "chat-a",
+      text: "recap",
+      enqueued_at: "t",
+    });
+    const other = msgFor({
+      id: "o",
+      platform: "telegram",
+      destination_id: "chat-b",
+      text: "hi",
+      enqueued_at: "t",
+    });
+
+    handle(photo);
+    handle(recap);
+    handle(other);
+    await flush();
+    expect(order).toEqual(["text:chat-b"]);
+
+    releasePhoto();
+    await flush();
+    await flush();
+    expect(order).toEqual(["text:chat-b", "photo:chat-a", "text:chat-a"]);
+  });
 });
