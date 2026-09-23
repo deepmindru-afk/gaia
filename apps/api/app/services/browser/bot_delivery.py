@@ -29,11 +29,16 @@ from app.services.outbound_delivery import (
     publish_outbound_message,
     publish_outbound_photo,
 )
+from app.services.platform_message_service import ChannelTarget
 from shared.py.wide_events import log
 
 
 class BotProgressDelivery:
-    """Delivers browser card snapshots to a bot conversation."""
+    """Delivers browser card snapshots to a bot conversation.
+
+    Everything goes where the request came from: the group or channel in
+    channel, or the user's DM when channel is None.
+    """
 
     def __init__(
         self,
@@ -42,11 +47,14 @@ class BotProgressDelivery:
         user_id: str,
         conversation_id: str,
         stream_screenshots: bool,
+        channel: ChannelTarget | None = None,
     ) -> None:
         self._platform = platform
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._stream_screenshots = stream_screenshots
+        self._destination_override = channel.destination_id if channel else None
+        self._is_channel = channel.is_channel if channel else False
         self._links: dict[str, str] = {}
         self._steps_shown = 0
         self._last_label = ""
@@ -100,6 +108,8 @@ class BotProgressDelivery:
                 snapshot.screenshot,
                 filename=f"browser-step-{self._steps_shown}.png",
                 caption=caption,
+                destination_override=self._destination_override,
+                is_channel=self._is_channel,
             )
             if sent:
                 return
@@ -137,7 +147,13 @@ class BotProgressDelivery:
 
     async def note(self, message: str) -> None:
         """Send one plain message to the user."""
-        result = await publish_outbound_message(self._platform, self._user_id, [message])
+        result = await publish_outbound_message(
+            self._platform,
+            self._user_id,
+            [message],
+            destination_override=self._destination_override,
+            is_channel=self._is_channel,
+        )
         if result is not OutboundResult.PUBLISHED:
             log.warning(
                 f"{LogTag.BROWSER} Browser progress not sent to the bot",

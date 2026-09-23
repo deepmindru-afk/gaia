@@ -28,14 +28,14 @@ def is_bot_platform(source: ConversationSource | str | None) -> bool:
 
 
 @dataclass(frozen=True)
-class _ChannelTarget:
+class ChannelTarget:
     """The exact channel a proactive message must land in (a group/channel id)."""
 
     destination_id: str
     is_channel: bool = True
 
 
-async def _resolve_channel_target(conversation_id: str | None) -> _ChannelTarget | None:
+async def resolve_channel_target(conversation_id: str | None) -> ChannelTarget | None:
     """Return the channel a bot conversation lives in, or None to fall back to the DM.
 
     A group conversation's bot_sessions row stores its channel_id; a DM
@@ -47,7 +47,7 @@ async def _resolve_channel_target(conversation_id: str | None) -> _ChannelTarget
     session = await bot_session_repository.get_by_conversation_id(conversation_id)
     if session is None or session.channel_id is None:
         return None
-    return _ChannelTarget(destination_id=session.channel_id)
+    return ChannelTarget(destination_id=session.channel_id)
 
 
 async def deliver_message_to_platform(
@@ -74,7 +74,7 @@ async def deliver_message_to_platform(
     parts = [part.strip() for part in text.split(NEW_MESSAGE_BREAKER) if part.strip()]
     if not parts:
         return False
-    target = await _resolve_channel_target(conversation_id)
+    target = await resolve_channel_target(conversation_id)
     result = await publish_outbound_message(
         platform,
         user_id,
@@ -104,7 +104,7 @@ async def deliver_reaction_to_platform(
         return False
     if not target_platform_message_id or not emoji.strip():
         return False
-    target = await _resolve_channel_target(conversation_id)
+    target = await resolve_channel_target(conversation_id)
     result = await publish_outbound_reaction(
         platform,
         user_id,

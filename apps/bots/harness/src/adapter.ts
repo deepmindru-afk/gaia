@@ -143,10 +143,12 @@ export class HarnessAdapter extends BaseBotAdapter {
   protected override async deliverOutboundFile(
     destinationId: string,
     attachment: OutboundAttachment,
+    isChannel: boolean,
   ): Promise<void> {
     const artifact = await this.fetchOutboundArtifact(
       destinationId,
       attachment,
+      isChannel,
     );
     if (!artifact) return; // too large — fetchOutboundArtifact already replied
     this.transcript.record({

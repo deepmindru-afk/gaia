@@ -230,24 +230,37 @@ export class DiscordAdapter extends BaseBotAdapter {
   }
 
   /**
-   * Delivers an agent-generated file artifact to a Discord user. Fetches the
-   * bytes from GAIA (bot-authenticated) and DMs them as a message attachment.
-   * The destination is the stored Discord user id.
+   * Delivers an agent-generated file artifact as a message attachment. Fetches
+   * the bytes from GAIA (bot-authenticated), then posts them into the channel
+   * when `isChannel`, else DMs them to the stored Discord user id.
    */
   protected override async deliverOutboundFile(
     destinationId: string,
     attachment: OutboundAttachment,
+    isChannel: boolean,
   ): Promise<void> {
     const artifact = await this.fetchOutboundArtifact(
       destinationId,
       attachment,
+      isChannel,
     );
     if (!artifact) return; // too large — fetchOutboundArtifact already replied
-    const user = await this.client.users.fetch(destinationId);
-    await user.send({
+    const message = {
       content: attachment.caption ?? undefined,
       files: [{ attachment: artifact.data, name: attachment.filename }],
-    });
+    };
+    if (isChannel) {
+      const channel = await this.client.channels.fetch(destinationId);
+      if (channel?.isTextBased() && "send" in channel) {
+        await channel.send(message);
+        return;
+      }
+      throw new Error(
+        `Discord destination ${destinationId} is not a sendable text channel`,
+      );
+    }
+    const user = await this.client.users.fetch(destinationId);
+    await user.send(message);
   }
 
   protected override async deliverOutboundReaction(

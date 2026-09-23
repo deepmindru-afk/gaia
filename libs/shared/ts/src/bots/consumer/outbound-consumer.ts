@@ -56,10 +56,14 @@ type DeliverFn = (
   isChannel: boolean,
 ) => Promise<void>;
 
-/** Sends one file attachment to a platform destination. */
+/**
+ * Sends one file attachment to a platform destination, addressed like
+ * {@link DeliverFn}: a channel/group id when `isChannel`, else a user id.
+ */
 type DeliverFileFn = (
   destinationId: string,
   attachment: OutboundAttachment,
+  isChannel: boolean,
 ) => Promise<void>;
 
 /**
@@ -299,6 +303,7 @@ export class OutboundConsumer {
             env.id,
             env.destination_id,
             env.attachment,
+            env.is_channel,
           );
           return;
         }
@@ -375,10 +380,11 @@ export class OutboundConsumer {
     id: string,
     destinationId: string,
     attachment: OutboundAttachment,
+    isChannel: boolean,
   ): Promise<void> {
     wideLog.set({ attachment_filename: attachment.filename });
     try {
-      await this.deliverFile(destinationId, attachment);
+      await this.deliverFile(destinationId, attachment, isChannel);
       this.settle(channel, () => channel.ack(msg));
     } catch (err) {
       recordBotFailure("outbound_file_delivery_failed", err, {

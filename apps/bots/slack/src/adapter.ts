@@ -322,19 +322,31 @@ export class SlackAdapter extends BaseBotAdapter {
   }
 
   /**
-   * Delivers an agent-generated file artifact to a Slack user. Fetches the
-   * bytes from GAIA (bot-authenticated) and uploads them to the user's DM
-   * channel via files.uploadV2, with the caption as the message comment.
+   * Delivers an agent-generated file artifact via files.uploadV2, with the
+   * caption as the message comment. Fetches the bytes from GAIA
+   * (bot-authenticated), then uploads them into the channel when `isChannel`,
+   * else into the user's DM channel.
    */
   protected override async deliverOutboundFile(
     destinationId: string,
     attachment: OutboundAttachment,
+    isChannel: boolean,
   ): Promise<void> {
     const artifact = await this.fetchOutboundArtifact(
       destinationId,
       attachment,
+      isChannel,
     );
     if (!artifact) return; // too large — fetchOutboundArtifact already replied
+    if (isChannel) {
+      await this.app.client.files.uploadV2({
+        channel_id: destinationId,
+        file: artifact.data,
+        filename: attachment.filename,
+        initial_comment: attachment.caption ?? undefined,
+      });
+      return;
+    }
     const channel = await this.resolveDmChannel(destinationId);
     try {
       await this.app.client.files.uploadV2({

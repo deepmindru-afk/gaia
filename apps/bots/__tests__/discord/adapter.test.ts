@@ -1276,6 +1276,68 @@ describe("DiscordAdapter - deliverOutbound channel routing", () => {
   });
 });
 
+describe("DiscordAdapter - deliverOutboundFile channel routing", () => {
+  type FileDeliverer = {
+    deliverOutboundFile: (
+      destinationId: string,
+      attachment: { url: string; filename: string; caption?: string },
+      isChannel: boolean,
+    ) => Promise<void>;
+    fetchOutboundArtifact: ReturnType<typeof vi.fn>;
+    client: unknown;
+  };
+
+  const shot = {
+    url: "https://cdn.example.com/shot-1.png",
+    filename: "browser-step-1.png",
+    caption: "Step 1",
+  };
+
+  function makeAdapter() {
+    const adapter = new DiscordAdapter() as unknown as FileDeliverer;
+    adapter.fetchOutboundArtifact = vi.fn().mockResolvedValue({
+      data: Buffer.from("png"),
+      contentType: "image/png",
+    });
+    const channelSend = vi.fn().mockResolvedValue(undefined);
+    const userSend = vi.fn().mockResolvedValue(undefined);
+    const client = {
+      channels: {
+        fetch: vi
+          .fn()
+          .mockResolvedValue({ isTextBased: () => true, send: channelSend }),
+      },
+      users: { fetch: vi.fn().mockResolvedValue({ send: userSend }) },
+    };
+    adapter.client = client;
+    return { adapter, client, channelSend, userSend };
+  }
+
+  it("posts a group's photo into the channel, never a DM", async () => {
+    const { adapter, client, channelSend } = makeAdapter();
+
+    await adapter.deliverOutboundFile("chan-1", shot, true);
+
+    expect(client.channels.fetch).toHaveBeenCalledWith("chan-1");
+    expect(channelSend).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Step 1" }),
+    );
+    expect(client.users.fetch).not.toHaveBeenCalled();
+  });
+
+  it("DMs a photo to the user when not a channel", async () => {
+    const { adapter, client, userSend } = makeAdapter();
+
+    await adapter.deliverOutboundFile("user-1", shot, false);
+
+    expect(client.users.fetch).toHaveBeenCalledWith("user-1");
+    expect(userSend).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Step 1" }),
+    );
+    expect(client.channels.fetch).not.toHaveBeenCalled();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // client errors — an unhandled 'error' event would crash the process
 // ---------------------------------------------------------------------------

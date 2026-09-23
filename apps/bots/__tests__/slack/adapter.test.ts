@@ -932,6 +932,66 @@ describe("SlackAdapter - deliverOutbound channel routing", () => {
   });
 });
 
+describe("SlackAdapter - deliverOutboundFile channel routing", () => {
+  type FileDeliverer = {
+    deliverOutboundFile: (
+      destinationId: string,
+      attachment: { url: string; filename: string; caption?: string },
+      isChannel: boolean,
+    ) => Promise<void>;
+    fetchOutboundArtifact: ReturnType<typeof vi.fn>;
+    app: unknown;
+  };
+
+  const shot = {
+    url: "https://cdn.example.com/shot-1.png",
+    filename: "browser-step-1.png",
+    caption: "Step 1",
+  };
+
+  function makeAdapter() {
+    const adapter = new SlackAdapter() as unknown as FileDeliverer;
+    adapter.fetchOutboundArtifact = vi.fn().mockResolvedValue({
+      data: Buffer.from("png"),
+      contentType: "image/png",
+    });
+    const app = {
+      client: {
+        files: { uploadV2: vi.fn().mockResolvedValue({}) },
+        conversations: {
+          open: vi.fn().mockResolvedValue({ channel: { id: "D-dm" } }),
+        },
+      },
+    };
+    adapter.app = app;
+    return { adapter, app };
+  }
+
+  it("uploads a group's photo into the channel and skips DM resolution", async () => {
+    const { adapter, app } = makeAdapter();
+
+    await adapter.deliverOutboundFile("C-group", shot, true);
+
+    expect(app.client.conversations.open).not.toHaveBeenCalled();
+    expect(app.client.files.uploadV2).toHaveBeenCalledWith(
+      expect.objectContaining({ channel_id: "C-group" }),
+    );
+  });
+
+  it("uploads a photo to the user's DM when not a channel", async () => {
+    const { adapter, app } = makeAdapter();
+
+    await adapter.deliverOutboundFile("U-user", shot, false);
+
+    expect(app.client.conversations.open).toHaveBeenCalledWith({
+      users: "U-user",
+    });
+    expect(app.client.files.uploadV2).toHaveBeenCalledWith(
+      expect.objectContaining({ channel_id: "D-dm" }),
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // app.error — Bolt's last-resort handler
 // ---------------------------------------------------------------------------

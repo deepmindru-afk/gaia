@@ -50,6 +50,7 @@ async function startAndCaptureHandler(
   deliverFile: (
     id: string,
     attachment: OutboundAttachment,
+    isChannel: boolean,
   ) => Promise<void> = async () => undefined,
   gaiaApiUrl = "https://api.gaia.test",
   deliverReaction: (
@@ -377,8 +378,40 @@ describe("OutboundConsumer message handling", () => {
         path: "artifacts/report.pdf",
         filename: "report.pdf",
       }),
+      false,
     );
     expect(deliver).not.toHaveBeenCalled(); // file path, never the text sender
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+  });
+
+  it("hands a group's photo to deliverFile addressed to the channel", async () => {
+    // A browser run asked for in a group streams its step photos back into
+    // that group; dropping is_channel here sent them to a user id instead.
+    const deliverFile = vi.fn().mockResolvedValue(undefined);
+    const handle = await startAndCaptureHandler(
+      "discord",
+      vi.fn(),
+      deliverFile,
+    );
+    const msg = msgFor({
+      id: "1",
+      platform: "discord",
+      destination_id: "chan-42",
+      is_channel: true,
+      attachment: {
+        url: "https://cdn.example.com/shot-1.png",
+        filename: "browser-step-1.png",
+      },
+      enqueued_at: "t",
+    });
+
+    await deliverMessage(handle, msg);
+
+    expect(deliverFile).toHaveBeenCalledWith(
+      "chan-42",
+      expect.objectContaining({ url: "https://cdn.example.com/shot-1.png" }),
+      true,
+    );
     expect(channel.ack).toHaveBeenCalledWith(msg);
   });
 
@@ -412,6 +445,7 @@ describe("OutboundConsumer message handling", () => {
         url: "http://localhost:8121/shots/c0de/1.png",
         caption: "Step 1 \u00b7 open the site",
       }),
+      false,
     );
     expect(channel.ack).toHaveBeenCalledWith(msg);
   });

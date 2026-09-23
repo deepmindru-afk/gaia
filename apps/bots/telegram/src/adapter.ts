@@ -504,17 +504,20 @@ export class TelegramAdapter extends BaseBotAdapter {
   }
 
   /**
-   * Delivers an agent-generated file artifact to a Telegram user. Fetches the
+   * Delivers an agent-generated file artifact to a Telegram chat. Fetches the
    * bytes from GAIA (bot-authenticated) and uploads them as a photo (for
-   * images) or a document. The chat id is the stored Telegram user id.
+   * images) or a document. The chat id is polymorphic (a user's or a group's),
+   * so `isChannel` only addresses the too-large note.
    */
   protected override async deliverOutboundFile(
     destinationId: string,
     attachment: OutboundAttachment,
+    isChannel: boolean,
   ): Promise<void> {
     const artifact = await this.fetchOutboundArtifact(
       destinationId,
       attachment,
+      isChannel,
     );
     if (!artifact) return; // too large — fetchOutboundArtifact already replied
     const { data, contentType } = artifact;

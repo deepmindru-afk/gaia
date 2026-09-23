@@ -249,7 +249,8 @@ export abstract class BaseBotAdapter {
       this.platform,
       url,
       (id, text, isChannel) => this.deliverOutbound(id, text, isChannel),
-      (id, attachment) => this.deliverOutboundFile(id, attachment),
+      (id, attachment, isChannel) =>
+        this.deliverOutboundFile(id, attachment, isChannel),
       this.config.gaiaApiUrl,
       (id, reaction, isChannel) =>
         this.deliverOutboundReaction(id, reaction, isChannel),
@@ -327,6 +328,7 @@ export abstract class BaseBotAdapter {
   protected async fetchOutboundArtifact(
     destinationId: string,
     attachment: OutboundAttachment,
+    isChannel: boolean,
   ): Promise<{ data: Buffer; contentType: string } | null> {
     let artifact: { data: Buffer; contentType: string };
     if (attachment.url) {
@@ -377,7 +379,7 @@ export abstract class BaseBotAdapter {
           `I generated *${attachment.filename}*, but it's too large to send on ${this.platform} (max ${Math.floor(limit / (1024 * 1024))} MB).`,
           this.platform,
         ),
-        false, // the file path only ever targets a DM
+        isChannel,
       );
       return null;
     }
@@ -389,10 +391,14 @@ export abstract class BaseBotAdapter {
    * when an envelope carries an `attachment`. The default sends a short text note
    * via {@link deliverOutbound}; platforms that support attachments (e.g.
    * WhatsApp) override this to fetch the artifact bytes and upload them.
+   *
+   * `isChannel` addresses it like {@link deliverOutbound}: a browser run asked
+   * for in a group streams its step photos back into that group.
    */
   protected async deliverOutboundFile(
     destinationId: string,
     attachment: OutboundAttachment,
+    isChannel: boolean,
   ): Promise<void> {
     wideLog.warning("outbound_file_fallback_text", {
       attachment_filename: attachment.filename,
@@ -408,7 +414,7 @@ export abstract class BaseBotAdapter {
     await this.deliverOutbound(
       destinationId,
       `I created *${attachment.filename}*, but I can't send files on ${this.platform} yet.`,
-      false, // the file path only ever targets a DM
+      isChannel,
     );
   }
 

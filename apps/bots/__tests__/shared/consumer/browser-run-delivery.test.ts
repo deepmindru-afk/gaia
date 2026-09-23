@@ -49,7 +49,11 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 async function startAndCaptureHandler(
   deliver: (id: string, text: string) => Promise<void>,
-  deliverFile: (id: string, attachment: OutboundAttachment) => Promise<void>,
+  deliverFile: (
+    id: string,
+    attachment: OutboundAttachment,
+    isChannel: boolean,
+  ) => Promise<void>,
 ): Promise<Handler> {
   const consumer = new OutboundConsumer(
     "discord",
@@ -143,6 +147,7 @@ describe("a browser run delivered to a bot user", () => {
         url: "https://cdn.test/shot-1.png",
         caption: "Step 1 · Opening the booking page",
       }),
+      false,
     );
     expect(deliverFile).toHaveBeenNthCalledWith(
       2,
@@ -151,6 +156,7 @@ describe("a browser run delivered to a bot user", () => {
         url: "https://cdn.test/shot-2.png",
         caption: "Step 2 · Reading the sign-in wall",
       }),
+      false,
     );
 
     // Session + handoff + result bubbles ride the text path.

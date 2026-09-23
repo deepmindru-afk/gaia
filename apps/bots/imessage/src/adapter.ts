@@ -725,10 +725,12 @@ export class ImessageAdapter extends BaseBotAdapter {
   protected override async deliverOutboundFile(
     destinationId: string,
     outboundAttachment: OutboundAttachment,
+    isChannel: boolean,
   ): Promise<void> {
     const artifact = await this.fetchOutboundArtifact(
       destinationId,
       outboundAttachment,
+      isChannel,
     );
     if (!artifact) return;
     const { data, contentType } = artifact;
