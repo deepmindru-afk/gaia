@@ -9,6 +9,8 @@ from __future__ import annotations
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from pydantic import TypeAdapter
+
 from app.constants.browser import (
     BROWSER_TAKEOVER_PREAMBLE,
     BROWSER_VIEWPORT_HEIGHT,
@@ -57,6 +59,9 @@ class _ActionInputs(TypedDict, total=False):
     index: int
 
 
+_ACTION_INPUTS: TypeAdapter[_ActionInputs] = TypeAdapter(_ActionInputs)
+
+
 def _element_label(state: BrowserStateSummary, index: object) -> str | None:
     """Return the on-page name of the element an action targets, by its DOM index.
 
@@ -103,7 +108,7 @@ def _extract_actions(
         dumped = action.model_dump(exclude_none=True) if hasattr(action, "model_dump") else {}
         for action_name, params in dumped.items():
             raw_inputs = params if isinstance(params, dict) else {}
-            typed_inputs: _ActionInputs = raw_inputs
+            typed_inputs: _ActionInputs = _ACTION_INPUTS.validate_python(raw_inputs)
             index = typed_inputs.get("index")
             target = _element_label(state, index) if state is not None else None
             # The centre the page itself reported for this element this step; the

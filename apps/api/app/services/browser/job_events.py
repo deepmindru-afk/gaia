@@ -9,6 +9,8 @@ and shows the run from step 1.
 import json
 from typing import TypedDict
 
+from pydantic import TypeAdapter
+
 from app.constants.browser import (
     BROWSER_JOB_EVENTS_MAXLEN,
     BROWSER_JOB_EVENTS_PREFIX,
@@ -27,6 +29,9 @@ class _StreamFields(TypedDict, total=False):
     """One Redis stream entry's fields, as this module writes them."""
 
     payload: str
+
+
+_STREAM_FIELDS: TypeAdapter[_StreamFields] = TypeAdapter(_StreamFields)
 
 
 def _key(job_id: str) -> str:
@@ -59,7 +64,7 @@ async def read_job_events(
     events: list[tuple[str, dict[str, object]]] = []
     for _stream, entries in results:
         for entry_id, fields in entries:
-            typed_fields: _StreamFields = fields
+            typed_fields: _StreamFields = _STREAM_FIELDS.validate_python(fields)
             payload = _decode(entry_id, typed_fields.get("payload", ""))
             if payload is not None:
                 events.append((entry_id, payload))

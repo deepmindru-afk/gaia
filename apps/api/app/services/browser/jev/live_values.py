@@ -11,48 +11,20 @@ backend node id, the same ids Browser-Use's selector map carries.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
 
 if TYPE_CHECKING:
     from browser_use.browser.session import BrowserSession
-
-
-class _IndexList(TypedDict, total=False):
-    """A rare-data column's row indices."""
-
-    index: list[int]
-
-
-class _InputValue(TypedDict, total=False):
-    """The inputValue column: which rows have a value, and which string each holds."""
-
-    index: list[int]
-    value: list[int]
-
-
-class _SnapshotNodes(TypedDict, total=False):
-    """The nodes object of one DOMSnapshot document."""
-
-    backendNodeId: list[int]
-    inputValue: _InputValue
-    inputChecked: _IndexList
-    optionSelected: _IndexList
-
-
-class _SnapshotDocument(TypedDict, total=False):
-    """One document in DOMSnapshot.captureSnapshot's response."""
-
-    nodes: _SnapshotNodes
-
-
-class _DomSnapshot(TypedDict, total=False):
-    """DOMSnapshot.captureSnapshot's response, read only for live form state."""
-
-    strings: list[str]
-    documents: list[_SnapshotDocument]
+    from cdp_use.cdp.domsnapshot.commands import CaptureSnapshotReturns
+    from cdp_use.cdp.domsnapshot.types import (
+        DocumentSnapshot,
+        NodeTreeSnapshot,
+        RareBooleanData,
+        RareStringData,
+    )
 
 
 @dataclass(frozen=True)
@@ -68,7 +40,7 @@ async def read_live_values(browser: BrowserSession) -> LiveValues:
     """One CDP round-trip; empty (attributes only) when the snapshot is unavailable."""
     try:
         session = await browser.get_or_create_cdp_session()
-        snapshot: _DomSnapshot = dict(
+        snapshot: CaptureSnapshotReturns = (
             await session.cdp_client.send.DOMSnapshot.captureSnapshot(
                 params={"computedStyles": [], "includeDOMRects": False},
                 session_id=session.session_id,
@@ -82,25 +54,29 @@ async def read_live_values(browser: BrowserSession) -> LiveValues:
     return parse_snapshot(snapshot)
 
 
-def parse_snapshot(snapshot: _DomSnapshot) -> LiveValues:
+def parse_snapshot(snapshot: CaptureSnapshotReturns) -> LiveValues:
     """Decode DOMSnapshot.captureSnapshot's rare-data columns into per-node facts."""
-    strings: list[str] = snapshot.get("strings", [])
+    strings = snapshot.get("strings", [])
     values: dict[int, str] = {}
     checked: set[int] = set()
     selected: set[int] = set()
-    for raw_document in snapshot.get("documents", []):
-        document: _SnapshotDocument = raw_document
-        nodes: _SnapshotNodes = document.get("nodes", {})
-        backend_ids: list[int] = nodes.get("backendNodeId", [])
-        input_value: _InputValue = nodes.get("inputValue", {})
-        for row, string_index in zip(
-            input_value.get("index", []), input_value.get("value", []), strict=True
-        ):
-            values[backend_ids[row]] = strings[string_index] if string_index >= 0 else ""
-        checked_column: _IndexList = nodes.get("inputChecked", {})
-        checked.update(backend_ids[row] for row in checked_column.get("index", []))
-        selected_column: _IndexList = nodes.get("optionSelected", {})
-        selected.update(backend_ids[row] for row in selected_column.get("index", []))
+    documents: list[DocumentSnapshot] = snapshot.get("documents", [])
+    for document in documents:
+        nodes: NodeTreeSnapshot = document.get("nodes", {})
+        backend_ids = nodes.get("backendNodeId", [])
+        input_value: RareStringData | None = nodes.get("inputValue")
+        if input_value is not None:
+            for row, string_index in zip(
+                input_value.get("index", []), input_value.get("value", []), strict=True
+            ):
+                values[backend_ids[row]] = strings[string_index] if string_index >= 0 else ""
+        checked.update(backend_ids[row] for row in _rows(nodes.get("inputChecked")))
+        selected.update(backend_ids[row] for row in _rows(nodes.get("optionSelected")))
     return LiveValues(
         values=values, checked=frozenset(checked), selected_options=frozenset(selected)
     )
+
+
+def _rows(column: RareBooleanData | None) -> list[int]:
+    """Return the rows a rare boolean column marks true; none when the engine left it out."""
+    return column.get("index", []) if column is not None else []

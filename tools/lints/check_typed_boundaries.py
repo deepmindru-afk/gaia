@@ -102,6 +102,15 @@ EXTERNAL_TYPEDDICT_PATHS = frozenset(
         "langchain_core.messages.ReasoningContentBlock",
         "langchain_core.messages.content.ReasoningContentBlock",
         "composio.core.models.tools.ToolExecutionResponse",
+        "cdp_use.cdp.dom.commands.ResolveNodeReturns",
+        "cdp_use.cdp.domsnapshot.commands.CaptureSnapshotReturns",
+        "cdp_use.cdp.domsnapshot.types.DocumentSnapshot",
+        "cdp_use.cdp.domsnapshot.types.NodeTreeSnapshot",
+        "cdp_use.cdp.domsnapshot.types.RareBooleanData",
+        "cdp_use.cdp.domsnapshot.types.RareStringData",
+        "cdp_use.cdp.runtime.commands.CallFunctionOnReturns",
+        "cdp_use.cdp.runtime.commands.EvaluateReturns",
+        "cdp_use.cdp.runtime.types.RemoteObject",
     }
 )
 # Collections whose one type argument is the element a loop over them yields.

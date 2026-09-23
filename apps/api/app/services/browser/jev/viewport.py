@@ -18,6 +18,8 @@ import json
 import re
 from typing import TYPE_CHECKING, TypedDict
 
+from pydantic import TypeAdapter, ValidationError
+
 from app.constants.browser import JEV_PAGE_TEXT_MAX_CHARS
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
@@ -25,6 +27,9 @@ from shared.py.wide_events import log
 if TYPE_CHECKING:
     from browser_use.browser.session import BrowserSession, CDPSession
     from browser_use.dom.views import EnhancedDOMTreeNode
+    from cdp_use.cdp.dom.commands import ResolveNodeReturns
+    from cdp_use.cdp.runtime.commands import CallFunctionOnReturns, EvaluateReturns
+    from cdp_use.cdp.runtime.types import RemoteObject
 
 # An element inside an iframe would need its own frame to walk parents in.
 _MAX_ANCESTORS = 200
@@ -138,21 +143,8 @@ def normalize_page_text(text: str) -> str:
     return _SPACE_RUN.sub(" ", text.translate(_INVISIBLE))
 
 
-class _CdpResult(TypedDict, total=False):
-    """One CDP response's result object, read only for the value the page returned."""
-
-    value: object
-
-
-class _CdpResponse(TypedDict, total=False):
-    """A CDP Runtime response, read only for a page error or its result."""
-
-    exceptionDetails: object
-    result: _CdpResult
-
-
 class _ScreenValue(TypedDict, total=False):
-    """The viewport's own text, url, title and bottom flag, as the page reported them."""
+    """The viewport's own text, url, title and bottom flag, as _SCREEN_JS reports them."""
 
     text: str
     url: str
@@ -160,24 +152,16 @@ class _ScreenValue(TypedDict, total=False):
     at_bottom: bool
 
 
-class _ViewportRow(TypedDict, total=False):
-    """One element's measured box, as the page reported it."""
+class _ViewportRow(TypedDict):
+    """One element's measured box, as _MEASURE_JS and _MEASURE_HANDLES_JS report it."""
 
     on_screen: bool
     cx: float
     cy: float
 
 
-class _ResolveObject(TypedDict, total=False):
-    """A resolveNode result's object, read only for its handle."""
-
-    objectId: str
-
-
-class _ResolveResult(TypedDict, total=False):
-    """A DOM.resolveNode response, read only for the handle it resolved."""
-
-    object: _ResolveObject
+_SCREEN_VALUE: TypeAdapter[_ScreenValue] = TypeAdapter(_ScreenValue)
+_VIEWPORT_ROW: TypeAdapter[_ViewportRow] = TypeAdapter(_ViewportRow)
 
 
 @dataclass(frozen=True)
@@ -281,14 +265,12 @@ async def _measure(
 async def _screen(session: CDPSession) -> ViewportRead:
     """Return the viewport's own text, url and title; every field None when the page could not answer."""
     try:
-        response: _CdpResponse = dict(
-            await session.cdp_client.send.Runtime.evaluate(
-                params={
-                    "expression": f"({_SCREEN_JS})({JEV_PAGE_TEXT_MAX_CHARS})",
-                    "returnByValue": True,
-                },
-                session_id=session.session_id,
-            )
+        response: EvaluateReturns = await session.cdp_client.send.Runtime.evaluate(
+            params={
+                "expression": f"({_SCREEN_JS})({JEV_PAGE_TEXT_MAX_CHARS})",
+                "returnByValue": True,
+            },
+            session_id=session.session_id,
         )
     except Exception as exc:  # the element table still stands; only the text is lost
         log.warning(
@@ -300,23 +282,26 @@ async def _screen(session: CDPSession) -> ViewportRead:
             f"{LogTag.BROWSER} Jev viewport text read raised in the page", error_type="JSError"
         )
         return ViewportRead()
-    result: _CdpResult = response.get("result") or {}
-    raw_value = result.get("value")
-    if not isinstance(raw_value, dict):
+    try:
+        value: _ScreenValue = _SCREEN_VALUE.validate_python(_returned_value(response.get("result")))
+    except ValidationError:
+        log.warning(
+            f"{LogTag.BROWSER} Jev viewport text read returned an unexpected shape",
+            error_type="ValidationError",
+        )
         return ViewportRead()
-    value: _ScreenValue = raw_value
     text = value.get("text")
     return ViewportRead(
-        text=normalize_page_text(text)[:JEV_PAGE_TEXT_MAX_CHARS] if isinstance(text, str) else None,
-        url=_field(value, "url"),
-        title=_field(value, "title"),
-        at_bottom=bottom if isinstance(bottom := value.get("at_bottom"), bool) else None,
+        text=normalize_page_text(text)[:JEV_PAGE_TEXT_MAX_CHARS] if text is not None else None,
+        url=value.get("url") or None,
+        title=value.get("title") or None,
+        at_bottom=value.get("at_bottom"),
     )
 
 
-def _field(value: Mapping[str, object], key: str) -> str | None:
-    read = value.get(key)
-    return read if isinstance(read, str) and read else None
+def _returned_value(result: RemoteObject | None) -> object:
+    """Return the JSON value a returnByValue call produced; None when the page returned nothing."""
+    return result.get("value") if result is not None else None
 
 
 def _targets(selector_map: dict[int, EnhancedDOMTreeNode]) -> tuple[list[_Target], int]:
@@ -340,15 +325,13 @@ async def _by_xpath(session: CDPSession, targets: list[_Target]) -> dict[int, Vi
     pairs = [[t.index, t.xpath] for t in targets if t.xpath]
     if not pairs:
         return {}
-    response: _CdpResponse = dict(
-        await session.cdp_client.send.Runtime.evaluate(
-            params={
-                "expression": f"({_MEASURE_JS})({json.dumps(pairs)})",
-                "returnByValue": True,
-                "awaitPromise": False,
-            },
-            session_id=session.session_id,
-        )
+    response: EvaluateReturns = await session.cdp_client.send.Runtime.evaluate(
+        params={
+            "expression": f"({_MEASURE_JS})({json.dumps(pairs)})",
+            "returnByValue": True,
+            "awaitPromise": False,
+        },
+        session_id=session.session_id,
     )
     return _parse(response)
 
@@ -367,7 +350,7 @@ async def _by_backend_node(
             return (target.index, known)
         async with semaphore:
             try:
-                resolved = await session.cdp_client.send.DOM.resolveNode(
+                resolved: ResolveNodeReturns = await session.cdp_client.send.DOM.resolveNode(
                     params={"backendNodeId": target.backend_node_id},
                     session_id=session.session_id,
                 )
@@ -377,9 +360,8 @@ async def _by_backend_node(
                     error_type=type(exc).__name__,
                 )
                 return None
-        payload: _ResolveResult = dict(resolved)
-        resolved_object: _ResolveObject = payload.get("object") or {}
-        object_id = resolved_object.get("objectId")
+        resolved_object: RemoteObject | None = resolved.get("object")
+        object_id = resolved_object.get("objectId") if resolved_object is not None else None
         if not object_id:
             return None
         handles.put(target.backend_node_id, str(object_id))
@@ -407,21 +389,18 @@ async def _by_backend_node(
 async def _measure_batch(
     session: CDPSession, batch: list[tuple[int, str]]
 ) -> dict[int, ViewportBox]:
-    response: _CdpResponse = dict(
-        await session.cdp_client.send.Runtime.callFunctionOn(
-            params={
-                "functionDeclaration": _MEASURE_HANDLES_JS,
-                "objectId": batch[0][1],
-                "arguments": [{"objectId": object_id} for _, object_id in batch],
-                "returnByValue": True,
-            },
-            session_id=session.session_id,
-        )
+    response: CallFunctionOnReturns = await session.cdp_client.send.Runtime.callFunctionOn(
+        params={
+            "functionDeclaration": _MEASURE_HANDLES_JS,
+            "objectId": batch[0][1],
+            "arguments": [{"objectId": object_id} for _, object_id in batch],
+            "returnByValue": True,
+        },
+        session_id=session.session_id,
     )
     if response.get("exceptionDetails"):
         return {}
-    batch_result: _CdpResult = response.get("result") or {}
-    raw_values = batch_result.get("value") or []
+    raw_values = _returned_value(response.get("result")) or []
     if not isinstance(raw_values, list):
         return {}
     return _boxes_from_rows(
@@ -440,25 +419,20 @@ def _inside_iframe(node: EnhancedDOMTreeNode) -> bool:
     return False
 
 
-def _parse(response: _CdpResponse) -> dict[int, ViewportBox]:
+def _parse(response: EvaluateReturns) -> dict[int, ViewportBox]:
     if response.get("exceptionDetails"):
         log.warning(f"{LogTag.BROWSER} Jev viewport read raised in the page", error_type="JSError")
         return {}
-    parse_result: _CdpResult = response.get("result") or {}
-    value = parse_result.get("value")
+    value = _returned_value(response.get("result"))
     return _boxes_from_rows(value) if isinstance(value, dict) else {}
 
 
 def _boxes_from_rows(rows: Mapping[str, object]) -> dict[int, ViewportBox]:
     boxes: dict[int, ViewportBox] = {}
     for index, raw_box in rows.items():
-        if not isinstance(raw_box, dict):
-            continue
-        box: _ViewportRow = raw_box
         try:
-            boxes[int(index)] = ViewportBox(
-                on_screen=bool(box["on_screen"]), cx=float(box["cx"]), cy=float(box["cy"])
-            )
-        except (KeyError, TypeError, ValueError):
+            box: _ViewportRow = _VIEWPORT_ROW.validate_python(raw_box)
+            boxes[int(index)] = ViewportBox(on_screen=box["on_screen"], cx=box["cx"], cy=box["cy"])
+        except (ValidationError, ValueError):
             continue
     return boxes
