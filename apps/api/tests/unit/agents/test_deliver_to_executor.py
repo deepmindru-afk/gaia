@@ -7,7 +7,12 @@ activity. The append is therefore followed by a recheck that starts a carry
 run when the lock is free.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -17,13 +22,19 @@ from app.agents.core.background import (
     executor_runner as er,
 )
 from app.agents.core.background.executor_channel import ExecutorInbox
-from app.agents.core.background.executor_queue import build_lock_value, release_lock_if_owned
+from app.agents.core.background.executor_queue import (
+    build_lock_value,
+    get_lock_holder,
+    release_lock_if_owned,
+)
 from app.agents.core.background.session import ExecutorRun, RunKind
 from app.constants.agents import AgentTag
 from app.constants.cache import EXECUTOR_BUSY_PREFIX
 from app.constants.executor import EXECUTOR_CARRY_TASK
+from app.constants.log_tags import LogTag
 from app.models.agent_models import InboxEntry
 from app.models.user_models import AuthenticatedUser
+from tests.helpers import captured_wide_event
 
 pytestmark = pytest.mark.unit
 
@@ -32,8 +43,16 @@ TASK = "summarize the thread"
 
 
 def _seams(*, busy: list[bool], started: bool):
-    """Patch deliver_to_executor's seams: the busy fast-path, run start, inbox."""
-    stack = patch.object(er, "is_executor_busy", new_callable=AsyncMock, side_effect=busy)
+    """Patch deliver_to_executor's seams: the busy fast-path, run start, inbox.
+
+    busy answers successive checks of THIS conversation; any other id reads free.
+    """
+    answers = iter(busy)
+
+    async def _is_busy(conversation_id: str) -> bool:
+        return next(answers) if conversation_id == CONVERSATION else False
+
+    stack = patch.object(er, "is_executor_busy", new=_is_busy)
     start = patch.object(er, "_start_executor_run", new_callable=AsyncMock, return_value=started)
     append = patch.object(er.ExecutorInbox, "append", new_callable=AsyncMock)
     return stack, start, append
@@ -175,11 +194,150 @@ class TestTheRealLockAndInbox:
             patch.object(er, "_spawn_detached_run") as spawn,
             patch.object(ExecutorInbox, "append", finalize_the_old_run_then_append),
         ):
-            await er.deliver_to_executor(CONVERSATION, AuthenticatedUser(user_id="u1"), TASK)
+            await er.deliver_to_executor(
+                CONVERSATION, AuthenticatedUser(user_id="u1"), TASK, workflow_execution_id="exec-1"
+            )
             pending = await ExecutorInbox(CONVERSATION).read()
 
         spawn.assert_called_once()
         assert spawn.call_args.args[0].task == EXECUTOR_CARRY_TASK
+        assert spawn.call_args.args[0].run.workflow_execution_id == "exec-1"
         # Left in the inbox on purpose: the new run's drain hook injects it and
         # retires it only once the thread holds it.
         assert [entry.text for entry in pending] == [TASK]
+
+
+USER = AuthenticatedUser(user_id="u1", email="u1@x.com", name="Uno", timezone="Asia/Kolkata")
+OTHER_RUN_LOCK = build_lock_value("other-stream", "task-9")
+
+
+@contextmanager
+def _real_lifecycle() -> Iterator[SimpleNamespace]:
+    """Run the real busy lock and inbox over fakeredis, capturing only the spawned run."""
+    with (
+        patch.object(eq, "StreamManager", AsyncMock()),
+        patch.object(eq, "websocket_manager", AsyncMock()),
+        patch.object(er, "_spawn_detached_run") as spawn,
+    ):
+        yield SimpleNamespace(spawn=spawn)
+
+
+def _finished_run(**overrides: Any) -> ExecutorRun:
+    fields: dict[str, Any] = {
+        "stream_id": "stream-a",
+        "conversation_id": CONVERSATION,
+        "user": USER,
+        "kind": RunKind.QUEUED,
+        "task_id": "task-a",
+        "user_message_id": None,
+    }
+    return ExecutorRun(**{**fields, **overrides})
+
+
+class TestTheRunAnIdleConversationGets:
+    """The run deliver_to_executor starts is built from the user alone and owns the lock it took."""
+
+    async def test_it_carries_the_task_and_nothing_is_left_in_the_inbox(self, fake_redis) -> None:
+        with _real_lifecycle() as h:
+            await er.deliver_to_executor(CONVERSATION, USER, TASK, workflow_execution_id="exec-1")
+
+        (prepared, conversation_id), _ = h.spawn.call_args
+        assert (prepared.task, conversation_id) == (TASK, CONVERSATION)
+        assert await ExecutorInbox(CONVERSATION).read() == []
+        run = prepared.run
+        assert (run.conversation_id, run.workflow_execution_id) == (CONVERSATION, "exec-1")
+        assert UUID(run.task_id)
+        assert await get_lock_holder(CONVERSATION) == build_lock_value(run.stream_id, run.task_id)
+
+    async def test_it_acts_as_the_user_with_a_fresh_interactive_configurable(
+        self, fake_redis
+    ) -> None:
+        with _real_lifecycle() as h:
+            await er.deliver_to_executor(CONVERSATION, USER, TASK)
+
+        configurable = h.spawn.call_args.args[0].configurable
+        assert {k: configurable[k] for k in ("user_id", "email", "user_name")} == {
+            "user_id": "u1",
+            "email": "u1@x.com",
+            "user_name": "Uno",
+        }
+        assert configurable["user_timezone"] == "Asia/Kolkata"
+        assert configurable["thread_id"] == CONVERSATION
+        assert configurable["execution_mode"] == "interactive"
+
+    async def test_a_user_with_no_email_or_name_gets_empty_ones(self, fake_redis) -> None:
+        with _real_lifecycle() as h:
+            await er.deliver_to_executor(CONVERSATION, AuthenticatedUser(user_id="u1"), TASK)
+
+        configurable = h.spawn.call_args.args[0].configurable
+        assert (configurable["email"], configurable["user_name"]) == ("", "")
+
+    async def test_a_conversation_claimed_after_the_busy_check_keeps_the_work_queued(
+        self, fake_redis
+    ) -> None:
+        """The busy read is only a fast path: the claim decides, and a lost claim still queues the work."""
+        await fake_redis.set(f"{EXECUTOR_BUSY_PREFIX}{CONVERSATION}", OTHER_RUN_LOCK)
+
+        with (
+            _real_lifecycle() as h,
+            patch.object(er, "is_executor_busy", AsyncMock(return_value=False)),
+        ):
+            await er.deliver_to_executor(CONVERSATION, USER, TASK)
+
+        h.spawn.assert_not_called()
+        assert [e.text for e in await ExecutorInbox(CONVERSATION).read()] == [TASK]
+        assert await get_lock_holder(CONVERSATION) == OTHER_RUN_LOCK
+
+    async def test_work_for_a_busy_run_is_queued_under_its_own_id(self, fake_redis) -> None:
+        await fake_redis.set(f"{EXECUTOR_BUSY_PREFIX}{CONVERSATION}", OTHER_RUN_LOCK)
+
+        with _real_lifecycle() as h:
+            await er.deliver_to_executor(CONVERSATION, USER, "first")
+            await er.deliver_to_executor(CONVERSATION, USER, "second")
+
+        h.spawn.assert_not_called()
+        entries = await ExecutorInbox(CONVERSATION).read()
+        assert [e.text for e in entries] == ["first", "second"]
+        assert len({UUID(e.id) for e in entries}) == 2
+
+
+class TestCarryingPendingWork:
+    """A finished run's leftover inbox work gets a fresh run of its own — never a stolen lock."""
+
+    async def test_the_carry_run_continues_the_finished_runs_conversation_and_workflow(
+        self, fake_redis
+    ) -> None:
+        await ExecutorInbox(CONVERSATION).append("e1", "book the flight")
+
+        with _real_lifecycle() as h:
+            await er._carry_pending_into_new_run(
+                _finished_run(workflow_execution_id="exec-7"), None
+            )
+
+        prepared = h.spawn.call_args.args[0]
+        assert prepared.task == EXECUTOR_CARRY_TASK
+        assert prepared.run.conversation_id == CONVERSATION
+        assert prepared.run.workflow_execution_id == "exec-7"
+        assert prepared.configurable["user_id"] == "u1"
+
+    async def test_a_carry_never_takes_a_lock_another_run_holds(self, fake_redis) -> None:
+        await fake_redis.set(f"{EXECUTOR_BUSY_PREFIX}{CONVERSATION}", OTHER_RUN_LOCK)
+        await ExecutorInbox(CONVERSATION).append("e1", "book the flight")
+
+        with _real_lifecycle() as h:
+            await er._carry_pending_into_new_run(_finished_run(), None)
+
+        h.spawn.assert_not_called()
+        assert await get_lock_holder(CONVERSATION) == OTHER_RUN_LOCK
+        assert [e.id for e in await ExecutorInbox(CONVERSATION).read()] == ["e1"]
+
+    async def test_a_failed_carry_is_recorded_and_never_raises(self, fake_redis) -> None:
+        with (
+            patch.object(ExecutorInbox, "read", AsyncMock(side_effect=ConnectionError("down"))),
+        ):
+            async with captured_wide_event() as event:
+                await er._carry_pending_into_new_run(_finished_run(), None)
+
+        (error,) = event["errors"]
+        assert error["msg"] == f"{LogTag.AGENT} Could not carry pending work into a new run"
+        assert (error["conversation_id"], error["error_type"]) == (CONVERSATION, "ConnectionError")
