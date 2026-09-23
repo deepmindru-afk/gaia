@@ -692,7 +692,9 @@ class TestBackgroundSubagentApprovals:
         assert decided.await_count == 1
         resume.mark_resumed.assert_not_awaited()
 
-    async def test_a_rebuild_failure_keeps_the_decision_for_the_sweep(self, resume: Any) -> None:
+    async def test_a_rebuild_failure_keeps_the_decision_for_the_sweep_and_is_reported(
+        self, resume: Any
+    ) -> None:
         record = _subagent_record()
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
@@ -701,11 +703,19 @@ class TestBackgroundSubagentApprovals:
                 f"{MODULE}.resume_parked_subagent",
                 new=AsyncMock(side_effect=RuntimeError("mcp unavailable")),
             ),
+            patch(f"{MODULE}.log") as log,
         ):
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
 
         assert decided.await_count == 1
         resume.mark_resumed.assert_not_awaited()
+        log.error.assert_called_once()
+        assert "Could not resume the parked subagent" in log.error.call_args.args[0]
+        assert log.error.call_args.kwargs == {
+            "approval_id": "appr-1",
+            "error": "mcp unavailable",
+            "error_type": "RuntimeError",
+        }
 
     async def test_the_sweep_redispatches_a_decided_subagent_record(self) -> None:
         record = _subagent_record(approval_id="appr-9", status="approved")
