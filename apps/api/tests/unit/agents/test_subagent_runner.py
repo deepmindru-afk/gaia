@@ -2043,6 +2043,7 @@ async def _drive(ctx: SubagentExecutionContext) -> SubagentOutcome:
 
 
 class TestTheExecutorsCancel:
+    @pytest.mark.regression
     async def test_a_cancel_for_this_thread_stops_it_and_says_it_was_stopped(self, fake_redis):
         await SubagentCancel(SUBAGENT_THREAD).request()
         ctx = _cancellable_run(
@@ -2056,6 +2057,7 @@ class TestTheExecutorsCancel:
         )
         assert await SubagentCancel(SUBAGENT_THREAD).is_requested() is False
 
+    @pytest.mark.regression
     async def test_what_it_said_before_the_cancel_is_what_the_executor_gets(self, fake_redis):
         await SubagentCancel(SUBAGENT_THREAD).request()
         ctx = _cancellable_run(
