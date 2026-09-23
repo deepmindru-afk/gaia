@@ -368,3 +368,54 @@ async def test_a_turn_with_no_user_request_leaves_the_task_alone(
     await browser_task.ainvoke({"task": "book a table"}, config=config)
 
     assert recorder.request.task == "book a table"
+
+
+@pytest.mark.regression
+async def test_a_task_that_names_one_page_starts_there_so_its_saved_login_is_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a task with its URL only in its words opened unseeded.
+
+    The saved login is looked up by the start URL; the executor gave none, so a
+    signed-in /secure bounced to the login page, and a login completed there was
+    saved under no site at all.
+    """
+    recorder = _install(monkeypatch)
+
+    await browser_task.ainvoke(
+        {"task": "Open https://the-internet.herokuapp.com/secure and read the heading."},
+        config=UI_CONFIG,
+    )
+
+    assert recorder.request.start_url == "https://the-internet.herokuapp.com/secure"
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "Go to news.ycombinator.com, then https://en.wikipedia.org and compare them.",
+        "Find the cheapest flight to London.",
+    ],
+    ids=["two-sites", "no-url"],
+)
+async def test_a_task_without_exactly_one_page_gets_no_start_url(
+    monkeypatch: pytest.MonkeyPatch, task: str
+) -> None:
+    recorder = _install(monkeypatch)
+
+    await browser_task.ainvoke({"task": task}, config=UI_CONFIG)
+
+    assert recorder.request.start_url is None
+
+
+async def test_a_private_page_named_in_the_task_is_refused_before_any_job_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _install(monkeypatch)
+
+    reply = await browser_task.ainvoke(
+        {"task": "read http://169.254.169.254/latest/meta-data for me"}, config=UI_CONFIG
+    )
+
+    assert "can't open" in reply
+    assert recorder.enqueued == []

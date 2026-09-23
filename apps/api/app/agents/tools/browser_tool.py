@@ -10,6 +10,7 @@ the ARQ worker, through ``app/services/browser/job_runner.py``.
 
 import asyncio
 from dataclasses import dataclass
+import re
 from typing import Annotated
 import uuid
 
@@ -124,6 +125,21 @@ def _with_the_users_words(task: str, user_request: str | None) -> str:
     )
 
 
+_PAGE_URL = re.compile(r"https?://[^\s<>\"'()\[\]]+")
+_BARE_SITE = re.compile(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", re.IGNORECASE)
+
+
+def _the_one_page_in(task: str) -> str | None:
+    """Return the http(s) URL the task names, when it names that page and no other.
+
+    A site named without its scheme ("news.ycombinator.com") is a page too, so a
+    task that also names one has no single start.
+    """
+    pages = {match.group(0).rstrip(".,;:!?") for match in _PAGE_URL.finditer(task)}
+    elsewhere = _BARE_SITE.search(_PAGE_URL.sub(" ", task))
+    return pages.pop() if len(pages) == 1 and elsewhere is None else None
+
+
 def _job_request(
     params: _RunParams, job_id: str, task: str, start_url: str | None
 ) -> BrowserJobRequest:
@@ -156,6 +172,10 @@ async def browser_task(
     params = _run_params(config)
     log.set(browser={"operation": "task", "source_category": params.source_category})
 
+    # A task that names one page starts there, as Browser-Use would open it: the
+    # session is then seeded with that site's saved login, and a sign-in is saved
+    # under it. Given only in the task's words, the URL once seeded nothing.
+    start_url = start_url or _the_one_page_in(task)
     if start_url:
         try:
             assert_safe_url_shape(start_url)
