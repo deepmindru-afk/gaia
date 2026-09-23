@@ -11,11 +11,15 @@ Session state and the routing logic under test are real.
 """
 
 import asyncio
+from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import HumanMessage
+from langgraph.errors import GraphRecursionError
 from prometheus_client import REGISTRY
 import pytest
 
@@ -45,14 +49,22 @@ from app.agents.core.background.session import (
     mark_executor_spawned,
 )
 from app.agents.core.nodes import executor_status
+from app.agents.core.subagents.subagent_runner import SubagentExecutionContext, SubagentOutcome
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.cache import EXECUTOR_BUSY_PREFIX
-from app.constants.executor import EXECUTOR_PAUSED
+from app.constants.executor import (
+    EXECUTOR_APPROVAL_LOST_MESSAGE,
+    EXECUTOR_PAUSED,
+    EXECUTOR_STEP_LIMIT_MESSAGE,
+)
 from app.constants.hil import HIL_PAUSED_LOCK_TTL_SECONDS
+from app.constants.log_tags import LogTag
 from app.models.agent_models import InboxEntry
 from app.models.chat_models import SourceCategory
 from app.models.user_models import AuthenticatedUser
+from app.services.hil import bridge
 from shared.py.wide_events import log, log_context
+from tests.helpers import WideEventRecorder, captured_wide_event
 
 # The task text the finalize step now receives; forwarded to comms on a cancel.
 TASK = "run the standup summary"
@@ -896,9 +908,13 @@ class TestHeldCardsFlushedAtFinalize:
             "flush_held_approval_cards",
             new=AsyncMock(side_effect=RuntimeError("redis down")),
         ):
-            await er._finalize_executor_run(_run(RunKind.LIVE), TASK, "txt", "final")
+            async with captured_wide_event() as event:
+                await er._finalize_executor_run(_run(RunKind.LIVE), TASK, "txt", "final")
 
         assert session.done_event.is_set()
+        (error,) = [e for e in event["errors"] if "flush" in e["msg"]]
+        assert error["msg"] == f"{LogTag.AGENT} Held card flush failed"
+        assert (error["stream_id"], error["error_type"]) == ("s1", "RuntimeError")
 
 
 def _count(name: str, labels: dict[str, str]) -> float:
@@ -1015,3 +1031,143 @@ class TestRecordPauseIdentityRewrite:
         # measures user decision time as neither queue wait nor a lock wait.
         assert "t_dispatch_perf" not in item
         assert "queued" not in item
+
+
+def _executor_ctx() -> SubagentExecutionContext:
+    return SubagentExecutionContext(
+        subagent_graph=MagicMock(),
+        agent_name="executor_agent",
+        config={"configurable": {}},
+        configurable={},
+        integration_id="executor",
+        initial_state={},
+    )
+
+
+class TestARunHandsFinalizeWhatItProduced:
+    """run_executor_background through the real execute step and finalize, down to its seams.
+
+    The graph run, prep, delivery and the thread read are doubled; the busy lock, the
+    inbox and the carry are real (fakeredis), so what a run leaves behind for the next
+    one is what the real lifecycle leaves.
+    """
+
+    @contextmanager
+    def _lifecycle(
+        self,
+        *,
+        execute: Any = None,
+        prepare: Any = None,
+        committed: tuple[str, ...] = (),
+        record_pause: bool = True,
+    ) -> Iterator[SimpleNamespace]:
+        ctx = _executor_ctx()
+        prepare = prepare or AsyncMock(return_value=(ctx, None))
+        execute = execute or AsyncMock(return_value=SubagentOutcome(text="all done"))
+        thread = [
+            HumanMessage(content="x", additional_kwargs={ec.INBOX_ENTRY_ID: entry_id})
+            for entry_id in committed
+        ]
+
+        async def _thread_of(read_ctx: SubagentExecutionContext) -> list[HumanMessage]:
+            return thread if read_ctx is ctx else []
+
+        with ExitStack() as stack:
+            enter = stack.enter_context
+            enter(patch.object(er, "prepare_executor_execution", prepare))
+            enter(patch.object(er, "execute_subagent_stream", execute))
+            enter(patch.object(er, "make_redis_stream_writer", MagicMock()))
+            enter(patch.object(er, "thread_messages", _thread_of))
+            enter(patch.object(er, "_record_pause", AsyncMock(return_value=record_pause)))
+            deliver = enter(patch.object(er, "_deliver_terminal_outcome", AsyncMock()))
+            enter(patch.object(er, "release_lock_if_owned", AsyncMock()))
+            enter(patch.object(er.StreamManager, "is_cancelled", AsyncMock(return_value=False)))
+            enter(patch.object(er, "capture_event", MagicMock()))
+            enter(patch.object(bridge, "flush_held_approval_cards", AsyncMock()))
+            enter(patch.object(eq, "StreamManager", AsyncMock()))
+            enter(patch.object(eq, "websocket_manager", AsyncMock()))
+            spawn = enter(patch.object(er, "_spawn_detached_run"))
+            yield SimpleNamespace(deliver=deliver, spawn=spawn)
+
+    @staticmethod
+    async def _drive(inbox_ids: tuple[str, ...] = ()) -> None:
+        inbox = ec.ExecutorInbox("conv-1")
+        for entry_id in inbox_ids:
+            await inbox.append(entry_id, f"handed over {entry_id}")
+        await er.run_executor_background(
+            run=_run(RunKind.LIVE), task=TASK, configurable={"user_id": "u1"}
+        )
+
+    @staticmethod
+    def _delivered(deliver: AsyncMock) -> tuple[str, str]:
+        run, task, outcome = deliver.await_args.args
+        assert (run.stream_id, task) == ("s1", TASK)
+        return outcome.result_text, outcome.result_type
+
+    async def test_a_finished_run_delivers_its_answer_and_retires_what_it_absorbed(
+        self, fake_redis: Any
+    ) -> None:
+        with self._lifecycle(committed=("e1",)) as h:
+            await self._drive(inbox_ids=("e1",))
+
+        assert self._delivered(h.deliver) == ("all done", "final")
+        h.spawn.assert_not_called()
+        assert await ec.ExecutorInbox("conv-1").read() == []
+
+    async def test_a_run_whose_setup_raised_leaves_pending_work_for_the_next_run(
+        self, fake_redis: Any
+    ) -> None:
+        recorder = WideEventRecorder()
+        with (
+            self._lifecycle(prepare=AsyncMock(side_effect=RuntimeError("no model"))) as h,
+            patch("shared.py.wide_events._loguru", recorder),
+        ):
+            await self._drive(inbox_ids=("e1",))
+
+        assert self._delivered(h.deliver) == ("no model", "error")
+        h.spawn.assert_not_called()
+        assert [e.id for e in await ec.ExecutorInbox("conv-1").read()] == ["e1"]
+        warnings = recorder.event("executor_run")["warnings"]
+        (warning,) = [w for w in warnings if "setup failed" in w["msg"]]
+        assert warning["msg"] == (
+            f"{LogTag.AGENT} Executor setup failed; pending work left for the next run"
+        )
+        assert (warning["conversation_id"], warning["task_id"]) == ("conv-1", "task-1")
+
+    @pytest.mark.parametrize(
+        ("execute", "delivered"),
+        [
+            (
+                AsyncMock(side_effect=RuntimeError("graph exploded")),
+                ("graph exploded", "error"),
+            ),
+            (
+                AsyncMock(side_effect=GraphRecursionError("too deep")),
+                (EXECUTOR_STEP_LIMIT_MESSAGE, "error"),
+            ),
+            (
+                AsyncMock(return_value=SubagentOutcome(text="", interrupt={"summary": "x"})),
+                ("Approval request was malformed", "error"),
+            ),
+        ],
+        ids=["crash", "recursion-limit", "unresumable-pause"],
+    )
+    async def test_a_run_that_failed_after_setup_carries_the_work_handed_to_it(
+        self, fake_redis: Any, execute: AsyncMock, delivered: tuple[str, str]
+    ) -> None:
+        with self._lifecycle(execute=execute) as h:
+            await self._drive(inbox_ids=("e1",))
+
+        assert self._delivered(h.deliver) == delivered
+        h.spawn.assert_called_once()
+        assert h.spawn.call_args.args[0].task == er.EXECUTOR_CARRY_TASK
+
+    async def test_a_pause_that_could_not_be_recorded_fails_and_carries_the_handed_work(
+        self, fake_redis: Any
+    ) -> None:
+        paused = AsyncMock(return_value=SubagentOutcome(text="", interrupt={"approval_id": "a1"}))
+        with self._lifecycle(execute=paused, record_pause=False) as h:
+            await self._drive(inbox_ids=("e1",))
+
+        assert self._delivered(h.deliver) == (EXECUTOR_APPROVAL_LOST_MESSAGE, "error")
+        h.spawn.assert_called_once()

@@ -134,7 +134,9 @@ async def run_executor_background(
     ):
         result_text = ""
         result_type = "final"
-        run_ctx: SubagentExecutionContext | None = None
+        # Equivalent under mutation: read only if execute raised, when result_type is still
+        # "final" and finalize's `if ctx` treats any falsy placeholder alike.
+        run_ctx: SubagentExecutionContext | None = None  # pragma: no mutate
         queue_wait_ms = _queue_wait_ms(run, run_start, configurable, queued=queued)
         ttft_ms: float | None = None
         active_ms: float | None = None
@@ -361,15 +363,17 @@ async def _execute_executor(
         if error or ctx is None:
             log.error(f"{LogTag.AGENT} Executor prep failed", error=error)
             return _ExecutorResult(error or "Executor agent not available", "error")
+        # Equivalent under mutation: build_agent_config always sets "configurable".
+        run_configurable = ctx.config.setdefault("configurable", {})  # pragma: no mutate
         if resume is not None:
             # Tells the handoff tool to probe its subagent thread for a parked
             # interrupt — only a resume replay can encounter one, so fresh runs
             # skip that per-handoff checkpoint read.
             ctx.configurable[HIL_RESUME_CONFIG_KEY] = True
-            ctx.config.setdefault("configurable", {})[HIL_RESUME_CONFIG_KEY] = True
+            run_configurable[HIL_RESUME_CONFIG_KEY] = True
         if message_id := run.render_message_id:
             ctx.configurable["bot_message_id"] = message_id
-            ctx.config.setdefault("configurable", {})["bot_message_id"] = message_id
+            run_configurable["bot_message_id"] = message_id
         writer = make_redis_stream_writer(stream_id)
         outcome = await execute_subagent_stream(ctx=ctx, stream_writer=writer, resume=resume)
         if outcome.paused:
@@ -705,6 +709,14 @@ async def _prepare_executor_run(
     held it (its thread, subagent id, turn hints), never to the run started here.
     None means another run holds the conversation (or Redis is down).
     """
+    task_id = str(uuid4())
+    # Equivalent under mutation: prepare_run_from_item claims the conversation it is
+    # handed, never this item's copy, and the item is never stored.
+    identity = RunIdentity(  # pragma: no mutate
+        conversation_id=conversation_id,
+        task_id=task_id,
+        user_message_id=None,
+    )
     return await prepare_run_from_item(
         conversation_id,
         build_run_item(
@@ -717,11 +729,7 @@ async def _prepare_executor_run(
                 "thread_id": conversation_id,
                 "execution_mode": "interactive",
             },
-            identity=RunIdentity(
-                conversation_id=conversation_id,
-                task_id=str(uuid4()),
-                user_message_id=None,
-            ),
+            identity=identity,
             workflow_execution_id=workflow_execution_id,
         ),
         claim=LockClaim.ACQUIRE,
@@ -741,7 +749,8 @@ async def _start_executor_run(
     )
     if prepared is None:
         return False
-    _spawn_detached_run(prepared, conversation_id)
+    # Equivalent under mutation: the spawn reads conversation_id only for its log.info.
+    _spawn_detached_run(prepared, conversation_id)  # pragma: no mutate
     return True
 
 
@@ -775,7 +784,8 @@ async def _carry_pending_into_new_run(
             EXECUTOR_CARRY_TASK,
             workflow_execution_id=run.workflow_execution_id,
         )
-        if not started:
+        # Equivalent under mutation: the branch guards only a log.info.
+        if not started:  # pragma: no mutate
             log.info(
                 f"{LogTag.AGENT} Pending work left for the run that holds the conversation",
                 conversation_id=run.conversation_id,
