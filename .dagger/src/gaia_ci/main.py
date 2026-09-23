@@ -16,26 +16,27 @@ from dagger import DefaultPath, Doc, Ignore, dag, function, object_type
 
 # Patterns excluded from the source context for all functions.
 # Keep this tight -- unnecessary files slow down the filesync to the engine.
+# A bare name matches only at the root; per-package build/cache dirs need **/.
 _IGNORE = [
-    "node_modules",
+    "**/node_modules",
     ".conductor",
-    ".next",
-    "__pycache__",
-    ".venv",
-    "dist",
+    "**/.next",
+    "**/__pycache__",
+    "**/.venv",
+    "**/dist",
     ".nx/cache",
     ".nx/workspace-data",
     ".pnpm-store",
     "chroma-data",
     ".git",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".coverage",
-    "coverage",
+    "**/.mypy_cache",
+    "**/.ruff_cache",
+    "**/.coverage",
+    "**/coverage",
     ".wwebjs_auth",
     ".wwebjs_cache",
-    ".hypothesis",
-    "out",
+    "**/.hypothesis",
+    "**/out",
     ".agents/plans",
 ]
 
