@@ -281,3 +281,17 @@ describe("HarnessAdapter — command path", () => {
     expect(ephemeral).toMatchObject({ text: expect.stringContaining("nope") });
   });
 });
+
+describe("TranscriptRecorder — wall-clock stamp", () => {
+  it("stamps each event with the wall-clock time, so two senders' transcripts interleave", () => {
+    // A "stop" sent mid-run is answered in its own sender's transcript; the
+    // battery orders it against the run's deliveries by this stamp.
+    const before = Date.now();
+    const recorder = new TranscriptRecorder("telegram");
+
+    const event = recorder.record({ type: "typing", state: "start" });
+
+    expect(event.at).toBeGreaterThanOrEqual(before);
+    expect(event.at).toBeLessThanOrEqual(Date.now());
+  });
+});

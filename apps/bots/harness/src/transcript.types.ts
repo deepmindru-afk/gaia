@@ -24,6 +24,12 @@ export interface TranscriptEventBase {
    * jumps.
    */
   t: number;
+  /**
+   * Wall-clock time of the event (epoch ms). `t` only orders one process's
+   * events; this orders them against another sender's, e.g. the reply to a
+   * "stop" sent while a run was still delivering.
+   */
+  at: number;
 }
 
 /** The inbound user message that started (or continued) a turn. */

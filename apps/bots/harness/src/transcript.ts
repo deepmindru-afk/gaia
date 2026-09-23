@@ -2,8 +2,8 @@
  * In-memory recorder + JSONL serializer for harness transcripts.
  *
  * The adapter feeds it {@link TranscriptEventInput}s as the real bot pipeline
- * runs; the recorder stamps a monotonic sequence number and a monotonic
- * timestamp on each, keeps them in order, and can serialize the whole run to
+ * runs; the recorder stamps a monotonic sequence number, a monotonic
+ * timestamp and the wall-clock time on each, keeps them in order, and can serialize the whole run to
  * newline-delimited JSON for on-disk assertion.
  */
 
@@ -30,6 +30,7 @@ export class TranscriptRecorder {
       platform: this.platform,
       seq: this.seq,
       t: Math.round((performance.now() - this.startedAt) * 1000) / 1000,
+      at: Date.now(),
     } as TranscriptEvent;
     this.seq += 1;
     this.events.push(event);
