@@ -32,12 +32,14 @@ THREAD = f"gmail_executor_{CONV}"
 CONFIG: dict[str, Any] = {"configurable": {"conversation_id": CONV}}
 
 
-def _sub(subagent_id: str = "s1") -> RunningSubagent:
+def _sub(
+    subagent_id: str = "s1", *, thread: str = THREAD, integration_id: str = "gmail"
+) -> RunningSubagent:
     return RunningSubagent(
         subagent_id=subagent_id,
-        subagent_thread_id=THREAD,
-        integration_id="gmail",
-        agent_name="gmail_agent",
+        subagent_thread_id=thread,
+        integration_id=integration_id,
+        agent_name=f"{integration_id}_agent",
         task_summary="search mail",
         started_at="2026-09-05T10:00:00Z",
     )
@@ -64,7 +66,29 @@ class TestListRunningSubagents:
 
     async def test_says_none_when_empty(self, redis) -> None:
         out = await list_running_subagents.ainvoke({}, config=CONFIG)
-        assert "No subagents" in out
+        assert out == "No subagents are currently running."
+
+    async def test_lists_one_line_per_running_subagent(self, redis) -> None:
+        assert await RunningSubagents(CONV).claim(_sub("s1"))
+        assert await RunningSubagents(CONV).claim(
+            _sub("s2", thread="slack_executor_conv-1", integration_id="slack")
+        )
+
+        out = await list_running_subagents.ainvoke({}, config=CONFIG)
+
+        assert sorted(out.split("\n")) == ["- s1 (gmail): search mail", "- s2 (slack): search mail"]
+
+    async def test_a_run_with_no_conversation_sees_the_subagents_it_started(self, redis) -> None:
+        # A delegation with no conversation registers under "" (Delegation.conversation_id).
+        assert await RunningSubagents("").claim(_sub("s1"))
+
+        listed = await list_running_subagents.ainvoke({}, config={"configurable": {}})
+        steered = await message_subagent.ainvoke(
+            {"subagent_id": "s1", "message": "hurry"}, config={"configurable": {}}
+        )
+
+        assert listed == "- s1 (gmail): search mail"
+        assert steered == "Steer delivered to the gmail subagent (s1)."
 
 
 class TestMessageSubagent:
@@ -75,6 +99,16 @@ class TestMessageSubagent:
         )
         pending = await SubagentInbox(THREAD).read()
         assert [e.text for e in pending] == ["narrow to Q1 2024"]
+
+    async def test_each_steer_is_its_own_retirable_entry(self, redis) -> None:
+        assert await RunningSubagents(CONV).claim(_sub("s1"))
+        for message in ("narrow to Q1 2024", "skip drafts"):
+            await message_subagent.ainvoke({"subagent_id": "s1", "message": message}, config=CONFIG)
+
+        pending = await SubagentInbox(THREAD).read()
+        ids = [e.id for e in pending]
+        assert [e.text for e in pending] == ["narrow to Q1 2024", "skip drafts"]
+        assert all(ids) and len(set(ids)) == 2
 
     async def test_unknown_id_fails_loud(self, redis) -> None:
         out = await message_subagent.ainvoke(

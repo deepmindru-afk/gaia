@@ -18,7 +18,7 @@ from langchain_core.tools import tool
 
 from app.agents.core.background.running_registry import RunningSubagents
 from app.agents.core.background.subagent_channel import SubagentCancel, SubagentInbox
-from app.models.agent_models import AgentConfigurable, RunningSubagent, agent_configurable
+from app.models.agent_models import AgentConfigurable, agent_configurable
 
 _NOT_RUNNING = (
     "No running subagent with id {id!r}. It may have already finished — call "
@@ -26,10 +26,10 @@ _NOT_RUNNING = (
 )
 
 
-async def _resolve(config: RunnableConfig, subagent_id: str) -> RunningSubagent | None:
+def _running(config: RunnableConfig) -> RunningSubagents:
+    """Return the running-subagent registry of this tool call's conversation."""
     configurable: AgentConfigurable = agent_configurable(config)
-    conversation_id = str(configurable.get("conversation_id", ""))
-    return await RunningSubagents(conversation_id).get(subagent_id)
+    return RunningSubagents(str(configurable.get("conversation_id", "")))
 
 
 @tool
@@ -40,9 +40,7 @@ async def list_running_subagents(config: RunnableConfig) -> str:
     mean. Returns each running subagent's id, its integration, and what it is
     working on.
     """
-    configurable: AgentConfigurable = agent_configurable(config)
-    conversation_id = str(configurable.get("conversation_id", ""))
-    running = await RunningSubagents(conversation_id).list()
+    running = await _running(config).live()
     if not running:
         return "No subagents are currently running."
     return "\n".join(f"- {s.subagent_id} ({s.integration_id}): {s.task_summary}" for s in running)
@@ -57,7 +55,7 @@ async def message_subagent(config: RunnableConfig, subagent_id: str, message: st
     constraint or hint the subagent needs (e.g. a date range for a search). Get
     ``subagent_id`` from list_running_subagents.
     """
-    subagent = await _resolve(config, subagent_id)
+    subagent = await _running(config).get(subagent_id)
     if subagent is None:
         return _NOT_RUNNING.format(id=subagent_id)
     await SubagentInbox(subagent.subagent_thread_id).append(str(uuid4()), message)
@@ -73,7 +71,7 @@ async def cancel_subagent(config: RunnableConfig, subagent_id: str) -> str:
     subagent is doing the wrong thing or is no longer needed. Get ``subagent_id``
     from list_running_subagents.
     """
-    subagent = await _resolve(config, subagent_id)
+    subagent = await _running(config).get(subagent_id)
     if subagent is None:
         return _NOT_RUNNING.format(id=subagent_id)
     await SubagentCancel(subagent.subagent_thread_id).request()
