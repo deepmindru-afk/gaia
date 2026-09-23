@@ -446,11 +446,22 @@ class JevChatModel:
 
         try:
             decision = await self._choose(observation, goal, offered)
-            if decision.operation is JevOperation.DONE and self._advance_plan():
-                # One part of the task is done; the next part is decided on this
-                # same screen instead of ending the run here.
-                goal = self._effective_goal(messages)
-                decision = await self._choose(observation, goal, offered)
+            if decision.operation is JevOperation.DONE:
+                if not await self._part_is_done(observation, goal, done_chosen=True):
+                    # Jev's DONE is a read of the screen; the evidence check decides.
+                    # A DONE taken on confidence alone once reported a page still
+                    # showing "Loading..." as the finished answer.
+                    log.info(
+                        f"{LogTag.BROWSER} Jev DONE withheld (the part is not done on "
+                        f"{observation.url[:80]})",
+                        step=self._steps,
+                    )
+                    decision = await self._choose(observation, goal, offered - {JevOperation.DONE})
+                elif self._advance_plan():
+                    # One part of the task is done; the next part is decided on this
+                    # same screen instead of ending the run here.
+                    goal = self._effective_goal(messages)
+                    decision = await self._choose(observation, goal, offered)
         except (JevDecisionError, JevGatewayError) as exc:
             # Nothing executes on a malformed answer or a gateway that would not
             # answer; a WAIT keeps the loop honest and the failure shows up in
@@ -757,6 +768,7 @@ class JevChatModel:
         *,
         whole_history: bool = False,
         timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
+        label: str | None = None,
     ) -> T | None:
         """Goal, field, page and recent actions in; one small JSON value out.
 
@@ -787,7 +799,7 @@ class JevChatModel:
         if seen_text:
             context["seen_on_pages_read"] = seen_text
         t0 = perf_counter()
-        label = f"browser_{output.__name__.strip('_').lower()}"
+        label = label or f"browser_{output.__name__.strip('_').lower()}"
         prompt = [SystemMessage(content=instructions), HumanMessage(content=json.dumps(context))]
         parsed: T | None = None
         for attempt in range(1, JEV_TEXT_ATTEMPTS + 1):
@@ -915,16 +927,30 @@ class JevChatModel:
             steps=len(self._plan),
         )
 
-    async def _part_is_done(self, observation: JevObservation, goal: str) -> bool:
-        """Ask the writer whether the current part is complete, once per part and newly read page."""
+    async def _part_is_done(
+        self, observation: JevObservation, goal: str, *, done_chosen: bool = False
+    ) -> bool:
+        """Ask the writer whether the current part is complete, once per part and newly read page.
+
+        done_chosen asks again on the current screen whatever was judged
+        before: Jev chose DONE, and only this evidence check may accept it.
+        """
         pages = len(self._seen_text.pages)
-        if pages == 0 or self._plan is None or self._judged == (self._plan_index, pages):
+        if pages == 0 or self._plan is None:
+            return False
+        if not done_chosen and self._judged == (self._plan_index, pages):
             return False
         self._judged = (self._plan_index, pages)
         # pages_read (titles and urls) and every action are in the context; the
         # pages' full text is not what a "was every requirement met" judgement needs.
         verdict = await self._structured(
-            _PartDone, PART_DONE, goal, observation, None, whole_history=True
+            _PartDone,
+            PART_DONE,
+            goal,
+            observation,
+            None,
+            whole_history=True,
+            label="browser_done_check" if done_chosen else None,
         )
         # A "done" is only as good as its evidence: every entry must be a page the
         # run actually read (not the part's own listing) or an action it actually

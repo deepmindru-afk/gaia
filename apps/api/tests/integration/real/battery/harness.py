@@ -32,9 +32,10 @@ import redis
 from app.constants.browser import (
     BROWSER_HANDOFF_CONV_KEY_PREFIX,
     BROWSER_HANDOFF_KEY_PREFIX,
+    BROWSER_JOB_LOCK_PREFIX,
     BROWSER_JOB_STATE_PREFIX,
 )
-from app.constants.cache import RATE_LIMIT_KEY_PREFIX
+from app.constants.cache import EXECUTOR_BUSY_PREFIX, RATE_LIMIT_KEY_PREFIX
 
 API_URL = os.environ.get("GAIA_BATTERY_API_URL", "http://localhost:8480")
 HOST_URL = os.environ.get("BROWSER_HOST_URL", "http://localhost:8930")
@@ -59,7 +60,11 @@ RUN_TIMEOUT_SECONDS = 1200.0
 #: seconds after the job ends. The window is cut short with SIGTERM once the
 #: outcome has had this long to arrive.
 SENDER_WINDOW_SECONDS = RUN_TIMEOUT_SECONDS + 120.0
-OUTCOME_GRACE_SECONDS = 120.0
+#: After the job ends the executor still voices the outcome; the reply is out
+#: once the conversation's executor lock is released. Bounded by the chat
+#: model's own invoke timeout (LLM_INVOKE_TIMEOUT_SECONDS), plus delivery.
+OUTCOME_WAIT_SECONDS = 330.0
+OUTCOME_DELIVERY_SECONDS = 15.0
 _POLL_SECONDS = 2.0
 
 
@@ -154,6 +159,13 @@ class Battery:
             "instead of the transcript"
         )
         self.redis = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        # An executor from an earlier, interrupted battery can still start a job
+        # into this one; begin only once none is running.
+        deadline = time.monotonic() + OUTCOME_WAIT_SECONDS
+        while time.monotonic() < deadline and next(
+            self.redis.scan_iter(f"{EXECUTOR_BUSY_PREFIX}*"), None
+        ):
+            time.sleep(_POLL_SECONDS)
         #: Every sender started, so none outlives the battery holding the queue.
         self.senders: list[subprocess.Popen[str]] = []
         self.mongo = pymongo.MongoClient(MONGO_URL)["GAIA"]
@@ -278,17 +290,22 @@ class Battery:
         return json.loads(raw) if raw else {}
 
     def wait_for_job(
-        self, known: set[str], *, timeout: float = 240.0, proc: subprocess.Popen[str] | None = None
+        self, *, timeout: float = 240.0, proc: subprocess.Popen[str] | None = None
     ) -> str:
-        """Return the one job that appears after `known`: one browser per conversation, one scenario at a time."""
+        """Return the browser job running in this scenario's own conversation.
+
+        Read from the conversation's slot, never "the newest job": an executor
+        left over from an earlier scenario can start a job at any moment.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            new = [j for j in self.job_ids() if j not in known]
-            if new:
-                return new[0]
+            conversation = self.conversation_id_or_none()
+            job_id = conversation and self.redis.get(f"{BROWSER_JOB_LOCK_PREFIX}{conversation}")
+            if job_id:
+                return str(job_id)
             if proc is not None and proc.poll() is not None:
                 break
-            time.sleep(_POLL_SECONDS)
+            time.sleep(_POLL_SECONDS / 4)
         said = self.transcript_of(proc).texts if proc is not None else []
         raise AssertionError(f"no browser job was enqueued for the message; the bot said {said}")
 
@@ -307,16 +324,31 @@ class Battery:
             return None
         return self.mongo["browser_tasks"].find_one({"session_id": session_id})
 
+    def wait_for_outcome_voiced(self) -> None:
+        """Wait until this conversation's executor has finished and so has sent its reply."""
+        busy = f"{EXECUTOR_BUSY_PREFIX}{self.conversation_id()}"
+        started = time.monotonic()
+        deadline = started + OUTCOME_WAIT_SECONDS
+        while time.monotonic() < deadline and self.redis.exists(busy):
+            time.sleep(_POLL_SECONDS)
+        print(f"outcome voiced {time.monotonic() - started:.0f}s after the job ended")
+        time.sleep(OUTCOME_DELIVERY_SECONDS)
+
     # -- handoffs ----------------------------------------------------------
 
-    def conversation_id(self) -> str:
-        """Return the GAIA conversation the last sent channel maps to, from the bot session record."""
+    def conversation_id_or_none(self) -> str | None:
+        """Return the GAIA conversation the last sent channel maps to, once the bot has created it."""
         user = self.mongo["users"].find_one({"email": BATTERY_USER}, {"_id": 1})
-        assert user and self.last_channel, "send a message first"
+        if not user or not self.last_channel:
+            return None
         key = f"telegram:dev-telegram-{user['_id']}:{self.last_channel}"
         session = self.mongo["bot_sessions"].find_one({"session_key": key}, {"conversation_id": 1})
-        assert session, f"no bot session for {key}"
-        return str(session["conversation_id"])
+        return str(session["conversation_id"]) if session else None
+
+    def conversation_id(self) -> str:
+        conversation = self.conversation_id_or_none()
+        assert conversation, f"no bot session for channel {self.last_channel}"
+        return conversation
 
     def pending_handoff(self, conversation_id: str) -> tuple[str, dict[str, Any]] | None:
         handoff_id = self.redis.get(f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}{conversation_id}")
@@ -382,12 +414,11 @@ class Battery:
         on_running(job_id, state, battery) is called once the run is RUNNING, for
         scenarios that act mid-run (a handoff to answer, a stop to send).
         """
-        known = set(self.job_ids())
         self.reset_browser_quota()
         started = time.monotonic()
         proc = self.send(message, settle_ms=int(SENDER_WINDOW_SECONDS * 1000))
         try:
-            job_id = self.wait_for_job(known, proc=proc)
+            job_id = self.wait_for_job(proc=proc)
             state = self.wait_for_status(job_id, {"running", "done"}, timeout=240.0)
             # The terminal state drops the session id; the history row is keyed on it.
             session_id = state.get("session_id")
@@ -397,7 +428,7 @@ class Battery:
             state = self.wait_for_status(job_id, {"done"}, timeout=RUN_TIMEOUT_SECONDS)
             seconds = time.monotonic() - started
             print(f"run {job_id} done in {seconds:.0f}s")
-            time.sleep(OUTCOME_GRACE_SECONDS)
+            self.wait_for_outcome_voiced()
         finally:
             self.finish_sender(proc)
             try:

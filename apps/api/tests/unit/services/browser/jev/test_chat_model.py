@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, field
+import json
 from types import SimpleNamespace
 from typing import Any, Union, get_args
 from unittest.mock import AsyncMock, MagicMock
@@ -147,6 +148,8 @@ class FakeTextModel:
     calls: list[tuple[list[Any], type[BaseModel] | None]] = field(default_factory=list)
     provider: str = "fake"
     name: str = "text-helper"
+    #: How the DONE check answers: the part is done, cited by the page read.
+    confirms_done: bool = True
 
     async def ainvoke(self, messages, output_format=None, **kwargs):
         """Browser-Use's own calls, passed straight through the model."""
@@ -166,7 +169,12 @@ class FakeTextModel:
         if instructions.startswith(PLAN_STEPS):
             return schema.model_validate({"steps": []})
         if instructions.startswith(PART_DONE):
-            return schema.model_validate({"done": False})
+            if label != "browser_done_check" or not self.confirms_done:
+                return schema.model_validate({"done": False})
+            pages = json.loads(prompt[1].content)["pages_read"]
+            return schema.model_validate(
+                {"done": True, "evidence": [pages[0]["url"]], "findings": ""}
+            )
         self.calls.append((prompt, schema))
         reply = self.replies.pop(0) if self.replies else {}
         if isinstance(reply, Exception):
@@ -1277,3 +1285,13 @@ async def test_a_blocked_run_that_read_pages_reports_them(flights_state) -> None
     done = _action(result.completion)["done"]
     assert done["text"] == "Found the flights page; no fares shown."
     assert done["success"] is False
+
+
+async def test_a_done_the_evidence_check_rejects_is_withheld(flights_state) -> None:
+    model, gateway, helper, _ = _model(flights_state, [("DONE", None), ("WAIT", None)])
+    helper.confirms_done = False
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion) == {"wait": {"seconds": 4}}
+    assert "DONE" not in gateway.requests[1].questions["operation"].criteria
