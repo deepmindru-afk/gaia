@@ -305,7 +305,7 @@ class MCPTokenStore:
             pending = (
                 OAuthPendingState.model_validate(stored_data)
                 if isinstance(stored_data, dict)
-                else OAuthPendingState.model_validate_json(stored_data)
+                else OAuthPendingState.model_validate_json(str(stored_data))
             )
         except ValidationError:
             # Legacy format - just state string (backwards compat)

@@ -43,6 +43,7 @@ from app.models.agent_models import (
     AgentUserContext,
     ExecutionMode,
     LlmCallMetadata,
+    StreamChunkMetadata,
     read_agent_configurable,
 )
 from app.models.chat_models import ConversationSource, SourceCategory, ToolDataEntry
@@ -175,17 +176,6 @@ class _McpAppEntry(BaseModel):
     mcp_ui: dict[str, object] | None = None
     timestamp: str | None = None
     data: _McpAppCallData | None = None
-
-
-class _StreamChunkMetadata(BaseModel):
-    """The run metadata riding a "messages"-mode chunk.
-
-    silent marks an internal model call whose tokens never reach the client.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    silent: bool = False
 
 
 class _FallbackResponseMetadata(BaseModel):
@@ -451,6 +441,40 @@ def recent_user_messages(history: list[MessageDict], current: str) -> list[str]:
     if current and (not turns or turns[-1] != current):
         turns.append(current)
     return [clip_text(text, HIL_JUDGE_MAX_TURN_CHARS) for text in turns[-HIL_JUDGE_MAX_USER_TURNS:]]
+
+
+def background_authorization(
+    turns: list[str],
+    *,
+    execution_mode: str,
+    workflow_title: str = "",
+    workflow_description: str = "",
+    todo_title: str = "",
+) -> list[str]:
+    """Append a background run's schedule text as standing authorization.
+
+    A scheduled workflow/todo is a standing directive, so its human-written
+    display fields (title, description ONLY) authorize like a live turn's words —
+    the judge grounds calls against them verbatim. Step lists and execution
+    prompts may be LLM-generated and never authorize; interactive runs pass through.
+    """
+    if execution_mode != "background":
+        return turns
+    extra: list[str] = []
+    title = workflow_title.strip()
+    description = workflow_description.strip()
+    if title or description:
+        extra.append(
+            "Scheduled workflow"
+            + (f": {title}" if title else "")
+            + (f". {description}" if description else "")
+        )
+    label = todo_title.strip()
+    if label and not any(label in turn for turn in turns):
+        extra.append(f"Tracked todo: {label}")
+    if not extra:
+        return turns
+    return turns + [clip_text(text, HIL_JUDGE_MAX_TURN_CHARS) for text in extra]
 
 
 # Replaces 22 flat keyword-only parameters, bundled into five groups: AgentIdentity
@@ -977,15 +1001,16 @@ def _accumulate_silent_custom_event(payload: object, acc: _SilentAccumulators) -
 
 @traceable(run_type="llm", name="Call Agent Silent")
 def _hold_silent_chunk(
-    payload: tuple[BaseMessage, Mapping[str, object]],
+    payload: tuple[BaseMessage, StreamChunkMetadata],
     is_comms: bool,
     tool_call_message_ids: set[str],
     message_texts: dict[str, str],
 ) -> None:
     """One "messages"-mode event of a silent run: hold the chunk's text by message."""
+    metadata: StreamChunkMetadata
     chunk, metadata = payload
 
-    if _StreamChunkMetadata.model_validate(metadata).silent:
+    if metadata.get("silent"):
         return  # Skip silent chunks (e.g. follow-up actions generation)
 
     if chunk and isinstance(chunk, (AIMessage, AIMessageChunk)):
@@ -1326,15 +1351,16 @@ async def _stream_tool_message_frames(
 
 
 async def _stream_messages(
-    payload: tuple[BaseMessage, Mapping[str, object]],
+    payload: tuple[BaseMessage, StreamChunkMetadata],
     state: _StreamAccumulators,
     is_comms: bool,
     stream_id: str | None,
     user_id: str | None,
 ) -> AsyncGenerator[str, None]:
     """Handle one "messages" event: streamed reply text, or a ToolMessage result."""
+    metadata: StreamChunkMetadata
     chunk, metadata = payload
-    if _StreamChunkMetadata.model_validate(metadata).silent:
+    if metadata.get("silent"):
         return
 
     # Stream AI response content (only from comms_agent to avoid duplication)
@@ -1433,7 +1459,7 @@ async def _frames_for_stream_event(
         frames = _stream_updates(cast(Mapping[str, object], payload), state, is_comms, user_id)
     elif stream_mode == "messages":
         frames = _stream_messages(
-            cast(tuple[BaseMessage, Mapping[str, object]], payload),
+            cast(tuple[BaseMessage, StreamChunkMetadata], payload),
             state,
             is_comms,
             stream_id,

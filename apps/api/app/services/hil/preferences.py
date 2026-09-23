@@ -16,10 +16,11 @@ async def update_hil_preferences(
     *,
     mode: HILMode | None = None,
     tool_overrides: dict[str, bool] | None = None,
+    never_auto_tools: list[str] | None = None,
 ) -> HILPreferences:
     """Apply a partial update to a user's HIL preferences."""
     await user_repository.set_hil_preference_fields(
-        user_id, mode=mode, tool_overrides=tool_overrides
+        user_id, mode=mode, tool_overrides=tool_overrides, never_auto_tools=never_auto_tools
     )
     prefs = await get_hil_preferences(user_id)
 

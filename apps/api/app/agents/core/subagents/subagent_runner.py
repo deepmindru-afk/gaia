@@ -4,9 +4,9 @@ Lives here (rather than in handoff_tools.py) so those modules import from it,
 avoiding a cyclic dependency.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import time
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from langchain_core.messages import (
@@ -14,6 +14,7 @@ from langchain_core.messages import (
     AnyMessage,
     BaseMessage,
     HumanMessage,
+    ReasoningContentBlock,
     SystemMessage,
     ToolMessage,
 )
@@ -24,6 +25,7 @@ from app.agents.context.assemble import assemble_context
 from app.agents.context.section_context import SectionContext
 from app.agents.context.tiers import AgentTier
 from app.agents.core.background.session import claim_tool_output, note_tool_output_owner
+from app.agents.core.background.subagent_channel import SubagentCancel
 from app.agents.core.graph_manager import (
     CompiledAgentGraph,
     GraphManager,
@@ -35,7 +37,12 @@ from app.agents.prompts.workflow_prompts import (
     WORKFLOW_AUTO_NOTIFY_SECTION,
     WORKFLOW_SILENT_NOTIFY_SECTION,
 )
-from app.constants.general import EXECUTOR_THREAD_PREFIX, FINISH_TASK_NAME
+from app.constants.agents import AgentTag, wrap_agent_payload
+from app.constants.general import (
+    EXECUTOR_INTEGRATION_ID,
+    EXECUTOR_THREAD_PREFIX,
+    FINISH_TASK_NAME,
+)
 from app.constants.hil import LANGGRAPH_INTERRUPT_KEY
 from app.constants.llm import EXECUTOR_RECURSION_LIMIT
 from app.constants.log_tags import LogTag
@@ -50,8 +57,10 @@ from app.models.agent_models import (
     AgentConfigurable,
     AgentRunnableConfig,
     AgentUserContext,
+    StreamChunkMetadata,
     agent_configurable,
 )
+from app.models.hil_models import HilInterruptPayload, HilResumeDecision
 from app.models.stream_events import ReasoningPayload, ToolOutputPayload
 from app.services.chat.chunks import normalize_custom_event
 from app.services.files import FileService
@@ -74,6 +83,40 @@ def _capture_finish_task_content(chunk: ToolMessage, current_message: str) -> st
     return current_message
 
 
+class _ReasoningKwargs(TypedDict, total=False):
+    """The additional_kwargs key DeepSeek-style providers put reasoning under; not always a str."""
+
+    reasoning_content: object
+
+
+class _MessagesChannel(TypedDict, total=False):
+    """The messages channel of a State update or snapshot; its other channels ride along unread."""
+
+    messages: list[AnyMessage]
+
+
+class SubagentInitialState(TypedDict, total=False):
+    """The State channels a subagent run is seeded with; the graph fills in the rest."""
+
+    messages: list[AnyMessage]
+    todos: list[object]
+    intent: str | None
+    integration_usernames: dict[str, str]
+    selected_tool_ids: list[str]
+
+
+def _block_reasoning(block: object) -> str | None:
+    """Return a content block's reasoning text, or None when it is not a reasoning block."""
+    # content_blocks yields ContentBlock dicts (a v1 list may also hold bare strings)
+    if not isinstance(block, dict):
+        return None
+    # only "type" is read before the block is known to be a reasoning block
+    reasoning_block: ReasoningContentBlock = cast(ReasoningContentBlock, block)
+    if reasoning_block.get("type") != "reasoning":
+        return None
+    return reasoning_block.get("reasoning")
+
+
 def _extract_reasoning_delta(chunk: AIMessageChunk) -> str:
     """Pull this chunk's reasoning ("thinking") text, model-agnostic.
 
@@ -83,18 +126,13 @@ def _extract_reasoning_delta(chunk: AIMessageChunk) -> str:
     the caller emits nothing for them.
     """
     parts: list[str] = []
-    for block in getattr(chunk, "content_blocks", None) or []:
-        block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
-        if block_type == "reasoning":
-            text = (
-                block.get("reasoning")
-                if isinstance(block, dict)
-                else getattr(block, "reasoning", "")
-            )
-            if text:
-                parts.append(text)
+    for block in chunk.content_blocks:
+        text = _block_reasoning(block)
+        if text:
+            parts.append(text)
     if not parts:
-        fallback = (getattr(chunk, "additional_kwargs", None) or {}).get("reasoning_content")
+        kwargs: _ReasoningKwargs = cast(_ReasoningKwargs, chunk.additional_kwargs)
+        fallback = kwargs.get("reasoning_content")
         if fallback:
             parts.append(fallback if isinstance(fallback, str) else str(fallback))
     return "".join(parts)
@@ -115,7 +153,7 @@ class SubagentOutcome:
     """
 
     text: str
-    interrupt: dict[str, Any] | None = None
+    interrupt: HilInterruptPayload | None = None
     run_messages: tuple[AnyMessage, ...] = ()
 
     @property
@@ -135,7 +173,7 @@ def subagent_row_id(tool_call_id: str) -> str:
     return str(uuid5(NAMESPACE_URL, f"subagent_row:{tool_call_id}"))
 
 
-def resume_for_gate(interrupt_payload: dict[str, Any]) -> object:
+def resume_for_gate(interrupt_payload: HilInterruptPayload) -> object:
     """Return the decision belonging to the subagent gate now paused.
 
     Resume values replay positionally from zero even though recover_from_checkpoint
@@ -144,12 +182,11 @@ def resume_for_gate(interrupt_payload: dict[str, Any]) -> object:
     """
     target = interrupt_payload.get("approval_id") if isinstance(interrupt_payload, dict) else None
     decision = interrupt(interrupt_payload)
-    while (
-        target is not None
-        and isinstance(decision, dict)
-        and decision.get("approval_id") is not None
-        and decision.get("approval_id") != target
-    ):
+    while target is not None and isinstance(decision, dict):
+        answered: HilResumeDecision = cast(HilResumeDecision, decision)
+        answered_id = answered.get("approval_id")
+        if answered_id is None or answered_id == target:
+            break
         decision = interrupt(interrupt_payload)
     return decision
 
@@ -166,9 +203,12 @@ class SubagentExecutionContext:
     config: AgentRunnableConfig
     configurable: AgentConfigurable
     integration_id: str
-    initial_state: dict[str, Any]
+    initial_state: SubagentInitialState
     user_id: str | None = None
     stream_id: str | None = None
+    #: The stream of the turn that dispatched a background run onto its own
+    #: stream: a Stop on that turn stops the run too.
+    parent_stream_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -199,9 +239,9 @@ async def build_initial_messages(
     prefix stays shared across users. seed.retrieval_query defaults to task, but
     callers pass the unenhanced task when task carries hints that would pollute search.
     """
-    tier, configurable, user_id, subagent_id, retrieval_query, integration_id = (
+    configurable: AgentConfigurable = seed.configurable
+    tier, user_id, subagent_id, retrieval_query, integration_id = (
         seed.tier,
-        seed.configurable,
         seed.user_id,
         seed.subagent_id,
         seed.retrieval_query,
@@ -246,7 +286,9 @@ def _with_current_time(resume: Command, configurable: AgentConfigurable) -> Comm
     STARTED — a HIL pause can leave it hours stale. Appending is safe mid
     tool-call: manage_system_prompts_node lifts the latest time message to the tail, untouched pairing.
     """
-    update = {**resume.update} if isinstance(resume.update, dict) else {}
+    update: _MessagesChannel = (
+        cast(_MessagesChannel, {**resume.update}) if isinstance(resume.update, dict) else {}
+    )
     update["messages"] = [
         *update.get("messages", []),
         build_current_time_message(user_timezone=configurable.get("user_timezone")),
@@ -256,8 +298,8 @@ def _with_current_time(resume: Command, configurable: AgentConfigurable) -> Comm
 
 def _process_messages_payload(
     # "messages"-mode payloads are always (message chunk, metadata); the driver
-    # above holds them as `Any` only because the shape varies per stream mode.
-    payload: tuple[BaseMessage, dict[str, Any]],
+    # above holds them as `object` only because the shape varies per stream mode.
+    payload: tuple[BaseMessage, StreamChunkMetadata],
     complete_message: str,
     stream_writer: StreamWriterCallable | None,
     subagent_id: str | None,
@@ -269,6 +311,7 @@ def _process_messages_payload(
     subagent's chunks carry the SAME run metadata as ours, so ungated it would
     double-render the result — the claim goes to whichever run announced the call.
     """
+    metadata: StreamChunkMetadata
     chunk, metadata = payload
     if metadata.get("silent"):
         return complete_message
@@ -321,11 +364,11 @@ class _StreamRun:
     complete_message: str = ""
     emitted_tool_calls: set[str] = field(default_factory=set)
     tool_ran: bool = False
-    pending_approvals: list[dict[str, Any]] = field(default_factory=list)
+    pending_approvals: list[HilInterruptPayload] = field(default_factory=list)
     run_messages: list[AnyMessage] = field(default_factory=list)
 
 
-async def _process_updates_payload(run: _StreamRun, payload: dict[str, Any]) -> None:
+async def _process_updates_payload(run: _StreamRun, payload: dict[str, object]) -> None:
     """Handle one "updates"-mode stream event: record a pause, or emit tool_data.
 
     Never break on a pause — keep draining. Under durability="exit", the run-exit
@@ -349,8 +392,9 @@ async def _process_updates_payload(run: _StreamRun, payload: dict[str, Any]) -> 
         # tool_calls (exact names + args) appear — "messages" mode only
         # streams them as partial chunks. Captured for the call record.
         if isinstance(state_update, dict):
+            agent_update: _MessagesChannel = cast(_MessagesChannel, state_update)
             run.run_messages.extend(
-                msg for msg in state_update.get("messages", []) if getattr(msg, "tool_calls", None)
+                msg for msg in agent_update.get("messages", []) if getattr(msg, "tool_calls", None)
             )
         # Use shared helper to extract and format tool entries
         entries = await extract_tool_entries_from_update(
@@ -380,10 +424,14 @@ def _finalize_run(run: _StreamRun) -> SubagentOutcome:
             run_messages=tuple(run.run_messages),
         )
 
-    # A subagent that only narrated and never ran a tool didn't do the work — return
-    # an actionable signal so the parent re-issues the handoff instead of treating the
-    # planning text as the result.
-    if not run.tool_ran and not run.emitted_tool_calls and run.complete_message:
+    # A worker that only narrated did no work: say so, so its delegator re-issues it.
+    # The executor is nobody's delegate; its words are its answer (collection runs report).
+    if (
+        run.ctx.integration_id != EXECUTOR_INTEGRATION_ID
+        and not run.tool_ran
+        and not run.emitted_tool_calls
+        and run.complete_message
+    ):
         log.warning("subagent_returned_narration_only", subagent_name=run.ctx.agent_name)
         final_message = (
             f"The {run.ctx.agent_name} subagent ended without running any tool; it only "
@@ -392,12 +440,13 @@ def _finalize_run(run: _StreamRun) -> SubagentOutcome:
         )
     else:
         final_message = run.complete_message or "Task completed"
+    initial_state: SubagentInitialState = run.ctx.initial_state
     log.set(
         subagent={
             "name": run.ctx.agent_name,
             "provider": run.ctx.integration_id,
             "response_length": len(final_message),
-            "messages_count": len(run.ctx.initial_state.get("messages", [])),
+            "messages_count": len(initial_state.get("messages", [])),
         }
     )
     return SubagentOutcome(text=final_message, run_messages=tuple(run.run_messages))
@@ -444,6 +493,11 @@ async def execute_subagent_stream(
             # finished task — an empty outcome says "nothing to deliver" outright.
             return SubagentOutcome(text="")
 
+    # The executor addresses a cancel to this subagent by its own thread_id.
+    run_configurable: AgentConfigurable = agent_configurable(ctx.config)
+    subagent_thread_id = run_configurable.get("thread_id")
+    cancel = SubagentCancel(subagent_thread_id) if subagent_thread_id else None
+
     # One span per segment; a pause ends its segment here, so the HIL wait that
     # follows never counts as active time. Labelled by integration id: per-call
     # uuids and user-made MCPs would each mint unbounded series.
@@ -463,13 +517,12 @@ async def execute_subagent_stream(
             # build_agent_config returns an AgentRunnableConfig, but run_config may be
             # rebuilt above as a dict spread, which mypy widens back to a plain dict.
             config=cast(RunnableConfig, run_config),
-            # Persist checkpoints only on exit, not every step (default is "async"):
-            # intermediate steps never need to survive a mid-run crash, only the final
-            # state does. Collapses O(steps) writes to one. comms graph keeps "async".
+            # Persist checkpoints only on run exit (this path is one unit of work),
+            # collapsing O(steps) writes to one. The comms graph driver keeps
+            # "async" — its mid-run checkpoints are needed.
             durability="exit",
         ):
-            # Check for cancellation
-            if ctx.stream_id and await stream_manager.is_cancelled(ctx.stream_id):
+            if await _stream_cancelled(ctx):
                 log.info(
                     f"{LogTag.AGENT} Subagent stream cancelled by user", stream_id=ctx.stream_id
                 )
@@ -481,21 +534,60 @@ async def execute_subagent_stream(
                 continue
             # A list `stream_mode` makes astream yield (mode, payload) tuples, which
             # langgraph's own overload return type does not express.
-            stream_mode, payload = cast(tuple[str, Any], event)
+            stream_mode, payload = cast(tuple[str, object], event)
+
+            # Targeted cancel from the executor, checked once per superstep (one
+            # redis read per reasoning step). Returns a clean cancelled result so
+            # the executor learns it stopped; the executor and siblings keep running.
+            if (
+                stream_mode == "updates"
+                and ctx.stream_id
+                and cancel
+                and await cancel.is_requested()
+            ):
+                await cancel.clear()
+                log.info(f"{LogTag.AGENT} Subagent cancelled by executor", stream_id=ctx.stream_id)
+                outcome = _finalize_run(run)
+                observe_subagent_run(
+                    time.perf_counter() - segment_start, subagent_id=label, status="cancelled"
+                )
+                # What the run said so far, not the finished-run text: that one reads
+                # "Task completed" or tells the executor to re-issue what it just stopped.
+                return replace(
+                    outcome,
+                    text=wrap_agent_payload(
+                        AgentTag.SUBAGENT_CANCELLED,
+                        run.complete_message or "Stopped by the executor before finishing.",
+                    ),
+                )
+
             await _consume_stream_event(run, stream_mode, payload)
     except Exception:
         observe_subagent_run(time.perf_counter() - segment_start, subagent_id=label, status="error")
         raise
 
     outcome = _finalize_run(run)
-    if outcome.paused:
-        status = "paused"
-    elif cancelled:
-        status = "cancelled"
-    else:
-        status = "success"
-    observe_subagent_run(time.perf_counter() - segment_start, subagent_id=label, status=status)
+    observe_subagent_run(
+        time.perf_counter() - segment_start,
+        subagent_id=label,
+        status=_segment_status(outcome, cancelled=cancelled),
+    )
     return outcome
+
+
+async def _stream_cancelled(ctx: SubagentExecutionContext) -> bool:
+    """Whether the user stopped this run's stream, or the turn that dispatched it."""
+    for stream_id in (ctx.stream_id, ctx.parent_stream_id):
+        if stream_id and await stream_manager.is_cancelled(stream_id):
+            return True
+    return False
+
+
+def _segment_status(outcome: SubagentOutcome, *, cancelled: bool) -> str:
+    """How this run segment ended, for the latency histogram's status label."""
+    if outcome.paused:
+        return "paused"
+    return "cancelled" if cancelled else "success"
 
 
 async def _consume_stream_event(run: _StreamRun, stream_mode: str, payload: object) -> None:
@@ -505,11 +597,11 @@ async def _consume_stream_event(run: _StreamRun, stream_mode: str, payload: obje
     untyped: each branch narrows it to the shape that mode is documented to carry.
     """
     if stream_mode == "updates":
-        await _process_updates_payload(run, cast(dict[str, Any], payload))
+        await _process_updates_payload(run, cast(dict[str, object], payload))
         return
 
     if stream_mode == "messages":
-        chunk_and_metadata = cast(tuple[BaseMessage, dict[str, Any]], payload)
+        chunk_and_metadata = cast(tuple[BaseMessage, StreamChunkMetadata], payload)
         run.complete_message = _process_messages_payload(
             chunk_and_metadata,
             run.complete_message,
@@ -523,14 +615,27 @@ async def _consume_stream_event(run: _StreamRun, stream_mode: str, payload: obje
         return
 
     if stream_mode == "custom" and run.stream_writer:
-        run.stream_writer(normalize_custom_event(cast(dict[str, Any], payload)))
+        run.stream_writer(normalize_custom_event(cast(dict[str, object], payload)))
 
 
 def _snapshot_messages(snapshot: StateSnapshot) -> list[AnyMessage]:
     """Return the messages a checkpoint holds. Empty means the thread has never run."""
     values = getattr(snapshot, "values", None) or {}
-    messages = values.get("messages") if isinstance(values, dict) else None
+    if not isinstance(values, dict):
+        return []
+    state: _MessagesChannel = cast(_MessagesChannel, values)
+    messages = state.get("messages")
     return messages if isinstance(messages, list) else []
+
+
+async def thread_messages(ctx: SubagentExecutionContext) -> list[AnyMessage]:
+    """Read back what this run's thread holds right now, from its checkpoint.
+
+    The authoritative record of what actually reached the model: a run that died
+    mid-call committed nothing, and only the checkpoint can tell that apart from
+    a call that landed.
+    """
+    return _snapshot_messages(await ctx.subagent_graph.aget_state(cast(RunnableConfig, ctx.config)))
 
 
 def _final_text_from_snapshot(snapshot: StateSnapshot) -> str:
@@ -587,7 +692,10 @@ async def _address_resume(
     for item in interrupts:
         value = getattr(item, "value", None)
         interrupt_id = getattr(item, "id", None)
-        if interrupt_id and isinstance(value, dict) and value.get("approval_id") == approval_id:
+        if not (interrupt_id and isinstance(value, dict)):
+            continue
+        gate_payload: HilInterruptPayload = cast(HilInterruptPayload, value)
+        if gate_payload.get("approval_id") == approval_id:
             log.info(
                 f"{LogTag.HIL} Addressing resume to its interrupt",
                 approval_id=str(approval_id),
@@ -608,11 +716,12 @@ def _approval_id_of(resume: Command) -> str | None:
     payload = resume.resume
     if not isinstance(payload, dict):
         return None
-    approval_id = payload.get("approval_id")
+    decision: HilResumeDecision = cast(HilResumeDecision, payload)
+    approval_id = decision.get("approval_id")
     return str(approval_id) if approval_id else None
 
 
-def interrupt_payload(raw: object) -> dict[str, Any]:
+def interrupt_payload(raw: object) -> HilInterruptPayload:
     """Return the HIL payload inside LangGraph Interrupt object(s).
 
     Carries EVERY pending approval, not just the first — two destructive calls in
@@ -622,29 +731,42 @@ def interrupt_payload(raw: object) -> dict[str, Any]:
     return merge_approvals(interrupt_values(raw))
 
 
-def interrupt_values(raw: object) -> list[dict[str, Any]]:
+def interrupt_values(raw: object) -> list[HilInterruptPayload]:
     """Return the dict payloads inside one or more LangGraph Interrupt objects."""
     items = raw if isinstance(raw, (list, tuple)) else (raw,)
     return [
-        value
+        cast(HilInterruptPayload, value)
         for value in (getattr(item, "value", item) for item in items)
         if isinstance(value, dict)
     ]
 
 
-def merge_approvals(payloads: list[dict[str, Any]]) -> dict[str, Any]:
+def merge_approvals(payloads: list[HilInterruptPayload]) -> HilInterruptPayload:
     """Fold several pending approvals into one payload carrying ALL their ids.
 
     The first payload's own fields stay at the top level, so callers reading a single
     approval (resume_for_gate) are unaffected; approval_ids is what the batch
-    readers use (executor_runner._paused_approval_ids).
+    readers use (paused_approval_ids).
     """
     if not payloads:
         return {}
     ids = [str(payload["approval_id"]) for payload in payloads if payload.get("approval_id")]
     if len(ids) < 2:
         return payloads[0]
-    return {**payloads[0], "approval_ids": ids}
+    merged = payloads[0].copy()
+    merged["approval_ids"] = ids
+    return merged
+
+
+def paused_approval_ids(payload: HilInterruptPayload) -> tuple[str, ...]:
+    """Every approval id a pause carries — the batch first, then the single id."""
+    batch = payload.get("approval_ids")
+    if isinstance(batch, list):
+        ids = tuple(str(a) for a in batch if a)
+        if ids:
+            return ids
+    single = payload.get("approval_id")
+    return (str(single),) if single else ()
 
 
 def compose_executor_brief(
@@ -741,28 +863,42 @@ async def prepare_executor_execution(
     )
     new_configurable = agent_configurable(config)
 
-    # Create system message (executor-specific)
+    # Create system message (executor-specific).
     system_message = create_system_message(
         user_id=user_id,
         agent_type="executor",
         user_name=configurable.get("user_name"),
     )
 
-    # When comms knows the tool_category, hint the executor to go straight to
-    # handoff() and skip ChromaDB discovery — tools are NOT pre-bound, the target
-    # subagent still retrieves its own. Removes one redundant round-trip.
+    # When comms provides a known tool_category, hint the executor to go straight
+    # to activate_integration(...) and skip the ChromaDB discovery call — removes
+    # one redundant round-trip where comms already knows the category.
     enhanced_task = task
     tool_category = configurable.get("tool_category")
     selected_tool = configurable.get("selected_tool")
-    if tool_category and get_subagent_by_id(tool_category):
+    resolved_category = get_subagent_by_id(tool_category) if tool_category else None
+    if tool_category and resolved_category:
         tool_hint = f"the '{selected_tool}' tool" if selected_tool else "the user's request"
-        enhanced_task = (
-            f"{task}\n\n"
-            f"DIRECT EXECUTION HINT: This request should be handled by "
-            f"'{tool_category}'. Skip retrieve_tools discovery and directly "
-            f'call handoff(subagent_id="{tool_category}", task="{task}") to '
-            f"route {tool_hint}."
-        )
+        if (
+            resolved_category.managed_by == "mcp"
+            and resolved_category.mcp_config
+            and resolved_category.mcp_config.requires_auth
+        ):
+            enhanced_task = (
+                f"{task}\n\n"
+                f"DIRECT EXECUTION HINT: This request should be handled by "
+                f"'{tool_category}'. Skip retrieve_tools discovery and directly "
+                f'handoff(subagent_id="{tool_category}", task="...") with the full request, then '
+                f"use its result for {tool_hint}."
+            )
+        else:
+            enhanced_task = (
+                f"{task}\n\n"
+                f"DIRECT EXECUTION HINT: This request should be handled by "
+                f"'{tool_category}'. Skip retrieve_tools discovery and directly "
+                f'call activate_integration(integration_id="{tool_category}"), then '
+                f"act on {tool_hint} yourself with its tools."
+            )
         log.set(
             executor_prep={
                 "direct_hint_applied": True,
@@ -812,7 +948,7 @@ async def prepare_executor_execution(
         agent_name="executor_agent",
         config=config,
         configurable=new_configurable,
-        integration_id="executor",
+        integration_id=EXECUTOR_INTEGRATION_ID,
         initial_state={"messages": messages, "todos": []},
         user_id=user_id,
         stream_id=stream_id,

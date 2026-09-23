@@ -65,7 +65,7 @@ def _get_user_id(user: AuthenticatedUser = Depends(get_current_user)) -> str:
 
 async def _validate_target(user_id: str, target: str) -> None:
     """Reject a target that isn't the executor or one of the user's connected
-    integration subagents. Keeps the UI from scoping a skill to something the
+    integrations. Keeps the UI from scoping a skill to something the
     agent can never run."""
     targets = await get_skill_targets(user_id)
     allowed = {t.value for t in targets}
@@ -84,7 +84,7 @@ async def list_skill_targets_endpoint(
     user_id: Annotated[str, Depends(_get_user_id)],
 ) -> SkillTargetsResponse:
     """List the targets a skill can run in: the executor plus the user's
-    connected integration subagents."""
+    connected integrations."""
     log.set(operation="list_skill_targets")
     targets = await get_skill_targets(user_id)
     log.set(result_count=len(targets), outcome="success")
@@ -102,7 +102,7 @@ async def list_builtin_skills_endpoint(
     connected_ids = await get_connected_integration_ids(user_id)
 
     def _is_available(subagent_id: str) -> bool:
-        # The executor and non-integration builtin subagents (docgen, knowledge
+        # The executor and non-integration builtins (docgen, knowledge
         # guide) are always available; integration-backed ones need a connection.
         if subagent_id == EXECUTOR_SUBAGENT_ID:
             return True

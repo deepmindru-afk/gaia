@@ -15,7 +15,9 @@ scheduled_at now always names the next planned execution, or nothing.
 Recurrence/timezone resolution itself is covered by test_tracked_todo_recurrence.py.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import json
 import re
@@ -43,6 +45,7 @@ from app.models.workflow_models import TriggerType
 from app.services.analytics_service import AnalyticsEvents
 from app.workers.tasks.tracked_todo_tasks import (
     LOCK_DEFER_BACKOFF,
+    LOCK_TTL_SECONDS,
     MAX_RETRY_ATTEMPTS,
     RETRY_BACKOFF,
     TRIGGER_TODO_FEATURE_KEY,
@@ -56,6 +59,7 @@ from app.workers.tasks.tracked_todo_tasks import (
     _mark_todo_failed,
     _run_execution,
     execute_tracked_todo,
+    resume_tracked_todo,
     safety_net_check_orphaned_todos,
 )
 
@@ -1073,71 +1077,6 @@ class TestExecuteViaAgent:
         # writes the run's evidence onto the wrong (or no) activity log.
         assert self._written_for() == ({"todo-1"}, {"user-1"})
 
-    async def test_a_queued_dispatch_is_not_a_finished_run(self):
-        """Reading the queued acknowledgement as the result marks unfinished work as done (same bug as #1129)."""
-        agent = AsyncMock(
-            return_value=SilentRunResult(
-                message="That task is queued behind the one already running.",
-                tool_data=[],
-                queued_task_id="task-9",
-            )
-        )
-        p1, p2, p3, p4, p5 = self._patches(agent=agent)
-        with p1, p2, p3, p4, p5:
-            result = await _execute_via_agent(
-                _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1")
-            )
-
-        assert result == ""
-        start, end = self._entries()
-        assert " ▶ " in start
-        assert " ✓ " not in end
-        assert "queued" in end and "task-9" in end
-
-    async def test_the_queued_marker_names_the_todo_the_user_and_the_queued_task(self):
-        """The queued marker and warning are the only places a dropped or blanked field would be visible."""
-        recorded: list[dict[str, str]] = []
-
-        # append_activity_entry's real signature, so an argument the branch stops
-        # passing is a TypeError here rather than a quietly thinner call.
-        async def timeline(todo_id: str, user_id: str, entry: str) -> bool:
-            recorded.append({"todo_id": todo_id, "user_id": user_id, "entry": entry})
-            return True
-
-        agent = AsyncMock(
-            return_value=SilentRunResult(
-                message="That task is queued.", tool_data=[], queued_task_id="task-9"
-            )
-        )
-        with (
-            patch(f"{MODULE}.call_agent_silent", agent),
-            patch(f"{MODULE}.read_canvas", AsyncMock(return_value="")),
-            patch(f"{MODULE}.read_activity", AsyncMock(return_value="")),
-            patch(f"{MODULE}.tracked_todo_service.append_activity_entry", timeline),
-            patch(f"{MODULE}._collect_reference_context", AsyncMock(return_value="")),
-            patch(f"{MODULE}.log") as log_mock,
-        ):
-            result = await _execute_via_agent(
-                _doc(id="todo-7"), "user-9", user_data={"user_id": "user-9"}
-            )
-
-        assert result == ""
-        queued = recorded[1]
-        assert queued["todo_id"] == "todo-7"
-        assert queued["user_id"] == "user-9"
-        stamp = queued["entry"].split(" ", 1)[0]
-        assert queued["entry"] == (
-            f"{stamp} ⏸ scheduled run queued behind an in-flight run (task task-9); not run"
-        )
-        # Stamped in UTC: a naive or local timestamp reads as a different moment
-        # to anyone reading the canvas from another timezone.
-        assert datetime.fromisoformat(stamp).utcoffset() == timedelta(0)
-        assert log_mock.warning.call_args.args == ("tracked_todo.agent_dispatch_queued",)
-        assert log_mock.warning.call_args.kwargs == {
-            "todo_id": "todo-7",
-            "queued_task_id": "task-9",
-        }
-
     async def test_the_start_marker_is_written_before_the_agent_runs(self):
         """A run that dies inside the agent must still leave evidence."""
         order: list[str] = []
@@ -1403,22 +1342,6 @@ class TestExecuteViaAgentDelivery:
 
         self.capture.assert_not_called()
 
-    async def test_a_queued_dispatch_delivers_nothing(self):
-        """The queued acknowledgement is not a result; delivering it announces work that never ran."""
-        agent = AsyncMock(
-            return_value=SilentRunResult(
-                message="That task is queued.", tool_data=[], queued_task_id="task-9"
-            )
-        )
-        deliver = AsyncMock()
-        p1, p2, p3, p4, p5, p6, p7 = self._patches(agent=agent, deliver=deliver)
-        with p1, p2, p3, p4, p5, p6, p7:
-            await _execute_via_agent(
-                _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1")
-            )
-
-        deliver.assert_not_awaited()
-
 
 # ---------------------------------------------------------------------------
 # _mark_todo_failed
@@ -1593,3 +1516,243 @@ class TestSafetyNet:
 
         run_ats = {c.kwargs["_defer_until"] for c in pool.enqueue_job.call_args_list}
         assert len(run_ats) > 1
+
+
+# resume_tracked_todo
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ResumeRun:
+    """The seams resume_tracked_todo touched, recorded for one call."""
+
+    result: str
+    pool: MagicMock
+    repo: MagicMock
+    user: AuthenticatedUser
+    load_user: AsyncMock
+    budget: AsyncMock
+    agent: AsyncMock
+    timeline: AsyncMock
+    deliver: AsyncMock
+    capture: MagicMock
+    enqueue: AsyncMock
+    log: MagicMock
+
+    def entries(self) -> list[str]:
+        return [c.kwargs["entry"] for c in self.timeline.call_args_list]
+
+
+def _split_stamp(entry: str) -> tuple[datetime, str]:
+    """Split an activity entry into its leading timestamp and the rest."""
+    stamp, rest = entry.split(" ", 1)
+    return datetime.fromisoformat(stamp), rest
+
+
+class TestResumeTrackedTodo:
+    RESUME_MESSAGE = (
+        "Approval ap_1 was granted: Send briefing "
+        "The action has run — verify with a read if you need certainty, "
+        "never re-run the granted call blind. Continue the run from here."
+    )
+
+    @staticmethod
+    def _build(
+        *,
+        doc: TodoDocument | None = None,
+        lock_acquired: bool = True,
+        agent: AsyncMock | None = None,
+    ) -> _ResumeRun:
+        pool = _pool()
+        pool.set = AsyncMock(return_value=True if lock_acquired else None)
+        repo = MagicMock()
+        repo.get_by_id = AsyncMock(return_value=doc or _doc(user_id="user-7"))
+        user = AuthenticatedUser(user_id="user-7")
+        return _ResumeRun(
+            result="",
+            pool=pool,
+            repo=repo,
+            user=user,
+            load_user=AsyncMock(return_value=(user, MagicMock())),
+            budget=AsyncMock(),
+            agent=agent
+            or AsyncMock(return_value=SilentRunResult(message="Briefing sent.", tool_data=[])),
+            timeline=AsyncMock(return_value=True),
+            deliver=AsyncMock(return_value=ConversationSource.TELEGRAM),
+            capture=MagicMock(),
+            enqueue=AsyncMock(),
+            log=MagicMock(),
+        )
+
+    @staticmethod
+    @contextmanager
+    def _patched(run: _ResumeRun) -> Iterator[None]:
+        with (
+            patch(f"{MODULE}.RedisPoolManager.get_pool", AsyncMock(return_value=run.pool)),
+            patch(f"{MODULE}.todo_repository", run.repo),
+            patch(f"{MODULE}._load_user_with_tz", run.load_user),
+            patch(f"{MODULE}.enforce_daily_cost_budget", run.budget),
+            patch(f"{MODULE}.call_agent_silent", run.agent),
+            patch(f"{MODULE}.tracked_todo_service.append_activity_entry", run.timeline),
+            patch(f"{MODULE}.deliver_result_to_platforms", run.deliver),
+            patch(f"{MODULE}.capture_event", run.capture),
+            patch(f"{MODULE}.enqueue_worker_job", run.enqueue),
+            patch(f"{MODULE}.log", run.log),
+        ):
+            yield
+
+    async def _resume(
+        self,
+        *args: object,
+        doc: TodoDocument | None = None,
+        lock_acquired: bool = True,
+        agent: AsyncMock | None = None,
+    ) -> _ResumeRun:
+        run = self._build(doc=doc, lock_acquired=lock_acquired, agent=agent)
+        with self._patched(run):
+            run.result = await resume_tracked_todo({}, *args)
+        return run
+
+    async def test_continues_the_parked_conversation_not_a_fresh_one(self) -> None:
+        """The parked run's thread holds its reasoning and partial results — a fresh uuid would orphan all of it."""
+        run = await self._resume("todo-1", "conv-parked", "ap_1", "Send briefing")
+
+        assert run.result == "resumed:todo-1"
+        kwargs = run.agent.await_args.kwargs
+        assert kwargs["conversation_id"] == "conv-parked"
+        assert kwargs["user"] is run.user
+        assert kwargs["options"].trigger_context == {
+            "trigger_type": TriggerType.SCHEDULED_TODO.value,
+            "todo_id": "todo-1",
+            "todo_title": "Check the deploy",
+            "active_todo_id": "todo-1",
+            "execution_mode": "background",
+            "resume_from_approval": "ap_1",
+        }
+
+    async def test_the_agent_is_told_the_granted_call_already_ran(self) -> None:
+        """Without it the resumed run re-issues the approved action, a second send the user never approved."""
+        run = await self._resume("todo-1", "conv-parked", "ap_1", "Send briefing")
+
+        request = run.agent.await_args.kwargs["request"]
+        assert request.message == self.RESUME_MESSAGE
+        assert request.messages == [{"role": "user", "content": self.RESUME_MESSAGE}]
+        assert (request.fileIds, request.fileData, request.selectedTool) == ([], [], None)
+
+    async def test_it_runs_as_the_todos_owner_under_their_daily_budget(self) -> None:
+        run = await self._resume("todo-1", "conv-parked", "ap_1", "Send briefing")
+
+        run.repo.get_by_id.assert_awaited_once_with("todo-1")
+        run.load_user.assert_awaited_once_with("user-7")
+        run.budget.assert_awaited_once_with("user-7", feature_key=TRIGGER_TODO_FEATURE_KEY)
+        run.log.set.assert_any_call(todo_id="todo-1", approval_id="ap_1")
+
+    async def test_it_holds_the_todos_execution_lock_for_the_run(self) -> None:
+        """Same key as execute_tracked_todo, or a scheduled run and a resume overlap on one todo."""
+        run = await self._resume("todo-1", "conv-parked", "ap_1", "Send briefing")
+
+        run.pool.set.assert_awaited_once_with(
+            "gaia_todo_exec:todo-1", "1", nx=True, ex=LOCK_TTL_SECONDS
+        )
+        run.pool.delete.assert_awaited_once_with("gaia_todo_exec:todo-1")
+
+    async def test_the_activity_log_brackets_the_resume_with_utc_stamps(self) -> None:
+        long_reply = "Sent the briefing.\nAll three recipients " + "x" * 150
+        agent = AsyncMock(return_value=SilentRunResult(message=long_reply, tool_data=[]))
+        run = await self._resume("todo-1", "conv-parked", "ap_1", "Send briefing", agent=agent)
+
+        start, end = run.entries()
+        start_at, start_text = _split_stamp(start)
+        end_at, end_text = _split_stamp(end)
+        assert start_at.utcoffset() == timedelta(0)
+        assert end_at.utcoffset() == timedelta(0)
+        assert start_text == (
+            "▶ approval resume started (ap_1: Send briefing — granted, continuing in this thread)"
+        )
+        summary = long_reply.replace("\n", " ")[:120]
+        assert end_text == f"✓ approval resume finished (summary={summary!r})"
+        assert {
+            (c.kwargs["todo_id"], c.kwargs["user_id"]) for c in run.timeline.call_args_list
+        } == {("todo-1", "user-7")}
+
+    async def test_a_reply_with_no_text_is_logged_with_an_empty_summary(self) -> None:
+        agent = AsyncMock(return_value=SilentRunResult(message="", tool_data=[]))
+        run = await self._resume("todo-1", "conv-parked", "ap_1", "Send briefing", agent=agent)
+
+        _, end_text = _split_stamp(run.entries()[-1])
+        assert end_text == "✓ approval resume finished (summary='')"
+
+    async def test_the_result_is_delivered_and_captured_against_the_owner(self) -> None:
+        run = await self._resume(
+            "todo-1",
+            "conv-parked",
+            "ap_1",
+            "Send briefing",
+            doc=_doc(user_id="user-7", recurrence="daily"),
+        )
+
+        run.deliver.assert_awaited_once_with(
+            user=run.user,
+            user_id="user-7",
+            notification_text="Briefing sent.",
+            origin='tracked todo "Check the deploy" (id todo-1)',
+        )
+        run.capture.assert_called_once_with(
+            "user-7",
+            AnalyticsEvents.TODO_RUN_RESULT_DELIVERED,
+            {
+                "delivered": True,
+                "platform": ConversationSource.TELEGRAM.value,
+                "trigger_type": TriggerType.SCHEDULED_TODO.value,
+                "recurring": True,
+            },
+        )
+
+    async def test_a_failed_resume_is_recorded_raised_and_releases_the_lock(self) -> None:
+        run = self._build(agent=AsyncMock(side_effect=RuntimeError("model down")))
+        with self._patched(run), pytest.raises(RuntimeError, match="model down"):
+            await resume_tracked_todo({}, "todo-1", "conv-parked", "ap_1", "Send briefing")
+
+        failed = run.timeline.call_args_list[-1].kwargs
+        failed_at, failed_text = _split_stamp(failed["entry"])
+        assert failed_at.utcoffset() == timedelta(0)
+        assert failed_text == "✗ approval resume failed (RuntimeError)"
+        assert (failed["todo_id"], failed["user_id"]) == ("todo-1", "user-7")
+        run.pool.delete.assert_awaited_once_with("gaia_todo_exec:todo-1")
+
+    async def test_completed_todo_needs_no_resume(self) -> None:
+        run = await self._resume(
+            "todo-1", "conv-parked", "ap_1", "Send briefing", doc=_doc(completed=True)
+        )
+
+        assert run.result == "completed:todo-1"
+        run.agent.assert_not_called()
+
+    async def test_a_held_lock_defers_the_resume_one_backoff_step_later(self) -> None:
+        before = datetime.now(UTC)
+        run = await self._resume("todo-1", "conv-x", "ap_1", "r", lock_acquired=False)
+        after = datetime.now(UTC)
+
+        assert run.result == "resume_deferred:todo-1 (lock held)"
+        run.agent.assert_not_called()
+        run.pool.delete.assert_not_awaited()
+        assert run.enqueue.await_args.args == (
+            run.pool,
+            "resume_tracked_todo",
+            "todo-1",
+            "conv-x",
+            "ap_1",
+            "r",
+            1,
+        )
+        retry_at = run.enqueue.await_args.kwargs["_defer_until"]
+        assert before + LOCK_DEFER_BACKOFF[0] <= retry_at <= after + LOCK_DEFER_BACKOFF[0]
+        assert retry_at.utcoffset() == timedelta(0)
+
+    async def test_a_held_lock_past_the_last_backoff_step_drops_loudly(self) -> None:
+        exhausted = len(LOCK_DEFER_BACKOFF)
+        run = await self._resume("todo-1", "conv-x", "ap_1", "r", exhausted, lock_acquired=False)
+
+        assert run.result == "resume_dropped:todo-1 (lock held)"
+        run.enqueue.assert_not_awaited()
+        run.log.warning.assert_called_once_with("tracked_todo.resume_lock_held", todo_id="todo-1")

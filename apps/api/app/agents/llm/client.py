@@ -6,6 +6,7 @@ import math
 import time
 from typing import Any, TypedDict, TypeVar, cast
 
+import httpx
 from langchain_core.callbacks import BaseCallbackHandler, UsageMetadataCallbackHandler
 from langchain_core.language_models import LanguageModelInput, LanguageModelLike
 from langchain_core.language_models.chat_models import (
@@ -22,6 +23,7 @@ from langchain_core.runnables import (
 )
 from langchain_core.runnables.utils import ConfigurableField
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_openrouter import ChatOpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
 from pydantic import BaseModel, SecretStr
@@ -40,6 +42,7 @@ from app.constants.llm import (
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_NAME,
+    DEV_LLM_BROWSER_HEADERS,
     DEV_LLM_MAX_OUTPUT_TOKENS,
     HELPER_MAX_OUTPUT_TOKENS,
     LLM_INVOKE_TIMEOUT_SECONDS,
@@ -82,16 +85,27 @@ from shared.py.wide_events import log
 
 _StructuredT = TypeVar("_StructuredT", bound=BaseModel)
 _ResultT = TypeVar("_ResultT")
+# The custom lane runs ChatOpenAI, every other lane ChatOpenRouter; both are
+# BaseChatModel. Identity-preserving so each caller keeps its concrete type.
+_LLMT = TypeVar("_LLMT", bound=BaseChatModel)
 
 
-def without_sdk_retry(llm: ChatOpenRouter) -> ChatOpenRouter:
-    """Leave retrying to :func:with_llm_retry.
+# NOSONAR justification: intentional pass-through -- normalizes retries in place and returns the same client for chaining
+def without_sdk_retry(llm: _LLMT) -> _LLMT:  # NOSONAR python:S3516
+    """Disable the SDK's own retry loop so with_llm_retry is the only one.
 
-    The SDK's own retry loop nests under ours and turned 3 attempts into 40
-    requests. max_retries=0 does NOT disable it — the SDK then applies a
-    one-hour default; only this does.
+    The SDK loop nests under ours and turned 3 attempts into 40 requests.
+    max_retries=0 does NOT disable it (the SDK then applies a one-hour
+    default); only clearing retry_config does.
     """
-    llm.client.sdk_configuration.retry_config = RetryConfig(
+    sdk_client = getattr(llm, "client", None)
+    sdk_config = getattr(sdk_client, "sdk_configuration", None)
+    if sdk_config is None:
+        # Not an OpenRouter-SDK client (e.g. ChatOpenAI on the custom lane):
+        # nothing SDK-side to disable, retries are already ours alone.
+        return llm
+    # Equivalent to a None retry_config, which the SDK also runs without retrying.
+    sdk_config.retry_config = RetryConfig(
         # Any strategy but "backoff" skips the retry path, so the (required)
         # backoff values below are never read.
         strategy="none",
@@ -99,7 +113,7 @@ def without_sdk_retry(llm: ChatOpenRouter) -> ChatOpenRouter:
             initial_interval=0, max_interval=0, exponent=1.0, max_elapsed_time=0
         ),
         retry_connection_errors=False,
-    )
+    )  # pragma: no mutate
     return llm
 
 
@@ -131,8 +145,13 @@ PROVIDER_PRIORITY: dict[int, LLMProviderName] = {
 }
 
 
+def _secret_or_none(api_key: str | None) -> SecretStr | None:
+    """Wrap an API key exactly as pydantic coerces one into a SecretStr | None field."""
+    return None if api_key is None else SecretStr(api_key)
+
+
 @cache
-def _sim_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
+def _sim_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Build the one model used for EVERYTHING under GAIA_SIM_MODE.
 
     An OpenAI-wire client pointed at the local scripted stub (tools/llm-stub).
@@ -258,7 +277,7 @@ def init_openrouter_llm() -> LanguageModelLike:
             # Output cap; must stay well under the model's shared input+output context
             # window (see OPENROUTER_MAX_OUTPUT_TOKENS) or OpenRouter rejects the request.
             max_tokens=OPENROUTER_MAX_OUTPUT_TOKENS,
-            api_key=settings.OPENROUTER_API_KEY,
+            api_key=_secret_or_none(settings.OPENROUTER_API_KEY),
             # App attribution → OpenRouter rankings/analytics. ChatOpenRouter exposes
             # these as dedicated params (NOT `default_headers`, which it forwards to
             # send_async and crashes on). https://openrouter.ai/docs/app-attribution
@@ -295,25 +314,39 @@ def init_custom_llm() -> LanguageModelLike:
     """
     if settings.GAIA_SIM_MODE:
         return _sim_llm()
-    return _openrouter_wire_configurables(_build_custom_llm())
+    # Only the model pin: the custom lane runs ChatOpenAI (no reasoning field to
+    # bind, binding keys omit reasoning/model_kwargs). model_name is the field id
+    # both ChatOpenAI and ChatOpenRouter expose (see _MODEL_FIELD).
+    return _build_custom_llm().configurable_fields(model_name=_MODEL_FIELD)
 
 
-def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
+def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
     """Build the bare custom-endpoint chat model, before the configurable wiring.
 
-    Split out because a structured one-shot needs the model itself:
-    with_structured_output lives on the chat model, not on the configurable
-    wrapper init_custom_llm hands back.
+    Split out because a structured one-shot needs the model itself, which the
+    configurable wrapper init_custom_llm hides. ChatOpenAI not ChatOpenRouter:
+    the openrouter SDK requires a system_fingerprint that OpenAI-compatible
+    lanes omit, failing every call; the openai SDK tolerates it.
     """
+    # ChatOpenAI takes the browser headers on its httpx clients directly
+    # (ChatOpenRouter's default_headers path crashes — see init_openrouter_llm).
     llm = without_sdk_retry(
-        ChatOpenRouter(
+        ChatOpenAI(
             model=PROVIDER_MODELS[LLMProviderName.CUSTOM],
             temperature=temperature,
             streaming=True,
             stream_usage=True,
-            max_tokens=DEV_LLM_MAX_OUTPUT_TOKENS,
-            api_key=settings.DEV_LLM_API_KEY,
+            # Field name is max_tokens, but ChatOpenAI aliases it to
+            # max_completion_tokens at construction; langchain still sends it as
+            # max_tokens on the wire (compatible with the OpenAI-style lanes).
+            max_completion_tokens=DEV_LLM_MAX_OUTPUT_TOKENS,
+            # Unlike the OpenRouter SDK (see without_sdk_retry), the OpenAI
+            # SDK honors max_retries=0, so retries stay solely with with_llm_retry.
+            max_retries=0,
+            api_key=_secret_or_none(settings.DEV_LLM_API_KEY),
             base_url=settings.DEV_LLM_BASE_URL,
+            http_client=httpx.Client(headers=DEV_LLM_BROWSER_HEADERS),
+            http_async_client=httpx.AsyncClient(headers=DEV_LLM_BROWSER_HEADERS),
         )
     )
     # Fractional-window middleware resolves the window from the model profile at
@@ -474,7 +507,7 @@ def register_llm_providers() -> None:
         init_custom_llm()
 
 
-def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
+def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Build the single factory for the default model (DEFAULT_MODEL_NAME, over OpenRouter).
 
     Used by EVERY auxiliary LLM task -- the paid model is reserved for the main chat
@@ -530,7 +563,7 @@ def _provider_order_kwargs() -> _ProviderOrderKwargs:
 
 
 @cache
-def _build_default_llm(temperature: float) -> BaseChatModel:
+def _build_default_llm(temperature: float) -> ChatOpenRouter:
     llm = without_sdk_retry(
         ChatOpenRouter(
             model=DEFAULT_MODEL_NAME,
@@ -540,7 +573,7 @@ def _build_default_llm(temperature: float) -> BaseChatModel:
             streaming=True,
             stream_usage=True,
             max_tokens=OPENROUTER_MAX_OUTPUT_TOKENS,
-            api_key=settings.OPENROUTER_API_KEY,
+            api_key=_secret_or_none(settings.OPENROUTER_API_KEY),
             **_app_attribution(),
             **_provider_order_kwargs(),
         )
@@ -552,7 +585,7 @@ def _build_default_llm(temperature: float) -> BaseChatModel:
     return llm
 
 
-def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
+def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenRouter:
     """Return get_default_llm capped to HELPER_MAX_OUTPUT_TOKENS.
 
     For one-shot helpers whose output is small. The graph-adjacent consumers
@@ -563,7 +596,7 @@ def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatM
     llm = get_default_llm(temperature=temperature)
     if settings.GAIA_SIM_MODE:
         return llm
-    return cast(BaseChatModel, llm.model_copy(update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS}))
+    return llm.model_copy(update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS})
 
 
 def get_vision_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
@@ -780,6 +813,12 @@ class StructuredCallOptions:
 
     temperature: float = DEFAULT_LLM_TEMPERATURE
     timeout: float | None = LLM_INVOKE_TIMEOUT_SECONDS
+    # Model override for this one-shot only (None = the aux default). Rides
+    # model_kwargs like the provider order, not .bind (bind_tools drops it).
+    model_name: str | None = None
+    # OpenRouter `models`-array fallback, tried in order on transport errors —
+    # never on verdicts. Empty = no fallback.
+    fallback_model_names: tuple[str, ...] = ()
 
 
 _DEFAULT_STRUCTURED_OPTIONS = StructuredCallOptions()
@@ -1246,21 +1285,30 @@ async def _record_auxiliary_usage(
 
 
 def _aux_structured_runnable(
-    schema: type[_StructuredT], temperature: float, config: RunnableConfig | None
+    schema: type[_StructuredT],
+    temperature: float,
+    config: RunnableConfig | None,
+    *,
+    model_name: str | None = None,
+    fallback_model_names: tuple[str, ...] = (),
 ) -> Runnable:
     """Build the structured runnable every auxiliary one-shot runs on.
 
-    The helper LLM re-pointed at :data:AUX_MODEL_NAME, with the aux
-    sticky-routing session.
+    The helper LLM re-pointed at model_name (default AUX_MODEL_NAME), with the
+    aux sticky-routing session. fallback_model_names rides the OpenRouter models
+    array: same primary first, tried in order on rate limits/downtime — verdicts
+    never trigger it.
     """
     # The alias must be set via model_copy, NOT .bind(model=...):
     # with_structured_output rebuilds via bind_tools, which drops a bound
     # alias — every aux call then served DEFAULT_MODEL_NAME (measured).
-    structured = (
-        get_helper_llm(temperature=temperature)
-        .model_copy(update={"model_name": AUX_MODEL_NAME})
-        .with_structured_output(schema)
-    )
+    resolved = model_name or AUX_MODEL_NAME
+    base = get_helper_llm(temperature=temperature)
+    helper = base.model_copy(update={"model_name": resolved})
+    if fallback_model_names:
+        merged = {**(base.model_kwargs or {}), "models": [resolved, *fallback_model_names]}
+        helper = helper.model_copy(update={"model_kwargs": merged})
+    structured = helper.with_structured_output(schema)
     # Bound AFTER with_structured_output (which drops outer bindings). Aux
     # one-shots get their OWN suffixed sticky session — sharing the
     # conversation's session_id re-pinned its provider (measured: rotation dips).
@@ -1315,7 +1363,13 @@ async def ainvoke_structured(
     return cast(
         _StructuredT,
         await ainvoke_llm(
-            _aux_structured_runnable(schema, options.temperature, config),
+            _aux_structured_runnable(
+                schema,
+                options.temperature,
+                config,
+                model_name=options.model_name,
+                fallback_model_names=options.fallback_model_names,
+            ),
             prompt,
             config=config,
             label=label,

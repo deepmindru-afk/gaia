@@ -26,6 +26,10 @@ class SectionContext:
     tier: AgentTier
     user_id: str | None = None
     user_name: str | None = None
+    #: Conversation the run belongs to. Sections needing per-conversation
+    #: ledger state (open approval pendings) read it here instead of reaching
+    #: into the run's configurable bag.
+    conversation_id: str | None = None
     user_timezone: str | None = None
     #: Onboarding answers; open by construction, so no fixed shape.
     user_preferences: dict[str, Any] | None = None
@@ -62,6 +66,7 @@ class SectionContext:
         return cls(
             tier=tier,
             user_id=user_id or configurable.get("user_id"),
+            conversation_id=configurable.get("conversation_id"),
             user_name=configurable.get("user_name"),
             user_timezone=configurable.get("user_timezone"),
             user_preferences=configurable.get("user_preferences"),

@@ -38,10 +38,18 @@ DEFAULT_PRICING = ModelPricing(
 # re-check by hand when a model id here is added or re-pointed.
 MODEL_PRICING: dict[str, ModelPricing] = {
     # DEFAULT_MODEL_NAME / PAID_MODEL_NAME — the graph lane on every tier.
+    # Live 2026-09-20: $0.04/$0.08/$0.016 per 1M in/out/cached.
     "deepseek/deepseek-v4-flash-0731": ModelPricing(
-        input_cost_per_1k=0.00014,
-        output_cost_per_1k=0.00028,
-        cached_input_cost_per_1k=0.000028,
+        input_cost_per_1k=0.00004,
+        output_cost_per_1k=0.00008,
+        cached_input_cost_per_1k=0.000016,
+    ),
+    # HIL_JUDGE_MODEL_NAME — the approval gate's judge (+ eval winner 42/50).
+    # Live 2026-09-20: $0.30/$2.50/$0.03 per 1M in/out/cached.
+    "google/gemini-3.5-flash-lite": ModelPricing(
+        input_cost_per_1k=0.0003,
+        output_cost_per_1k=0.0025,
+        cached_input_cost_per_1k=0.00003,
     ),
     # MEMORY_MODEL_NAME / VISION_MODEL_NAME — deliberately a different provider
     # than the graph lane (see constants/llm.py for the cache-collision reason).

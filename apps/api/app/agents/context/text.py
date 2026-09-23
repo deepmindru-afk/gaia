@@ -16,27 +16,20 @@ BACKGROUND_EXECUTION_BANNER = (
     "   - You were woken by a scheduled trigger. There is no user to ask.\n"
     "   - Do NOT ask clarifying questions, present plans for approval, or seek confirmation.\n"
     '   - Do NOT produce conversational acknowledgements ("Sure, I\'ll…", "Let me know if…").\n'
-    "   - Just execute. If you need a decision you cannot make, write the question into "
+    "   - Gated actions register persistent approval cards (never expire) instead of "
+    "pausing: if a call comes back PENDING, leave it and move on to independent work "
+    "or stop — the user decides in the Approvals tab and durable work resumes. "
+    "If the step is not needed, withdraw it with a revoke before the run ends.\n"
+    "   - Just execute. If no card can carry the decision (a truly novel choice with "
+    "no standing instruction), write the question into "
     "the Context section of the active todo's canvas.md and stop.\n"
     "   - Your output is consumed by the system, not a human. Be terse and action-only."
 )
 
-#: Comms: pure capability awareness — it hands off rather than acting.
+#: Comms: pure capability awareness — it delegates via call_executor rather
+#: than acting.
 CONNECTED_INTEGRATIONS_HEADER = (
-    "Connected integrations (hand off to the matching subagent to use them):"
-)
-
-#: The executor performs the handoffs, so its header states the list is live
-#: and names the parenthesised id as the handoff ``subagent_id``.
-EXECUTOR_CONNECTED_INTEGRATIONS_HEADER = (
-    "CONNECTED INTEGRATIONS (live snapshot of the user's currently connected accounts as of "
-    "this turn; this is the latest connected set, so trust it over retrieve_tools for what is "
-    "connected). To act on one, handoff to its subagent using the id in parentheses as the "
-    "handoff subagent_id. If the user asks for a provider that is NOT listed here, STILL do the "
-    "handoff: the handoff is what shows the user the connect card. Telling the user to connect "
-    "WITHOUT handing off leaves them hunting for a button that was never rendered. Built-in "
-    "subagents (todos, gaia_knowledge_guide, docgen) are always available; one is "
-    "listed below only where a connected account could be mistaken for it:"
+    "Connected integrations (the executor can act on these when you delegate via call_executor):"
 )
 
 #: Comms: knows a device exists so it delegates local/file work rather than
@@ -63,7 +56,7 @@ EXECUTOR_CONNECTED_DEVICES_HEADER = (
 
 
 class BuiltinOverlap(NamedTuple):
-    """A built-in subagent whose job a connected provider gets mistaken for."""
+    """A built-in capability whose job a connected provider gets mistaken for."""
 
     subagent_id: str
     description: str
@@ -83,6 +76,20 @@ BUILTIN_CAPABILITY_OVERLAPS: Final[tuple[BuiltinOverlap, ...]] = (
 
 #: Renders to ``- Todos: GAIA's own todo list, not Todoist (todos)``.
 BUILTIN_OVERLAP_LINE: Final[str] = "- {description}, not {providers} ({subagent_id})"
+
+#: The activation variant of the header above. Same guarantee (call the tool even
+#: for an unlisted integration, because the call is what renders the connect card),
+#: but the executor acts on the integration itself instead of routing to a subagent.
+EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER = (
+    "CONNECTED INTEGRATIONS (live snapshot of the user's currently connected accounts as of "
+    "this turn; this is the latest connected set, so trust it over retrieve_tools for what is "
+    "connected). To act on one, call activate_integration with the id in parentheses, then use "
+    "its tools yourself. If the user asks for an integration that is NOT listed here, STILL "
+    "call activate_integration on it: that call is what shows the user the connect card. "
+    "Telling the user to connect WITHOUT calling it leaves them hunting for a button that was "
+    "never rendered. Built-in integrations (reminders, todos, gaia_knowledge_guide, docgen) "
+    "are always available and are not listed here:"
+)
 
 MEMORY_RECALL_HEADER = (
     "Based on our previous conversations (bracketed dates say when "

@@ -13,8 +13,10 @@ a body of its own next to the table.
 """
 
 import asyncio
+from datetime import UTC, datetime
 import functools
 import re
+from typing import TypedDict, cast
 
 from app.agents.context.section_context import SectionContext
 from app.agents.context.text import (
@@ -27,7 +29,10 @@ from app.agents.context.text import (
 )
 from app.agents.prompts.new_user_prompts import build_new_user_guidance
 from app.agents.workspace.paths import session_dir
+from app.config.oauth_config import get_integration_by_id
+from app.constants.log_tags import LogTag
 from app.constants.tool_labels import humanize_tool_name
+from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.db.repositories.conversations import conversation_repository
 from app.db.repositories.todos import todo_repository
 from app.memory.context import AGENDA_HEADING, RECENT_ACTIVITY_HEADING
@@ -41,10 +46,12 @@ from app.services.device.device_service import (
 from app.services.gaia_knowledge_service import gaia_knowledge_service
 from app.services.integrations.user_integrations import get_connected_integrations_named
 from app.services.onboarding.first_question import seeded_chips
+from app.services.provider_metadata_service import get_provider_metadata
 from app.services.storage._vfs_common import folder_name
 from app.services.tools.tools_service import get_integration_tool_list
 from app.services.tracked_todo_service import tracked_todo_service
 from app.utils.artifact_utils import artifact_url_base
+from app.utils.user_preferences_utils import OnboardingPreferencesRecord
 from shared.py.wide_events import log
 
 
@@ -229,7 +236,7 @@ async def build_tracked_todos_block(ctx: SectionContext) -> str:
 NEW_USER_CONVERSATION_LIMIT = 3
 
 
-def _selected_needs(preferences: dict[str, object]) -> list[OnboardingNeed]:
+def _selected_needs(preferences: OnboardingPreferencesRecord) -> list[OnboardingNeed]:
     """Return the onboarding needs off a raw preferences bag, in the order picked.
 
     A value this build does not know (an older client, a renamed need) is
@@ -255,8 +262,11 @@ async def build_new_user_guidance_block(ctx: SectionContext) -> str:
     """
     if not (ctx.user_id and ctx.user_preferences):
         return ""
-    needs = _selected_needs(ctx.user_preferences)
-    other_need = ctx.user_preferences.get("other_need")
+    preferences: OnboardingPreferencesRecord = cast(
+        OnboardingPreferencesRecord, ctx.user_preferences
+    )
+    needs = _selected_needs(preferences)
+    other_need = preferences.get("other_need")
     if not isinstance(other_need, str):
         other_need = None
     if not needs and not other_need:
@@ -273,7 +283,7 @@ async def build_new_user_guidance_block(ctx: SectionContext) -> str:
         return ""
     if conversations > NEW_USER_CONVERSATION_LIMIT:
         return ""
-    profession = ctx.user_preferences.get("profession")
+    profession = preferences.get("profession")
     # The chips GAIA itself offered at the end of the seeded conversation. Their
     # first message is usually one of them, and without this the model treats a
     # one-word choice as a fragment it has to ask about.
@@ -344,23 +354,30 @@ async def build_active_todo_banner(ctx: SectionContext) -> str:
     return format_active_todo_banner(doc) if doc else ""
 
 
-def _dedupe_by_provider(items: list[dict[str, str]]) -> list[dict[str, str]]:
+class _ConnectedIntegration(TypedDict):
+    """One row of get_connected_integrations_named: an integration id and its display name."""
+
+    id: str
+    name: str
+
+
+def _dedupe_by_provider(items: list[_ConnectedIntegration]) -> list[_ConnectedIntegration]:
     """One row per provider, keeping whichever row resolved to a display name.
 
     A connected set can hold two ids for the same account (a legacy
     google_calendar beside today's googlecalendar) — rendering both once gave
     the agent two handoff targets, one resolving to no subagent.
     """
-    by_provider: dict[str, dict[str, str]] = {}
+    by_provider: dict[str, _ConnectedIntegration] = {}
     for item in items:
         key = re.sub(r"[^a-z0-9]", "", item["id"].lower())
-        held = by_provider.get(key)
+        held: _ConnectedIntegration | None = by_provider.get(key)
         if held is None or (held["name"] == held["id"] and item["name"] != item["id"]):
             by_provider[key] = item
     return list(by_provider.values())
 
 
-def _builtin_overlap_lines(items: list[dict[str, str]]) -> list[str]:
+def _builtin_overlap_lines(items: list[_ConnectedIntegration]) -> list[str]:
     """Rows spelling out the built-ins a connected provider would otherwise mask."""
     names = {item["id"]: item["name"] for item in items}
     lines: list[str] = []
@@ -380,13 +397,13 @@ def _builtin_overlap_lines(items: list[dict[str, str]]) -> list[str]:
 async def build_connected_integrations_manifest(user_id: str, header: str) -> str:
     """One line per connected integration, so the agent knows what it can reach.
 
-    Capability awareness only — tool schemas still come from retrieve_tools
-    at inference time. The parenthesised id doubles as the handoff
-    subagent_id. A built-in whose job a connected provider is mistaken for
-    gets its own row above the accounts.
+    Capability awareness only; schemas still come from retrieve_tools. The
+    parenthesised id is the integration_id for activate_integration; a row
+    collapses to just the id when the name IS the id. A builtin shadowed by
+    a connected provider gets its own row above the accounts.
     """
     try:
-        items = await get_connected_integrations_named(user_id)
+        items = cast(list[_ConnectedIntegration], await get_connected_integrations_named(user_id))
     except Exception as e:
         log.warning(
             "Error building connected-integrations manifest",
@@ -397,7 +414,7 @@ async def build_connected_integrations_manifest(user_id: str, header: str) -> st
         return ""
     if not items:
         return ""
-    connected = _dedupe_by_provider(items)
+    connected: list[_ConnectedIntegration] = _dedupe_by_provider(items)
     lines = [header, *_builtin_overlap_lines(connected)]
     for item in connected:
         iid, name = item["id"], item["name"]
@@ -467,3 +484,87 @@ async def build_connected_devices_manifest(user_id: str, header: str) -> str:
         # fails the ownership check.
         lines.append(f"- {entry.name} ({entry.platform}, id: {entry.id}){exposing}")
     return "\n".join(lines)
+
+
+async def build_provider_metadata_block(integration_id: str | None, user_id: str | None) -> str:
+    """Who the user is on this provider — GitHub login, Gmail address, etc.
+
+    Shared by the worker context sections and activate_integration: an
+    executor acting on an integration directly needs the same identity a
+    worker got, or it does not know which account it is operating.
+    """
+    if not (integration_id and user_id):
+        return ""
+    integration = get_integration_by_id(integration_id)
+    if not integration or not integration.provider:
+        return ""
+    try:
+        metadata = await get_provider_metadata(user_id, integration.provider)
+    except Exception as e:
+        log.warning(
+            f"{LogTag.AGENT} Failed to fetch provider metadata",
+            provider=integration.provider,
+            user_id=user_id,
+            error_type=type(e).__name__,
+            error=str(e),
+        )
+        return ""
+    if not metadata:
+        return ""
+    lines = "\n".join(f"- {key}: {value}" for key, value in metadata.items())
+    return f"USER CONTEXT FOR {integration.name.upper()}:\n{lines}"
+
+
+async def build_open_pendings_block(ctx: SectionContext) -> str:
+    """Open approval pendings for this conversation, oldest first.
+
+    Ledger state, not per-run state: without this a future turn never sees
+    what past turns left undecided, and "revoke anything stale" never fires.
+    Degrades to nothing (with a warning) rather than failing the turn over an
+    enrichment block. Cap keeps a hoarding conversation out of the cache prefix.
+    """
+    if not ctx.conversation_id:
+        return ""
+    try:
+        pendings = await approval_ledger_repository.list_open(ctx.conversation_id)
+    except Exception as e:
+        log.warning(
+            "open_pendings_fetch_failed",
+            error_type=type(e).__name__,
+        )
+        return ""
+    if not pendings:
+        return ""
+    # Belt-and-suspenders behind the conversation scoping: a foreign row must
+    # never render into this user's agent context. Legacy rows without an
+    # owner stay visible rather than silently dropping legit pendings.
+    if ctx.user_id:
+        pendings = [doc for doc in pendings if not doc.user_id or doc.user_id == ctx.user_id]
+        if not pendings:
+            return ""
+    shown = pendings[:10]
+    lines = [
+        f"- {doc.approval_id} | {doc.tool_name} | {_pending_age(doc.created_at)} | {doc.summary}"
+        for doc in shown
+    ]
+    if len(pendings) > len(shown):
+        lines.append(f"(+{len(pendings) - len(shown)} more open)")
+    lines.append(
+        'If a step is no longer needed, withdraw it with execute(tool_name="revoke", data={"id": "<id>"}).'
+    )
+    return "OPEN PENDINGS (awaiting the user's decision):\n" + "\n".join(lines)
+
+
+def _pending_age(created_at: object) -> str:
+    """Coarse age bucket for a pending row; unknown when the timestamp is absent.
+
+    Bucketed to the day so the open-pendings block stays byte-stable inside
+    the cache-stable context slot (per-minute ages would bust the prompt-cache
+    prefix every minute while a pending sits open).
+    """
+    if not isinstance(created_at, datetime):
+        return "?"
+    delta = datetime.now(UTC) - created_at
+    if delta.days > 0:
+        return f"{delta.days}d"
+    return "today"

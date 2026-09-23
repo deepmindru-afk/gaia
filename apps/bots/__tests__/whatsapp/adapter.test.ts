@@ -52,10 +52,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockSendText = vi.fn();
 const mockMarkRead = vi.fn();
+const mockSendReaction = vi.fn();
 const mockWaClientInstance = {
   messages: {
     sendText: mockSendText,
     markRead: mockMarkRead,
+    sendReaction: mockSendReaction,
   },
 };
 
@@ -888,5 +890,64 @@ describe("WhatsAppAdapter - welcome message", () => {
     mockSendText.mockRejectedValueOnce(new Error("Network error"));
 
     await expect(priv.sendWelcome("15551234567")).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deliverOutboundReaction — native attach with text fallback
+// ---------------------------------------------------------------------------
+
+describe("WhatsAppAdapter - deliverOutboundReaction", () => {
+  type Reactor = {
+    deliverOutboundReaction: (
+      destinationId: string,
+      reaction: { target_platform_message_id: string; emoji: string },
+      isChannel: boolean,
+    ) => Promise<void>;
+    analytics: { capture: (...args: unknown[]) => void };
+  };
+
+  function makeReactor() {
+    const adapter = makeAdapter() as unknown as Reactor;
+    adapter.analytics = { capture: vi.fn() };
+    return adapter;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("attaches via sendReaction with the Kapso addressing", async () => {
+    mockSendReaction.mockResolvedValue({ messages: [{ id: "r1" }] });
+    const adapter = makeReactor();
+
+    await adapter.deliverOutboundReaction(
+      "15551234567",
+      { target_platform_message_id: "wamid.123", emoji: "👍" },
+      false,
+    );
+
+    expect(mockSendReaction).toHaveBeenCalledWith({
+      phoneNumberId: "test-phone-id",
+      to: "+15551234567",
+      reaction: { messageId: "wamid.123", emoji: "👍" },
+    });
+    expect(mockSendText).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a text bubble when attach fails", async () => {
+    mockSendReaction.mockRejectedValueOnce(new Error("too old to react"));
+    mockSendText.mockResolvedValue({ messages: [{ id: "wa-msg-9" }] });
+    const adapter = makeReactor();
+
+    await adapter.deliverOutboundReaction(
+      "15551234567",
+      { target_platform_message_id: "wamid.123", emoji: "👍" },
+      false,
+    );
+
+    expect(mockSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ body: "👍" }),
+    );
   });
 });

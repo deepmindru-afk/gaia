@@ -460,7 +460,9 @@ class ToolRegistry:
         )
         self._add_category(
             "control",
-            tools=[finish_task_tool.finish_task],
+            tools=[
+                finish_task_tool.finish_task,
+            ],
             options=CategoryOptions(internal=True),
             risk=CategoryRisk(destructive_tools=set()),
         )
@@ -510,6 +512,16 @@ class ToolRegistry:
             options=CategoryOptions(internal=True),
             risk=CategoryRisk(destructive_tools=set()),
         )
+        from app.agents.tools.execute import execute_tool, schema_tool
+
+        # The execute proxy is never classified by its own name: the HIL gate
+        # unwraps args["tool_name"] and classifies the REAL tool (hil/utils).
+        self._add_category(
+            "execute",
+            tools=[execute_tool.execute, schema_tool.get_tool_schema],
+            options=CategoryOptions(internal=True),
+            risk=CategoryRisk(destructive_tools=set()),
+        )
         self._add_category(
             "creative",
             tools=[image_tool.generate_image, flowchart_tool.create_flowchart],
@@ -543,7 +555,7 @@ class ToolRegistry:
         exclude_tools: list[str] | None = None,
     ) -> ToolCategory:
         """
-        Register provider tools on-demand when subagent is created.
+        Register provider tools on-demand when an integration is first used.
         Tools are loaded from Composio and indexed in ChromaDB.
         """
         if toolkit_name in self._categories:

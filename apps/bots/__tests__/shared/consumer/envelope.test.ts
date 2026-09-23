@@ -47,4 +47,24 @@ describe("outboundMessageEnvelopeSchema", () => {
       outboundMessageEnvelopeSchema.safeParse({ ...valid, text: 123 }).success,
     ).toBe(false);
   });
+
+  it("accepts a reaction-only envelope (no text body)", () => {
+    const { text: _text, ...noText } = valid;
+    expect(
+      outboundMessageEnvelopeSchema.safeParse({
+        ...noText,
+        reaction: { target_platform_message_id: "wamid.123", emoji: "👍" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a reaction without a target", () => {
+    const { text: _text, ...noText } = valid;
+    expect(
+      outboundMessageEnvelopeSchema.safeParse({
+        ...noText,
+        reaction: { target_platform_message_id: "", emoji: "👍" },
+      }).success,
+    ).toBe(false);
+  });
 });

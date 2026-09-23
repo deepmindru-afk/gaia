@@ -19,9 +19,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
-from typing import cast
+from typing import Any, TypedDict, cast
 
-from app.agents.core.background.session import get_session
+from app.agents.core.background.session import RunKind, get_session
 from app.constants.cache import HIL_DECLINED_PREFIX
 from app.constants.hil import (
     APPROVAL_REQUEST_TOOL_NAME,
@@ -37,15 +37,43 @@ from app.constants.hil import (
 from app.constants.log_tags import LogTag
 from app.core.stream_manager import stream_manager
 from app.db.redis import redis_cache
+from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.db.repositories.conversations import conversation_repository
-from app.models.hil_models import DeclinedCallRecord, HILApprovalRecord, HILApprovalStatus
+from app.models.agent_config import SubagentResumeItem
+from app.models.hil_models import (
+    DeclinedCallRecord,
+    HILApprovalRecord,
+    HILApprovalStatus,
+    LedgerState,
+)
 from app.models.stream_events import ApprovalRequestEntry, ApprovalRequestEntryData
+from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.hil.approvals_store import record_auto_approval, upsert_pending_approval
 from app.services.hil.notify import notify_approval_pending
 from app.services.hil.utils import GatedCall
 from app.services.latency_metrics import observe_hil_pause
 from app.utils.general_utils import clip_text
 from shared.py.wide_events import log, spawn_logged_task
+
+
+class _SessionFrame(TypedDict, total=False):
+    """A session.tool_events frame as read here; other writers share the list, so values are unchecked."""
+
+    tool_data: object
+    _held_approval: object
+
+
+class _FrameToolData(TypedDict, total=False):
+    tool_name: object
+    data: object
+
+
+class _ApprovalFrameData(TypedDict, total=False):
+    """An approval_request frame's data object, mutated in place when its card settles."""
+
+    approval_id: object
+    status: str
+    feedback: str
 
 
 @dataclass
@@ -55,6 +83,9 @@ class ApprovalOutcome:
     status: HILApprovalStatus
     feedback: str | None = None
     scope: str = "once"
+    # True when the refusal came from auto mode, never from the user — the
+    # retry message must not claim the user declined something they never saw.
+    auto: bool = False
 
 
 async def publish_approval_request(
@@ -66,6 +97,9 @@ async def publish_approval_request(
     tool_call: GatedCall,
     summary: str,
     integration_name: str | None,
+    auto_reason: str | None = None,
+    subagent_resume: SubagentResumeItem | None = None,
+    subagent_thread_id: str | None = None,
 ) -> None:
     """Record the pending approval and surface its card — exactly once.
 
@@ -83,6 +117,8 @@ async def publish_approval_request(
         args=tool_call.args,
         summary=summary,
         integration_name=integration_name,
+        subagent_thread_id=subagent_thread_id,
+        subagent_resume=subagent_resume,
     )
     if not created:
         return
@@ -95,10 +131,104 @@ async def publish_approval_request(
     await _publish_entry(
         stream_id,
         _approval_entry(
-            approval_id, tool_call, HILApprovalStatus.PENDING, summary, integration_name
+            approval_id,
+            tool_call,
+            HILApprovalStatus.PENDING,
+            summary,
+            integration_name,
+            auto_reason=auto_reason,
         ),
     )
     _schedule_pending_notification(user_id, conversation_id, approval_id, summary)
+
+
+async def publish_ledger_request(
+    *,
+    approval_id: str,
+    stream_id: str,
+    user_id: str,
+    conversation_id: str,
+    tool_call: GatedCall,
+    summary: str,
+    integration_name: str | None,
+    rationale: str | None = None,
+    auto_reason: str | None = None,
+    live: bool = True,
+    owner_run_type: str = "",
+    owner_id: str = "",
+) -> None:
+    """Surface a ledger PENDING card exactly once per registration.
+
+    Same approval_request wire shape as the barrier path, so clients render it
+    unchanged. On a live run the card is HELD (recorded on the session for the
+    end-of-run drain, no SSE until then); background runs publish immediately,
+    nobody being there to watch the stream.
+    """
+    log.set(hil={"approval_id": approval_id, "tool": tool_call.name, "stream_id": stream_id})
+    entry = _approval_entry(
+        approval_id,
+        tool_call,
+        HILApprovalStatus.PENDING,
+        summary,
+        integration_name,
+        auto_reason=auto_reason,
+    )
+    entry.data.rationale = rationale
+    entry.data.age_seconds = 0
+    entry.data.ledger_version = 0
+    # Server-owned funnel event: exactly once per registration, held or
+    # streamed — the card exists either way. Explicit user_id: bridge paths
+    # carry no request context to attribute from.
+    capture_event(
+        user_id,
+        AnalyticsEvents.HIL_CARD_SHOWN,
+        {
+            "approval_id": approval_id,
+            "tool_name": tool_call.name,
+            "ledger_version": 0,
+            "background": not live,
+        },
+    )
+    session = get_session(stream_id)
+    held = live and session is not None and session.kind is RunKind.LIVE
+    if owner_run_type and owner_id:
+        # Background owner parked here: surface its conversation in the
+        # sidebar while the approval lives (hidden otherwise).
+        await conversation_repository.mark_background_with_live_approval(
+            conversation_id, user_id=user_id
+        )
+    if not held:
+        # Background, detached-queued, and session-less runs publish immediately:
+        # nobody is watching this stream (or there is none to drain), so holding
+        # would hide the card until a drain that never comes.
+        await _publish_entry(stream_id, entry)
+        _schedule_pending_notification(user_id, conversation_id, approval_id, summary)
+        return
+    frame = {"tool_data": entry.model_dump(), "_held_approval": True}
+    session.tool_events.append(frame)
+
+
+async def sync_conversation_approval_flag(conversation_id: str, user_id: str) -> None:
+    """Rewrite one conversation's sidebar flag from its pending ledger rows.
+
+    Called wherever a row leaves the pending set (decide, revoke, cancel,
+    reconcile): the flag follows the ledger, never leads it. Pending-only, since
+    the flag tracks "needs the user" and a decided approval needs nothing.
+    Best-effort — a stale flag only mislists a conversation, never misdecides.
+    """
+    try:
+        rows = await approval_ledger_repository.list_open(conversation_id)
+        live = any(row.user_id == user_id and row.state is LedgerState.PENDING for row in rows)
+        await conversation_repository.refresh_live_approval_flag(
+            conversation_id, user_id=user_id, live=live
+        )
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} approval-flag sync failed",
+            conversation_id=conversation_id,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
 
 
 async def publish_decision(
@@ -184,12 +314,16 @@ async def publish_auto_approval(
 
 
 async def remember_declined_call(
-    stream_id: str, tool_name: str, args: Mapping[str, object], feedback: str | None
+    stream_id: str,
+    tool_name: str,
+    args: Mapping[str, object],
+    feedback: str | None,
+    auto: bool = False,
 ) -> None:
-    """Record that the user declined this exact call for the rest of the turn."""
+    """Record that this exact call was declined for the rest of the turn."""
     if not redis_cache.redis:
         return
-    record: DeclinedCallRecord = {"feedback": feedback}
+    record: DeclinedCallRecord = {"feedback": feedback, "auto": auto}
     await redis_cache.set(
         _declined_key(stream_id, tool_name, args),
         record,
@@ -211,7 +345,11 @@ async def recall_declined_call(
         return None
     # Correct by construction: the only writer is ``remember_declined_call`` above.
     record: DeclinedCallRecord = cast(DeclinedCallRecord, raw)
-    return ApprovalOutcome(status=HILApprovalStatus.DENIED, feedback=record.get("feedback"))
+    return ApprovalOutcome(
+        status=HILApprovalStatus.DENIED,
+        feedback=record.get("feedback"),
+        auto=record.get("auto", False),
+    )
 
 
 def build_summary(tool_name: str, args: Mapping[str, object], integration_name: str | None) -> str:
@@ -276,6 +414,145 @@ async def _publish_entry(stream_id: str, entry: ApprovalRequestEntry) -> None:
     session = get_session(stream_id)
     if session is not None:
         session.tool_events.append(frame)
+
+
+def settle_session_approval_frame(
+    stream_id: str,
+    approval_id: str,
+    status: str,
+    feedback: str | None = None,
+    *,
+    drop_if_unpublished: bool = False,
+) -> bool:
+    """Flip an already-recorded card frame to its terminal status, in place.
+
+    Mutating in place keeps the drain upsert a no-op safety net, not a path that
+    resurrects a settled card from a stale PENDING frame. With drop_if_unpublished
+    a still-held frame is removed instead (the user never saw it, so there is
+    nothing to tombstone). Returns whether a frame was settled or dropped.
+    """
+    try:
+        session = get_session(stream_id)
+        if session is None:
+            return False
+        settled = False
+        kept: list[dict[str, Any]] = []
+        for event in session.tool_events:
+            tool_data: _FrameToolData | None = _frame_tool_data(event)
+            if tool_data is None:
+                kept.append(event)
+                continue
+            if tool_data.get("tool_name") != APPROVAL_REQUEST_TOOL_NAME:
+                kept.append(event)
+                continue
+            data: _ApprovalFrameData | None = _frame_approval_data(tool_data)
+            if data is None or data.get("approval_id") != approval_id:
+                kept.append(event)
+                continue
+            if drop_if_unpublished and _is_held(event):
+                settled = True
+                continue
+            data["status"] = status
+            if feedback is not None:
+                data["feedback"] = feedback
+            kept.append(event)
+            settled = True
+        session.tool_events[:] = kept
+        return settled
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} Approval frame settle failed",
+            approval_id=approval_id,
+            error_type=type(e).__name__,
+        )
+        return False
+
+
+async def flush_held_approval_cards(stream_id: str) -> int:
+    """Publish held PENDING cards at run end so the open client renders them.
+
+    Without this they surface only after a full refresh re-fetches messages.
+    Only rows still PENDING go live; decided or revoked ones are dropped unseen.
+    Each frame clears its held marker as it publishes, so a second flush is a
+    no-op. A card whose row read or publish fails stays held for the drain.
+    """
+    session = get_session(stream_id)
+    if session is None:
+        return 0
+    flushed = 0
+    kept: list[dict[str, Any]] = []
+    for event in session.tool_events:
+        if not _is_held(event):
+            kept.append(event)
+            continue
+        tool_data: _FrameToolData | None = _frame_tool_data(event)
+        data: _ApprovalFrameData | None = _frame_approval_data(tool_data)
+        approval_id = data.get("approval_id") if data is not None else None
+        try:
+            row = (
+                await approval_ledger_repository.get_by_approval_id(approval_id)
+                if isinstance(approval_id, str)
+                else None
+            )
+        except Exception as e:
+            log.error(
+                f"{LogTag.HIL} Held card ledger read failed",
+                approval_id=approval_id,
+                error_type=type(e).__name__,
+            )
+            kept.append(event)
+            continue
+        if row is None or row.state not in (
+            LedgerState.PENDING,
+            LedgerState.APPROVED,
+        ):
+            # Decided, revoked, or gone: a card the user never saw needs
+            # no tombstone — drop it so the drain cannot resurrect it.
+            continue
+        try:
+            frame = {"tool_data": tool_data}
+            await stream_manager.publish_chunk(stream_id, f"data: {json.dumps(frame)}\n\n")
+            _schedule_pending_notification(
+                row.user_id, row.conversation_id, row.approval_id, row.summary
+            )
+        except Exception as e:
+            log.warning(
+                f"{LogTag.HIL} Held card flush missed its stream",
+                approval_id=row.approval_id,
+                error_type=type(e).__name__,
+            )
+            kept.append(event)
+            continue
+        # Marker stripped, frame kept: the end-of-run drain still persists
+        # it (reload-safe), while a second flush sees no marker and stays
+        # a no-op — live frames can never duplicate.
+        kept.append(frame)
+        flushed += 1
+    session.tool_events[:] = kept
+    return flushed
+
+
+def _frame_tool_data(event: object) -> _FrameToolData | None:
+    """Return a session frame's tool_data object, or None when it carries none."""
+    if not isinstance(event, dict):
+        return None
+    frame: _SessionFrame = cast(_SessionFrame, event)
+    tool_data = frame.get("tool_data")
+    return cast(_FrameToolData, tool_data) if isinstance(tool_data, dict) else None
+
+
+def _frame_approval_data(tool_data: _FrameToolData | None) -> _ApprovalFrameData | None:
+    """Return the data object inside a frame's tool_data, or None when it carries none."""
+    data = tool_data.get("data") if tool_data is not None else None
+    return cast(_ApprovalFrameData, data) if isinstance(data, dict) else None
+
+
+def _is_held(event: object) -> bool:
+    """Whether a session frame is a live-run card still held for the end-of-run flush."""
+    if not isinstance(event, dict):
+        return False
+    frame: _SessionFrame = cast(_SessionFrame, event)
+    return frame.get("_held_approval") is True
 
 
 def _approval_entry(

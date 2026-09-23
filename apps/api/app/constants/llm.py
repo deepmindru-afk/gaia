@@ -74,11 +74,11 @@ MESSAGES_SNAPSHOT_FREQUENCY = 50
 
 # Runaway loops are the main driver of long, expensive traces; capping tail
 # risk keeps p95 cost predictable. Legitimate tasks that need more steps
-# should split work across handoffs rather than chew through recursion budget.
-AGENT_RECURSION_LIMIT = 40  # Comms + provider subagents (routing / focused work)
-# The executor runs long multi-step tool loops across subagents, so 40 truncates
-# real work with GraphRecursionError. Both the graph's recursion_limit and the
-# accounting middleware's high-water-mark denominator read this.
+# should split work across spawns rather than chew through recursion budget.
+AGENT_RECURSION_LIMIT = 40  # Comms + workers (routing / focused work)
+# The executor runs long multi-step tool loops across several integrations, so 40
+# truncates real work with GraphRecursionError. Both the graph runtime limit and
+# the accounting middleware's denominator read this, so they stay in sync.
 EXECUTOR_RECURSION_LIMIT = 100
 SUBAGENT_RECURSION_LIMIT = 15  # Spawned subagents (spawn_subagent tool loop)
 # The workflow authoring subagent only discovers integrations/triggers then emits
@@ -146,10 +146,17 @@ TOOL_TIMEOUT_EXEMPT_TOOLS = frozenset(
         "cancel_executor",
         "spawn_subagent",
         "handoff",
-        "wait_for_subagents",
         "deep_research",
+        # bash carries its own deadline down (the e2b server-side command timeout,
+        # capped at BASH_MAX_TIMEOUT_SECONDS); bounding it here capped every command
+        # at 120s while the tool advertised 300 and killed code-mode execute() calls.
+        "bash",
     }
 )
+# How much longer the tool node waits than the bound closer to the tool: it must
+# expire strictly after dispatch_tool's inner bound, else the outer deadline wins
+# and the model only ever sees the node's generic timeout text.
+TOOL_TIMEOUT_BACKSTOP_BUFFER_SECONDS = 15
 
 # Run-metadata key carrying each call's label so TTFT callbacks can attribute a
 # sample: one turn's callback list is shared by the comms call and its title,
@@ -160,10 +167,10 @@ LLM_LABEL_METADATA_KEY: Final = "llm_label"
 # to the default model (see with_llm_retry in app/agents/llm/client.py).
 LLM_RETRY_MAX_ATTEMPTS = 3
 
-# Sticky routing (the ``session_id`` hint that pins a chain to one upstream) is
-# OpenRouter-wire behaviour. Gemini has no sticky routing, so the key is an
-# unsupported argument there and must never be sent.
-STICKY_ROUTING_PROVIDERS = frozenset({LLMProviderName.OPENROUTER, LLMProviderName.CUSTOM})
+# Sticky routing (the session_id hint pinning a chain to one upstream) is
+# OpenRouter-only wire behaviour: Gemini rejects the key, and CUSTOM runs
+# ChatOpenAI where session_id is unsupported on AsyncCompletions.create.
+STICKY_ROUTING_PROVIDERS = frozenset({LLMProviderName.OPENROUTER})
 # Auxiliary one-shots route on their own sticky session: sharing the
 # conversation's key re-pinned its provider from a background call (measured).
 AUX_SESSION_SUFFIX = "-aux"
@@ -182,9 +189,17 @@ DEFAULT_LLM_TEMPERATURE = 0.1
 # fractional triggers denominated in THIS window even under a different model.
 DEFAULT_MAX_TOKENS = 1_000_000
 # Changing the default model is high blast radius: update DEFAULT_MAX_TOKENS
-# (else fractional-token middleware fails to build) and add a MODEL_PRICING
-# entry. Text-only default for every tier: tool results with images are captioned rather than shown.
+# (else fractional-token middleware fails to build) and add a MODEL_PRICING entry.
+# Text-only default for every tier: image tool results are captioned, not shown.
 DEFAULT_MODEL_NAME = "deepseek/deepseek-v4-flash-0731"
+# The HIL intent judge runs here, not AUX_MODEL_NAME: accuracy and tail latency
+# beat sharing the graph lane's cache. The eval (50 scenarios, real LLMs) put
+# this at 42/50 in 1.9s p95 vs the default's 40/50 in 20s p95. Changing re-runs it.
+HIL_JUDGE_MODEL_NAME = "google/gemini-3.5-flash-lite"
+# OpenRouter `models`-array fallback for the judge only: tried in order on
+# rate limits, downtime, and moderation refusals — never on verdicts. The
+# fallback's bias is fail-safe (it over-asks rather than over-approves).
+HIL_JUDGE_FALLBACK_MODEL_NAMES: tuple[str, ...] = ("deepseek/deepseek-v4-flash-0731",)
 # Stand-in when a call reports no model id. Priced at DEFAULT_PRICING rather
 # than its real rate, so its appearance is an alertable bug, not a benign
 # default — both metering routes log it loudly.
@@ -262,6 +277,12 @@ PAID_COMMS_REASONING: dict[str, Any] = {"effort": "medium"}
 # 65,536 ceiling: these cheap lanes RESERVE max_tokens per request, so a 64k cap
 # 402'd as soon as balance dipped, while a 256-token probe still succeeded.
 DEV_LLM_MAX_OUTPUT_TOKENS = 16_000
+
+# Discounted DEV_LLM_* lanes sit behind Cloudflare, which 403s (error 1010)
+# programmatic user agents; a browser UA on the httpx clients passes.
+DEV_LLM_BROWSER_HEADERS: Final[dict[str, str]] = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+}
 
 # OpenRouter app attribution, sent as HTTP-Referer/X-Title/X-OpenRouter-Categories.
 # Development sends a fixed synthetic referer since a localhost FRONTEND_URL

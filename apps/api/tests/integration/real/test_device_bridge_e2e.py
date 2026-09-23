@@ -650,18 +650,21 @@ class TestDeviceServerRemoval:
             listing_after = await owner.get("/api/v1/device/list")
             assert listing_after.json()["devices"][0]["servers"] == []
 
-            # ...and the running daemon receives server.remove over its live socket
-            # and forgets the server. Poll its config until the frame lands.
+            # ...and the running daemon receives server.remove over its live socket,
+            # forgets the server, then logs it. Poll both: the log line is written
+            # after the config, so checking it the instant the config clears races.
             loop = asyncio.get_running_loop()
             deadline = loop.time() + 10.0
-            while daemon.read_config_keys() != set():
+            while (
+                daemon.read_config_keys() != set()
+                or "removed server 'everything'" not in daemon.daemon_log().lower()
+            ):
                 if loop.time() >= deadline:
                     raise AssertionError(
                         f"daemon still exposes {daemon.read_config_keys()} after delete; "
                         f"daemon.log:\n{daemon.daemon_log()}"
                     )
                 await asyncio.sleep(0.1)
-            assert "removed server 'everything'" in daemon.daemon_log().lower()
         finally:
             await owner.aclose()
             await daemon.stop_all()

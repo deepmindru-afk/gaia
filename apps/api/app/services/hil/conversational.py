@@ -1,18 +1,18 @@
 """Resolve pending HIL approvals from a bot user's next chat reply.
 
-BUTTON-LESS CHANNELS ONLY: the caller, _resolve_pending_approval_turn in
-app/services/chat/stream.py, invokes this for messaging-platform bots alone (WhatsApp,
-Telegram, Slack, Discord). Web/mobile/desktop resolve via POST /approvals/{id}/decision
-and never run this classifier — a typed reply is a text-only bot's only approval surface.
+BUTTON-LESS CHANNELS ONLY: the caller (_resolve_pending_approval_turn in
+app/services/chat/stream.py) invokes this for messaging-platform bots alone;
+web/mobile/desktop resolve via POST /approvals/{id}/decision instead.
 
-Single pending approval: approve resumes the paused run AS PROPOSED; deny resolves
-it as a refusal carrying any correction as next-turn feedback; unrelated abandons
-it and lets the new message run as a normal turn. An 'approve' never edits args —
-"yes but cc finance" is a deny with the change as feedback (enforced by _no_arg_edit).
-A wait_for_subagents batch resolves per-item: "yes"/"no" decide all, a selective
-reply decides only what it names. Unnamed items are DENIED when exclusive and LEFT
-pending when partial, so answering across several messages doesn't force-decline
-items not yet reached. Fails safe: an LLM error leaves approvals pending.
+Single pending approval maps to approve (resume, run as proposed), deny (refuse,
+carrying any correction as next-turn feedback), or unrelated (abandon, run the
+new message normally). An approve runs EXACTLY as proposed; a reply that changes
+anything is a deny with the change as feedback.
+
+Several pending approvals decide per-item against the numbered list: yes/no
+approve/decline all, a selective reply decides only what it names, unnamed items
+deny on an exclusive reply and stay pending on a partial one. Fails safe: an LLM
+error leaves approvals pending, never approves.
 """
 
 import contextlib
@@ -27,10 +27,12 @@ from app.constants.hil import (
     HIL_LLM_TIMEOUT_SECONDS,
 )
 from app.constants.log_tags import LogTag
-from app.models.hil_models import HILApprovalRecord
+from app.db.repositories.approval_ledger import approval_ledger_repository
+from app.models.hil_models import ApprovalLedgerDocument, HILApprovalRecord, LedgerState
 from app.models.message_models import MessageDict
 from app.services.hil.approvals_store import list_pending_for_conversation
 from app.services.hil.bridge import build_action_detail
+from app.services.hil.ledger_decide import LedgerDecision, decide_ledger
 from app.services.hil.resolution import (
     ApprovalRequestForbiddenError,
     ApprovalRequestNotFoundError,
@@ -44,6 +46,23 @@ DecisionAction = Literal["approve", "deny", "unrelated"]
 
 # Auto-deny reason when the user moves on without answering the approval.
 UNRELATED_FEEDBACK = "The user moved on to a different request; do not perform the action."
+
+# Ground truth for a settled ledger row in the bot reply's words. Lives here, not
+# result_delivery (which only knows barrier statuses), so the bot path can narrate
+# executed/failed/unknown/revoked without depending on that module.
+LEDGER_OUTCOME_TEXT: dict[LedgerState, str] = {
+    LedgerState.APPROVED: "approved by the user; the agent runs it from the ticket",
+    LedgerState.DENIED: "denied by the user; the action did NOT run",
+    LedgerState.EXECUTED: "approved by the user and executed",
+    LedgerState.FAILED: "approved by the user but execution failed",
+    LedgerState.UNKNOWN: "approved by the user but the outcome is unknown; never retried",
+    LedgerState.REVOKED: "withdrawn by the agent; the action did NOT run",
+}
+
+
+def ledger_outcome_text(state: LedgerState) -> str:
+    """One line of ground truth for a settled ledger row."""
+    return LEDGER_OUTCOME_TEXT.get(state, state.value)
 
 
 class DecisionResult(BaseModel):
@@ -84,15 +103,21 @@ async def resolve_pending_from_message(
     or None when nothing was pending or the reply addressed none of it.
     """
     pending = await list_pending_for_conversation(conversation_id)
-    if not pending:
+    if pending:
+        if len(pending) == 1:
+            return await _resolve_single(pending[0], conversation_id, user_id, message, history)
+        return await _resolve_batch(pending, conversation_id, user_id, message, history)
+    # Barrier store empty: ledger-enabled users' rows live in approval_ledger.
+    ledger_pending = await _list_pending_ledger(conversation_id)
+    if not ledger_pending:
         return None
-    if len(pending) == 1:
-        return await _resolve_single(pending[0], conversation_id, user_id, message, history)
-    return await _resolve_batch(pending, conversation_id, user_id, message, history)
+    if len(ledger_pending) == 1:
+        return await _resolve_single(ledger_pending[0], conversation_id, user_id, message, history)
+    return await _resolve_batch(ledger_pending, conversation_id, user_id, message, history)
 
 
 async def _resolve_single(
-    record: HILApprovalRecord,
+    record: HILApprovalRecord | ApprovalLedgerDocument,
     conversation_id: str,
     user_id: str,
     message: str,
@@ -108,16 +133,22 @@ async def _resolve_single(
     if result.action == "unrelated":
         # The user moved on. Abandon the paused run so it resumes, sees a refusal,
         # wraps up, and frees the conversation's executor lock for the new turn.
-        await abandon_conversation_approvals(conversation_id, user_id, UNRELATED_FEEDBACK)
+        if isinstance(record, ApprovalLedgerDocument):
+            await _abandon_ledger_approvals(conversation_id, user_id)
+        else:
+            await abandon_conversation_approvals(conversation_id, user_id, UNRELATED_FEEDBACK)
         return "unrelated"
 
     action, feedback = _no_arg_edit(result.action, result.feedback)
-    await _safe_resolve(record.approval_id, user_id, action, feedback)
+    if isinstance(record, ApprovalLedgerDocument):
+        await _safe_resolve_ledger(record.approval_id, user_id, action, feedback)
+    else:
+        await _safe_resolve(record.approval_id, user_id, action, feedback)
     return action
 
 
 async def _resolve_batch(
-    pending: list[HILApprovalRecord],
+    pending: list[HILApprovalRecord] | list[ApprovalLedgerDocument],
     conversation_id: str,
     user_id: str,
     message: str,
@@ -125,35 +156,50 @@ async def _resolve_batch(
 ) -> DecisionAction | None:
     """Apply a per-item classification of message to the pending batch.
 
-    Decisions dispatch through resolve_approval one by one; the per-conversation
-    resume slot ensures only the first actually re-dispatches the executor — the
-    join round it wakes collects the rest.
+    Decisions dispatch through resolve_approval (barrier) or decide_ledger
+    (ledger) one by one; the per-conversation resume slot ensures only the first
+    actually re-dispatches the executor — the join round it wakes collects the rest.
     """
     action_details = [build_action_detail(r.summary, r.args) for r in pending]
     result = await interpret_batch_decision_message(
         message, action_details, history, user_id=user_id
     )
     if result.unrelated:
-        await abandon_conversation_approvals(conversation_id, user_id, UNRELATED_FEEDBACK)
+        if pending and isinstance(pending[0], ApprovalLedgerDocument):
+            await _abandon_ledger_approvals(conversation_id, user_id)
+        else:
+            await abandon_conversation_approvals(conversation_id, user_id, UNRELATED_FEEDBACK)
         return "unrelated"
 
-    approved = denied = 0
-    for decision in result.decisions:
-        if decision.action == "leave" or not 1 <= decision.index <= len(pending):
-            continue
-        record = pending[decision.index - 1]
-        action, feedback = _no_arg_edit(decision.action, decision.feedback)
-        await _safe_resolve(record.approval_id, user_id, action, feedback)
-        if action == "approve":
-            approved += 1
-        else:
-            denied += 1
-
+    approved, denied = await _apply_decisions(pending, user_id, result.decisions)
     if approved:
         return "approve"
     if denied:
         return "deny"
     return None
+
+
+async def _apply_decisions(
+    pending: list[HILApprovalRecord] | list[ApprovalLedgerDocument],
+    user_id: str,
+    decisions: list[BatchItemDecision],
+) -> tuple[int, int]:
+    """Dispatch every in-range decision onto its pending item; returns (approved, denied)."""
+    approved = denied = 0
+    for decision in decisions:
+        if decision.action == "leave" or not 1 <= decision.index <= len(pending):
+            continue
+        record = pending[decision.index - 1]
+        action, feedback = _no_arg_edit(decision.action, decision.feedback)
+        if isinstance(record, ApprovalLedgerDocument):
+            await _safe_resolve_ledger(record.approval_id, user_id, action, feedback)
+        else:
+            await _safe_resolve(record.approval_id, user_id, action, feedback)
+        if action == "approve":
+            approved += 1
+        else:
+            denied += 1
+    return approved, denied
 
 
 async def interpret_batch_decision_message(
@@ -243,6 +289,49 @@ async def _safe_resolve(
             feedback=feedback,
             scope="once",
         )
+
+
+async def _list_pending_ledger(conversation_id: str) -> list[ApprovalLedgerDocument]:
+    """Ledger-enabled users' decidable rows: list_open covers live states, only PENDING decides here."""
+    return [
+        row
+        for row in await approval_ledger_repository.list_open(conversation_id)
+        if row.state is LedgerState.PENDING
+    ]
+
+
+async def _safe_resolve_ledger(
+    approval_id: str, user_id: str, decision: Literal["approve", "deny"], feedback: str | None
+) -> None:
+    """Apply one ledger decision, tolerating a lost race.
+
+    Bots carry no row version, so v=None — the PENDING->decided CAS inside
+    decide_ledger still guards.
+    """
+    result: LedgerDecision | None = None
+    with contextlib.suppress(ApprovalRequestNotFoundError, ApprovalRequestForbiddenError):
+        result = await decide_ledger(
+            approval_id, user_id=user_id, kind=decision, feedback=feedback, v=None
+        )
+    if result is not None and not result.committed:
+        log.warning(
+            f"{LogTag.HIL} Ledger bot decision lost the race",
+            approval_id=approval_id,
+            state=result.state.value,
+            outcome=ledger_outcome_text(result.state),
+        )
+
+
+async def _abandon_ledger_approvals(conversation_id: str, user_id: str) -> None:
+    """Deny every pending ledger row because the user moved on.
+
+    Denies with the moved-on feedback, which wakes the agent to wrap up.
+    """
+    for row in await _list_pending_ledger(conversation_id):
+        with contextlib.suppress(ApprovalRequestNotFoundError, ApprovalRequestForbiddenError):
+            await decide_ledger(
+                row.approval_id, user_id=user_id, kind="deny", feedback=UNRELATED_FEEDBACK, v=None
+            )
 
 
 def _history_block(history: list[MessageDict] | None) -> str:

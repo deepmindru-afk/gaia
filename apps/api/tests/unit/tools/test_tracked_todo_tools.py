@@ -38,6 +38,7 @@ from app.agents.tools.tracked_todo_tools import (
     list_tracked_todos,
     search_todo_context,
     update_tracked_todo,
+    update_tracked_todo_canvas,
 )
 from app.constants.todos import GAIA_TRACKED_LABEL
 from app.models.todo_models import Priority, TodoDocument, TodoResponse, TodoUpdate
@@ -549,6 +550,138 @@ class TestCompleteTrackedTodo:
                 config=_config(), todo_id="t1", summary="done"
             )
         assert "completed and archived" in result
+
+
+class TestUpdateTrackedTodoCanvas:
+    async def test_missing_user_id_returns_error(self):
+        result = await update_tracked_todo_canvas.coroutine(
+            config=_config(None), todo_id="t1", content="x"
+        )
+        assert "user_id not found" in result
+
+    async def test_invalid_mode_returns_error(self):
+        result = await update_tracked_todo_canvas.coroutine(
+            config=_config(), todo_id="t1", content="x", mode="overwrite"
+        )
+        assert "invalid mode" in result
+
+    async def test_replace_writes_content_verbatim(self):
+        with patch(
+            "app.agents.tools.tracked_todo_tools.write_canvas",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as write:
+            result = await update_tracked_todo_canvas.coroutine(
+                config=_config(), todo_id="t1", content="new body"
+            )
+        write.assert_awaited_once_with("t1", "user-1", "new body")
+        assert "mode: replace" in result
+
+    async def test_append_joins_onto_existing_canvas(self):
+        with (
+            patch(
+                "app.agents.tools.tracked_todo_tools.read_canvas",
+                new_callable=AsyncMock,
+                return_value="existing",
+            ),
+            patch(
+                "app.agents.tools.tracked_todo_tools.write_canvas",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as write,
+        ):
+            result = await update_tracked_todo_canvas.coroutine(
+                config=_config(), todo_id="t1", content="more", mode="append"
+            )
+        write.assert_awaited_once_with("t1", "user-1", "existing\nmore")
+        assert "mode: append" in result
+
+    async def test_append_reads_the_callers_canvas_and_keeps_a_leading_newline(self):
+        read = AsyncMock(return_value="existing")
+        with (
+            patch("app.agents.tools.tracked_todo_tools.read_canvas", new=read),
+            patch(
+                "app.agents.tools.tracked_todo_tools.write_canvas",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as write,
+        ):
+            await update_tracked_todo_canvas.coroutine(
+                config=_config(), todo_id="t1", content="\nmore", mode="append"
+            )
+        read.assert_awaited_once_with("t1", "user-1")
+        write.assert_awaited_once_with("t1", "user-1", "existing\nmore")
+
+    async def test_a_config_without_metadata_returns_the_no_user_error(self):
+        result = await update_tracked_todo_canvas.coroutine(
+            config={"configurable": {}}, todo_id="t1", content="x"
+        )
+        assert "user_id not found" in result
+
+    async def test_append_is_case_insensitive(self):
+        with (
+            patch(
+                "app.agents.tools.tracked_todo_tools.read_canvas",
+                new_callable=AsyncMock,
+                return_value="existing",
+            ),
+            patch(
+                "app.agents.tools.tracked_todo_tools.write_canvas",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as write,
+        ):
+            await update_tracked_todo_canvas.coroutine(
+                config=_config(), todo_id="t1", content="more", mode="APPEND"
+            )
+        write.assert_awaited_once_with("t1", "user-1", "existing\nmore")
+
+    async def test_append_on_missing_todo_returns_error(self):
+        with patch(
+            "app.agents.tools.tracked_todo_tools.read_canvas",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = await update_tracked_todo_canvas.coroutine(
+                config=_config(), todo_id="t1", content="more", mode="append"
+            )
+        assert "not found" in result
+
+    async def test_replace_on_missing_todo_returns_error(self):
+        with patch(
+            "app.agents.tools.tracked_todo_tools.write_canvas",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            result = await update_tracked_todo_canvas.coroutine(
+                config=_config(), todo_id="t1", content="x"
+            )
+        assert "not found" in result
+
+    async def test_append_on_empty_canvas_writes_content_alone(self):
+        with (
+            patch(
+                "app.agents.tools.tracked_todo_tools.read_canvas",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch(
+                "app.agents.tools.tracked_todo_tools.write_canvas",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as write,
+        ):
+            await update_tracked_todo_canvas.coroutine(
+                config=_config(), todo_id="t1", content="first", mode="append"
+            )
+        write.assert_awaited_once_with("t1", "user-1", "first")
+
+    def test_tool_is_registered_for_retrieval_and_binding(self):
+        """The executor binds this by id and the prompt names it: both must resolve."""
+        from app.agents.tools import tracked_todo_tools
+
+        assert update_tracked_todo_canvas in tracked_todo_tools.tools
+        assert update_tracked_todo_canvas.name == "update_tracked_todo_canvas"
 
 
 # ---------------------------------------------------------------------------

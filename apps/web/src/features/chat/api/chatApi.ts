@@ -16,9 +16,11 @@ import { ApiError, toErrorEnvelope } from "@shared/api";
 import type {
   ApprovalDecisionPayload,
   BatchApprovalDecisionPayload,
+  BatchApprovalDecisionResponse,
 } from "@shared/chat";
 import type { DesktopToolResult } from "@shared/desktop-tools";
 import { getSubscriptionRequiredDetail } from "@shared/types/subscription";
+import { BATCH_OUTCOME_REASON } from "@/features/chat/utils/batchOutcome";
 import { apiBaseUrl, clientHeaders } from "@/lib/api/client";
 import { api, binaryField, formDataSerializer } from "@/lib/api/typed";
 import { desktopClientHeaders } from "@/lib/electron/api";
@@ -68,6 +70,10 @@ const HTTP_CONFLICT = 409;
 const HTTP_PAYMENT_REQUIRED = 402;
 const HTTP_GONE = 410;
 const HTTP_TOO_MANY_REQUESTS = 429;
+
+// The server rejects a batch-decision body larger than this, so a big review
+// sheet is chunked into requests of this size instead of 422ing as one.
+const APPROVAL_BATCH_CHUNK_SIZE = 25;
 
 export interface ChatStreamRequest {
   inputText: string;
@@ -475,33 +481,74 @@ export const chatApi = {
 
   /**
    * Relay a HIL approval decision to the awaiting agent gate. Silent — the
-   * caller surfaces real failures; a 410 (already resolved elsewhere) resolves
-   * over the stream regardless, so it's swallowed here rather than surfaced.
+   * caller surfaces real failures. A 410 (already resolved elsewhere) is
+   * reported as not_found instead of success: settling the tapped verdict
+   * would paint over the real one, so the caller refreshes instead.
+   * Returns the relay outcome so callers can tell a commit from a stale tap:
+   * `success:false` means the row moved under the client — refresh, don't retry.
    */
   postApprovalDecision: async (
     approvalId: string,
     decision: ApprovalDecisionPayload,
-  ): Promise<void> => {
+  ): Promise<{
+    success: boolean;
+    reason?: string | null;
+    status?: string | null;
+  }> => {
     try {
-      await api.post("/api/v1/approvals/{approval_id}/decision", {
+      return await api.post("/api/v1/approvals/{approval_id}/decision", {
         path: { approval_id: approvalId },
         body: decision,
         silent: true,
       });
     } catch (error) {
-      if (error instanceof ApiError && error.status === HTTP_GONE) return;
+      if (error instanceof ApiError && error.status === HTTP_GONE)
+        return { success: false, reason: "not_found" };
       throw error;
     }
   },
 
   /**
    * Decide several pending approvals in one submission (the batch review's
-   * "Approve all"/"Decline all"). Per-approval outcomes come back in the
-   * response — an already-resolved item never fails the rest.
+   * "Approve all"/"Decline all"), chunked to the server's 25-item cap. Chunks
+   * commit independently, so a failed chunk comes back as per-item "error"
+   * outcomes beside the committed ones; throws only when every chunk failed.
    */
-  postApprovalBatchDecision: async (payload: BatchApprovalDecisionPayload) =>
-    api.post("/api/v1/approvals/batch-decision", {
-      body: payload,
-      silent: true,
-    }),
+  postApprovalBatchDecision: async (
+    payload: BatchApprovalDecisionPayload,
+  ): Promise<BatchApprovalDecisionResponse> => {
+    const chunks: BatchApprovalDecisionPayload["decisions"][] = [];
+    for (
+      let i = 0;
+      i < payload.decisions.length;
+      i += APPROVAL_BATCH_CHUNK_SIZE
+    ) {
+      chunks.push(payload.decisions.slice(i, i + APPROVAL_BATCH_CHUNK_SIZE));
+    }
+    // Disjoint slices with no ordering dependency (chunked only for the 25-item
+    // cap), so they fan out in parallel rather than serially.
+    const results = await Promise.allSettled(
+      chunks.map((decisions) =>
+        api.post("/api/v1/approvals/batch-decision", {
+          body: { decisions },
+          silent: true,
+        }),
+      ),
+    );
+    const firstFailure = results.find((r) => r.status === "rejected");
+    if (firstFailure && results.every((r) => r.status === "rejected")) {
+      throw firstFailure.reason;
+    }
+    return {
+      outcomes: results.flatMap((result, i) =>
+        result.status === "fulfilled"
+          ? result.value.outcomes
+          : chunks[i].map(({ approval_id }) => ({
+              approval_id,
+              resolved: false,
+              reason: BATCH_OUTCOME_REASON.ERROR,
+            })),
+      ),
+    };
+  },
 };

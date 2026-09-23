@@ -83,6 +83,7 @@ from app.override.langgraph_bigtool.utils import (
     dedupe_str_list,
     dedupe_tool_bindings,
     format_selected_tools,
+    pop_injected_messages,
     pop_pruned_tombstones,
 )
 from app.utils.mcp_utils import canonical_tool_name_map
@@ -295,12 +296,15 @@ def _log_message_preview(state: State) -> None:
 
 
 def _after_model_result(
-    tombstones: list[Any], response: AIMessage, updated_state: State
+    tombstones: list[Any],
+    injected: list[Any],
+    response: AIMessage,
+    updated_state: State,
 ) -> dict[str, object]:
     # Messages use an append reducer, so only the new response is returned,
-    # not the full list. Tombstones prune slot-stale prompt copies the
-    # pre-model hooks dropped, keeping the checkpointed thread bounded.
-    result: dict[str, object] = {"messages": [*tombstones, response]}
+    # not the full list. Tombstones prune slot-stale prompt copies; injected
+    # messages are committed AHEAD of the response so the thread reads in order.
+    result: dict[str, object] = {"messages": [*tombstones, *injected, response]}
     base_keys = {"messages", "selected_tool_ids"}
     result.update({key: value for key, value in updated_state.items() if key not in base_keys})
     return result
@@ -314,6 +318,7 @@ def _model_node(deps: _AgentDeps) -> RunnableCallable:
     def call_model(state: State, config: RunnableConfig, *, store: BaseStore) -> State:
         state = sync_execute_hooks(pre_model_hooks, state, config, store)
         tombstones = pop_pruned_tombstones(state)
+        injected = pop_injected_messages(state)
 
         if middleware_executor:
             raise RuntimeError(
@@ -342,12 +347,19 @@ def _model_node(deps: _AgentDeps) -> RunnableCallable:
             ),
         )
 
-        return {"messages": [*tombstones, _finalize_model_response(response, deps.agent_name)]}  # type: ignore[return-value]  # helper's declared return is wider than the dict actually built
+        return {
+            "messages": [
+                *tombstones,
+                *injected,
+                _finalize_model_response(response, deps.agent_name),
+            ]
+        }  # type: ignore[return-value]  # helper's declared return is wider than the dict actually built
 
     async def acall_model(state: State, config: RunnableConfig, *, store: BaseStore) -> State:
         """Async model invocation with middleware support."""
         state = await execute_hooks(pre_model_hooks, state, config, store)
         tombstones = pop_pruned_tombstones(state)
+        injected = pop_injected_messages(state)
 
         if middleware_executor:
             state = await middleware_executor.execute_before_model(state, config, store)
@@ -407,7 +419,7 @@ def _model_node(deps: _AgentDeps) -> RunnableCallable:
                 updated_state, config, store
             )
 
-        return _after_model_result(tombstones, response, updated_state)  # type: ignore[return-value]  # helper's declared return is wider than the dict actually built
+        return _after_model_result(tombstones, injected, response, updated_state)  # type: ignore[return-value]  # helper's declared return is wider than the dict actually built
 
     return RunnableCallable(call_model, acall_model)
 

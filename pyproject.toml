@@ -457,6 +457,7 @@ unfixable = [
 "apps/api/app/utils/composio_hooks/reddit_hooks.py" = ["ARG001"]  # Composio's Modifier.apply() calls hooks positionally; params are framework contract
 "apps/api/app/utils/composio_hooks/slack_hooks.py" = ["ARG001"]  # Composio's Modifier.apply() calls hooks positionally; params are framework contract
 "apps/api/app/utils/composio_hooks/twitter_hooks.py" = ["ARG001"]  # Composio's Modifier.apply() calls hooks positionally; params are framework contract
+"apps/api/app/agents/core/background/subagent_channel.py" = ["ARG001"]  # drain_subagent_inbox_hook is a pre-model hook called positionally as (state, config, store); store is framework contract
 # ARG001: LangChain injects `config: RunnableConfig` / `store: BaseStore` into
 # @tool-decorated functions via the tool call signature regardless of whether a
 # given tool implementation reads them — framework contract, not dead code.
@@ -479,10 +480,7 @@ unfixable = [
 # positionally to every registered custom tool handler regardless of whether
 # a given handler needs it.
 "apps/api/app/services/composio/custom_tools/gmail_tools.py" = ["ARG001"]
-# ANN401: generic decorator/proxy/settings surfaces that genuinely accept or
-# return arbitrary data -- Any is the correct type here, not a shortcut.
-"apps/api/app/db/redis.py" = ["ANN401"]
-# ANN401: the same two shapes, in the shared package. wide_events is the
+# ANN401: wide_events is the
 # structured-logging sink -- log.set()/warning()/error() take an arbitrary bag of
 # JSON-serializable event fields that is only stored and serialized, never
 # operated on. `object` would be the honest type for the bag itself but forces a

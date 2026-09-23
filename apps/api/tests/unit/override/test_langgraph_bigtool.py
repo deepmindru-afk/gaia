@@ -952,15 +952,22 @@ class TestBindSessionId:
         llm.bind.assert_not_called()
         assert bound is llm
 
-    @pytest.mark.parametrize("provider", [LLMProviderName.OPENROUTER, LLMProviderName.CUSTOM])
-    def test_a_sticky_provider_gets_the_key(self, provider: LLMProviderName) -> None:
-        # A CUSTOM provider pointed at OpenRouter's own endpoint is still
-        # OpenRouter-wire, so the sticky key binds; the negative (custom aimed at
-        # api.openai.com) is covered in test_llm_client.py.
+    @pytest.mark.parametrize(
+        ("provider", "binds"),
+        [(LLMProviderName.OPENROUTER, True), (LLMProviderName.CUSTOM, False)],
+    )
+    def test_only_openrouter_gets_the_sticky_key(
+        self, provider: LLMProviderName, binds: bool
+    ) -> None:
+        # session_id is an OpenRouter-only routing hint; CUSTOM runs ChatOpenAI where
+        # it is unsupported, so it never binds even on an OpenRouter-wire runnable.
         llm = _openrouter_wire_runnable()
         _bind_session_id(llm, {"provider": provider, "session_id": "conv-1"})
 
-        llm.bind.assert_called_once_with(session_id="conv-1")
+        if binds:
+            llm.bind.assert_called_once_with(session_id="conv-1")
+        else:
+            llm.bind.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent", ["comms_agent", "executor_agent"])
@@ -1763,7 +1770,7 @@ class TestAfterModelResultMerge:
             },
         )
 
-        result = _after_model_result([tombstone], response, dict(updated_state))
+        result = _after_model_result([tombstone], [], response, dict(updated_state))
 
         # Messages carry ONLY the tombstones + response (append reducer), and
         # selected_tool_ids is base state — everything else the hooks added
@@ -1773,6 +1780,15 @@ class TestAfterModelResultMerge:
             "todos": [{"id": "t1"}],
             "intent": "greet",
         }
+
+    def test_injected_messages_are_committed_ahead_of_the_response(self) -> None:
+        """A pre-model hook cannot commit; it stages, and this node commits."""
+        interjection = HumanMessage("also check spam")
+        response = AIMessage("on it")
+
+        result = _after_model_result([], [interjection], response, {})
+
+        assert result["messages"] == [interjection, response]
 
 
 class TestModelNodeWiring:

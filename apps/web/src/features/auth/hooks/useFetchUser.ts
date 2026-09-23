@@ -74,9 +74,9 @@ const useFetchUser = () => {
   const accessToken = searchParams.get("access_token");
   const refreshToken = searchParams.get("refresh_token");
 
-  // Analytics for the OAuth login — fired pre-redirect (redirect() aborts the
-  // render, so an effect here would never run). A module flag, not a ref:
-  // refs must not be written during render. Exactly-once per page load.
+  // OAuth redirect resolved during render (not an effect) so the callback page
+  // never paints before redirecting. Login analytics are server-side only
+  // (track_login on the OAuth callback); emitting here would double-count.
   if (
     data &&
     accessToken &&

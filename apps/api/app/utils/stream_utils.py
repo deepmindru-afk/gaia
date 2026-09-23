@@ -25,6 +25,7 @@ from typing import Annotated
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
+from app.constants.chat import SUBAGENT_GROUP_TOOL_NAME
 from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
 from app.models.chat_models import ToolDataEntry
 from app.utils.agent_utils import (
@@ -40,7 +41,7 @@ from app.utils.agent_utils import (
 _EntryList = Annotated[list[ToolDataEntry], SkipValidation]
 
 
-class _ToolDataEnvelope(BaseModel):
+class ToolDataEnvelope(BaseModel):
     """The accumulator envelope's ``tool_data`` list (see the module docstring)."""
 
     model_config = ConfigDict(extra="ignore")
@@ -243,7 +244,7 @@ def absorb_collector_event(
     list with associated outputs and subagent start/end pairs.
     """
     event = _CollectorEvent.model_validate(evt)
-    entries = _ToolDataEnvelope.model_validate(accumulated).tool_data
+    entries = ToolDataEnvelope.model_validate(accumulated).tool_data
     accumulated["tool_data"] = entries
     if event.tool_data is not None:
         for entry in event.tool_data if isinstance(event.tool_data, list) else [event.tool_data]:
@@ -361,7 +362,7 @@ def reconstruct_subagent_groups(accumulated: MutableMapping[str, object]) -> Non
         )
 
     # Route subagent-tagged entries into their group
-    flat_entries = _ToolDataEnvelope.model_validate(accumulated).tool_data
+    flat_entries = ToolDataEnvelope.model_validate(accumulated).tool_data
     top_level: list[ToolDataEntry] = []
     for entry in flat_entries:
         head = _EntryHead.model_validate(entry)
@@ -383,7 +384,7 @@ def reconstruct_subagent_groups(accumulated: MutableMapping[str, object]) -> Non
     # Rebuild tool_data
     group_entries: list[ToolDataEntry] = [
         {
-            "tool_name": "subagent_group",
+            "tool_name": SUBAGENT_GROUP_TOOL_NAME,
             "data": asdict(group),
             "timestamp": group.started_at,
         }

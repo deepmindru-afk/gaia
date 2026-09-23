@@ -2,9 +2,13 @@
 # pytest.sh — everything about RUNNING the Python suite in CI.
 #
 # Subcommands:
+#   slices                   Print the test-python slice matrix (lib/test-slices.json)
+#                            as a `python_slices=<json>` GITHUB_OUTPUT line.
 #   slice                    Run one test-python slice, either whole or on the
 #                            test-impact selection this job's `test_impact.py
 #                            select` wrote. Reads its inputs from the env.
+#   shared-suite             Run libs/shared/py/tests (the unit-b slice's "after").
+#   contract-fuzz            Run the schemathesis API fuzz (integration's "after").
 #   flake-gate <cmd...>      Run a pytest command; on failure rerun ONLY the
 #                            failures once and fail the build if they pass on
 #                            rerun (CPython's --fail-rerun lesson).
@@ -27,6 +31,29 @@ source "$(dirname "$0")/lib/cpu-slots.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# ── slices ────────────────────────────────────────────────────────────────
+# lib/test-slices.json is the ONE definition of the four slices: main.yml's
+# test-python matrix reads it through this subcommand and the Dagger module
+# (.dagger, `test-python --slice`) reads the file directly, so a local run
+# cannot drift from CI. Why the shares look the way they do:
+#   * workers sum to the box (16 threads): the lanes start together, so a
+#     runtime probe sees zero neighbours and each took 16 (measured 2026-08-28).
+#   * integration's wall is flat from 6 to 16 workers (it waits on services);
+#     its share went to unit-b (~30 s fixed + ~270 CPU-s / n).
+#   * unit is two slices because xdist re-collects the whole slice per worker
+#     (20 s for 13.2k tests); services/agents/storage is ~5.2k of it.
+#   * bridge is serial (workers 0): the device-bridge e2e TRUNCATEs a shared
+#     Postgres table, which another xdist worker's fixture would wipe mid-test.
+#   * node: only bridge drives the real `gaia bridge` CLI via tsx.
+#   * after: the extra suites a slice runs once its own run is done — see
+#     cmd_shared_suite / cmd_contract_fuzz for why each is its own invocation.
+SLICES_FILE="$SCRIPT_DIR/lib/test-slices.json"
+
+cmd_slices() {
+  printf 'python_slices=%s\n' "$(python3 -c 'import json, sys
+print(json.dumps(json.load(open(sys.argv[1]))["slices"], separators=(",", ":")))' "$SLICES_FILE")"
+}
 
 # ── slice ─────────────────────────────────────────────────────────────────
 # Node ids can contain spaces and brackets (parametrised tests), so the
@@ -144,6 +171,33 @@ cmd_slice() {
 # ── flake-gate ────────────────────────────────────────────────────────────
 # Exit codes: 0 all green; whatever pytest returns on a genuine/coverage
 # failure (1 for both); 1 flaky.
+# ── shared-suite ──────────────────────────────────────────────────────────
+# Its OWN pytest invocation, never a slice path. gaia-shared lives under
+# libs/, and handing pytest paths from two trees at once moves rootdir to the
+# repo root — apps/api/pytest.ini stops being the inifile, so asyncio_mode=auto
+# and the marker registrations vanish and the entire slice dies (measured: 2145
+# failed, 891 errors, run 33301137881). A separate run keeps each invocation's
+# rootdir and ini intact.
+cmd_shared_suite() {
+  cd "$REPO_ROOT/apps/api"
+  uv run --frozen pytest ../../libs/shared/py/tests \
+    --tb=short -q --override-ini=addopts=--strict-markers
+  ci_ok "gaia-shared tests: OK"
+}
+
+# ── contract-fuzz ─────────────────────────────────────────────────────────
+# Its own run, not a slice member: it boots a REAL server and must run serially
+# and isolated, and the slice runs exclude `-m schemathesis` (the plugin costs
+# ~2 s of import per xdist worker on lanes that never use it). It rides the
+# integration slice because that is the lane with the services up.
+cmd_contract_fuzz() {
+  cd "$REPO_ROOT/apps/api"
+  USE_REAL_SERVICES=1 bash "$SCRIPT_DIR/pytest.sh" flake-gate \
+    uv run --frozen pytest tests/integration/real/test_schemathesis.py -q --tb=short \
+    -m schemathesis -p schemathesis --override-ini=addopts=--strict-markers --timeout=600
+  ci_ok "Schemathesis: OK"
+}
+
 cmd_flake_gate() {
   [ "$#" -gt 0 ] || { echo "usage: pytest.sh flake-gate <pytest-command...>" >&2; exit 2; }
 
@@ -430,14 +484,17 @@ cmd_regression_proof() {
 }
 
 usage() {
-  sed -n '2,20p' "$0" >&2
+  sed -n '2,24p' "$0" >&2
 }
 
 main() {
   local sub="${1:-}"
   shift || true
   case "$sub" in
+    slices)           cmd_slices "$@" ;;
     slice)            cmd_slice "$@" ;;
+    shared-suite)     cmd_shared_suite "$@" ;;
+    contract-fuzz)    cmd_contract_fuzz "$@" ;;
     flake-gate)       cmd_flake_gate "$@" ;;
     regression-proof) cmd_regression_proof "$@" ;;
     *)

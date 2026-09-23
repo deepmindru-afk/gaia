@@ -15,13 +15,13 @@ in a separate dynamic-context system message placed AFTER this one.
 
 from typing import Final
 
-from app.agents.prompts.comms_prompts import (
-    COMMS_AGENT_PROMPT,
-    EXECUTOR_AGENT_PROMPT,
-    _strip_openui_section,
+from app.agents.prompts.comms_prompts import COMMS_AGENT_PROMPT, _strip_openui_section
+from app.agents.prompts.executor_activation_prompt import (
+    build_activation_executor_prompt,
 )
 from app.agents.prompts.openui_prompts import OPENUI_INSTRUCTIONS
 from app.agents.workspace.operational_docs import GAIA_CORE
+from app.constants.chat import ConversationSource
 from app.constants.general import NEW_MESSAGE_BREAKER
 
 # Base comms prompt with the OpenUI section stripped, so the per-channel
@@ -103,17 +103,19 @@ _SLACK_ADDENDUM: Final[str] = _text_only_addendum(
 # string literal that lives for the process lifetime, so the bytes sent to
 # the LLM are identical for every user on that channel.
 COMMS_PROMPT_BY_SOURCE: Final[dict[str, str]] = {
-    "web": _COMMS_AGENT_PROMPT_BASE + _OPENUI_ADDENDUM,
-    "mobile": _COMMS_AGENT_PROMPT_BASE + _OPENUI_ADDENDUM,
-    "desktop": _COMMS_AGENT_PROMPT_BASE + _OPENUI_ADDENDUM + _DESKTOP_ADDENDUM,
-    "whatsapp": _COMMS_AGENT_PROMPT_BASE + _WHATSAPP_ADDENDUM,
-    "telegram": _COMMS_AGENT_PROMPT_BASE + _TELEGRAM_ADDENDUM,
-    "discord": _COMMS_AGENT_PROMPT_BASE + _DISCORD_ADDENDUM,
-    "slack": _COMMS_AGENT_PROMPT_BASE + _SLACK_ADDENDUM,
+    ConversationSource.WEB.value: _COMMS_AGENT_PROMPT_BASE + _OPENUI_ADDENDUM,
+    ConversationSource.MOBILE.value: _COMMS_AGENT_PROMPT_BASE + _OPENUI_ADDENDUM,
+    ConversationSource.DESKTOP.value: _COMMS_AGENT_PROMPT_BASE
+    + _OPENUI_ADDENDUM
+    + _DESKTOP_ADDENDUM,
+    ConversationSource.WHATSAPP.value: _COMMS_AGENT_PROMPT_BASE + _WHATSAPP_ADDENDUM,
+    ConversationSource.TELEGRAM.value: _COMMS_AGENT_PROMPT_BASE + _TELEGRAM_ADDENDUM,
+    ConversationSource.DISCORD.value: _COMMS_AGENT_PROMPT_BASE + _DISCORD_ADDENDUM,
+    ConversationSource.SLACK.value: _COMMS_AGENT_PROMPT_BASE + _SLACK_ADDENDUM,
 }
 
 # Default (web-style) static prompt used when ``source`` is unknown/None.
-COMMS_PROMPT_DEFAULT: Final[str] = COMMS_PROMPT_BY_SOURCE["web"]
+COMMS_PROMPT_DEFAULT: Final[str] = COMMS_PROMPT_BY_SOURCE[ConversationSource.WEB.value]
 
 
 def get_comms_static_prompt(source: str | None) -> str:
@@ -133,7 +135,15 @@ def get_comms_static_prompt(source: str | None) -> str:
 # ``get_comms_static_prompt``.
 COMMS_PROMPT_TEMPLATE: Final[str] = COMMS_PROMPT_DEFAULT
 
-# Carries the always-on operating core (GAIA_CORE): self-knowledge, the
-# self-management menu, and read_manual routing. Appended here, not
-# interpolated per user, so the prompt stays byte-identical for caching.
-EXECUTOR_PROMPT_TEMPLATE: Final[str] = EXECUTOR_AGENT_PROMPT + "\n\n" + GAIA_CORE
+# Activation rewrite plus GAIA_CORE, appended (not interpolated) for a stable
+# provider cache. A stale anchor skips just that rewrite with a warning (never
+# raises: runs at import); anchor tests pin every rewrite in CI.
+_EXECUTOR_BASE: Final[str] = build_activation_executor_prompt()
+
+
+def get_executor_prompt() -> str:
+    """Return the static executor prompt (activation doctrine, always)."""
+    return _EXECUTOR_BASE + "\n\n" + GAIA_CORE
+
+
+EXECUTOR_PROMPT_TEMPLATE: Final[str] = get_executor_prompt()

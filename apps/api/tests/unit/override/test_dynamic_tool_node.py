@@ -8,14 +8,20 @@ executor and every wrap_tool_call hook consume as their view of graph state.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import tool
 import pytest
 
+from app.agents.middleware.executor import MiddlewareExecutor
 from app.override.langgraph_bigtool.dynamic_tool_node import DynamicToolNode
+
+NODE = "app.override.langgraph_bigtool.dynamic_tool_node"
 
 pytestmark = pytest.mark.unit
 
@@ -134,3 +140,94 @@ class TestMiddlewareDispatchPins:
         await node._afunc(_input_with_echo_call(), {}, MagicMock(spec=[]))
 
         assert executor.wrap_tool_invocation.await_args.kwargs["store"] is None
+
+
+class _Passthrough(AgentMiddleware):
+    async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
+        return await handler(request)
+
+
+@tool
+async def hangs(query: str) -> str:
+    """Never answer."""
+    await asyncio.sleep(5)
+    return query
+
+
+@tool
+async def breaks(query: str) -> str:
+    """Fail on every call."""
+    raise ValueError(f"bad {query}")
+
+
+@tool("execute")
+async def proxy(tool_name: str, data: dict[str, Any]) -> str:
+    """Stand in for the execute proxy: slow enough to outlive a shrunk bound."""
+    await asyncio.sleep(0.1)
+    return f"ran {tool_name}"
+
+
+def _real_node(*tools: Any) -> DynamicToolNode:
+    registry = {t.name: t for t in tools}
+    return DynamicToolNode(registry, middleware_executor=MiddlewareExecutor([_Passthrough()]))
+
+
+def _one_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    call = {"name": name, "args": args, "id": "call_1", "type": "tool_call"}
+    return {"messages": [AIMessage(content="", tool_calls=[call])]}
+
+
+async def _run(node: DynamicToolNode, name: str, args: dict[str, Any]) -> ToolMessage:
+    result = await node._afunc(_one_call(name, args), {}, MagicMock(spec=[]))
+    (message,) = result["messages"]
+    return message
+
+
+@pytest.fixture
+def shrunk_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(f"{NODE}.TOOL_EXECUTION_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(f"{NODE}.TOOL_TIMEOUT_BACKSTOP_BUFFER_SECONDS", 0.02)
+
+
+@pytest.mark.usefixtures("shrunk_bounds")
+class TestRealMiddlewarePath:
+    """The tool call runs through a real MiddlewareExecutor, so invoke_tool itself executes."""
+
+    async def test_a_hung_tool_is_cut_short_under_its_own_name(self) -> None:
+        message = await _run(_real_node(hangs), "hangs", {"query": "q"})
+        assert message.status == "error"
+        assert message.tool_call_id == "call_1"
+        assert message.name == "hangs"
+        assert message.content == (
+            "Error: TimeoutError: 'hangs' timed out after 0.01s. The operation may or may "
+            "not have completed on the provider side — verify its effect before retrying."
+        )
+
+    async def test_a_proxied_timeout_names_the_real_tool_at_the_backstop_bound(self) -> None:
+        message = await _run(
+            _real_node(proxy), "execute", {"tool_name": "GMAIL_SEND_EMAIL", "data": {}}
+        )
+        assert message.name == "execute"
+        assert message.content.startswith(
+            "Error: TimeoutError: 'GMAIL_SEND_EMAIL' timed out after 0.03s."
+        )
+
+    async def test_a_proxied_exempt_tool_runs_unbounded(self) -> None:
+        message = await _run(
+            _real_node(proxy), "execute", {"tool_name": "deep_research", "data": {}}
+        )
+        assert message.content == "ran deep_research"
+        assert message.tool_call_id == "call_1"
+        assert message.name == "execute"
+
+    async def test_a_failing_tool_reports_its_error_under_its_own_name(self) -> None:
+        message = await _run(_real_node(breaks), "breaks", {"query": "q"})
+        assert message.status == "error"
+        assert message.tool_call_id == "call_1"
+        assert message.name == "breaks"
+        assert message.content == "Error: ValueError: bad q"
+
+    async def test_an_unknown_tool_is_answered_on_its_own_call_id(self) -> None:
+        message = await _run(_real_node(breaks), "ghost", {"query": "q"})
+        assert message.content == "Tool 'ghost' not found"
+        assert message.tool_call_id == "call_1"

@@ -212,6 +212,7 @@ export function createTodoStore(
             workflow_categories: [],
             trigger_subscriptions: [],
             gaia_retry_count: 0,
+            pending_approval: null,
             created_at: now,
             updated_at: now,
           };

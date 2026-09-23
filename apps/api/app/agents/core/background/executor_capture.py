@@ -13,7 +13,8 @@ implementation so chat and workflow runs render identically.
 import asyncio
 from pathlib import Path
 from types import CoroutineType, FrameType
-from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from app.agents.core.background.session import (
     RunKind,
@@ -24,10 +25,12 @@ from app.agents.core.background.session import (
 )
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.cache import EXECUTOR_WAIT_TIMEOUT
+from app.constants.chat import SUBAGENT_GROUP_TOOL_NAME
 from app.constants.log_tags import LogTag
 from app.models.chat_models import ToolDataEntry, tool_fields
 from app.services.chat.chunks import normalize_custom_event
 from app.utils.stream_utils import (
+    ToolDataEnvelope,
     absorb_collector_event,
     apply_outputs_to_tool_data,
     reconstruct_subagent_groups,
@@ -139,17 +142,25 @@ def drain_executor_tool_data(stream_id: str) -> list[ToolDataEntry]:
     # The accumulator envelope is an open bag; only "tool_data" has a fixed
     # shape, and it's this list object throughout, rebound by
     # reconstruct_subagent_groups, hence the re-read at the end.
-    accumulated: dict[str, Any] = {"tool_data": entries}
+    accumulated: dict[str, object] = {"tool_data": entries}
     outputs: dict[str, str] = {}
     for evt in session.tool_events:
         # Hooks emit raw field payloads like {"email_fetch_data": [...]};
         # normalize to {"tool_data": {...}} or absorb_collector_event drops
         # them and the list card never persists.
         absorb_collector_event(normalize_custom_event(evt), accumulated, outputs)
-    apply_outputs_to_tool_data(accumulated["tool_data"], outputs, only_tool_name="tool_calls_data")
+    apply_outputs_to_tool_data(entries, outputs, only_tool_name="tool_calls_data")
     reconstruct_subagent_groups(accumulated)
-    grouped: list[ToolDataEntry] = accumulated["tool_data"]
-    return grouped
+    return ToolDataEnvelope.model_validate(accumulated).tool_data
+
+
+class _SubagentGroupProducer(BaseModel):
+    """A subagent_group entry's data, read for the id and name it credits cards to."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    subagent_id: str | None = None
+    subagent_name: str | None = None
 
 
 def build_returned_to_frontend_note(stream_id: str) -> str:
@@ -160,13 +171,14 @@ def build_returned_to_frontend_note(stream_id: str) -> str:
     executor summary credited the wrong product: "8 tasks created (Todoist)"
     for GAIA todos). MUST be called before the session is torn down.
     """
-    entries = drain_executor_tool_data(stream_id)
+    entries: list[ToolDataEntry] = drain_executor_tool_data(stream_id)
     subagent_names: dict[str, str] = {}
     for entry in entries:
         group = entry.get("data")
-        if entry.get("tool_name") != "subagent_group" or not isinstance(group, dict):
+        if entry.get("tool_name") != SUBAGENT_GROUP_TOOL_NAME or not isinstance(group, dict):
             continue
-        subagent_names[str(group.get("subagent_id"))] = str(group.get("subagent_name") or "")
+        credited = _SubagentGroupProducer.model_validate(group)
+        subagent_names[str(credited.subagent_id)] = credited.subagent_name or ""
 
     # (field name, producer) -> item count. Eight separate one-item todo cards
     # from one subagent are one fact, not eight lines of noise.

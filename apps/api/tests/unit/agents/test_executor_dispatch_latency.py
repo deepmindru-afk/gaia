@@ -76,34 +76,6 @@ class TestDispatchLatency:
     def teardown_method(self) -> None:
         sess._sessions.clear()
 
-    async def test_busy_lock_queues_and_carries_dispatch_stamp(self) -> None:
-        """The queued item carries the dispatch stamp the runner measures queue-wait from."""
-        stream_id = "dispatch-queued"
-        with (
-            patch.object(et, "try_acquire_lock", AsyncMock(return_value=False)),
-            patch.object(et, "redis_cache", _mock_redis("other-stream:other-task")),
-            patch.object(et, "_acquire_lock_through_redirect", AsyncMock(return_value=False)),
-            patch.object(et, "enqueue_task", AsyncMock()) as mock_enqueue,
-            patch.object(et, "spawn_background_task") as mock_spawn,
-        ):
-            result = await et._dispatch_executor(
-                task="do the thing",
-                task_id="task-q",
-                configurable=_configurable(stream_id),  # type: ignore[arg-type] -- minimal dispatch bag
-                conversation_id="conv-1",
-            )
-
-        assert "queued" in result
-        mock_spawn.assert_not_called()
-        mock_enqueue.assert_called_once()
-        session = get_session(stream_id)
-        assert session is not None
-        assert session.executor_queued_task_id == "task-q"
-        item = mock_enqueue.call_args.args[1]
-        assert item["task_id"] == "task-q"
-        assert isinstance(item["t_dispatch_perf"], float)
-        assert item["queued"] is True
-
     async def test_free_lock_spawns_live_run_with_dispatch_stamp(self) -> None:
         stream_id = "dispatch-live"
         captured: dict[str, Any] = {}
@@ -143,7 +115,6 @@ class TestDispatchLatency:
         with (
             patch.object(et, "try_acquire_lock", AsyncMock(return_value=False)),
             patch.object(et, "redis_cache", _mock_redis(f"{stream_id}:task-first")),
-            patch.object(et, "enqueue_task", AsyncMock()) as mock_enqueue,
             patch.object(et, "spawn_background_task") as mock_spawn,
         ):
             result = await et._dispatch_executor(
@@ -154,7 +125,6 @@ class TestDispatchLatency:
             )
 
         assert "already running" in result
-        mock_enqueue.assert_not_called()
         mock_spawn.assert_not_called()
         assert get_session(stream_id) is None
 
@@ -242,8 +212,6 @@ class TestExecutorRunLatency:
             patch.object(er, "_deliver_terminal_outcome", AsyncMock()),
             patch.object(er, "release_lock_if_owned", AsyncMock()),
             patch.object(er, "_close_queued_stream", AsyncMock()),
-            patch.object(er, "_queue_collection_if_uncollected", AsyncMock()),
-            patch.object(er, "reclaim_stranded_task", AsyncMock(return_value=None)),
             patch.object(er, "capture_event") as mock_capture,
         ):
             await run_executor_background(
@@ -546,8 +514,6 @@ class TestBackgroundRunExactWiring:
             patch.object(er, "_deliver_terminal_outcome", AsyncMock()),
             patch.object(er, "release_lock_if_owned", AsyncMock()),
             patch.object(er, "_close_queued_stream", AsyncMock()),
-            patch.object(er, "_queue_collection_if_uncollected", AsyncMock()),
-            patch.object(er, "reclaim_stranded_task", AsyncMock(return_value=None)),
             patch.object(er, "capture_event", MagicMock()),
             patch.object(er.StreamManager, "is_cancelled", is_cancelled_mock),
             patch.object(er.time, "perf_counter", side_effect=list(perf_values)),
@@ -560,7 +526,7 @@ class TestBackgroundRunExactWiring:
         with self._env(run, perf_values=[1000.0, 1000.0, 1000.5]) as env:
             await run_executor_background(run=run, task="the task", configurable=configurable)
 
-        env.execute.assert_awaited_once_with("the task", configurable, "exec-args", None)
+        env.execute.assert_awaited_once_with("the task", configurable, run, None)
 
     async def test_ttft_helper_receives_the_run_and_its_start(self) -> None:
         run = _run("exec-ttft-args")
@@ -711,8 +677,6 @@ class TestResumeForwarding:
             patch.object(er, "_deliver_terminal_outcome", AsyncMock()),
             patch.object(er, "release_lock_if_owned", AsyncMock()),
             patch.object(er, "_close_queued_stream", AsyncMock()),
-            patch.object(er, "_queue_collection_if_uncollected", AsyncMock()),
-            patch.object(er, "reclaim_stranded_task", AsyncMock(return_value=None)),
             patch.object(er, "release_resume_dispatch", AsyncMock()),
             patch.object(er, "capture_event"),
         ):

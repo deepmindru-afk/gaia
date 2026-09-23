@@ -196,8 +196,32 @@ BOT_UPGRADE_LINK_TTL = ONE_HOUR_TTL
 
 EXECUTOR_BUSY_PREFIX = "executor:busy:"
 EXECUTOR_BUSY_TTL = THIRTY_MINUTES_TTL
-EXECUTOR_QUEUE_PREFIX = "executor:queue:"
-EXECUTOR_QUEUE_TTL = ONE_HOUR_TTL  # Tasks expire if not picked up within 1 hour
+# Pending messages for a conversation's executor (see executor_channel). Not a
+# queue of runs: an entry is text some executor run will read into its history.
+EXECUTOR_INBOX_PREFIX = "executor:inbox:"
+EXECUTOR_INBOX_TTL = ONE_HOUR_TTL  # Unread work expires after an hour
+# Per-subagent mailbox (see subagent_channel). Keyed by the subagent's own
+# thread_id, written ONLY by the executor's message_subagent tool, drained by
+# that subagent's own pre-model hook — never a broadcast, never read by peers.
+SUBAGENT_INBOX_PREFIX = "subagent:inbox:"
+SUBAGENT_INBOX_TTL = ONE_HOUR_TTL
+# Integrations one conversation activated in-context (see active_integrations);
+# retrieve_tools discovery searches these namespaces too. Stamped only after a
+# successful activation, so membership implies entitlement; a lost key degrades.
+ACTIVATION_ACTIVE_PREFIX = "activation:active:"
+ACTIVATION_ACTIVE_TTL = ONE_DAY_TTL
+# Targeted cancel flag for one running subagent, keyed by its thread_id, checked
+# in the subagent stream loop so a cancel stops that subagent alone.
+SUBAGENT_CANCEL_PREFIX = "subagent:cancel:"
+SUBAGENT_CANCEL_TTL = ONE_HOUR_TTL
+# Registry of a conversation's currently-running subagents (Redis hash keyed by
+# conversation_id, field = subagent_id) so the executor can enumerate and
+# address live subagents by a stable id.
+RUNNING_SUBAGENTS_PREFIX = "subagents:running:"
+RUNNING_SUBAGENTS_TTL = ONE_HOUR_TTL
+# One live run per subagent checkpoint thread (SET NX, value = subagent_id): two
+# runs on one LangGraph thread corrupt its checkpoint. Held for the run's lifetime.
+RUNNING_SUBAGENT_THREAD_PREFIX = "subagents:thread:"
 # Max time a caller waits for a detached executor to finish before draining
 # whatever tool events were collected. Matches the busy lock TTL — the executor
 # cannot outlive its lock, so waiting longer would be pointless.

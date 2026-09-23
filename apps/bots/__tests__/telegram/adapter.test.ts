@@ -41,6 +41,8 @@ const mockGetFile = vi
   .fn()
   .mockResolvedValue({ file_path: "photos/file_1.jpg" });
 
+const mockSetMessageReaction = vi.fn().mockResolvedValue(true);
+
 const mockBotInstance = {
   on: mockBotOn,
   command: mockBotCommand,
@@ -54,6 +56,7 @@ const mockBotInstance = {
     editMessageText: vi.fn().mockResolvedValue({}),
     sendMessage: vi.fn().mockResolvedValue({ message_id: 99 }),
     sendChatAction: vi.fn().mockResolvedValue({}),
+    setMessageReaction: mockSetMessageReaction,
   },
 };
 
@@ -1647,5 +1650,58 @@ describe("TelegramAdapter - media message routing", () => {
     ).resolveIncomingMedia;
     expect(resolve).not.toHaveBeenCalled();
     expect(handleStreamingChat).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deliverOutboundReaction — native attach with text fallback
+// ---------------------------------------------------------------------------
+
+describe("TelegramAdapter - deliverOutboundReaction", () => {
+  type Reactor = {
+    deliverOutboundReaction: (
+      destinationId: string,
+      reaction: { target_platform_message_id: string; emoji: string },
+      isChannel: boolean,
+    ) => Promise<void>;
+    analytics: { capture: (...args: unknown[]) => void };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("attaches via setMessageReaction with numeric chat and message ids", async () => {
+    const adapter = makeAdapter() as unknown as Reactor;
+    adapter.analytics = { capture: vi.fn() };
+
+    await adapter.deliverOutboundReaction(
+      "4242",
+      { target_platform_message_id: "777", emoji: "👍" },
+      false,
+    );
+
+    expect(mockSetMessageReaction).toHaveBeenCalledWith("4242", 777, [
+      { type: "emoji", emoji: "👍" },
+    ]);
+  });
+
+  it("falls back to a text bubble when attach fails", async () => {
+    mockSetMessageReaction.mockRejectedValueOnce(new Error("Bad Request"));
+    const adapter = makeAdapter() as unknown as Reactor;
+    adapter.analytics = { capture: vi.fn() };
+
+    await adapter.deliverOutboundReaction(
+      "4242",
+      { target_platform_message_id: "777", emoji: "✅" },
+      false,
+    );
+
+    const sendMessage = mockBotInstance.api.sendMessage;
+    expect(sendMessage).toHaveBeenCalledWith(
+      "4242",
+      expect.stringContaining("✅"),
+      expect.anything(),
+    );
   });
 });

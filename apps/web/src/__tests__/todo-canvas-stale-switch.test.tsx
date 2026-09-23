@@ -87,6 +87,7 @@ function makeTodo(id: string): Todo {
     workflow_categories: [],
     trigger_subscriptions: [],
     gaia_retry_count: 0,
+    pending_approval: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   };

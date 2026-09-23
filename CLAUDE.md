@@ -144,7 +144,7 @@ The full agent architecture — comms → executor → subagents, bots, voice, s
 Quick map:
 - **Comms agent** (user-facing, no work tools) → `apps/api/app/agents/core/graph_builder/build_graph.py` (`build_comms_*`)
 - **Executor agent** (worker tier, all tools) → same file (`build_executor_*`) + `apps/api/app/agents/tools/executor_tool.py`
-- **Subagents** (per-integration) → `apps/api/app/agents/core/subagents/` + `apps/api/app/config/oauth_config.py`
+- **Subagents** (per-user MCP workers + spawned isolation) → `apps/api/app/agents/core/subagents/` + `apps/api/app/config/oauth_config.py`
 - **Bots** → `apps/bots/{telegram,whatsapp,discord,slack}/` + `libs/shared/ts/src/bots/`
 - **Voice** → `apps/voice-agent/src/worker.py`
 - **Skills** → `apps/api/app/agents/skills/`

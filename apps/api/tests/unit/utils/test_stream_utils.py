@@ -6,8 +6,11 @@ from unittest.mock import AsyncMock, patch
 from langchain_core.messages import AIMessage, HumanMessage
 import pytest
 
+from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
+from app.models.chat_models import ToolDataEntry
 from app.utils.agent_utils import IntegrationMetadata
 from app.utils.stream_utils import (
+    absorb_collector_event,
     extract_tool_entries_from_update,
     reconstruct_subagent_groups,
 )
@@ -438,3 +441,39 @@ def test_a_groups_stable_subagent_id_comes_from_its_start_event() -> None:
     groups = {entry["data"]["subagent_id"]: entry["data"] for entry in accumulated["tool_data"]}
     assert groups["row-1"]["subagent"] == "todos"
     assert groups["row-2"]["subagent"] is None
+
+
+class TestAbsorbCollectorEvent:
+    """absorb_collector_event files each collector event into the turn's accumulator."""
+
+    def test_a_first_tool_event_starts_the_turns_tool_data(self) -> None:
+        accumulated: dict[str, object] = {}
+        entry: ToolDataEntry = {"tool_name": "tool_calls_data", "data": {"tool_call_id": "tc-1"}}
+
+        absorb_collector_event({"tool_data": entry}, accumulated, {})
+
+        assert accumulated["tool_data"] == [entry]
+
+    def test_a_later_event_appends_after_what_the_turn_already_holds(self) -> None:
+        earlier: ToolDataEntry = {"tool_name": "tool_calls_data", "data": {"tool_call_id": "a"}}
+        later: ToolDataEntry = {"tool_name": "tool_calls_data", "data": {"tool_call_id": "b"}}
+        accumulated: dict[str, object] = {"tool_data": [earlier]}
+
+        absorb_collector_event({"tool_data": [later]}, accumulated, {})
+
+        assert accumulated["tool_data"] == [earlier, later]
+
+    def test_a_resolved_approval_frame_replaces_its_pending_one(self) -> None:
+        pending: ToolDataEntry = {
+            "tool_name": APPROVAL_REQUEST_TOOL_NAME,
+            "data": {"approval_id": "appr-1", "status": "pending"},
+        }
+        resolved: ToolDataEntry = {
+            "tool_name": APPROVAL_REQUEST_TOOL_NAME,
+            "data": {"approval_id": "appr-1", "status": "approved"},
+        }
+        accumulated: dict[str, object] = {"tool_data": [pending]}
+
+        absorb_collector_event({"tool_data": resolved}, accumulated, {})
+
+        assert accumulated["tool_data"] == [resolved]

@@ -1,8 +1,8 @@
 """
 Workflow subagent factory and runner.
 
-This module provides the dedicated workflow subagent that is:
-- NOT registered in oauth_config.py (hidden from handoff discovery)
+This module provides the dedicated workflow authoring worker that is:
+- NOT registered in oauth_config.py (not an integration)
 - Invoked directly by create_workflow tool
 - Uses structured JSON output for workflow drafts
 
@@ -12,12 +12,14 @@ The subagent has access to:
 - search_memory: Access user memories
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 from typing import Any, cast
 
 from langchain_core.messages import (
     AIMessageChunk,
+    BaseMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
@@ -38,7 +40,12 @@ from app.constants.llm import WORKFLOW_SUBAGENT_RECURSION_LIMIT
 from app.constants.log_tags import LogTag
 from app.helpers.agent_helpers import AgentIdentity, AgentThread, build_agent_config
 from app.helpers.message_helpers import build_current_time_message
-from app.models.agent_models import AgentConfigurable, AgentUserContext, agent_configurable
+from app.models.agent_models import (
+    AgentConfigurable,
+    AgentUserContext,
+    StreamChunkMetadata,
+    agent_configurable,
+)
 from app.services.workflow.knowledge import build_connected_integrations_hint
 from app.services.workflow.subagent_output import parse_subagent_response
 from app.utils.stream_utils import extract_tool_entries_from_update
@@ -225,7 +232,7 @@ class WorkflowSubagentRunner:
         # is made of. This tier was the only one seeded without a clock.
         time_message = build_current_time_message(user_timezone=user_timezone)
 
-        initial_state: dict[str, Any] = {
+        initial_state: dict[str, object] = {
             "messages": [
                 system_message,
                 *assembled.messages(),
@@ -242,7 +249,7 @@ class WorkflowSubagentRunner:
         # structure or integration_ids that name a non-existent integration), hand the
         # error back and let it re-emit, up to MAX_DRAFT_CORRECTIONS times.
         emitted_tool_calls: set[str] = set()
-        state: dict[str, Any] = initial_state
+        state: dict[str, object] = initial_state
         complete_message = ""
         for attempt in range(MAX_DRAFT_CORRECTIONS + 1):
             complete_message, hit_limit = await WorkflowSubagentRunner._stream_turn(
@@ -318,7 +325,7 @@ class WorkflowSubagentRunner:
 
     @staticmethod
     async def _emit_update_entries(
-        payload: dict[str, Any],
+        payload: Mapping[str, object],
         stream_writer: StreamWriter | None,
         emitted_tool_calls: set[str],
     ) -> None:
@@ -334,11 +341,12 @@ class WorkflowSubagentRunner:
 
     @staticmethod
     def _consume_message_chunk(
-        payload: tuple[Any, Any],
+        payload: tuple[BaseMessage, StreamChunkMetadata],
         stream_writer: StreamWriter | None,
         complete_message: str,
     ) -> str:
         """Fold one messages-mode event into the running assistant text."""
+        metadata: StreamChunkMetadata
         chunk, metadata = payload
         if metadata.get("silent"):
             return complete_message
@@ -361,7 +369,7 @@ class WorkflowSubagentRunner:
     @staticmethod
     async def _stream_turn(
         subagent_graph: CompiledStateGraph,
-        state: dict[str, Any],
+        state: Mapping[str, object],
         config: RunnableConfig,
         stream_writer: StreamWriter | None,
         emitted_tool_calls: set[str],

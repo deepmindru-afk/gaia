@@ -39,6 +39,7 @@ from app.agents.llm.client import (
     LLMInvokeOptions,
     ResponseFacts,
     StructuredCallOptions,
+    _aux_structured_runnable,
     _build_default_llm,
     _create_configurable_llm,
     _GenerationIdCallback,
@@ -747,6 +748,64 @@ class TestBackgroundStructuredRunnable:
         mock_aux.assert_called_once_with(self._Shape, 0.3, None)
         assert runnable is mock_aux.return_value
 
+    @patch("app.agents.llm.client.get_helper_llm")
+    def test_model_override_repoints_the_alias(self, mock_helper: MagicMock) -> None:
+        """A one-shot naming its own model must ask for it — the default must not leak in."""
+        mock_helper.return_value.model_kwargs = None
+
+        _aux_structured_runnable(self._Shape, 0.1, None, model_name="google/gemini-3.5-flash-lite")
+
+        mock_helper.return_value.model_copy.assert_called_once_with(
+            update={"model_name": "google/gemini-3.5-flash-lite"}
+        )
+
+    @patch("app.agents.llm.client.get_helper_llm")
+    def test_no_override_keeps_the_aux_default(self, mock_helper: MagicMock) -> None:
+        """Every existing caller passes nothing: the aux lane must not move under them."""
+        mock_helper.return_value.model_kwargs = None
+
+        _aux_structured_runnable(self._Shape, 0.1, None)
+
+        mock_helper.return_value.model_copy.assert_called_once_with(
+            update={"model_name": AUX_MODEL_NAME}
+        )
+
+    @patch("app.agents.llm.client.get_helper_llm")
+    def test_fallbacks_ride_the_models_array_primary_first(self, mock_helper: MagicMock) -> None:
+        """OpenRouter tries models in order on transport errors only — the primary stays first, and the provider order it already carried survives."""
+        mock_helper.return_value.model_kwargs = {"provider": {"order": ["google"]}}
+
+        _aux_structured_runnable(
+            self._Shape,
+            0.1,
+            None,
+            model_name="google/gemini-3.5-flash-lite",
+            fallback_model_names=("deepseek/deepseek-v4-flash-0731",),
+        )
+
+        # The fallback copy chains off the re-pointed copy, not the base mock.
+        first_copy = mock_helper.return_value.model_copy.return_value
+        first_copy.model_copy.assert_called_once_with(
+            update={
+                "model_kwargs": {
+                    "provider": {"order": ["google"]},
+                    "models": [
+                        "google/gemini-3.5-flash-lite",
+                        "deepseek/deepseek-v4-flash-0731",
+                    ],
+                }
+            }
+        )
+
+    @patch("app.agents.llm.client.get_helper_llm")
+    def test_no_fallbacks_means_no_models_array(self, mock_helper: MagicMock) -> None:
+        """Without fallbacks there is exactly one model_copy — no empty array for OpenRouter to interpret."""
+        mock_helper.return_value.model_kwargs = None
+
+        _aux_structured_runnable(self._Shape, 0.1, None)
+
+        assert mock_helper.return_value.model_copy.call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # ainvoke_llm — the single LLM invocation primitive (retry + fallback)
@@ -1059,6 +1118,20 @@ class TestMemoryLaneProviderSelection:
         # Whitespace-only must not send an empty order list to the provider.
         mock_settings.OPENROUTER_PROVIDER_ORDER = " , "
         assert _provider_order_kwargs() == {}
+
+    def test_the_default_model_is_built_with_the_routing_preference(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(client_module.settings, "OPENROUTER_API_KEY", "test-key")
+        monkeypatch.setattr(client_module.settings, "OPENROUTER_PROVIDER_ORDER", "deepseek")
+        client_module._build_default_llm.cache_clear()
+
+        try:
+            llm = client_module._build_default_llm(0.0)
+        finally:
+            client_module._build_default_llm.cache_clear()
+
+        assert llm.model_kwargs["provider"] == {"order": ["deepseek"], "allow_fallbacks": False}
 
     @patch("app.agents.llm.client.settings")
     def test_the_aux_lane_predicate_reads_the_openrouter_key(
@@ -1861,6 +1934,35 @@ class TestAinvokeStructured:
 
         assert mock_invoke.call_args.args[1] is prompt
         assert mock_invoke.call_args.kwargs["options"].timeout == 12.0
+
+    async def test_a_model_override_and_its_fallbacks_reach_the_runnable(self) -> None:
+        """Dropped, the one-shot silently runs on the aux default with no fallback chain."""
+        config = RunnableConfig(configurable={"user_id": "user-3"})
+
+        with (
+            patch("app.agents.llm.client._aux_structured_runnable") as runnable,
+            patch(
+                "app.agents.llm.client.ainvoke_llm",
+                new=AsyncMock(return_value=self._Schema(answer="ok")),
+            ),
+        ):
+            await ainvoke_structured(
+                self._Schema,
+                "prompt",
+                label="judge",
+                config=config,
+                options=StructuredCallOptions(
+                    temperature=0.2,
+                    model_name="google/gemini-3.5-flash-lite",
+                    fallback_model_names=("deepseek/deepseek-v4-flash-0731",),
+                ),
+            )
+
+        assert runnable.call_args.args == (self._Schema, 0.2, config)
+        assert runnable.call_args.kwargs == {
+            "model_name": "google/gemini-3.5-flash-lite",
+            "fallback_model_names": ("deepseek/deepseek-v4-flash-0731",),
+        }
 
     async def test_the_aux_lane_runs_on_its_own_sticky_session(self) -> None:
         """The session id must be suffixed and bound after with_structured_output, since bind_tools drops the outer binding's kwargs if bound before."""

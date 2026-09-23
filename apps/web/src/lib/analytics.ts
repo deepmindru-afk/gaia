@@ -46,10 +46,6 @@ export const ANALYTICS_EVENTS = {
   USER_SESSION_RESUMED: "user:session_resumed",
 
   ONBOARDING_STARTED: "onboarding:started",
-  // Client-owned: the wizard's UI stages never reach the API as individual
-  // steps (it only sees phase completions), so `trackOnboardingStep` is the
-  // sole emitter.
-  ONBOARDING_STEP_COMPLETED: "onboarding:step_completed",
   ONBOARDING_SKIPPED: "onboarding:skipped",
   // Wiping the wizard and starting over. Client-only: the server sees the
   // reset request, but only the browser knows it came from the restart modal
@@ -298,21 +294,4 @@ export function trackEvent(
  */
 export function setUserProperties(properties: UserProperties): void {
   dispatch({ kind: "person", properties });
-}
-
-/**
- * Track onboarding progress. Client-owned: the wizard's UI stages (each
- * question, the payment reveal, the platform pick) never reach the API as
- * individual steps — the server only sees phase completions.
- */
-export function trackOnboardingStep(
-  step: number,
-  stepName: string,
-  properties?: EventProperties,
-): void {
-  trackEvent(ANALYTICS_EVENTS.ONBOARDING_STEP_COMPLETED, {
-    step_number: step,
-    step_name: stepName,
-    ...properties,
-  });
 }

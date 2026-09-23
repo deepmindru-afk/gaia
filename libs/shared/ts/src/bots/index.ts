@@ -37,10 +37,12 @@ export { injectInfisicalSecrets, loadConfig } from "./config";
 export type {
   OutboundAttachment,
   OutboundMessageEnvelope,
+  OutboundReaction,
 } from "./consumer/envelope";
 export {
   outboundAttachmentSchema,
   outboundMessageEnvelopeSchema,
+  outboundReactionSchema,
 } from "./consumer/envelope";
 export {
   buildLinkCodeFailureMessage,

@@ -8,7 +8,9 @@ from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_config
 
-from app.constants.hil import HIL_RESUME_CONFIG_KEY
+from app.constants.agents import AgentTag
+from app.constants.comms import CommsDirectiveKind
+from app.constants.hil import HIL_RESUME_CONFIG_KEY, SUBAGENT_RESUME_CONFIG_KEY
 
 # The configurable bag's shape and its typed read live in app.models.agent_config,
 # a leaf with no langchain import, so app.utils.timezone can read a home timezone
@@ -18,6 +20,8 @@ from app.models.agent_config import (
     AgentConfigurableView,
     AgentRunConfig,
     ExecutionMode,
+    SubagentKind,
+    SubagentResumeItem,
     agent_configurable,
     read_agent_configurable,
 )
@@ -34,8 +38,14 @@ __all__ = [
     "AgentRunnableConfig",
     "AgentUserContext",
     "AnyAgentMiddleware",
+    "CommsDirective",
     "ExecutionMode",
+    "InboxDrain",
+    "InboxEntry",
+    "RunningSubagent",
     "SilentRunResult",
+    "SubagentKind",
+    "SubagentResumeItem",
     "agent_configurable",
     "read_agent_configurable",
     "config_agent_name",
@@ -140,6 +150,15 @@ class LlmCallMetadata(TypedDict, total=False):
     llm_label: str
 
 
+class StreamChunkMetadata(TypedDict, total=False):
+    """The run-metadata keys a messages-mode stream consumer reads off one chunk.
+
+    silent is stamped by quiet LLM calls (llm/client.py, follow_up_actions_node) so their tokens never stream.
+    """
+
+    silent: bool
+
+
 class AgentRunnableConfig(RunnableConfig):
     """What ``build_agent_config`` returns: a ``RunnableConfig`` plus ``agent_name``.
 
@@ -160,23 +179,61 @@ class AgentRunnableConfig(RunnableConfig):
 
 @dataclass(frozen=True)
 class SilentRunResult:
-    """What one ``call_agent_silent`` turn produced.
-
-    ``queued_task_id`` is set when the turn's comms agent delegated to the
-    executor and that dispatch was QUEUED behind an in-flight run for the same
-    conversation instead of running. The ``message`` is then an acknowledgement
-    of work that has not started, so a caller must not record the turn as work
-    done. It is ``None`` whenever an executor actually ran.
-    """
+    """What one ``call_agent_silent`` turn produced."""
 
     message: str
     tool_data: list[ToolDataEntry]
-    queued_task_id: str | None = None
-    #: The executor this turn delegated to ended in an error. ``message`` is
-    #: then comms' account of that error, not a result; ``executor_failure``
-    #: is the error itself, or why the wait for it gave up.
-    executor_failed: bool = False
-    executor_failure: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InboxEntry:
+    """One thing the executor has not been told yet.
+
+    ``tag`` decides how it reads to the model: ordinary work is the user
+    speaking, an interruption is the system reporting that a task was stopped.
+    """
+
+    id: str
+    text: str
+    tag: AgentTag = AgentTag.USER_INTERJECTION
+
+
+@dataclass(frozen=True, slots=True)
+class InboxDrain:
+    """What a single drain pass decided to do."""
+
+    inject: list[InboxEntry]
+    retire: list[InboxEntry]
+
+    def __bool__(self) -> bool:
+        return bool(self.inject or self.retire)
+
+
+@dataclass(frozen=True, slots=True)
+class CommsDirective:
+    """A parsed comms narration outcome. ``payload`` is the reply text, the silence
+    reason, or the emoji, depending on ``kind``."""
+
+    kind: CommsDirectiveKind
+    payload: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunningSubagent:
+    """One subagent currently executing for a conversation.
+
+    The stable, addressable handle the executor needs to steer or cancel a
+    specific worker: ``subagent_id`` is what the executor names in
+    ``message_subagent``/``cancel_subagent``; ``subagent_thread_id`` is the key
+    its mailbox and cancel flag live under.
+    """
+
+    subagent_id: str
+    subagent_thread_id: str
+    integration_id: str
+    agent_name: str
+    task_summary: str
+    started_at: str
 
 
 # What survives a queue hop / HIL resume. AgentConfigurable IS the allowlist; the
@@ -184,7 +241,8 @@ class SilentRunResult:
 # (checkpoint_ns, __pregel_*) are filtered by not being declared on it.
 CONFIGURABLE_OWNED_KEYS: frozenset[str] = frozenset(AgentConfigurable.__annotations__)
 
-# Owned keys that are nonetheless scoped to ONE dispatch and must not ride along
-# to the next: hil_resume_replay means "this exact call is a replay", so carrying
-# it would make a fresh run probe its subagent threads for interrupts it cannot have.
-CONFIGURABLE_RUN_SCOPED_KEYS: frozenset[str] = frozenset({HIL_RESUME_CONFIG_KEY})
+# Owned keys scoped to ONE dispatch: hil_resume_replay ("this call is a replay") would
+# make a fresh run probe for interrupts it cannot have; subagent_resume is one run's own.
+CONFIGURABLE_RUN_SCOPED_KEYS: frozenset[str] = frozenset(
+    {HIL_RESUME_CONFIG_KEY, SUBAGENT_RESUME_CONFIG_KEY}
+)
