@@ -116,7 +116,7 @@ class MemoryTreeNode(ResponseModel):
     name: str = Field(description="Folder name (last path segment)")
     path: str = Field(description="Full category path, e.g. 'work/gaia'")
     count: int = Field(description="Number of memories in this folder and its children")
-    children: list["MemoryTreeNode"] = Field(default_factory=list, description="Sub-folders")
+    children: "list[MemoryTreeNode]" = Field(default_factory=list, description="Sub-folders")
     memories: list[MemoryEntry] | None = Field(
         default=None, description="Memories directly in this folder, when expanded"
     )

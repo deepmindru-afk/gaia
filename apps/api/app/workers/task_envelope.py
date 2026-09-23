@@ -17,10 +17,10 @@ open by the time they run.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 import functools
 import time
-from typing import Any, TypeVar
+from typing import TypeVar
 
 from arq.worker import Function, func as arq_func
 
@@ -33,16 +33,19 @@ from app.workers.queue import TRACE_ID_KWARG
 from shared.py.wide_events import log, wide_task
 
 T = TypeVar("T")
+#: An ARQ task coroutine. ARQ calls it with (ctx, *args, **kwargs) from the job
+#: payload, so its parameters are the task's own business; its result is typed.
+ArqTask = Callable[..., Coroutine[object, object, T]]
 
 #: The worker_task event's reason when the envelope's deadline cut the task off.
 REASON_TASK_TIMEOUT = "task_timeout"
 
 
 def arq_task(
-    func: Callable[..., Coroutine[Any, Any, T]],
+    func: ArqTask[T],
     *,
     timeout_seconds: float = WORKER_JOB_TIMEOUT_SECONDS,
-) -> Callable[..., Coroutine[Any, Any, T]]:
+) -> ArqTask[T]:
     """Wrap an ARQ task coroutine in the wide-event + metrics envelope, cut off at timeout_seconds.
 
     A task given its own timeout_seconds must be registered with ARQ through
@@ -52,7 +55,7 @@ def arq_task(
     task_name = func.__name__
 
     @functools.wraps(func)
-    async def wrapper(ctx: dict[str, Any], *args: Any, **kwargs: Any) -> T:  # noqa: ANN401 -- ARQ's job API is dynamically typed upstream
+    async def wrapper(ctx: Mapping[str, object], *args: object, **kwargs: object) -> T:
         # Absent only when a caller (a test) invokes the task with a bare ctx;
         # omitting the keys beats emitting nulls the dashboards would have to skip.
         job_context = {key: ctx[key] for key in ("job_id", "job_try") if key in ctx}
@@ -61,7 +64,7 @@ def arq_task(
         try:
             async with wide_task(
                 task_name,
-                trace_id=kwargs.pop(TRACE_ID_KWARG, None),
+                trace_id=_pop_trace_id(kwargs),
                 **job_context,
             ):
                 deadline = asyncio.timeout(timeout_seconds)
@@ -84,8 +87,14 @@ def arq_task(
     return wrapper
 
 
+def _pop_trace_id(kwargs: dict[str, object]) -> str | None:
+    """Take the trace id enqueue_worker_job appended to the job's kwargs, so the task never sees it."""
+    trace_id = kwargs.pop(TRACE_ID_KWARG, None)
+    return trace_id if isinstance(trace_id, str) else None
+
+
 def arq_function(
-    func: Callable[..., Coroutine[Any, Any, T]],
+    func: ArqTask[T],
     *,
     name: str,
     timeout_seconds: int,

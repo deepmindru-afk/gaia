@@ -9,9 +9,10 @@ anyway: their browser session died with the process.
 """
 
 import asyncio
+from collections.abc import MutableMapping
+from dataclasses import dataclass
 import signal
 import socket
-from typing import Any
 
 from arq.worker import Worker
 
@@ -26,6 +27,14 @@ from shared.py.wide_events import log
 
 #: Where the running browser worker and its task live in the main worker's ctx.
 BROWSER_WORKER_CTX_KEY = "browser_worker"
+
+
+@dataclass(frozen=True)
+class RunningBrowserWorker:
+    """The browser queue's Worker and the task serving it, kept in the main worker's ctx."""
+
+    worker: Worker
+    task: asyncio.Task[None]
 
 
 def build_browser_worker() -> Worker:
@@ -52,26 +61,25 @@ def build_browser_worker() -> Worker:
     )
 
 
-def start_browser_worker(ctx: dict[str, Any]) -> None:
+def start_browser_worker(ctx: MutableMapping[str, object]) -> None:
     """Start serving the browser queue beside the main worker, once the process is ready."""
     worker = build_browser_worker()
     task = spawn_background_task(
         worker.async_run(), name="browser_worker", on_done=_stop_process_if_it_ended
     )
-    ctx[BROWSER_WORKER_CTX_KEY] = (worker, task)
+    ctx[BROWSER_WORKER_CTX_KEY] = RunningBrowserWorker(worker=worker, task=task)
 
 
-async def stop_browser_worker(ctx: dict[str, Any]) -> None:
+async def stop_browser_worker(ctx: MutableMapping[str, object]) -> None:
     """Cancel the browser worker's jobs (each ends through its cancel path) and close it."""
-    running: tuple[Worker, asyncio.Task[None]] | None = ctx.pop(BROWSER_WORKER_CTX_KEY, None)
-    if running is None:
+    running = ctx.pop(BROWSER_WORKER_CTX_KEY, None)
+    if not isinstance(running, RunningBrowserWorker):
         # Startup failed before it started; there is nothing to stop.
         return
-    worker, task = running
-    await worker.close()
+    await running.worker.close()
     # close() only cancels a run that had got as far as starting its poll loop.
-    task.cancel()
-    await asyncio.wait({task})
+    running.task.cancel()
+    await asyncio.wait({running.task})
 
 
 def _stop_process_if_it_ended(task: asyncio.Task[None]) -> None:

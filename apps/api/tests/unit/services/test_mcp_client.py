@@ -42,6 +42,7 @@ from app.services.mcp.mcp_client import (
     DCRNotSupportedError,
     MCPClient,
     StepUpAuthRequiredError,
+    _OidcTokenResponse,
     _parse_device_server_url,
     get_mcp_client,
 )
@@ -3321,6 +3322,8 @@ class TestMCPClientHandleCustomIntegrationConnect:
 
         resolved = MagicMock()
         resolved.custom_doc = {"name": "Resolved Name", "description": "Resolved Desc"}
+        resolved.name = "Resolved Name"
+        resolved.description = "Resolved Desc"
 
         with (
             patch(
@@ -3737,6 +3740,8 @@ class TestRunPostConnectTasksExact:
     async def test_custom_integration_routes_to_custom_handler_with_doc_fields(self):
         resolved = MagicMock()
         resolved.custom_doc = {"name": "Custom Name", "description": "Custom Desc"}
+        resolved.name = "Custom Name"
+        resolved.description = "Custom Desc"
         client = MCPClient(user_id=USER_ID)
         client.token_store.store_unauthenticated = AsyncMock()
         client._handle_custom_integration_connect = AsyncMock()
@@ -4660,11 +4665,11 @@ class TestExchangeCodeForTokensExact:
             },
             timeout=30,
         )
-        assert result == {"access_token": "at"}
+        assert result == _OidcTokenResponse(access_token="at")
 
     async def test_missing_verifier_omits_the_key_entirely(self):
         client = MCPClient(user_id=USER_ID)
-        post = AsyncMock(return_value=_ok_response({}))
+        post = AsyncMock(return_value=_ok_response({"access_token": "at"}))
         with patch(
             "app.services.mcp.mcp_client.httpx.AsyncClient",
             return_value=_fake_http_client(post)(),
@@ -4684,7 +4689,7 @@ class TestExchangeCodeForTokensExact:
 
     async def test_secret_adds_basic_auth_header_with_exact_encoding(self):
         client = MCPClient(user_id=USER_ID)
-        post = AsyncMock(return_value=_ok_response({}))
+        post = AsyncMock(return_value=_ok_response({"access_token": "at"}))
         expected_basic = "Basic " + base64.b64encode(b"cid:sec").decode()
         with patch(
             "app.services.mcp.mcp_client.httpx.AsyncClient",
@@ -4701,7 +4706,7 @@ class TestExchangeCodeForTokensExact:
 
     async def test_no_secret_means_no_authorization_header(self):
         client = MCPClient(user_id=USER_ID)
-        post = AsyncMock(return_value=_ok_response({}))
+        post = AsyncMock(return_value=_ok_response({"access_token": "at"}))
         with patch(
             "app.services.mcp.mcp_client.httpx.AsyncClient",
             return_value=_fake_http_client(post)(),
@@ -4726,7 +4731,7 @@ class TestExchangeCodeForTokensExact:
                 INTEGRATION_ID, "https://auth.example.com/token", self._exchange()
             )
 
-        assert result == {"access_token": "at"}
+        assert result == _OidcTokenResponse(access_token="at")
 
     @pytest.mark.parametrize("status", [300, 301, 400])
     async def test_the_first_non_2xx_status_is_an_error(self, status: int) -> None:
@@ -4867,7 +4872,10 @@ class TestHandleOauthCallbackNonceEnforcement:
                 client, "_discover_oauth_config", new_callable=AsyncMock, return_value=oauth_config
             ) as discover,
             patch.object(
-                client, "_exchange_code_for_tokens", new_callable=AsyncMock, return_value=tokens
+                client,
+                "_exchange_code_for_tokens",
+                new_callable=AsyncMock,
+                return_value=_OidcTokenResponse.model_validate(tokens),
             ) as exchange,
             patch.object(
                 client,
@@ -4887,7 +4895,9 @@ class TestHandleOauthCallbackNonceEnforcement:
         credentials.assert_awaited_once_with(INTEGRATION_ID, resolved.mcp_config, oauth_config)
         assert exchange.await_args.kwargs["integration_id"] == INTEGRATION_ID
         assert exchange.await_args.kwargs["token_endpoint"] == "https://auth.example.com/token"
-        client._validate_oidc_nonce.assert_called_once_with(INTEGRATION_ID, "stored_nonce", tokens)
+        client._validate_oidc_nonce.assert_called_once_with(
+            INTEGRATION_ID, "stored_nonce", _OidcTokenResponse.model_validate(tokens)
+        )
 
     async def test_nonce_mismatch_aborts_before_tokens_are_stored(self):
         client = self._make_client()

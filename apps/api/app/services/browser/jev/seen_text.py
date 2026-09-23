@@ -13,7 +13,17 @@ the task's last part was answered on reached the answer empty.
 
 from __future__ import annotations
 
+from typing import Literal, TypedDict
+
 from app.constants.browser import JEV_SEEN_TEXT_MAX_CHARS
+
+
+class ReadPage(TypedDict):
+    """One page the run read: its url, title and how far down it was read."""
+
+    url: str
+    title: str
+    read: Literal["to the end", "top part only"]
 
 
 class SeenText:
@@ -62,7 +72,7 @@ class SeenText:
         return "\n".join(self._lines.get(self._page, []))
 
     @property
-    def pages(self) -> list[dict[str, str]]:
+    def pages(self) -> list[ReadPage]:
         """The pages read, oldest first, each as its url, title and how far down it was read.
 
         A page counts as read to the end once a screen of it showed its bottom;
@@ -70,11 +80,11 @@ class SeenText:
         item counted" or "the whole list seen" has to know.
         """
         return [
-            {
-                "url": page,
-                "title": self._titles.get(page, ""),
-                "read": "to the end" if page in self._to_the_end else "top part only",
-            }
+            ReadPage(
+                url=page,
+                title=self._titles.get(page, ""),
+                read="to the end" if page in self._to_the_end else "top part only",
+            )
             for page in self._lines
         ]
 

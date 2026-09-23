@@ -9,7 +9,7 @@ target head matching the chosen operation is read.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 import math
 from typing import TypedDict, cast
@@ -39,6 +39,7 @@ from app.services.browser.jev.prompts import (
     SOLVE_CAPTCHA_CRITERION,
     TARGET,
 )
+from app.services.browser.jev.seen_text import ReadPage
 
 
 class JevDecisionError(ValueError):
@@ -143,7 +144,7 @@ def build_request(
     goal: str,
     history: list[JevHistoryEntry],
     offered: frozenset[JevOperation],
-    pages_read: Sequence[Mapping[str, str]] = (),
+    pages_read: Sequence[ReadPage] = (),
 ) -> JevEvaluationRequest:
     """Return the shared state plus one operation head and one target head per offered element operation."""
     targets = {op: observation.targets(op) for op in JEV_TARGET_OPERATIONS if op in offered}
@@ -191,7 +192,7 @@ def build_request(
 
 
 def _already_opened(
-    history: list[JevHistoryEntry], url: str, pages_read: Sequence[Mapping[str, str]]
+    history: list[JevHistoryEntry], url: str, pages_read: Sequence[ReadPage]
 ) -> frozenset[str]:
     """Labels on this page that name something the run has already opened and read.
 
@@ -216,10 +217,7 @@ def _already_opened(
         elif any(later.url and page_key(later.url) != here for later in history[position + 1 :]):
             opened.add(entry.target_label)
     for page in pages_read:
-        if (
-            page_key(page.get("url")) != here
-            and len(page.get("title", "")) >= _TITLE_MATCH_MIN_CHARS
-        ):
+        if page_key(page["url"]) != here and len(page["title"]) >= _TITLE_MATCH_MIN_CHARS:
             opened.add(page["title"])
     return frozenset(opened)
 
@@ -251,7 +249,7 @@ async def choose(
     goal: str,
     history: list[JevHistoryEntry],
     offered: frozenset[JevOperation],
-    pages_read: Sequence[Mapping[str, str]] = (),
+    pages_read: Sequence[ReadPage] = (),
 ) -> JevDecision:
     """Ask Jev for this step's operation and, when it needs one, its target."""
     request = build_request(observation, goal, history, offered, pages_read)
