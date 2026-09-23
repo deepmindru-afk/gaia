@@ -16,7 +16,16 @@ from dataclasses import replace
 import json
 import re
 from time import perf_counter
-from typing import TYPE_CHECKING, Protocol, TypedDict, TypeVar, cast, get_args, overload
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    Protocol,
+    TypedDict,
+    TypeVar,
+    cast,
+    get_args,
+    overload,
+)
 from urllib.parse import urlsplit
 
 from langchain_core.messages import BaseMessage as LangChainMessage, HumanMessage, SystemMessage
@@ -216,10 +225,39 @@ class _PlanSteps(BaseModel):
     steps: list[_PlanStep] = []
 
 
+class _Evidence(BaseModel):
+    """One requirement of a part and what the run holds for it."""
+
+    requirement: str = ""
+    #: None for a bare source with no kind: held to the strictest rule.
+    kind: Literal["action", "page opened", "fact"] | None = None
+    source: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_source(cls, value: object) -> object:
+        # The writer sometimes lists an entry as its source alone.
+        return {"source": value} if isinstance(value, str) else value
+
+
 class _PartDone(BaseModel):
+    #: Named before the evidence, so a requirement with nothing to cite is
+    #: written down rather than left out of a "done".
+    requirements: list[str] = []
+    evidence: list[_Evidence] = []
     done: bool = False
-    evidence: list[str] = []
     findings: str = ""
+
+    def uncovered(self) -> list[str]:
+        """Return the requirements left without an evidence entry of their own.
+
+        One entry per requirement is what the writer is asked for; fewer entries
+        than requirements leaves the ones no entry names (in any wording) bare.
+        """
+        if len(self.evidence) >= len(self.requirements):
+            return []
+        named = {" ".join(item.requirement.casefold().split()) for item in self.evidence}
+        return [r for r in self.requirements if " ".join(r.casefold().split()) not in named]
 
 
 class JevChatModel:
@@ -851,12 +889,14 @@ class JevChatModel:
         hedge_after: float = JEV_TEXT_HEDGE_SECONDS,
         label: str | None = None,
         reasoning: OpenRouterReasoning | None = None,
+        start_page: str | None = None,
     ) -> T | None:
         """Goal, field, page and recent actions in; one small JSON value out.
 
         whole_history hands over every action of the run, not the recent few:
         the closing answer reports what was done, and it can only know that
-        from the actions themselves, never from the task's wording.
+        from the actions themselves, never from the task's wording. start_page
+        is the page the current part began on, which the run opened for it.
         """
         context: dict[str, object] = {
             "goal": goal,
@@ -882,6 +922,8 @@ class JevChatModel:
         }
         if seen_text:
             context["seen_on_pages_read"] = seen_text
+        if start_page:
+            context["start_page"] = start_page
         t0 = perf_counter()
         label = label or f"browser_{output.__name__.strip('_').lower()}"
         prompt = [SystemMessage(content=instructions), HumanMessage(content=json.dumps(context))]
@@ -1066,14 +1108,9 @@ class JevChatModel:
         if not done_chosen and self._judged == state:
             return False
         self._judged = state
-        # Every evidence entry must be a page read (not the part's own listing) or an
-        # action taken, as the writer was shown them: it once declared three stories
-        # opened from the front page alone, and a radio chosen that was never clicked.
-        opened = {page_key(page["url"]) for page in self._seen_text.pages}
-        listing = page_key(self._plan[part].url)
-        taken = {entry.action for entry in self._history}
         # Reasoning off: 1-3 s instead of 8-33 s a judgement. Without it the judge
         # needs the text read, not the screen alone, to see a list read to the end.
+        start_page = self._plan[part].url
         verdict = await self._structured(
             _PartDone,
             PART_DONE,
@@ -1084,14 +1121,24 @@ class JevChatModel:
             whole_history=True,
             label="browser_done_check" if done_chosen else None,
             reasoning=REASONING_DISABLED,
+            start_page=start_page,
         )
-        evidence = [item.strip() for item in (verdict.evidence if verdict else []) if item.strip()]
+        evidence = [item for item in (verdict.evidence if verdict else []) if item.source.strip()]
         unverified = [
-            item
-            for item in evidence
-            if item not in taken and (page_key(item) not in opened or page_key(item) == listing)
+            item.source for item in evidence if not self._holds(item, page_key(start_page))
         ]
-        done = bool(verdict and verdict.done and evidence and not unverified)
+        uncovered = verdict.uncovered() if verdict else []
+        done = (
+            bool(verdict and verdict.done and verdict.requirements and evidence and not unverified)
+            and not uncovered
+        )
+        if verdict and verdict.done and uncovered:
+            log.info(
+                f"{LogTag.BROWSER} Jev part claimed done with requirements it cites nothing for "
+                f"({uncovered[:4]})",
+                step=self._steps,
+                part=part + 1,
+            )
         if verdict and verdict.done and not done:
             log.info(
                 f"{LogTag.BROWSER} Jev part claimed done on evidence the run does not hold "
@@ -1102,15 +1149,36 @@ class JevChatModel:
         findings = (verdict.findings if verdict else "").strip()
         if done and findings:
             self._findings.append(f"Part {part + 1}: {findings}")
+        cited = [f"{item.kind}: {item.source[:120]}" for item in evidence]
         log.info(
             f"{LogTag.BROWSER} Jev part judged (part {part + 1}/{len(self._plan)} "
             f"{'done' if done else 'not done'} after {pages} pages read"
-            f"{f'; findings: {findings[:160]}' if findings else ''})",
+            f"{f'; findings: {findings[:160]}' if findings else ''}"
+            f"{f'; evidence: {cited}' if done else ''})",
             step=self._steps,
             part=part + 1,
             done=done,
+            evidence=cited,
         )
         return done
+
+    def _holds(self, evidence: _Evidence, start_page: str | None) -> bool:
+        """Whether the run itself holds this evidence entry, as what the entry says it is.
+
+        An action is one the run took, cited by its action string or by what it
+        said (a handoff's ask); a page is never one. A page counts when it was
+        read; the part's own start page shows facts (a story's title and points)
+        but is never a page opened from it. The writer once declared three stories
+        opened from the front page alone, a radio chosen that was never clicked,
+        and a login handed to the user on its first step, citing the login page.
+        """
+        source = evidence.source.strip()
+        taken = source in _citations(self._history)
+        if evidence.kind == "action" or (evidence.kind is None and taken):
+            return taken
+        key = page_key(source)
+        read = key in {page_key(page["url"]) for page in self._seen_text.pages}
+        return read and (key != start_page or evidence.kind == "fact")
 
     def _advance_plan(self) -> bool:
         """Move to the next part of the plan; False when the part just finished was the last."""
@@ -1354,6 +1422,15 @@ class JevChatModel:
         self._history.append(
             JevHistoryEntry(action=action, kind=kind, text=text, url=url, target_label=target_label)
         )
+
+
+def _citations(history: list[JevHistoryEntry]) -> set[str]:
+    """Every string that names an action the run took: its action string, its text, or both."""
+    cited = {entry.action for entry in history}
+    for entry in history:
+        if entry.text:
+            cited |= {entry.text.strip(), f"{entry.action}: {entry.text.strip()}"}
+    return cited
 
 
 _STALLED_STEPS = 8

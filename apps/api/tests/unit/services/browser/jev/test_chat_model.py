@@ -184,7 +184,12 @@ class FakeTextModel:
                 return schema.model_validate({"done": False})
             pages = json.loads(prompt[1].content)["pages_read"]
             return schema.model_validate(
-                {"done": True, "evidence": [pages[0]["url"]], "findings": ""}
+                {
+                    "requirements": ["the page"],
+                    "done": True,
+                    "evidence": [pages[0]["url"]],
+                    "findings": "",
+                }
             )
         self.calls.append((prompt, schema))
         reply = self.replies.pop(0) if self.replies else {}
@@ -1421,7 +1426,12 @@ async def test_a_list_that_replaces_a_wall_on_the_same_url_is_judged_and_answers
         judged.append(context)
         shown = "How to keep" in context["page"]["text"]
         return schema.model_validate(
-            {"done": shown, "evidence": [_QUESTIONS_URL] if shown else [], "findings": ""}
+            {
+                "requirements": ["the first question"],
+                "done": shown,
+                "evidence": [_QUESTIONS_URL] if shown else [],
+                "findings": "",
+            }
         )
 
     gateway = ScriptedGateway(script=[("WAIT", None), ("SCROLL_DOWN", None)])
@@ -1485,7 +1495,12 @@ class _Judge:
         await self.release.wait()
         url = json.loads(prompt[1].content)["pages_read"][0]["url"]
         return schema.model_validate(
-            {"done": self.done, "evidence": [url] if self.done else [], "findings": ""}
+            {
+                "requirements": ["the flights"],
+                "done": self.done,
+                "evidence": [url] if self.done else [],
+                "findings": "",
+            }
         )
 
 
@@ -1748,7 +1763,12 @@ async def test_a_one_page_category_read_to_its_bottom_answers_the_cheapest_book(
         # Judges like the real writer: a whole list is known only from a page read to the end.
         whole = any(p["url"] == _TRAVEL and p["read"] == "to the end" for p in pages)
         return schema.model_validate(
-            {"done": whole, "evidence": [_TRAVEL] if whole else [], "findings": ""}
+            {
+                "requirements": ["the cheapest book"],
+                "done": whole,
+                "evidence": [_TRAVEL] if whole else [],
+                "findings": "",
+            }
         )
 
     gateway = ScriptedGateway(script=[("SCROLL_DOWN", None), ("SCROLL_DOWN", None)])
@@ -1811,7 +1831,9 @@ class _SlowJudgeFastCheck:
         if label != "browser_done_check":
             await self.release.wait()
         url = json.loads(prompt[1].content)["pages_read"][-1]["url"]
-        return schema.model_validate({"done": True, "evidence": [url], "findings": ""})
+        return schema.model_validate(
+            {"requirements": ["the page"], "done": True, "evidence": [url], "findings": ""}
+        )
 
 
 async def test_a_done_on_newer_pages_is_not_held_by_a_judgement_of_older_ones(
@@ -1849,3 +1871,247 @@ async def test_a_judgement_of_a_finished_part_never_finishes_the_next(flights_st
     result = await asyncio.wait_for(model.ainvoke([], _agent_output()), timeout=1)
 
     assert _action(result.completion) == {"click": {"index": 40}}
+
+
+# ---------------------------------------------------------------------------
+# Part evidence: what the run holds, and what a part's own start page can prove
+# ---------------------------------------------------------------------------
+
+_HN = "https://news.ycombinator.com/"
+_ARTICLE = "https://blog.example/tts"
+_LOGIN = "https://the-internet.herokuapp.com/login"
+_SECURE = "https://the-internet.herokuapp.com/secure"
+
+
+def _evidence_writer(
+    parts: list[dict[str, Any]],
+    evidence: list[Any],
+    replies: list[dict[str, Any] | Exception],
+    judged: list[dict[str, Any]] | None = None,
+    requirements: list[str] | None = None,
+):
+    """Return a writer with this plan whose DONE check cites evidence; nothing else is judged done.
+
+    Every judgement's context is appended to judged.
+    """
+    helper = FakeTextModel(replies=replies)
+
+    async def writer(schema, prompt, *, label, timeout=None, reasoning=None):
+        if prompt[0].content.startswith(PLAN_STEPS):
+            return schema.model_validate({"steps": parts})
+        if prompt[0].content.startswith(PART_DONE):
+            if judged is not None:
+                judged.append(json.loads(prompt[1].content))
+            if label != "browser_done_check":
+                return schema.model_validate({"done": False})
+            return schema.model_validate(
+                {
+                    "requirements": requirements
+                    if requirements is not None
+                    else [e["requirement"] for e in evidence if isinstance(e, dict)] or ["it"],
+                    "done": True,
+                    "evidence": evidence,
+                    "findings": "",
+                }
+            )
+        return await helper.structured(schema, prompt, label=label, timeout=timeout)
+
+    return writer
+
+
+async def _run_to_done(start, then, script, writer, task: str):
+    """Read start, move to then, and return the step Jev chose DONE on (or what replaced it).
+
+    The gateway is returned too: its last request shows which part the run is on.
+    """
+    gateway = ScriptedGateway(script=list(script))
+    model = JevChatModel(client=gateway, text_model=FakeTextModel(), structured_call=writer)  # type: ignore[arg-type]  # a scripted gateway and a fake text model stand in for the real ones
+    session = FakeSession(start)
+    model.bind(session, task)  # type: ignore[arg-type]  # a fake session stands in for Browser-Use's
+    await model.ainvoke([], _agent_output())
+    for _ in range(20):
+        await asyncio.sleep(0)
+    session.state = then
+    return _action((await model.ainvoke([], _agent_output())).completion), gateway
+
+
+_HN_TASK = (
+    f"Go to {_HN}, give me the top story's title and points and summarise its article, "
+    "then look the story up on Wikipedia."
+)
+#: A part only has a start page of its own in a plan of several parts.
+_TOP_STORY_PLAN = [
+    {"goal": "Top story's title, points and a summary of its article", "url": _HN},
+    {"goal": "Look the story up on Wikipedia", "url": "https://en.wikipedia.org/"},
+]
+
+
+def _on_part(gateway: ScriptedGateway) -> str:
+    goal = str(gateway.requests[-1].questions["operation"].instructions["goal"])
+    return next(part for part in ("1 of 2", "2 of 2") if f"CURRENT PART ({part})" in goal)
+
+
+@pytest.mark.regression
+async def test_facts_the_parts_own_listing_shows_are_evidence_for_it() -> None:
+    """Regression: a story's title and points, read where they are shown, were refused as evidence.
+
+    The front page is the part's start page, and every citation of it was thrown
+    out; the part could never be done, and the run wandered HN for 80 steps.
+    """
+    writer = _evidence_writer(
+        _TOP_STORY_PLAN,
+        [
+            {"requirement": "title", "kind": "fact", "source": _HN},
+            {"requirement": "points", "kind": "fact", "source": _HN},
+            {"requirement": "article opened", "kind": "page opened", "source": _ARTICLE},
+        ],
+        [],
+    )
+
+    _, gateway = await _run_to_done(
+        make_state({1: FakeNode("A", text="TTS")}, url=_HN),
+        make_state({1: FakeNode("P", text="Gemini TTS")}, url=_ARTICLE),
+        [("WAIT", None), ("DONE", None), ("WAIT", None)],
+        writer,
+        _HN_TASK,
+    )
+
+    assert _on_part(gateway) == "2 of 2"
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        {"requirement": "article opened", "kind": "page opened", "source": _HN},
+        {"requirement": "article opened", "kind": "action", "source": _HN},
+        _HN,
+    ],
+    ids=["opened", "as-an-action", "bare"],
+)
+async def test_the_listing_never_proves_a_page_was_opened_from_it(citation) -> None:
+    writer = _evidence_writer(
+        _TOP_STORY_PLAN,
+        [{"requirement": "title", "kind": "fact", "source": _HN}, citation],
+        [],
+    )
+
+    _, gateway = await _run_to_done(
+        make_state({1: FakeNode("A", text="TTS")}, url=_HN),
+        make_state({1: FakeNode("A", text="TTS")}, url=_HN),
+        [("WAIT", None), ("DONE", None), ("WAIT", None)],
+        writer,
+        _HN_TASK,
+    )
+
+    assert _on_part(gateway) == "1 of 2"
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Enter your username and password and sign in.",
+        "REQUEST_HUMAN: Enter your username and password and sign in.",
+    ],
+    ids=["its-words", "labelled"],
+)
+async def test_a_login_the_user_completed_is_evidence_of_the_login(source) -> None:
+    """Regression: the handoff cited by what it asked was refused, so a finished login stayed "not done"."""
+    writer = _evidence_writer(
+        [{"goal": "Log in", "url": _LOGIN}],
+        [{"requirement": "logged in", "kind": "action", "source": source}],
+        [
+            {"text": "Enter your username and password and sign in.", "category": "credentials"},
+            {"text": "You logged into a secure area!"},
+        ],
+    )
+
+    action, _ = await _run_to_done(
+        make_state({1: FakeNode("INPUT", {"name": "password"})}, url=_LOGIN),
+        make_state({1: FakeNode("H2", text="Secure Area")}, url=_SECURE),
+        [("REQUEST_HUMAN", None), ("DONE", None), ("WAIT", None)],
+        writer,
+        f"Go to {_LOGIN} and log me in; I'll type the password myself.",
+    )
+
+    assert action["done"]["success"] is True
+
+
+async def test_an_action_the_run_never_took_is_not_evidence() -> None:
+    writer = _evidence_writer(
+        [{"goal": "Log in", "url": _LOGIN}],
+        [{"requirement": "logged in", "kind": "action", "source": "CLICK [9] Login"}],
+        [{"text": "Enter your username and password and sign in.", "category": "credentials"}],
+    )
+
+    action, _ = await _run_to_done(
+        make_state({1: FakeNode("INPUT", {"name": "password"})}, url=_LOGIN),
+        make_state({1: FakeNode("H2", text="Secure Area")}, url=_SECURE),
+        [("REQUEST_HUMAN", None), ("DONE", None), ("WAIT", None)],
+        writer,
+        f"Go to {_LOGIN} and log me in; I'll type the password myself.",
+    )
+
+    assert "done" not in action, action
+
+
+@pytest.mark.regression
+async def test_a_page_is_never_evidence_of_an_action() -> None:
+    """The judge once called a login "handed to the user" on its first step, citing only the login page."""
+    writer = _evidence_writer(
+        [{"goal": "Log in", "url": _LOGIN}],
+        [{"requirement": "session handed to the user", "kind": "action", "source": _LOGIN}],
+        [],
+    )
+
+    action, _ = await _run_to_done(
+        make_state({1: FakeNode("INPUT", {"name": "password"})}, url=_LOGIN),
+        make_state({1: FakeNode("INPUT", {"name": "password"})}, url=_LOGIN),
+        [("WAIT", None), ("DONE", None), ("WAIT", None)],
+        writer,
+        f"Go to {_LOGIN} and log me in; I'll type the password myself.",
+    )
+
+    assert "done" not in action, action
+
+
+@pytest.mark.regression
+async def test_the_judge_is_told_the_page_the_part_started_on() -> None:
+    """A login part's goal said "go to the login page"; the judge cited it as a page opened, and the finished login stayed "not done"."""
+    judged: list[dict[str, Any]] = []
+    writer = _evidence_writer(_TOP_STORY_PLAN, [], [], judged)
+
+    await _run_to_done(
+        make_state({1: FakeNode("A", text="TTS")}, url=_HN),
+        make_state({1: FakeNode("A", text="TTS")}, url=_HN),
+        [("WAIT", None), ("DONE", None), ("WAIT", None)],
+        writer,
+        _HN_TASK,
+    )
+
+    assert judged and all(context["start_page"] == _HN for context in judged)
+
+
+@pytest.mark.regression
+async def test_a_part_is_not_done_while_a_requirement_it_named_has_no_evidence() -> None:
+    """Regression: the judge called a login part done on its first step.
+
+    It named the handoff as a requirement, cited only the login page for the
+    part, and its own findings said the run was still waiting for the user.
+    """
+    writer = _evidence_writer(
+        [{"goal": "Go to the login page and hand the live view to the user"}],
+        [{"requirement": "login page open", "kind": "fact", "source": _LOGIN}],
+        [],
+        requirements=["login page open", "live view handed to the user"],
+    )
+
+    action, _ = await _run_to_done(
+        make_state({1: FakeNode("INPUT", {"name": "password"})}, url=_LOGIN),
+        make_state({1: FakeNode("INPUT", {"name": "password"})}, url=_LOGIN),
+        [("WAIT", None), ("DONE", None), ("WAIT", None)],
+        writer,
+        f"Go to {_LOGIN} and log me in; I'll type the password myself.",
+    )
+
+    assert "done" not in action, action
