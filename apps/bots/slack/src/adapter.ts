@@ -298,27 +298,37 @@ export class SlackAdapter extends BaseBotAdapter {
     return channel;
   }
 
+  /**
+   * Runs one outbound send against the conversation's channel id: the channel
+   * itself for a channel/group, else the user's resolved DM channel
+   * (platform_links stores the user id).
+   */
+  private async sendToConversation(
+    destinationId: string,
+    isChannel: boolean,
+    send: (channel: string) => Promise<unknown>,
+  ): Promise<void> {
+    const channel = isChannel
+      ? destinationId
+      : await this.resolveDmChannel(destinationId);
+    try {
+      await send(channel);
+    } catch (err) {
+      // A cached DM channel id can go stale (conversation archived, user
+      // deactivated): drop it so the next delivery re-resolves.
+      if (!isChannel) this.dmChannelCache.delete(destinationId);
+      throw err;
+    }
+  }
+
   protected async deliverOutbound(
     destinationId: string,
     text: string,
     isChannel: boolean,
   ): Promise<void> {
-    // A channel/group conversation posts to the channel id directly; a DM posts
-    // to the user's resolved DM channel (platform_links stores the user id).
-    if (isChannel) {
-      await this.app.client.chat.postMessage({ channel: destinationId, text });
-      return;
-    }
-    const channel = await this.resolveDmChannel(destinationId);
-    try {
-      await this.app.client.chat.postMessage({ channel, text });
-    } catch (err) {
-      // A cached DM channel id can go stale (conversation archived, user
-      // deactivated). Drop it so the next delivery re-resolves instead of
-      // failing forever against a dead channel.
-      this.dmChannelCache.delete(destinationId);
-      throw err;
-    }
+    await this.sendToConversation(destinationId, isChannel, (channel) =>
+      this.app.client.chat.postMessage({ channel, text }),
+    );
   }
 
   /**
@@ -338,27 +348,14 @@ export class SlackAdapter extends BaseBotAdapter {
       isChannel,
     );
     if (!artifact) return; // too large — fetchOutboundArtifact already replied
-    if (isChannel) {
-      await this.app.client.files.uploadV2({
-        channel_id: destinationId,
-        file: artifact.data,
-        filename: attachment.filename,
-        initial_comment: attachment.caption ?? undefined,
-      });
-      return;
-    }
-    const channel = await this.resolveDmChannel(destinationId);
-    try {
-      await this.app.client.files.uploadV2({
+    await this.sendToConversation(destinationId, isChannel, (channel) =>
+      this.app.client.files.uploadV2({
         channel_id: channel,
         file: artifact.data,
         filename: attachment.filename,
         initial_comment: attachment.caption ?? undefined,
-      });
-    } catch (err) {
-      this.dmChannelCache.delete(destinationId);
-      throw err;
-    }
+      }),
+    );
   }
 
   protected override async deliverOutboundReaction(

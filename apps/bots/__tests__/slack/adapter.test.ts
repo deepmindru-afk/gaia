@@ -990,6 +990,20 @@ describe("SlackAdapter - deliverOutboundFile channel routing", () => {
       expect.objectContaining({ channel_id: "D-dm" }),
     );
   });
+
+  it("re-resolves the DM after an upload to a stale DM channel fails", async () => {
+    const { adapter, app } = makeAdapter();
+    app.client.files.uploadV2.mockRejectedValueOnce(
+      new Error("channel_not_found"),
+    );
+
+    await expect(
+      adapter.deliverOutboundFile("U-user", shot, false),
+    ).rejects.toThrow("channel_not_found");
+    await adapter.deliverOutboundFile("U-user", shot, false);
+
+    expect(app.client.conversations.open).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
