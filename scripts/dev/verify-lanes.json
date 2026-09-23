@@ -274,7 +274,7 @@
       "heavy": true,
       "timeout_s": 900,
       "require_cmd": ["docker"],
-      "command": "docker run --rm --volume \"$PWD:/src\" --workdir /src semgrep/semgrep@sha256:b68f9b68483955b85042dac7b4533757779625a02dcf91e470da4c2df1b430be semgrep scan --config tools/semgrep/p-python.yaml apps/api/app --error --metrics=off"
+      "command": "GITDIR=$(git rev-parse --path-format=absolute --git-common-dir) && docker run --rm --volume \"$PWD:/src\" --volume \"$GITDIR:$GITDIR\" --workdir /src semgrep/semgrep@sha256:b68f9b68483955b85042dac7b4533757779625a02dcf91e470da4c2df1b430be semgrep scan --config tools/semgrep/p-python.yaml apps/api/app --error --metrics=off"
     },
     {
       "name": "test-mutation",
