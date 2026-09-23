@@ -1495,7 +1495,6 @@ class TestABackgroundSpawnsApproval:
             if isinstance(message, HumanMessage)
         ]
 
-    @pytest.mark.regression
     async def test_the_card_is_raised_on_the_spawns_own_stream(self) -> None:
         """The spawn outlives the turn that started it, so its card must not ride the turn's stream."""
         async with self._world() as (world, _model):

@@ -894,7 +894,6 @@ class TestResolutionEdges:
         ):
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
 
-    @pytest.mark.regression
     async def test_a_failed_card_settle_is_logged_not_swallowed(self, resume: Any) -> None:
         with (
             patch(

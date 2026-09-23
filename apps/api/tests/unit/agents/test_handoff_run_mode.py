@@ -116,7 +116,6 @@ def _configurable(**overrides: Any) -> dict[str, Any]:
 
 
 class TestAHeadlessRunWaitsForItsSubagent:
-    @pytest.mark.regression
     async def test_a_workflow_handoff_returns_the_subagents_answer(self, world: None) -> None:
         # A headless run delivers once: a result landing after it ends reaches nobody.
         configurable = _configurable(execution_mode="background", workflow_id="")
@@ -131,7 +130,6 @@ class TestAHeadlessRunWaitsForItsSubagent:
 
 
 class TestABusyIntegrationRefusesInWholeSentences:
-    @pytest.mark.regression
     async def test_a_second_handoff_while_the_first_runs_names_how_to_reach_it(
         self, world: None
     ) -> None:
