@@ -6,6 +6,7 @@ any of those shapes breaks these tests instead of silently passing against a stu
 """
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -26,6 +27,9 @@ from app.services.hil.intent import IntentDecision
 USER_ID = "507f1f77bcf86cd799439011"
 CONVERSATION_ID = "conv-1"
 STREAM_ID = "stream-1"
+
+# The JEV Decisions transport: the network boundary every JEV question crosses.
+JEV_CLIENT_MODULE = "app.services.hil.jev_client"
 
 
 def make_tool(
@@ -270,3 +274,38 @@ def gated_request(
             **configurable,
         },
     )
+
+
+def jev_reply_body(*verdicts: tuple[str, float]) -> dict[str, Any]:
+    """Build a Decisions body answering action_1..N, one (choice, confidence) each."""
+    return {
+        "answers": {
+            f"action_{number}": {
+                "type": "choice",
+                "choice": choice,
+                "confidence": confidence,
+                "probabilities": {choice: confidence},
+            }
+            for number, (choice, confidence) in enumerate(verdicts, start=1)
+        },
+        "usage": {"input_tokens": 400, "output_tokens": 40},
+    }
+
+
+@contextmanager
+def serve_jev(answer: dict[str, Any] | Exception) -> Iterator[AsyncMock]:
+    """Serve one Decisions answer (or raise it) with a key configured; yields the client."""
+    response = MagicMock()
+    response.json.return_value = answer
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    if isinstance(answer, Exception):
+        client.post.side_effect = answer
+    else:
+        client.post.return_value = response
+    with (
+        patch(f"{JEV_CLIENT_MODULE}.httpx.AsyncClient", return_value=client),
+        patch(f"{JEV_CLIENT_MODULE}.settings") as settings,
+    ):
+        settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
+        yield client
