@@ -16,7 +16,7 @@ from app.constants.payments import SUBSCRIPTION_WORKFLOW_SYNC_TASK
 import app.patches  # noqa: F401 -- applies monkeypatches on import; must run before the patched SDKs are used
 from app.workers.config.worker_settings import WorkerSettings
 from app.workers.lifecycle import shutdown, startup
-from app.workers.task_envelope import arq_task
+from app.workers.task_envelope import arq_function, arq_task
 from app.workers.tasks import (
     backfill_active_users,
     backfill_user_memories,
@@ -40,7 +40,7 @@ from app.workers.tasks import (
     sweep_idle_sandboxes,
     sweep_undelivered_signup_emails,
 )
-from app.workers.tasks.browser_tasks import run_browser_job
+from app.workers.tasks.browser_tasks import browser_job_timeout_seconds, run_browser_job
 from app.workers.tasks.device_tasks import warm_device_servers
 from app.workers.tasks.hil_sweep_tasks import sweep_hil_approvals
 from app.workers.tasks.maintenance_sweep_tasks import maintenance_sweep_tracked_todos
@@ -112,8 +112,14 @@ _sync_workflows_for_subscription_state = func(
 
 # One run per conversation is enforced by the browser slot lease, not by ARQ,
 # and a browser run is not idempotent — it may already have submitted a form.
-_run_browser_job = func(
-    arq_task(run_browser_job), name=BROWSER_JOB_TASK, max_tries=1, keep_result=0
+# Its deadline is derived from the settings that bound a run: handoffs alone can
+# hold a legitimate run for hours, far past the default job cap.
+_run_browser_job = arq_function(
+    run_browser_job,
+    name=BROWSER_JOB_TASK,
+    timeout_seconds=browser_job_timeout_seconds(),
+    max_tries=1,
+    keep_result=0,
 )
 
 WorkerSettings.functions = [

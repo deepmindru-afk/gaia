@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.workers.config.worker_settings import WorkerSettings
+from app.workers.config.worker_settings import (
+    ARQ_BACKSTOP_GRACE_SECONDS,
+    WORKER_JOB_TIMEOUT_SECONDS,
+    WorkerSettings,
+)
 from app.workers.lifecycle.shutdown import shutdown
 
 # startup is imported lazily: the module has side effects at import time
@@ -236,9 +240,10 @@ class TestWorkerSettings:
         assert isinstance(WorkerSettings.job_timeout, int)
         assert WorkerSettings.job_timeout > 0
 
-    def test_job_timeout_is_30_minutes(self):
-        """Default job timeout should be 30 minutes (1800 seconds)."""
-        assert WorkerSettings.job_timeout == 1800
+    def test_job_timeout_is_a_backstop_past_the_30_minute_envelope_cap(self):
+        """The envelope cuts a job off at 30 minutes; ARQ's timeout only backs it up."""
+        assert WORKER_JOB_TIMEOUT_SECONDS == 1800
+        assert WorkerSettings.job_timeout == WORKER_JOB_TIMEOUT_SECONDS + ARQ_BACKSTOP_GRACE_SECONDS
 
     def test_keep_result_zero(self):
         """keep_result=0 means results are not stored in Redis."""

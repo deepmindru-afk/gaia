@@ -12,11 +12,15 @@ from collections.abc import Mapping
 from app.agents.core.background.comms_narrator import narrate_executor_result
 from app.agents.core.background.executor_capture import tool_data_from_events
 from app.agents.core.background.result_delivery import deliver_message_to_conversation
+from app.config.settings import settings
 from app.constants.browser import (
+    BROWSER_AGENT_GUIDANCE_MAX,
+    BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS,
     BROWSER_JOB_HEARTBEAT_SECONDS,
     BROWSER_JOB_JOINER_LEASE_SECONDS,
     BROWSER_JOB_JOINER_REFRESH_SECONDS,
     BROWSER_JOB_POLL_INTERVAL_SECONDS,
+    MAX_HANDOFFS_PER_TASK,
 )
 from app.constants.log_tags import LogTag
 from app.schemas.browser_job import BrowserJobRequest, BrowserJobState, BrowserJobStatus
@@ -36,6 +40,29 @@ from app.services.browser.jobs import (
 from app.utils.auth_utils import load_user_context
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log
+
+#: What a job does outside the run's own clock: opening the session (and the
+#: fallback engine's), the terminal writes, the wait for a joiner and narrating
+#: the result.
+BROWSER_JOB_OVERHEAD_SECONDS = 300
+
+
+def browser_job_timeout_seconds() -> int:
+    """Return the longest a browser job may legitimately take, which the worker cuts it off at.
+
+    A run's active-work budget, plus every handoff it may make waiting the full
+    handoff window, plus every agent-guidance round waiting its full window, plus
+    the job's own overhead. The runner's wall clock fires inside this, so a run
+    that overstays still ends as the runner's task_timeout, not the worker's.
+    """
+    task_budget: int = settings.BROWSER_USE_TASK_TIMEOUT_SECONDS
+    handoff_window: int = settings.BROWSER_USE_HANDOFF_TIMEOUT_SECONDS
+    return (
+        task_budget
+        + MAX_HANDOFFS_PER_TASK * handoff_window
+        + BROWSER_AGENT_GUIDANCE_MAX * BROWSER_AGENT_GUIDANCE_TIMEOUT_SECONDS
+        + BROWSER_JOB_OVERHEAD_SECONDS
+    )
 
 
 async def run_browser_job(
