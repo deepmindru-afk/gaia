@@ -1,5 +1,6 @@
 """Tests for app.agents.skills.github_discovery."""
 
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,7 +17,7 @@ from app.agents.skills.github_discovery import (
     discover_skills_from_repo,
     get_skill_from_repo,
 )
-from app.agents.skills.utils import GITHUB_API_BASE
+from app.agents.skills.utils import GITHUB_API_BASE, github_url
 
 # ---------------------------------------------------------------------------
 # DiscoveredSkill
@@ -479,6 +480,19 @@ class TestGithubApiTraversal:
         with respx.mock:
             with pytest.raises(ValueError, match="Invalid GitHub path segment"):
                 await discover_skills_from_repo(repo_url, branch)
+
+    @pytest.mark.parametrize(
+        ("parts", "shown"),
+        [
+            (("repos", "owner", "."), "repos/owner/."),
+            (("repos", "owner", "a//b"), "repos/owner/a//b"),
+        ],
+    )
+    def test_github_url_names_the_rejected_ref(self, parts: tuple[str, ...], shown: str) -> None:
+        with pytest.raises(
+            ValueError, match=f"^Invalid GitHub path segment in '{re.escape(shown)}'$"
+        ):
+            github_url(GITHUB_API_BASE, *parts)
 
     async def test_query_characters_are_encoded_not_interpreted(self) -> None:
         with respx.mock:

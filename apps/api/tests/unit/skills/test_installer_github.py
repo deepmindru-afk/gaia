@@ -202,6 +202,30 @@ class TestInstallFromGithubValidation:
         with pytest.raises(ValueError, match="Provide a path"):
             await install_from_github(user_id="u1", repo_url="org/repo")
 
+    async def test_skill_md_without_download_url_raises_value_error(self, storage_seams):
+        entry = {**_contents_entry("SKILL.md", "file", "skills/x/SKILL.md"), "download_url": None}
+        with respx.mock:
+            respx.get(f"{GITHUB_API_BASE}/repos/org/repo/contents/skills/x").mock(
+                return_value=httpx.Response(200, json=[entry])
+            )
+            with pytest.raises(ValueError, match="no download URL for skills/x/SKILL.md"):
+                await install_from_github(user_id="u1", repo_url="org/repo/skills/x")
+
+    async def test_single_file_contents_response_is_treated_as_one_entry(self, storage_seams):
+        """The Contents API answers a file path with one object, not a list."""
+        with respx.mock:
+            respx.get(f"{GITHUB_API_BASE}/repos/org/repo/contents/skills/x").mock(
+                return_value=httpx.Response(
+                    200, json=_contents_entry("SKILL.md", "file", "skills/x/SKILL.md")
+                )
+            )
+            respx.get("https://raw.githubusercontent.com/org/repo/main/skills/x/SKILL.md").mock(
+                return_value=httpx.Response(200, text=_SKILL_MD_CONTENT)
+            )
+            await install_from_github(user_id="u1", repo_url="org/repo/skills/x")
+
+        assert storage_seams[1].await_args.args[0].name == "my-skill"
+
     async def test_dot_segment_path_is_rejected_before_any_request(self, storage_seams):
         """Httpx collapses dot segments: unchecked, this path sent the server's GitHub token to /user/keys."""
         with respx.mock:

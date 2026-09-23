@@ -29,7 +29,12 @@ from app.agents.skills.registry import (
     uninstall_skill,
     update_skill,
 )
-from app.agents.skills.utils import GITHUB_API_BASE, get_github_headers, github_url
+from app.agents.skills.utils import (
+    GITHUB_API_BASE,
+    GitHubContentEntry,
+    get_github_headers,
+    github_url,
+)
 from app.constants.log_tags import LogTag
 from app.services.storage import (
     JuiceFSUnavailable,
@@ -81,7 +86,7 @@ async def _fetch_github_contents(
     path: str,
     client: httpx.AsyncClient,
     branch: str = "main",
-) -> list[dict]:
+) -> list[GitHubContentEntry]:
     """Fetch directory contents from GitHub API.
 
     Returns list of file info dicts with 'name', 'path', 'type', 'download_url'.
@@ -103,15 +108,18 @@ async def _fetch_github_contents(
         )
 
     resp.raise_for_status()
-    data: list[dict] | dict = resp.json()
+    data: list[GitHubContentEntry] | GitHubContentEntry = resp.json()
 
-    if isinstance(data, dict):
-        return [data]
-    return data
+    if isinstance(data, list):
+        return data
+    return [data]
 
 
-async def _fetch_file_content(download_url: str, client: httpx.AsyncClient) -> str:
-    """Download raw file content from a URL."""
+async def _fetch_file_content(entry: GitHubContentEntry, client: httpx.AsyncClient) -> str:
+    """Download a file entry's raw content."""
+    download_url = entry["download_url"]
+    if download_url is None:
+        raise ValueError(f"GitHub returned no download URL for {entry['path']}")
     resp = await client.get(download_url, headers=get_github_headers())
     resp.raise_for_status()
     return resp.text
@@ -151,10 +159,12 @@ async def install_from_github(
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         # Fetch the directory contents
-        contents = await _fetch_github_contents(owner, repo, base_path, client=client)
+        contents: list[GitHubContentEntry] = await _fetch_github_contents(
+            owner, repo, base_path, client=client
+        )
 
         # Find SKILL.md
-        skill_md_entry = None
+        skill_md_entry: GitHubContentEntry | None = None
         for entry in contents:
             if entry["name"] == "SKILL.md":
                 skill_md_entry = entry
@@ -166,7 +176,7 @@ async def install_from_github(
                 "A valid skill must contain a SKILL.md file."
             )
 
-        skill_md_content = await _fetch_file_content(skill_md_entry["download_url"], client=client)
+        skill_md_content = await _fetch_file_content(skill_md_entry, client=client)
 
         errors = validate_skill_content(skill_md_content)
         if errors:
@@ -250,7 +260,7 @@ class _GitHubRef:
 async def _download_github_dir(
     ref: _GitHubRef,
     remote_path: str,
-    contents: list[dict],
+    contents: list[GitHubContentEntry],
     file_list: list[str],
     client: httpx.AsyncClient,
 ) -> None:
@@ -263,7 +273,7 @@ async def _download_github_dir(
             continue  # Already handled
 
         if entry_type == "file":
-            content = await _fetch_file_content(entry["download_url"], client=client)
+            content = await _fetch_file_content(entry, client=client)
             relative_path = entry["path"].removeprefix(f"{remote_path}/")
             await write_skill_file(ref.user_id, ref.skill_name, relative_path, content)
             file_list.append(relative_path)

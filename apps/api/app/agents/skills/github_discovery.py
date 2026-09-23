@@ -19,6 +19,8 @@ from app.agents.skills.utils import (
     GITHUB_API_BASE,
     GITHUB_RAW_BASE,
     MAX_SKILLS_PER_REPO,
+    GitHubTree,
+    GitHubTreeEntry,
     check_tree_truncated,
     find_skill_files,
     get_folder_path,
@@ -46,7 +48,7 @@ async def _fetch_git_tree(
     owner: str,
     repo: str,
     branch: str = "main",
-) -> tuple[list[dict], str]:
+) -> tuple[list[GitHubTreeEntry], str]:
     """Fetch entire repository tree using Git Tree API.
 
     Uses recursive=1 to get all files in a single API call. Returns
@@ -67,12 +69,12 @@ async def _fetch_git_tree(
             return [], branch
 
         resp.raise_for_status()
-        data = resp.json()
+        data: GitHubTree = resp.json()
 
         # Handle truncated trees (very large repos)
         check_tree_truncated(data, owner, repo)
 
-        return data.get("tree", []), branch
+        return data["tree"], branch
 
 
 async def _fetch_single_file_content(
