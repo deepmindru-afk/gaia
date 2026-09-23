@@ -198,11 +198,15 @@ class TestUnresumableRecords:
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
             patch(f"{MODULE}.mark_decided", new=AsyncMock()) as decided,
             patch(f"{MODULE}.publish_decision", new=AsyncMock()) as settle,
+            patch(f"{MODULE}.log") as log,
             pytest.raises(ApprovalNotResumableError),
         ):
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
 
         assert decided.await_count == 0  # stays pending; the sweep will expire it
+        log.error.assert_called_once()
+        assert "No resume context on record" in log.error.call_args.args[0]
+        assert log.error.call_args.kwargs == {"approval_id": "appr-1"}
         assert resume.prepare.await_count == 0
         # ...but the card settles so the user stops staring at a live Approve button.
         settle.assert_awaited_once()
@@ -517,11 +521,16 @@ class TestSweep:
             patch(f"{MODULE}.list_expired_pending", new=AsyncMock(return_value=[bad, good])),
             patch(f"{MODULE}.list_decided_unresumed", new=AsyncMock(return_value=[])),
             patch(f"{MODULE}.mark_decided", new=AsyncMock(side_effect=transition)),
+            patch(f"{MODULE}.log") as log,
         ):
             counts = await sweep_approvals()
 
         assert counts == {"expired": 1, "redispatched": 0}
         assert resume.runner.call_count == 1  # only the good record's run resumed
+        expiry_errors = [c for c in log.error.call_args_list if "could not expire" in c.args[0]]
+        assert [c.kwargs for c in expiry_errors] == [
+            {"approval_id": "a-bad", "error": "mongo write failed", "error_type": "RuntimeError"}
+        ]
 
     async def test_one_failed_redispatch_does_not_abort_the_rest_of_the_sweep(
         self, resume: Any
@@ -884,6 +893,25 @@ class TestResolutionEdges:
             pytest.raises(ApprovalNotResumableError),
         ):
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+    @pytest.mark.regression
+    async def test_a_failed_card_settle_is_logged_not_swallowed(self, resume: Any) -> None:
+        with (
+            patch(
+                f"{MODULE}.get_approval",
+                new=AsyncMock(return_value=make_record(resume_item=None)),
+            ),
+            patch(f"{MODULE}.publish_decision", new=AsyncMock(side_effect=RuntimeError("down"))),
+            patch(f"{MODULE}.log") as log,
+            pytest.raises(ApprovalNotResumableError),
+        ):
+            await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+        settle_errors = [c for c in log.error.call_args_list if c.kwargs.get("error") == "down"]
+        assert [c.kwargs for c in settle_errors] == [
+            {"approval_id": "appr-1", "error": "down", "error_type": "RuntimeError"}
+        ]
+        assert "Could not settle the unresumable approval card" in settle_errors[0].args[0]
 
     async def test_the_resume_rebuilds_the_run_from_the_stored_item(self, resume: Any) -> None:
         item = {"task": "send the deck", "stream_id": "stream-1"}

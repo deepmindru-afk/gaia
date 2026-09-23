@@ -16,7 +16,6 @@ Two guarantees:
 """
 
 import asyncio
-import contextlib
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any, Literal, TypedDict, cast
@@ -287,13 +286,20 @@ async def _resolve_record(
         if kind == "approve":
             log.error(f"{LogTag.HIL} No resume context on record", approval_id=record.approval_id)
             # Settle the card without touching the record (stays pending for the
-            # sweep timeout); errors already logged in publish_decision.
-            with contextlib.suppress(Exception):
+            # sweep timeout); a failed settle must not mask the refusal below.
+            try:
                 await publish_decision(
                     record,
                     HILApprovalStatus.ABANDONED,
                     stream_id=record.stream_id,
                     feedback="The paused task cannot be resumed.",
+                )
+            except Exception as e:
+                log.error(
+                    f"{LogTag.HIL} Could not settle the unresumable approval card",
+                    approval_id=record.approval_id,
+                    error=str(e),
+                    error_type=type(e).__name__,
                 )
             raise ApprovalNotResumableError()
 
