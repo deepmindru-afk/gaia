@@ -32,12 +32,13 @@ from app.constants.browser import (
     BROWSER_GUIDANCE_RECENT_ACTIONS,
     BROWSER_RUN_BLOCKED_SUMMARY,
     JEV_CLOSING_ANSWER_ACTIONS,
+    JEV_CLOSING_ANSWER_HEDGE_SECONDS,
     JEV_CLOSING_ANSWER_TIMEOUT_SECONDS,
     JEV_DONE_REASK_BUDGET,
     JEV_MIN_DONE_CONFIDENCE,
     JEV_PLAN_MAX_STEPS,
     JEV_SUMMARY_MAX_CHARS,
-    JEV_TEXT_ATTEMPTS,
+    JEV_TEXT_HEDGE_SECONDS,
     JEV_TEXT_HELPER_RECENT_ACTIONS,
     JEV_TEXT_TIMEOUT_SECONDS,
     JEV_TEXT_VALUE_MAX_CHARS,
@@ -57,6 +58,7 @@ from app.services.browser.jev.gateway import (
     JevGatewayClient,
     JevGatewayError,
 )
+from app.services.browser.jev.hedge import first_answer
 from app.services.browser.jev.live_values import read_live_values
 from app.services.browser.jev.observation import JevElement, JevObservation, observe
 from app.services.browser.jev.policy import (
@@ -145,6 +147,9 @@ class _ClosingAnswer(BaseModel):
     """The closing answer is never optional: an empty reply is a failed call, retried on the lane."""
 
     text: str = Field(min_length=1)
+    #: Whether the goal was done: an honest "there is no Buy now button" is a
+    #: good answer to a goal that was not achieved, and the run reports it so.
+    achieved: bool
 
 
 class _TakeoverReason(BaseModel):
@@ -374,9 +379,20 @@ class JevChatModel:
         await self._ensure_plan(observation)
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
-        offered = _offered_operations(registered)
         self._steps += 1
-        while await self._part_is_done(observation, goal):
+        # The part check and Jev's choice run side by side: the check only
+        # matters when it finds the part done, and waiting for it first put a
+        # writer call (3 s typical, far more on a slow provider) on every page.
+        judging = asyncio.create_task(self._part_is_done(observation, goal))
+        opening, offered = self._step_options(observation, registered)
+        choosing = (
+            asyncio.create_task(self._choose(observation, goal, offered))
+            if opening is None and not self._page_stalled()
+            else None
+        )
+        while await judging:
+            _discard(choosing)
+            choosing = None
             if not self._advance_plan():
                 # The writer judged the last part complete: finish with the summary,
                 # without waiting for Jev to reach the same conclusion by chance.
@@ -386,44 +402,12 @@ class JevChatModel:
             # article opened while collecting its list), and waiting for another
             # page to be read once spent 24 steps clicking around that article.
             goal = self._effective_goal(messages)
-        opening = self._part_opening(observation)
+            opening, offered = self._step_options(observation, registered)
+            judging = asyncio.create_task(self._part_is_done(observation, goal))
         if opening is not None:
             # A new part starts on a site of its own; open it outright instead of
             # spending a decision and a URL answer on what the plan already knows.
             return self._direct(output_format, opening, observation)
-        if self._latest_note_from(JevNoteSource.USER):
-            # The user answered a takeover with an instruction; handing the same step
-            # back ignores what they said, then blames them when it times out. A later
-            # agent note says how to proceed and never restores what they declined.
-            offered -= _HANDOFF_OPERATIONS
-        if self._blocked_suppressed:
-            # The agent just said how to proceed; giving up on the same step would
-            # spend a guidance round and never try what it said.
-            offered -= {JevOperation.BLOCKED}
-            self._blocked_suppressed = False
-        last = self._history[-1] if self._history else None
-        if any(
-            entry.kind == "error"
-            and entry.action.startswith(JevOperation.NAVIGATE.value)
-            and page_key(entry.url) == page_key(observation.url)
-            for entry in self._history
-        ):
-            # The helper found no URL to write from this page; asking again on
-            # the same page gets the same answer and spends a step on a wait
-            # that sleeps nothing.
-            offered -= {JevOperation.NAVIGATE}
-        if self._off_part_site(observation):
-            # Off the part's own site; the plan knows the way back, so NAVIGATE
-            # is a direct move there (see _control_action), and never a blank.
-            offered |= {JevOperation.NAVIGATE} & _offered_operations(registered)
-        if observation.at_bottom:
-            # Nothing is further down; an offered scroll there is a step that changes nothing.
-            offered -= {JevOperation.SCROLL_DOWN}
-        if last is not None and last.kind == "go_back":
-            # Two backs in a row is never the plan: the first one landed somewhere,
-            # and the run decides from there; twenty of them once spent a whole run.
-            offered -= {JevOperation.GO_BACK}
-        offered -= _stalled_operations(self._history)
         if self._page_stalled():
             # Nothing this page offers has changed it for a whole run of steps
             # (a search form the engine cannot submit once took 38 of them);
@@ -445,7 +429,7 @@ class JevChatModel:
             )
 
         try:
-            decision = await self._choose(observation, goal, offered)
+            decision = await (choosing or self._choose(observation, goal, offered))
             if decision.operation is JevOperation.DONE:
                 if not await self._part_is_done(observation, goal, done_chosen=True):
                     # Jev's DONE is a read of the screen; the evidence check decides.
@@ -593,14 +577,16 @@ class JevChatModel:
     ) -> tuple[dict[str, dict[str, object]], str | None]:
         if decision.operation is JevOperation.BLOCKED:
             return await self._blocked_action(goal, observation, registered)
-        summary = await self._closing_answer(observation, goal)
-        if not summary:
+        answer = await self._closing_answer(observation, goal)
+        if answer is None:
             # The pages were read but the answer could not be written; saying
             # "completed" here would report a success the user never receives.
             return {"done": {"text": _NO_SUMMARY, "success": False}}, _NO_SUMMARY
-        return {"done": {"text": summary, "success": True}}, summary
+        return {"done": {"text": answer.text, "success": answer.achieved}}, answer.text
 
-    async def _closing_answer(self, observation: JevObservation, goal: str) -> str | None:
+    async def _closing_answer(
+        self, observation: JevObservation, goal: str
+    ) -> _ClosingAnswer | None:
         """Write the final message against the whole task, or None when it could not be written."""
         answer = await self._structured(
             _ClosingAnswer,
@@ -611,9 +597,12 @@ class JevChatModel:
             seen_text=self._seen_text.all_text,
             whole_history=True,
             timeout=JEV_CLOSING_ANSWER_TIMEOUT_SECONDS,
+            hedge_after=JEV_CLOSING_ANSWER_HEDGE_SECONDS,
         )
-        summary = answer.text.strip() if answer else None
-        if summary and len(summary) > JEV_SUMMARY_MAX_CHARS:
+        summary = answer.text.strip() if answer else ""
+        if not answer or not summary:
+            return None
+        if len(summary) > JEV_SUMMARY_MAX_CHARS:
             log.warning(
                 f"{LogTag.BROWSER} Jev closing answer discarded ({len(summary)} chars over "
                 f"the {JEV_SUMMARY_MAX_CHARS} cap)",
@@ -621,7 +610,7 @@ class JevChatModel:
                 chars=len(summary),
             )
             return None
-        return summary or None
+        return answer.model_copy(update={"text": summary})
 
     async def _blocked_action(
         self, goal: str, observation: JevObservation, registered: set[str]
@@ -639,9 +628,9 @@ class JevChatModel:
                 # A blocked run that read pages reports what they held and what it
                 # could not finish; "no way forward" once threw away a front page
                 # and an article already read.
-                summary = await self._closing_answer(observation, goal)
-                if summary:
-                    return {"done": {"text": summary, "success": False}}, summary
+                answer = await self._closing_answer(observation, goal)
+                if answer is not None:
+                    return {"done": {"text": answer.text, "success": False}}, answer.text
             return {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}, None
         reason = await self._field_text(GUIDANCE_REASON, goal, observation, None)
         text = reason or _DEFAULT_GUIDANCE_REASON
@@ -768,6 +757,7 @@ class JevChatModel:
         *,
         whole_history: bool = False,
         timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
+        hedge_after: float = JEV_TEXT_HEDGE_SECONDS,
         label: str | None = None,
     ) -> T | None:
         """Goal, field, page and recent actions in; one small JSON value out.
@@ -801,24 +791,17 @@ class JevChatModel:
         t0 = perf_counter()
         label = label or f"browser_{output.__name__.strip('_').lower()}"
         prompt = [SystemMessage(content=instructions), HumanMessage(content=json.dumps(context))]
-        parsed: T | None = None
-        for attempt in range(1, JEV_TEXT_ATTEMPTS + 1):
-            try:
-                parsed = await self._structured_call(output, prompt, label=label, timeout=timeout)
-                break
-            except TimeoutError:
-                log.warning(
-                    f"{LogTag.BROWSER} Jev text helper timed out after {timeout:.0f}s "
-                    f"(attempt {attempt} of {JEV_TEXT_ATTEMPTS})",
-                    error_type="TimeoutError",
-                )
-            except Exception as exc:
-                log.warning(
-                    f"{LogTag.BROWSER} Jev text helper failed ({type(exc).__name__}: {str(exc)[:200]})",
-                    error_type=type(exc).__name__,
-                )
-                return None
-        if parsed is None:
+        try:
+            parsed = await first_answer(
+                lambda: self._structured_call(output, prompt, label=label, timeout=timeout),
+                hedge_after=hedge_after,
+                deadline=timeout,
+            )
+        except Exception as exc:
+            log.warning(
+                f"{LogTag.BROWSER} Jev text helper failed ({type(exc).__name__}: {str(exc)[:200]})",
+                error_type=type(exc).__name__,
+            )
             return None
         answer = next(iter(parsed.model_dump().values()), None)
         log.info(
@@ -1147,6 +1130,46 @@ class JevChatModel:
             None,
         )
 
+    def _step_options(
+        self, observation: JevObservation, registered: set[str]
+    ) -> tuple[dict[str, dict[str, object]] | None, frozenset[JevOperation]]:
+        """Return the current part's opening navigate, if any, and the operations offered on this page."""
+        opening = self._part_opening(observation)
+        offered = _offered_operations(registered)
+        if self._latest_note_from(JevNoteSource.USER):
+            # The user answered a takeover with an instruction; handing the same step
+            # back ignores what they said, then blames them when it times out. A later
+            # agent note says how to proceed and never restores what they declined.
+            offered -= _HANDOFF_OPERATIONS
+        if self._blocked_suppressed:
+            # The agent just said how to proceed; giving up on the same step would
+            # spend a guidance round and never try what it said.
+            offered -= {JevOperation.BLOCKED}
+            self._blocked_suppressed = False
+        last = self._history[-1] if self._history else None
+        if any(
+            entry.kind == "error"
+            and entry.action.startswith(JevOperation.NAVIGATE.value)
+            and page_key(entry.url) == page_key(observation.url)
+            for entry in self._history
+        ):
+            # The helper found no URL to write from this page; asking again on
+            # the same page gets the same answer and spends a step on a wait
+            # that sleeps nothing.
+            offered -= {JevOperation.NAVIGATE}
+        if self._off_part_site(observation):
+            # Off the part's own site; the plan knows the way back, so NAVIGATE
+            # is a direct move there (see _control_action), and never a blank.
+            offered |= {JevOperation.NAVIGATE} & _offered_operations(registered)
+        if observation.at_bottom:
+            # Nothing is further down; an offered scroll there is a step that changes nothing.
+            offered -= {JevOperation.SCROLL_DOWN}
+        if last is not None and last.kind == "go_back":
+            # Two backs in a row is never the plan: the first one landed somewhere,
+            # and the run decides from there; twenty of them once spent a whole run.
+            offered -= {JevOperation.GO_BACK}
+        return opening, offered - _stalled_operations(self._history)
+
     def _page_stalled(self) -> bool:
         return _page_stalled_in(self._history, self._stall_handled_at)
 
@@ -1180,6 +1203,16 @@ def _page_stalled_in(history: list[JevHistoryEntry], since: int) -> bool:
         and page_key(entry.url) == first
         for entry in recent
     )
+
+
+def _discard(task: asyncio.Task[JevDecision] | None) -> None:
+    """Drop a speculative choice the part check made moot, collecting its error if it had one."""
+    if task is None:
+        return
+    if task.done():
+        task.exception()
+    else:
+        task.cancel()
 
 
 def _stalled_operations(history: list[JevHistoryEntry]) -> frozenset[JevOperation]:

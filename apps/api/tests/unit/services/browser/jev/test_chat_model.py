@@ -179,6 +179,9 @@ class FakeTextModel:
         reply = self.replies.pop(0) if self.replies else {}
         if isinstance(reply, Exception):
             raise reply
+        if "achieved" in schema.model_fields and isinstance(reply, dict):
+            # A scripted closing answer achieves its goal unless the test says otherwise.
+            reply = {"achieved": True, **reply}
         return schema.model_validate(reply)
 
     def system_prompt(self, call: int = 0) -> str:
@@ -628,10 +631,10 @@ async def test_an_invalid_jev_answer_executes_nothing_but_a_wait(
 
     assert _action(result.completion) == {"wait": {"seconds": 1}}
     assert result.usage is None
-    assert logger.warning.call_count == 1
-    message, kwargs = logger.warning.call_args.args[0], logger.warning.call_args.kwargs
-    assert message.startswith(f"{LogTag.BROWSER} Jev decision rejected")
-    assert kwargs == {"error_type": "JevDecisionError"}
+    rejected = [c for c in logger.warning.call_args_list if "Jev decision rejected" in c.args[0]]
+    assert len(rejected) == 1
+    assert rejected[0].args[0].startswith(f"{LogTag.BROWSER} Jev decision rejected")
+    assert rejected[0].kwargs == {"error_type": "JevDecisionError"}
 
 
 async def test_calls_that_are_not_a_step_decision_go_to_the_text_helper(flights_state) -> None:
@@ -1264,17 +1267,6 @@ async def test_a_site_that_never_loaded_is_named_when_the_run_is_blocked(flights
     )
 
 
-async def test_a_writer_call_that_times_out_is_retried_once(flights_state) -> None:
-    model, _, helper, session = _model(
-        flights_state, [("TYPE_TEXT", "2")], [TimeoutError(), {"text": "Zurich"}]
-    )
-
-    result = await model.ainvoke([], _agent_output())
-
-    assert _action(result.completion)["input_text"]["text"] == "Zurich"
-    assert len(helper.calls) == 2
-
-
 async def test_a_blocked_run_that_read_pages_reports_them(flights_state) -> None:
     model, _, _, _ = _model(
         flights_state, [("BLOCKED", None)], [{"text": "Found the flights page; no fares shown."}]
@@ -1295,3 +1287,17 @@ async def test_a_done_the_evidence_check_rejects_is_withheld(flights_state) -> N
 
     assert _action(result.completion) == {"wait": {"seconds": 4}}
     assert "DONE" not in gateway.requests[1].questions["operation"].criteria
+
+
+async def test_an_honest_answer_to_a_goal_not_achieved_is_not_a_success(flights_state) -> None:
+    model, _, _, _ = _model(
+        flights_state,
+        [("DONE", None)],
+        [{"text": "There is no Buy now button on this page.", "achieved": False}],
+    )
+
+    result = await model.ainvoke([], _agent_output())
+
+    done = _action(result.completion)["done"]
+    assert done["text"] == "There is no Buy now button on this page."
+    assert done["success"] is False

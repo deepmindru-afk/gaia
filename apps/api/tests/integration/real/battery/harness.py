@@ -351,9 +351,11 @@ class Battery:
         return conversation
 
     def pending_handoff(self, conversation_id: str) -> tuple[str, dict[str, Any]] | None:
-        handoff_id = self.redis.get(f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}{conversation_id}")
-        if not handoff_id:
+        raw_id = self.redis.get(f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}{conversation_id}")
+        if not raw_id:
             return None
+        # The app's cache stores the id JSON-encoded, quotes included.
+        handoff_id = str(json.loads(raw_id))
         raw = self.redis.get(f"{BROWSER_HANDOFF_KEY_PREFIX}{handoff_id}")
         record = json.loads(raw) if raw else {}
         return (handoff_id, record) if record.get("status") == "pending" else None
