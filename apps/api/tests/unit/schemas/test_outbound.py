@@ -80,9 +80,17 @@ class TestAttachmentUrlOnThisApi:
     @pytest.fixture(autouse=True)
     def _own_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "HOST", "http://localhost:8480")
+        monkeypatch.setattr(settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
 
     def test_this_apis_own_http_url_is_accepted(self) -> None:
         url = "http://localhost:8480/shots/c0de/1.png"
+        assert OutboundAttachment(url=url, filename="1.png").url == url
+
+    def test_a_step_shot_on_the_browser_link_base_is_this_api(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "BROWSER_LIVE_VIEW_BASE_URL", "http://devbox.tailnet:8480")
+        url = "http://devbox.tailnet:8480/shots/c0de/1.png"
         assert OutboundAttachment(url=url, filename="1.png").url == url
 
     @pytest.mark.parametrize(
