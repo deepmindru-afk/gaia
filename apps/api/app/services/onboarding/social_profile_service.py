@@ -99,7 +99,8 @@ def _canonicalize_social_url(url: str) -> str:
 
 def _extract_urls_from_text(text: str) -> list[str]:
     urls: list[str] = []
-    for prefix in ("https://", "http://"):
+    # scheme prefixes to find links in scraped text; nothing is fetched over them here
+    for prefix in ("https://", "http://"):  # NOSONAR python:S5332
         start = 0
         while True:
             idx = text.find(prefix, start)
