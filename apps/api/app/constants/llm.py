@@ -259,6 +259,20 @@ OPENROUTER_REASONING: dict[str, Any] = {"effort": "medium"}
 # than a free user's; paid comms must never be thinner than free.
 PAID_COMMS_REASONING: dict[str, Any] = {"effort": "medium"}
 
+
+class OpenRouterReasoning(TypedDict, total=False):
+    """OpenRouter's request-level reasoning object, for a one-shot that overrides the model default."""
+
+    enabled: bool
+    effort: str
+    max_tokens: int
+    exclude: bool
+
+
+# enabled=False, not a low effort: several deepseek-v4-flash upstreams still
+# reasoned for thousands of tokens at effort "minimal" or "low" (measured).
+REASONING_DISABLED: Final[OpenRouterReasoning] = {"enabled": False}
+
 # Output cap for the env-defined custom dev provider, well under the model's
 # 65,536 ceiling: these cheap lanes RESERVE max_tokens per request, so a 64k cap
 # 402'd as soon as balance dipped, while a 256-token probe still succeeded.

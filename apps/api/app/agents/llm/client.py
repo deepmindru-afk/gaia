@@ -64,6 +64,7 @@ from app.constants.llm import (
     VISION_MODEL_NAME,
     LLMProviderKey,
     LLMProviderName,
+    OpenRouterReasoning,
 )
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider, providers
@@ -785,6 +786,8 @@ class StructuredCallOptions:
 
     temperature: float = DEFAULT_LLM_TEMPERATURE
     timeout: float | None = LLM_INVOKE_TIMEOUT_SECONDS
+    #: None keeps the model's default; OpenRouter lane only (the Gemini fallback ignores it).
+    reasoning: OpenRouterReasoning | None = None
 
 
 _DEFAULT_STRUCTURED_OPTIONS = StructuredCallOptions()
@@ -1270,7 +1273,10 @@ def _structured_tool_runnable(llm: BaseChatModel, schema: type[_StructuredT]) ->
 
 
 def _aux_structured_runnable(
-    schema: type[_StructuredT], temperature: float, config: RunnableConfig | None
+    schema: type[_StructuredT],
+    temperature: float,
+    config: RunnableConfig | None,
+    reasoning: OpenRouterReasoning | None = None,
 ) -> Runnable:
     """Build the structured runnable every auxiliary one-shot runs on.
 
@@ -1280,8 +1286,11 @@ def _aux_structured_runnable(
     # The alias must be set via model_copy, NOT .bind(model=...):
     # bind_tools rebuilds the binding, which drops a bound alias — every aux
     # call then served DEFAULT_MODEL_NAME (measured).
+    update: dict[str, object] = {"model_name": AUX_MODEL_NAME}
+    if reasoning is not None:
+        update["reasoning"] = dict(reasoning)
     structured = _structured_tool_runnable(
-        get_helper_llm(temperature=temperature).model_copy(update={"model_name": AUX_MODEL_NAME}),
+        get_helper_llm(temperature=temperature).model_copy(update=update),
         schema,
     )
     # Bound AFTER bind_tools (which drops outer bindings). Aux
@@ -1338,7 +1347,9 @@ async def ainvoke_structured(
     return cast(
         _StructuredT,
         await ainvoke_llm(
-            _aux_structured_runnable(schema, options.temperature, config),
+            _aux_structured_runnable(
+                schema, options.temperature, config, reasoning=options.reasoning
+            ),
             prompt,
             config=config,
             label=label,
@@ -1401,7 +1412,9 @@ async def ainvoke_structured_gemini(
     return cast(
         _StructuredT,
         await ainvoke_llm(
-            _aux_structured_runnable(schema, options.temperature, config),
+            _aux_structured_runnable(
+                schema, options.temperature, config, reasoning=options.reasoning
+            ),
             prompt,
             fallback=fallback,
             config=config,

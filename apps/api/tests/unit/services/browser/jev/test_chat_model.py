@@ -31,6 +31,7 @@ from app.constants.browser import (
     JEV_DONE_REASK_BUDGET,
     JevOperation,
 )
+from app.constants.llm import REASONING_DISABLED
 from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev import chat_model as chat_model_mod
@@ -45,6 +46,7 @@ from app.services.browser.jev.gateway import (
 from app.services.browser.jev.prompts import (
     CAPTCHA_CHALLENGE,
     DONE_SUMMARY,
+    GUIDANCE_REASON,
     PART_DONE,
     PLAN_STEPS,
     TAKEOVER_REASON,
@@ -153,6 +155,11 @@ class FakeTextModel:
     name: str = "text-helper"
     #: How the DONE check answers: the part is done, cited by the page read.
     confirms_done: bool = True
+    #: Every structured call as (instructions, reasoning asked for, context).
+    asked: list[tuple[str, Any, dict[str, Any]]] = field(default_factory=list)
+
+    def asked_with(self, instructions: str) -> list[tuple[Any, dict[str, Any]]]:
+        return [(r, c) for i, r, c in self.asked if i.startswith(instructions)]
 
     async def ainvoke(self, messages, output_format=None, **kwargs):
         """Browser-Use's own calls, passed straight through the model."""
@@ -164,9 +171,10 @@ class FakeTextModel:
             return ChatInvokeCompletion(completion="plain", usage=None)
         return ChatInvokeCompletion(completion=output_format.model_validate(reply), usage=None)
 
-    async def structured(self, schema, prompt, *, label, timeout=None):
+    async def structured(self, schema, prompt, *, label, timeout=None, reasoning=None):
         """Answer the loop's structured one-shots from the scripted queue (the writer seam)."""
         instructions = prompt[0].content
+        self.asked.append((instructions, reasoning, json.loads(prompt[1].content)))
         # The loop's own housekeeping (a single-part plan, a part not yet done)
         # answers itself here so scripted replies stay for typed values.
         if instructions.startswith(PLAN_STEPS):
@@ -1000,6 +1008,17 @@ async def test_a_blocked_step_asks_the_agent_instead_of_ending_the_run(flights_s
     }
 
 
+async def test_the_guidance_reason_is_written_without_reasoning(flights_state) -> None:
+    """With reasoning on, half the replies came back as prose with no tool call and fell to the generic reason."""
+    model, _, text_model = _guided_model(
+        flights_state, [("BLOCKED", None)], [{"text": "The date picker never opens."}]
+    )
+
+    await model.ainvoke([], _guidance_output())
+
+    assert [r for r, _ in text_model.asked_with(GUIDANCE_REASON)] == [REASONING_DISABLED]
+
+
 async def test_a_blocked_step_with_nobody_to_ask_still_ends_the_run_failed(flights_state) -> None:
     """The gate is the whole safety of this: with no agent joined, asking would stall the run for two minutes and answer nothing."""
     model, _, _ = _guided_model(flights_state, [("BLOCKED", None)], allowed=False)
@@ -1394,7 +1413,7 @@ async def test_a_list_that_replaces_a_wall_on_the_same_url_is_judged_and_answers
     helper = FakeTextModel(replies=[{"text": 'The first question is "How to keep direct..."'}])
     judged: list[dict[str, Any]] = []
 
-    async def writer(schema, prompt, *, label, timeout=None):
+    async def writer(schema, prompt, *, label, timeout=None, reasoning=None):
         # Judges like the real writer: done when the page shows the list, not while the wall does.
         if not prompt[0].content.startswith(PART_DONE):
             return await helper.structured(schema, prompt, label=label, timeout=timeout)
@@ -1458,7 +1477,7 @@ class _Judge:
         self.asked = asyncio.Event()
         self.judged = 0
 
-    async def __call__(self, schema, prompt, *, label, timeout=None):
+    async def __call__(self, schema, prompt, *, label, timeout=None, reasoning=None):
         if not prompt[0].content.startswith(PART_DONE):
             return await self.helper.structured(schema, prompt, label=label, timeout=timeout)
         self.judged += 1
@@ -1476,7 +1495,7 @@ async def test_the_plan_is_asked_for_while_the_first_page_is_still_being_read(
     plan_asked = asyncio.Event()
     helper = FakeTextModel()
 
-    async def writer(schema, prompt, *, label, timeout=None):
+    async def writer(schema, prompt, *, label, timeout=None, reasoning=None):
         if prompt[0].content.startswith(PLAN_STEPS):
             plan_asked.set()
         return await helper.structured(schema, prompt, label=label, timeout=timeout)
@@ -1500,7 +1519,7 @@ async def test_the_plan_is_asked_for_while_the_first_page_is_still_being_read(
 async def test_a_finishing_step_is_named_after_the_part_it_finished(flights_state) -> None:
     helper = FakeTextModel(replies=[{"text": "The top story is X with 217 points."}])
 
-    async def writer(schema, prompt, *, label, timeout=None):
+    async def writer(schema, prompt, *, label, timeout=None, reasoning=None):
         if prompt[0].content.startswith(PLAN_STEPS):
             return schema.model_validate(
                 {"steps": [{"goal": _HN_PART, "url": "https://news.ycombinator.com"}]}
@@ -1575,12 +1594,29 @@ async def test_the_blank_tab_before_the_first_page_is_never_judged() -> None:
     assert judge.judged == 0
 
 
+async def test_the_part_judge_answers_without_reasoning_from_the_text_read(flights_state) -> None:
+    """Reasoning made each judgement 8-33 s; without it the judge needs the text read, not the current screen alone."""
+    helper = FakeTextModel(replies=[{"text": "Flights are listed."}])
+    model, _, _ = _writer_model(flights_state, [("DONE", None)], helper.structured)
+
+    await model.ainvoke([], _agent_output())
+
+    judgements = helper.asked_with(PART_DONE)
+    assert judgements
+    assert all(reasoning == REASONING_DISABLED for reasoning, _ in judgements)
+    assert "Search" in judgements[-1][1]["seen_on_pages_read"]
+    assert [r for r, _ in helper.asked_with(PLAN_STEPS) + helper.asked_with(DONE_SUMMARY)] == [
+        None,
+        None,
+    ]
+
+
 async def test_the_closing_answer_is_written_while_the_evidence_check_runs(flights_state) -> None:
     order: list[str] = []
     answer_asked = asyncio.Event()
     helper = FakeTextModel(replies=[{"text": "Flights are listed."}])
 
-    async def writer(schema, prompt, *, label, timeout=None):
+    async def writer(schema, prompt, *, label, timeout=None, reasoning=None):
         if prompt[0].content.startswith(DONE_SUMMARY):
             order.append("answer asked")
             answer_asked.set()
@@ -1605,7 +1641,7 @@ async def test_no_answer_goes_out_when_the_evidence_check_says_the_part_is_not_d
     helper = FakeTextModel(confirms_done=False)
     never = asyncio.Event()
 
-    async def writer(schema, prompt, *, label, timeout=None):
+    async def writer(schema, prompt, *, label, timeout=None, reasoning=None):
         if prompt[0].content.startswith(DONE_SUMMARY):
             # An answer written ahead that is never needed must not hold the step.
             await never.wait()
@@ -1700,7 +1736,7 @@ async def test_a_one_page_category_read_to_its_bottom_answers_the_cheapest_book(
     helper = FakeTextModel(replies=[{"text": "The Road to Little Dribbling, £23.21."}])
     judged: list[list[dict[str, str]]] = []
 
-    async def writer(schema, prompt, *, label, timeout=None):
+    async def writer(schema, prompt, *, label, timeout=None, reasoning=None):
         if prompt[0].content.startswith(PLAN_STEPS):
             return schema.model_validate(
                 {"steps": [{"goal": "Find the cheapest book in Travel", "url": _TRAVEL}]}
@@ -1743,7 +1779,7 @@ class _SlowJudgeFastCheck:
         self.release = asyncio.Event()
         self.plan: list[dict[str, Any]] = []
 
-    async def __call__(self, schema, prompt, *, label, timeout=None):
+    async def __call__(self, schema, prompt, *, label, timeout=None, reasoning=None):
         if prompt[0].content.startswith(PLAN_STEPS) and self.plan:
             return schema.model_validate({"steps": self.plan})
         if not prompt[0].content.startswith(PART_DONE):

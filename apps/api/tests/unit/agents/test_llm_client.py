@@ -80,6 +80,7 @@ from app.constants.llm import (
     OPENROUTER_DEV_APP_URL,
     OPENROUTER_MAX_OUTPUT_TOKENS,
     PROVIDER_NAME_METADATA_KEY,
+    REASONING_DISABLED,
     UNKNOWN_MODEL_NAME,
     LLMProviderName,
 )
@@ -1883,6 +1884,29 @@ class TestAinvokeStructured:
         assert mock_structured_tool.call_args.args == (aux, self._Schema)
         assert mock_invoke.call_args.args[0] is structured
         assert result.answer == "42"
+
+    async def test_reasoning_off_reaches_the_request_and_the_default_sends_none(self) -> None:
+        """A call that turns reasoning off must say so on the wire; every other call keeps the model default."""
+        helper = ChatOpenRouter(model="test/model", api_key=SecretStr("sk-test"))
+        sent: list[object] = []
+
+        async def capture(runnable: Runnable, *_: object, **__: object) -> BaseModel:
+            sent.append(runnable.first.bound._default_params.get("reasoning"))
+            return self._Schema(answer="ok")
+
+        with (
+            patch(f"{_CLIENT}.get_helper_llm", return_value=helper),
+            patch(f"{_CLIENT}.ainvoke_llm", new=capture),
+        ):
+            await ainvoke_structured(
+                self._Schema,
+                "q",
+                label="judge",
+                options=StructuredCallOptions(reasoning=REASONING_DISABLED),
+            )
+            await ainvoke_structured(self._Schema, "q", label="judge")
+
+        assert sent == [{"enabled": False}, None]
 
     async def test_the_label_and_config_reach_the_invoke(self) -> None:
         """Label names the call in the COGS event and config carries the user attribution; losing either drops it."""

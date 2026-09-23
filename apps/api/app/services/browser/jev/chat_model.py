@@ -50,6 +50,7 @@ from app.constants.browser import (
     JevOperation,
     SensitiveCategory,
 )
+from app.constants.llm import REASONING_DISABLED, OpenRouterReasoning
 from app.constants.log_tags import LogTag
 from app.patches.browser_use_deferred_screenshot_patch import defer_screenshots_for
 from app.schemas.browser import AgentGuidanceRequest, GuidanceAction, GuidanceElement
@@ -173,6 +174,7 @@ class StructuredCall(Protocol):
         *,
         label: str,
         timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
+        reasoning: OpenRouterReasoning | None = None,
     ) -> T: ...
 
 
@@ -185,13 +187,14 @@ def canonical_structured_call(user_id: str | None) -> StructuredCall:
         *,
         label: str,
         timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
+        reasoning: OpenRouterReasoning | None = None,
     ) -> T:
         return await ainvoke_structured(
             schema,
             prompt,
             label=label,
             config=silent_metered_config(user_id) if user_id else None,
-            options=StructuredCallOptions(timeout=timeout),
+            options=StructuredCallOptions(timeout=timeout, reasoning=reasoning),
         )
 
     return call
@@ -716,7 +719,10 @@ class JevChatModel:
                 if answer is not None:
                     return {"done": {"text": answer.text, "success": False}}, answer.text
             return {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}, None
-        reason = await self._field_text(GUIDANCE_REASON, goal, observation, None)
+        # With reasoning on, half the replies were prose with no tool call (measured).
+        reason = await self._field_text(
+            GUIDANCE_REASON, goal, observation, None, reasoning=REASONING_DISABLED
+        )
         text = reason or _DEFAULT_GUIDANCE_REASON
         return {action: {"reason": text}}, text
 
@@ -811,11 +817,12 @@ class JevChatModel:
         field: JevElement | None,
         seen_text: str | None = None,
         max_chars: int | None = None,
+        reasoning: OpenRouterReasoning | None = None,
     ) -> str | None:
         # Resolved at call time: a typed value's cap is a module constant.
         cap = JEV_TEXT_VALUE_MAX_CHARS if max_chars is None else max_chars
         answer = await self._structured(
-            _TextValue, instructions, goal, observation, field, seen_text
+            _TextValue, instructions, goal, observation, field, seen_text, reasoning=reasoning
         )
         value = answer.text if answer else None
         if not value or not value.strip():
@@ -843,6 +850,7 @@ class JevChatModel:
         timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
         hedge_after: float = JEV_TEXT_HEDGE_SECONDS,
         label: str | None = None,
+        reasoning: OpenRouterReasoning | None = None,
     ) -> T | None:
         """Goal, field, page and recent actions in; one small JSON value out.
 
@@ -879,7 +887,9 @@ class JevChatModel:
         prompt = [SystemMessage(content=instructions), HumanMessage(content=json.dumps(context))]
         try:
             parsed = await first_answer(
-                lambda: self._structured_call(output, prompt, label=label, timeout=timeout),
+                lambda: self._structured_call(
+                    output, prompt, label=label, timeout=timeout, reasoning=reasoning
+                ),
                 hedge_after=hedge_after,
                 deadline=timeout,
             )
@@ -1062,16 +1072,18 @@ class JevChatModel:
         opened = {page_key(page["url"]) for page in self._seen_text.pages}
         listing = page_key(self._plan[part].url)
         taken = {entry.action for entry in self._history}
-        # pages_read (titles and urls) and every action are in the context; the
-        # pages' full text is not what a "was every requirement met" judgement needs.
+        # Reasoning off: 1-3 s instead of 8-33 s a judgement. Without it the judge
+        # needs the text read, not the screen alone, to see a list read to the end.
         verdict = await self._structured(
             _PartDone,
             PART_DONE,
             goal,
             observation,
             None,
+            self._seen_text.all_text,
             whole_history=True,
             label="browser_done_check" if done_chosen else None,
+            reasoning=REASONING_DISABLED,
         )
         evidence = [item.strip() for item in (verdict.evidence if verdict else []) if item.strip()]
         unverified = [
