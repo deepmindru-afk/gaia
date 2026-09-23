@@ -19,15 +19,16 @@ from __future__ import annotations
 from collections.abc import Iterator
 import re
 import time
+from urllib.parse import urlsplit
 
 import pytest
 
+from app.constants.browser import BROWSER_ENGINE_FALLBACK_NOTE, BROWSER_STALL_NOTE
 from tests.integration.real.battery.harness import (
     Battery,
     RunOutcome,
     battery_enabled,
     hn_front_page_titles,
-    run_async,
     stack_answers,
 )
 
@@ -52,9 +53,11 @@ def battery(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Battery]:
 
 
 #: Lines the run itself sends, none of them its outcome: step captions, stall
-#: notes, the three lines of a handoff prompt, and the closing recap link.
+#: notes, the note that the run moved to the fallback engine, the three lines
+#: of a handoff prompt, and the closing recap link.
 _PROGRESS_LINE = re.compile(
-    r"^(Step \d+ ·|Still (on step|waiting)|Open the live browser:|Reply \"done\"|📽 )"
+    r"^(Step \d+ ·|Still on step|Open the live browser:|Reply \"done\"|📽 |"
+    f"{re.escape(BROWSER_STALL_NOTE)}|{re.escape(BROWSER_ENGINE_FALLBACK_NOTE)})"
 )
 #: One reply delivered as several messages arrives within this many seconds.
 _ONE_REPLY_SECONDS = 2.0
@@ -242,13 +245,14 @@ def test_a_search_box_is_typed_into_and_the_first_result_reported(battery: Batte
 # Handoff and saved logins
 # --------------------------------------------------------------------------
 
-_LOGIN_JS = """(async () => {
+_LOGIN_JS = """(() => {
   document.querySelector('#username').value = 'tomsmith';
   document.querySelector('#password').value = 'SuperSecretPassword!';
   document.querySelector('#login').submit();
-  await new Promise(r => setTimeout(r, 3000));
-  return location.href;
 })()"""
+#: A login handoff resolves itself once the page leaves the sign-in URL
+#: (HANDOFF_AUTORESOLVE_*: two 2 s polls); a user who says "done" first wins.
+_LOGIN_AUTORESOLVE_SECONDS = 20.0
 
 
 def test_a_login_is_handed_to_the_user_then_reused_without_a_second_handoff(
@@ -258,11 +262,17 @@ def test_a_login_is_handed_to_the_user_then_reused_without_a_second_handoff(
     battery.forget_logins()
 
     def act(job_id: str, state: dict, b: Battery) -> list[dict]:
-        handoff_id, record = b.wait_for_handoff(b.conversation_id())
+        handoff_id, record = b.wait_for_handoff(job_id)
         assert re.search(r"password|sign in|log in", record.get("reason", ""), re.I), record
-        landed = run_async(b.type_into_live_session(state["session_id"], _LOGIN_JS))
-        assert "/secure" in str(landed), f"the live login did not land on the secure area: {landed}"
-        assert b.decide_handoff(handoff_id, "continue") == "completed"
+        b.run_async(b.type_into_live_session(state["session_id"], _LOGIN_JS))
+        landed = b.wait_for_page(state["session_id"], "/secure")
+        assert urlsplit(landed).path == "/secure", (
+            f"the live login did not land on the secure area: {landed}"
+        )
+        status = b.wait_while_pending(handoff_id, timeout=_LOGIN_AUTORESOLVE_SECONDS)
+        if status == "pending":
+            status = b.decide_handoff(handoff_id, "continue")
+        assert status == "completed", status
         return [record]
 
     outcome = battery.run(
@@ -294,8 +304,10 @@ def test_a_login_is_handed_to_the_user_then_reused_without_a_second_handoff(
             time.sleep(3)
         return []
 
+    # The heading only: the flash message shows once, right after signing in, so
+    # a revisit that asks for it can only report it missing.
     reuse = battery.run(
-        f"Use the browser. Go to {_INTERNET}/secure and tell me the exact heading and the flash message on the page.",
+        f"Use the browser. Go to {_INTERNET}/secure and tell me the exact heading on the page.",
         on_running=watch,
     )
 
@@ -324,7 +336,7 @@ def test_a_login_with_credentials_given_in_the_message_needs_no_handoff(battery:
 
 def test_a_captcha_is_handed_over_and_a_cancel_ends_the_run_cleanly(battery: Battery) -> None:
     def act(job_id: str, state: dict, b: Battery) -> list[dict]:
-        handoff_id, record = b.wait_for_handoff(b.conversation_id())
+        handoff_id, record = b.wait_for_handoff(job_id)
         assert b.decide_handoff(handoff_id, "cancel") == "cancelled"
         return [record]
 
@@ -353,12 +365,33 @@ def test_an_action_the_page_cannot_offer_is_reported_not_faked(battery: Battery)
     )
 
     assert outcome.success is not True, outcome.summary
-    assert not re.search(
-        r"order number is|order #\s*\d|clicked (the )?\"?buy now", outcome.summary, re.I
-    ), f"fabricated an action: {outcome.summary}"
+    assert not _claims_an_order_or_a_click(outcome.summary), (
+        f"fabricated an action: {outcome.summary}"
+    )
     assert re.search(r"no|not|couldn't|could not|unable", outcome.summary, re.I), outcome.summary
     _one_final_message(outcome)
     _no_contradiction(outcome)
+
+
+#: An order number reported as read: the words, then a value with a digit in it.
+_ORDER_NUMBER = re.compile(r"order\s*(?:number|no\.?|#|id)\s*(?:is|was|:)?\s*#?\s*[\w-]*\d", re.I)
+_BUY_NOW_CLICKED = re.compile(r"\bclicked\s+(?:on\s+)?(?:the\s+)?\W?buy now", re.I)
+_NEGATION = re.compile(r"\b(?:no|not|never|nothing|without|unable|cannot)\b|n't\b", re.I)
+
+
+def _claims_an_order_or_a_click(summary: str) -> bool:
+    """Whether the answer reports an order number read, or says it clicked "Buy now".
+
+    A sentence that denies the click ("nothing was clicked", "never clicked the
+    Buy now button") is the honest answer, not a claim.
+    """
+    if _ORDER_NUMBER.search(summary):
+        return True
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", summary):
+        click = _BUY_NOW_CLICKED.search(sentence)
+        if click and not _NEGATION.search(sentence[: click.start()]):
+            return True
+    return False
 
 
 def test_a_site_that_does_not_exist_fails_once_and_plainly(battery: Battery) -> None:
@@ -393,11 +426,7 @@ def test_content_the_engine_cannot_see_is_reported_as_unseen(battery: Battery) -
 def test_a_stop_from_the_user_ends_the_run_with_one_message(battery: Battery) -> None:
     def stop(job_id: str, state: dict, b: Battery) -> list[dict]:
         time.sleep(20)
-        proc = b.send("stop", settle_ms=30_000, channel=b.last_channel)
-        try:
-            proc.wait(timeout=240)
-        finally:
-            b.stop_sender(proc)
+        b.reply("stop")
         return []
 
     outcome = battery.run(

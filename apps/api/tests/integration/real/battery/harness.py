@@ -14,7 +14,9 @@ Requires the native dev stack (see the `driving-gaia` skill and
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
+import html
 import json
 import os
 from pathlib import Path
@@ -22,11 +24,13 @@ import re
 import signal
 import subprocess
 import time
-from typing import Any
+from typing import Any, TypeVar, cast
+from urllib.parse import urlsplit
 import uuid
 
 import httpx
 import pymongo
+from pymongo.database import Database
 import redis
 
 from app.constants.browser import (
@@ -36,8 +40,20 @@ from app.constants.browser import (
     BROWSER_JOB_STATE_PREFIX,
 )
 from app.constants.cache import EXECUTOR_BUSY_PREFIX, RATE_LIMIT_KEY_PREFIX
+from app.core.provider_registration import register_lazy_providers
+from app.db.repositories.browser_profiles import BrowserProfilesRepository
+from app.memory.management import delete_all as forget_all_memories
+from app.services.browser.host_client import get_session
+
+T = TypeVar("T")
 
 API_URL = os.environ.get("GAIA_BATTERY_API_URL", "http://localhost:8480")
+#: The API as the bot sees it: the dev bot's own GAIA_API_URL. Step photos are
+#: links on BROWSER_LIVE_VIEW_BASE_URL, and the bot fetches a link on its own API
+#: origin with its own credentials; any other origin goes through the public-fetch
+#: guard, which refuses the tailnet address the dev links resolve to.
+BOT_API_URL = os.environ.get("GAIA_API_URL", API_URL)
+LIVE_VIEW_BASE_URL = os.environ.get("BROWSER_LIVE_VIEW_BASE_URL", API_URL)
 HOST_URL = os.environ.get("BROWSER_HOST_URL", "http://localhost:8930")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
@@ -66,7 +82,11 @@ SENDER_WINDOW_SECONDS = RUN_TIMEOUT_SECONDS + 120.0
 #: model's own invoke timeout (LLM_INVOKE_TIMEOUT_SECONDS), plus delivery.
 OUTCOME_WAIT_SECONDS = 330.0
 OUTCOME_DELIVERY_SECONDS = 15.0
+#: One chat turn from the harness, bounded by the chat model's invoke timeout.
+REPLY_TIMEOUT_SECONDS = 330.0
 _POLL_SECONDS = 2.0
+#: What a Telegram user types to answer a handoff (the prompt's own words).
+_HANDOFF_REPLIES = {"continue": "done", "cancel": "stop"}
 
 
 def battery_enabled() -> bool:
@@ -93,6 +113,42 @@ def outbound_consumers() -> int:
         return 0
     response.raise_for_status()
     return int(response.json().get("consumers") or 0)
+
+
+def drain_battery_leftovers(battery_user_id: str) -> int:
+    """Purge the outbound queue of an earlier battery's undelivered replies; returns how many.
+
+    The first sender would otherwise record them, and the ones sent to the
+    user's DM are kept by every transcript. Refuses when any delivery is for
+    anyone else: with the real bot stopped, those are a person's messages.
+    """
+    queue = f"{RABBITMQ_MANAGEMENT_URL}/api/queues/%2F/{OUTBOUND_QUEUE}"
+    peeked = httpx.post(
+        f"{queue}/get",
+        json={"count": 10_000, "ackmode": "reject_requeue_true", "encoding": "auto"},
+        auth=RABBITMQ_MANAGEMENT_AUTH,
+        timeout=30,
+    )
+    if peeked.status_code == 404:
+        return 0
+    peeked.raise_for_status()
+    destinations = {
+        str(json.loads(message["payload"]).get("destination_id")) for message in peeked.json()
+    }
+    others = {
+        d
+        for d in destinations
+        if d != f"dev-telegram-{battery_user_id}" and not d.startswith("battery-")
+    }
+    assert not others, (
+        f"{OUTBOUND_QUEUE} holds deliveries for {sorted(others)}, not the battery's: "
+        "deliver or inspect them before running the battery"
+    )
+    if destinations:
+        httpx.delete(
+            f"{queue}/contents", auth=RABBITMQ_MANAGEMENT_AUTH, timeout=30
+        ).raise_for_status()
+    return len(peeked.json())
 
 
 @dataclass
@@ -153,6 +209,11 @@ class Battery:
     def __init__(self, out_dir: Path) -> None:
         self.out_dir = out_dir
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        bot_origin, links_origin = urlsplit(BOT_API_URL)[:2], urlsplit(LIVE_VIEW_BASE_URL)[:2]
+        assert bot_origin == links_origin, (
+            f"the bot's API ({BOT_API_URL}) is not the origin step photos link to "
+            f"({LIVE_VIEW_BASE_URL}): the bot would refuse every photo"
+        )
         consumers = outbound_consumers()
         assert consumers == 0, (
             f"{consumers} consumer(s) already hold {OUTBOUND_QUEUE}: stop the Telegram bot "
@@ -169,14 +230,24 @@ class Battery:
             time.sleep(_POLL_SECONDS)
         #: Every sender started, so none outlives the battery holding the queue.
         self.senders: list[subprocess.Popen[str]] = []
-        self.mongo = pymongo.MongoClient(MONGO_URL)["GAIA"]
-        self.api = httpx.Client(base_url=f"{API_URL}/api/v1", timeout=30)
+        self.mongo: Database[dict[str, Any]] = pymongo.MongoClient(MONGO_URL)["GAIA"]
+        if self.mongo["users"].find_one({"email": BATTERY_USER}, {"_id": 1}):
+            print(f"drained {drain_battery_leftovers(self.battery_user_id())} leftover replies")
+        # The memory store is reached through the app's own providers, whose
+        # clients belong to the loop that first used them: one loop for the battery.
+        register_lazy_providers("main_app")
+        self._loop = asyncio.new_event_loop()
         self.last_channel: str | None = None
 
     # -- sending -----------------------------------------------------------
 
     def send(
-        self, message: str, *, settle_ms: int, channel: str | None = None
+        self,
+        message: str,
+        *,
+        settle_ms: int,
+        channel: str | None = None,
+        consume_outbound: bool = True,
     ) -> subprocess.Popen[str]:
         """Inject one Telegram message through the real bot pipeline; returns the live process.
 
@@ -184,6 +255,9 @@ class Battery:
         one conversation a repeated task is answered from the earlier result
         instead of driving the browser again, which is right for a user and
         wrong for a test. Pass the same channel to continue a conversation.
+
+        consume_outbound=False for a message sent while another sender is still
+        consuming for the run: two consumers on the queue split its deliveries.
         """
         run_id = uuid.uuid4().hex[:8]
         out = self.out_dir / f"{run_id}.jsonl"
@@ -202,13 +276,14 @@ class Battery:
             "--user",
             BATTERY_USER,
             "--api",
-            API_URL,
+            BOT_API_URL,
             "--channel",
             self.last_channel,
             "--settle",
             str(settle_ms),
             "--out",
             str(out),
+            *([] if consume_outbound else ["--no-outbound"]),
             message,
         ]
         # Its console goes to a file, never a pipe nobody reads: a long run's
@@ -233,6 +308,11 @@ class Battery:
         """Kill any sender still running; a leftover keeps consuming the bot's queue."""
         for proc in self.senders:
             self.stop_sender(proc)
+        self._loop.close()
+
+    def run_async(self, coro: Coroutine[Any, Any, T]) -> T:
+        """Run one of the app's coroutines on the battery's own loop."""
+        return self._loop.run_until_complete(coro)
 
     @staticmethod
     def stop_sender(proc: subprocess.Popen[str]) -> None:
@@ -270,11 +350,19 @@ class Battery:
 
     # -- the account's quota --------------------------------------------------
 
+    def forget_memories(self) -> None:
+        """Wipe what the battery account remembers, so no scenario is answered from an earlier one.
+
+        The battery repeats the same tasks run after run; with their outcomes in
+        memory, the executor once answered "log me in" from the last run's result
+        instead of opening the browser.
+        """
+        self.run_async(forget_all_memories(self.battery_user_id()))
+
     def reset_browser_quota(self) -> None:
         """Clear the battery account's browser-task usage: a day of scenarios is more than any plan allows."""
-        user = self.mongo["users"].find_one({"email": BATTERY_USER}, {"_id": 1})
-        assert user, f"no user for {BATTERY_USER}; a scenario has not seeded it yet"
-        for key in self.redis.scan_iter(f"{RATE_LIMIT_KEY_PREFIX}:{user['_id']}:browser_task:*"):
+        user_id = self.battery_user_id()
+        for key in self.redis.scan_iter(f"{RATE_LIMIT_KEY_PREFIX}:{user_id}:browser_task:*"):
             self.redis.delete(key)
 
     # -- reading the run ----------------------------------------------------
@@ -286,9 +374,13 @@ class Battery:
             if ":" not in k.removeprefix(BROWSER_JOB_STATE_PREFIX)
         ]
 
+    def stored(self, key: str) -> Any:
+        """Return the JSON value the app's cache holds at key, or None (the client decodes to str)."""
+        raw = cast(str | None, self.redis.get(key))
+        return json.loads(raw) if raw else None
+
     def job_state(self, job_id: str) -> dict[str, Any]:
-        raw = self.redis.get(f"{BROWSER_JOB_STATE_PREFIX}{job_id}")
-        return json.loads(raw) if raw else {}
+        return self.stored(f"{BROWSER_JOB_STATE_PREFIX}{job_id}") or {}
 
     def wait_for_job(
         self, *, timeout: float = 240.0, proc: subprocess.Popen[str] | None = None
@@ -325,6 +417,18 @@ class Battery:
             return None
         return self.mongo["browser_tasks"].find_one({"session_id": session_id})
 
+    def stop_run(self, job_id: str) -> None:
+        """End a run the scenario gave up on, as its user would, before the next scenario starts.
+
+        Left running, its progress lines (sent to the user's DM, which every
+        scenario's transcript keeps) and its outcome land in the next scenario.
+        """
+        if self.job_state(job_id).get("status") == "done":
+            return
+        self.reply("stop")
+        self.wait_for_status(job_id, {"done"}, timeout=RUN_TIMEOUT_SECONDS / 4)
+        self.wait_for_outcome_voiced()
+
     def wait_for_outcome_voiced(self) -> None:
         """Wait until this conversation's executor has finished and so has sent its reply."""
         busy = f"{EXECUTOR_BUSY_PREFIX}{self.conversation_id()}"
@@ -352,43 +456,85 @@ class Battery:
         return conversation
 
     def pending_handoff(self, conversation_id: str) -> tuple[str, dict[str, Any]] | None:
-        raw_id = self.redis.get(f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}{conversation_id}")
-        if not raw_id:
-            return None
         # The app's cache stores the id JSON-encoded, quotes included.
-        handoff_id = str(json.loads(raw_id))
-        raw = self.redis.get(f"{BROWSER_HANDOFF_KEY_PREFIX}{handoff_id}")
-        record = json.loads(raw) if raw else {}
-        return (handoff_id, record) if record.get("status") == "pending" else None
+        handoff_id = self.stored(f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}{conversation_id}")
+        if not handoff_id:
+            return None
+        record = self.stored(f"{BROWSER_HANDOFF_KEY_PREFIX}{handoff_id}") or {}
+        return (str(handoff_id), record) if record.get("status") == "pending" else None
 
     def wait_for_handoff(
-        self, conversation_id: str, *, timeout: float = 300.0
+        self, job_id: str, *, timeout: float = 300.0
     ) -> tuple[str, dict[str, Any]]:
+        """Return the handoff this scenario's run raises; fails as soon as the run ends without one."""
+        conversation_id = self.conversation_id()
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             found = self.pending_handoff(conversation_id)
             if found:
                 return found
+            state = self.job_state(job_id)
+            if state.get("status") == "done":
+                raise AssertionError(f"the run ended without a handoff: {state.get('result')}")
             time.sleep(_POLL_SECONDS)
         raise AssertionError(f"no handoff was raised for conversation {conversation_id}")
 
-    def decide_handoff(self, handoff_id: str, decision: str, message: str | None = None) -> str:
-        response = self.api.post(
-            f"/browser/handoffs/{handoff_id}/decision",
-            json={"decision": decision, "message": message},
+    def handoff_status(self, handoff_id: str) -> str:
+        return str(
+            (self.stored(f"{BROWSER_HANDOFF_KEY_PREFIX}{handoff_id}") or {}).get("status", "")
         )
-        response.raise_for_status()
-        return str(response.json()["status"])
+
+    def wait_while_pending(self, handoff_id: str, *, timeout: float) -> str:
+        """Return the handoff's status once it leaves pending, or "pending" at the timeout."""
+        deadline = time.monotonic() + timeout
+        status = self.handoff_status(handoff_id)
+        while status == "pending" and time.monotonic() < deadline:
+            time.sleep(_POLL_SECONDS / 2)
+            status = self.handoff_status(handoff_id)
+        return status
+
+    def reply(self, message: str) -> None:
+        """Send a message into this scenario's conversation mid-run, as the user does in Telegram.
+
+        Its own reply streams into its own transcript; the run's deliveries stay
+        with the scenario's sender, the only consumer on the queue.
+        """
+        proc = self.send(message, settle_ms=0, channel=self.last_channel, consume_outbound=False)
+        try:
+            proc.wait(timeout=REPLY_TIMEOUT_SECONDS)
+        finally:
+            self.stop_sender(proc)
+        assert proc.returncode == 0, f"the reply {message!r} failed; see {proc.transcript_path}"  # type: ignore[attr-defined]
+
+    def decide_handoff(self, handoff_id: str, decision: str) -> str:
+        """Answer a pending handoff the way a Telegram user does: "done" or "stop" in the chat.
+
+        The web card's decision endpoint belongs to the signed-in web user; the
+        battery's user is a Telegram account, so it answers in the conversation.
+        """
+        self.reply(_HANDOFF_REPLIES[decision])
+        return self.wait_while_pending(handoff_id, timeout=OUTCOME_DELIVERY_SECONDS)
 
     # -- saved logins ------------------------------------------------------
 
+    # Read and cleared in the store: the API's dev auth bypass signs in as the
+    # developer, whose own saved logins these calls once listed and deleted.
+
+    def battery_user_id(self) -> str:
+        user = self.mongo["users"].find_one({"email": BATTERY_USER}, {"_id": 1})
+        assert user, f"no user for {BATTERY_USER}; a scenario has not seeded it yet"
+        return str(user["_id"])
+
     def saved_login_domains(self) -> list[str]:
-        response = self.api.get("/browser/logins")
-        response.raise_for_status()
-        return [str(row.get("domain", "")) for row in response.json()]
+        rows = self.mongo[BrowserProfilesRepository.collection_name].find(
+            {"user_id": self.battery_user_id()}
+        )
+        return [str(row.get("domain", "")) for row in rows]
 
     def forget_logins(self) -> None:
-        self.api.delete("/browser/logins").raise_for_status()
+        self.mongo[BrowserProfilesRepository.collection_name].delete_many(
+            {"user_id": self.battery_user_id()}
+        )
 
     # -- the live browser during a handoff --------------------------------
 
@@ -409,6 +555,21 @@ class Battery:
         finally:
             await browser.stop()
 
+    def wait_for_page(self, session_id: str, path: str, *, timeout: float = 30.0) -> str:
+        """Return the run's page URL once it is on path, or the last URL seen at the timeout.
+
+        Read from the host, not from the script that submitted: a navigation
+        replaces the document the script ran in, so its own location is stale.
+        """
+        deadline = time.monotonic() + timeout
+        url = ""
+        while time.monotonic() < deadline:
+            url = self.run_async(get_session(session_id, HOST_URL)).url or ""
+            if urlsplit(url).path == path:
+                break
+            time.sleep(_POLL_SECONDS / 2)
+        return url
+
     # -- one whole scenario -------------------------------------------------
 
     def run(self, message: str, *, on_running=None) -> RunOutcome:
@@ -418,8 +579,10 @@ class Battery:
         scenarios that act mid-run (a handoff to answer, a stop to send).
         """
         self.reset_browser_quota()
+        self.forget_memories()
         started = time.monotonic()
         proc = self.send(message, settle_ms=int(SENDER_WINDOW_SECONDS * 1000))
+        job_id = None
         try:
             job_id = self.wait_for_job(proc=proc)
             state = self.wait_for_status(job_id, {"running", "done"}, timeout=240.0)
@@ -432,6 +595,10 @@ class Battery:
             seconds = time.monotonic() - started
             print(f"run {job_id} done in {seconds:.0f}s")
             self.wait_for_outcome_voiced()
+        except BaseException:
+            if job_id is not None:
+                self.stop_run(job_id)
+            raise
         finally:
             self.finish_sender(proc)
             try:
@@ -456,12 +623,9 @@ def fetch_text(url: str) -> str:
 
 
 def hn_front_page_titles() -> list[str]:
-    html = fetch_text("https://news.ycombinator.com/")
+    page = fetch_text("https://news.ycombinator.com/")
+    # Titles as a reader sees them: HN escapes the apostrophe in "Stripe's".
     return [
-        re.sub(r"<[^>]+>", "", m)
-        for m in re.findall(r'<span class="titleline"><a[^>]*>(.*?)</a>', html)
+        html.unescape(re.sub(r"<[^>]+>", "", m))
+        for m in re.findall(r'<span class="titleline"><a[^>]*>(.*?)</a>', page)
     ]
-
-
-def run_async(coro):
-    return asyncio.run(coro)
