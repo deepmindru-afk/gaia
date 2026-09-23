@@ -7,8 +7,8 @@ Assertions read the run's own artifacts: the job state in Redis, the task
 history in Mongo, the handoff record, the saved logins, and the transcript of
 what the bot delivered (text, photos).
 
-Requires the native dev stack (see the `driving-gaia` skill and
-``~/.cache/gaia-browser/run/boot.sh``) and ``GAIA_BROWSER_BATTERY=1``.
+Requires the native dev stack (see the driving-gaia skill and
+~/.cache/gaia-browser/run/boot.sh) and GAIA_BROWSER_BATTERY=1.
 """
 
 from __future__ import annotations
@@ -48,10 +48,9 @@ from app.services.browser.host_client import get_session
 T = TypeVar("T")
 
 API_URL = os.environ.get("GAIA_BATTERY_API_URL", "http://localhost:8480")
-#: The API as the bot sees it: the dev bot's own GAIA_API_URL. Step photos are
-#: links on BROWSER_LIVE_VIEW_BASE_URL, and the bot fetches a link on its own API
-#: origin with its own credentials; any other origin goes through the public-fetch
-#: guard, which refuses the tailnet address the dev links resolve to.
+#: The dev bot's own GAIA_API_URL: the bot fetches step-photo links on its own API
+#: origin with its credentials, while any other origin hits the public-fetch guard,
+#: which refuses the tailnet address the dev links resolve to.
 BOT_API_URL = os.environ.get("GAIA_API_URL", API_URL)
 LIVE_VIEW_BASE_URL = os.environ.get("BROWSER_LIVE_VIEW_BASE_URL", API_URL)
 HOST_URL = os.environ.get("BROWSER_HOST_URL", "http://localhost:8930")
@@ -67,15 +66,11 @@ OUTBOUND_QUEUE = "outbound.telegram"
 REPO_ROOT = Path(__file__).resolve().parents[6]
 HARNESS_DIR = REPO_ROOT / "apps" / "bots" / "harness"
 
-#: How long one scenario may take end to end before it is a failure in itself.
-#: Sized for a research task on a slow link (measured 2026-09-22 at ~70 KB/s: a
-#: page load ran 30-90 s and a two-site task 13 min); the outcome reports the
-#: duration, so a slow pass is still visible.
+#: One scenario end to end, sized for a slow link (2026-09-22 at ~70 KB/s: a page
+#: load ran 30-90 s, a two-site task 13 min); the outcome reports the duration.
 RUN_TIMEOUT_SECONDS = 1200.0
-#: The sender's outbound consumer must outlive the run: its transcript is
-#: written only when it exits, and the comms agent voices the outcome some
-#: seconds after the job ends. The window is cut short with SIGTERM once the
-#: outcome has had this long to arrive.
+#: The sender writes its transcript only on exit and comms voices the outcome after
+#: the job ends, so it outlives the run; SIGTERM cuts the window short once done.
 SENDER_WINDOW_SECONDS = RUN_TIMEOUT_SECONDS + 120.0
 #: After the job ends the executor still voices the outcome; the reply is out
 #: once the conversation's executor lock is released. Bounded by the chat
@@ -149,6 +144,13 @@ def drain_battery_leftovers(battery_user_id: str) -> int:
             f"{queue}/contents", auth=RABBITMQ_MANAGEMENT_AUTH, timeout=30
         ).raise_for_status()
     return len(peeked.json())
+
+
+class Sender(subprocess.Popen[str]):
+    """A bot-harness sender process, with its transcript file and the chat it posts to."""
+
+    transcript_path: Path
+    channel: str
 
 
 @dataclass
@@ -229,7 +231,7 @@ class Battery:
         ):
             time.sleep(_POLL_SECONDS)
         #: Every sender started, so none outlives the battery holding the queue.
-        self.senders: list[subprocess.Popen[str]] = []
+        self.senders: list[Sender] = []
         self.mongo: Database[dict[str, Any]] = pymongo.MongoClient(MONGO_URL)["GAIA"]
         if self.mongo["users"].find_one({"email": BATTERY_USER}, {"_id": 1}):
             print(f"drained {drain_battery_leftovers(self.battery_user_id())} leftover replies")
@@ -239,7 +241,7 @@ class Battery:
         self._loop = asyncio.new_event_loop()
         self.last_channel: str | None = None
         #: The replies sent into the current run's conversation ("stop", "done").
-        self.replies: list[subprocess.Popen[str]] = []
+        self.replies: list[Sender] = []
 
     # -- sending -----------------------------------------------------------
 
@@ -250,16 +252,12 @@ class Battery:
         settle_ms: int,
         channel: str | None = None,
         consume_outbound: bool = True,
-    ) -> subprocess.Popen[str]:
+    ) -> Sender:
         """Inject one Telegram message through the real bot pipeline; returns the live process.
 
-        Every scenario gets a channel of its own, hence a fresh conversation: in
-        one conversation a repeated task is answered from the earlier result
-        instead of driving the browser again, which is right for a user and
-        wrong for a test. Pass the same channel to continue a conversation.
-
-        consume_outbound=False for a message sent while another sender is still
-        consuming for the run: two consumers on the queue split its deliveries.
+        A fresh channel per scenario, since one conversation answers a repeat task
+        from the earlier result; pass channel to continue one. consume_outbound=False
+        while another sender consumes for the run: two consumers split deliveries.
         """
         run_id = uuid.uuid4().hex[:8]
         out = self.out_dir / f"{run_id}.jsonl"
@@ -288,12 +286,11 @@ class Battery:
             *([] if consume_outbound else ["--no-outbound"]),
             message,
         ]
-        # Its console goes to a file, never a pipe nobody reads: a long run's
-        # logging filled the pipe and the sender hung before it posted anything.
-        # Its own session, so a timed-out sender is killed with its children, which
-        # otherwise outlive the test and keep consuming the outbound queue.
+        # Console to a file, never an unread pipe: a long run's logging filled it and
+        # hung the sender. Own session, so killing it also kills children that would
+        # otherwise keep consuming the outbound queue.
         console = (self.out_dir / f"{run_id}.log").open("w")
-        proc = subprocess.Popen(
+        proc = Sender(
             cmd,
             cwd=HARNESS_DIR,
             stdout=console,
@@ -301,8 +298,8 @@ class Battery:
             text=True,
             start_new_session=True,
         )
-        proc.transcript_path = out  # type: ignore[attr-defined]
-        proc.channel = self.last_channel  # type: ignore[attr-defined]
+        proc.transcript_path = out
+        proc.channel = self.last_channel
         self.senders.append(proc)
         return proc
 
@@ -329,21 +326,17 @@ class Battery:
         if proc.poll() is None:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
-    def transcript_of(
-        self, proc: subprocess.Popen[str], replies: Sequence[subprocess.Popen[str]] = ()
-    ) -> Transcript:
+    def transcript_of(self, proc: Sender, replies: Sequence[Sender] = ()) -> Transcript:
         """Everything the conversation showed its user: the sender's chat and the replies sent into it.
 
-        The sim consumes the whole Telegram outbound queue, so a delivery for
-        another scenario's chat (an earlier run's late outcome) lands in this
-        transcript too; only this chat's and the user's DM count. A reply's own
-        answer ("Stopped.") streams into that reply's sender, so the senders are
-        merged in wall-clock order.
+        The sim consumes the whole outbound queue, so other scenarios' chats are
+        dropped (only this chat and the user's DM count). A reply's answer streams
+        into that reply's sender, so senders are merged in wall-clock order.
         """
-        channel: str = proc.channel  # type: ignore[attr-defined]
+        channel = proc.channel
         events = []
         for sender in (proc, *replies):
-            path: Path = sender.transcript_path  # type: ignore[attr-defined]
+            path = sender.transcript_path
             if not path.exists():
                 continue
             for line in path.read_text().splitlines():
@@ -390,9 +383,7 @@ class Battery:
     def job_state(self, job_id: str) -> dict[str, Any]:
         return self.stored(f"{BROWSER_JOB_STATE_PREFIX}{job_id}") or {}
 
-    def wait_for_job(
-        self, *, timeout: float = 240.0, proc: subprocess.Popen[str] | None = None
-    ) -> str:
+    def wait_for_job(self, *, timeout: float = 240.0, proc: Sender | None = None) -> str:
         """Return the browser job running in this scenario's own conversation.
 
         Read from the conversation's slot, never "the newest job": an executor
@@ -513,7 +504,7 @@ class Battery:
             proc.wait(timeout=REPLY_TIMEOUT_SECONDS)
         finally:
             self.stop_sender(proc)
-        assert proc.returncode == 0, f"the reply {message!r} failed; see {proc.transcript_path}"  # type: ignore[attr-defined]
+        assert proc.returncode == 0, f"the reply {message!r} failed; see {proc.transcript_path}"
 
     def decide_handoff(self, handoff_id: str, decision: str) -> str:
         """Answer a pending handoff the way a Telegram user does: "done" or "stop" in the chat.
