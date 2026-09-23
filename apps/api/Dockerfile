@@ -67,10 +67,11 @@ COPY libs/pyproject.toml ./libs/
 
 # UV_PROJECT_ENVIRONMENT=/usr/local tells uv sync to use the system Python dir
 # instead of creating a .venv — entry points (crawl4ai-setup etc.) land in /usr/local/bin
-# No --no-build: cloudinary, pysher and standardwebhooks ship only sdists; --frozen builds only hash-pinned ones.
+# No --no-build: cloudinary, pysher and standardwebhooks ship only sdists; --frozen builds only hash-pinned
+# ones. Sonar docker:S8541 does not honour NOSONAR, so it is resolved as Accepted in the SonarCloud UI.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=libs,target=/app/libs,rw \
-    uv sync --frozen --package gaia --group backend  # NOSONAR docker:S8541
+    uv sync --frozen --package gaia --group backend
 
 # NOTE: crawl4ai-setup deliberately does NOT run here. Its browser downloads
 # live in the `browsers` stage (keyed on tool versions, not uv.lock) and its

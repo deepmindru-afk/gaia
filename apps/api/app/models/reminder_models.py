@@ -111,6 +111,7 @@ class CreateReminderRequest(BaseModel):
     @field_validator("repeat")
     @classmethod
     def check_repeat_cron(cls, v: str | None) -> str | None:
+        """Reject a repeat value that is not a valid cron expression."""
         # Deferred import: validator-local re-import of validate_cron_expression, also bound at module top level
         from app.utils.cron_utils import validate_cron_expression  # noqa: PLC0415 -- deferred
 
@@ -121,6 +122,7 @@ class CreateReminderRequest(BaseModel):
     @field_validator("scheduled_at")
     @classmethod
     def check_scheduled_at_future(cls, v: datetime | None) -> datetime | None:
+        """Treat a naive time as UTC and reject one that has already passed."""
         if v is not None:
             # Ensure timezone-aware datetime
             if v.tzinfo is None:
@@ -139,6 +141,7 @@ class CreateReminderRequest(BaseModel):
     @field_validator("max_occurrences")
     @classmethod
     def check_max_occurrences(cls, v: int | None) -> int | None:
+        """Reject a non-positive occurrence cap."""
         if v is not None and v <= 0:
             raise ValueError("max_occurrences must be greater than 0")
         return v
@@ -146,6 +149,7 @@ class CreateReminderRequest(BaseModel):
     @field_validator("stop_after")
     @classmethod
     def check_stop_after_future(cls, v: datetime | None) -> datetime | None:
+        """Treat a naive time as UTC and reject a stop_after already in the past."""
         if v is not None:
             # Ensure timezone-aware datetime
             if v.tzinfo is None:
@@ -216,6 +220,7 @@ class CreateReminderToolRequest(BaseModel):
     @field_validator("repeat")
     @classmethod
     def check_repeat_cron(cls, v: str | None) -> str | None:
+        """Reject a repeat value that is not a valid cron expression."""
         if v is not None and not validate_cron_expression(v):
             raise ValueError(f"Invalid cron expression: {v}")
         return v
@@ -223,6 +228,7 @@ class CreateReminderToolRequest(BaseModel):
     @field_validator("max_occurrences")
     @classmethod
     def check_max_occurrences(cls, v: int | None) -> int | None:
+        """Reject a non-positive occurrence cap."""
         if v is not None and v <= 0:
             raise ValueError("max_occurrences must be greater than 0")
         return v
@@ -230,6 +236,7 @@ class CreateReminderToolRequest(BaseModel):
     @field_validator("delay_seconds")
     @classmethod
     def check_delay_seconds(cls, v: int | None) -> int | None:
+        """Reject a non-positive delay."""
         if v is not None and v <= 0:
             raise ValueError("delay_seconds must be greater than 0")
         return v
@@ -318,6 +325,7 @@ class UpdateReminderRequest(BaseModel):
     @field_validator("repeat")
     @classmethod
     def check_repeat_cron(cls, v: str | None) -> str | None:
+        """Reject a repeat value that is not a valid cron expression."""
         from app.utils.cron_utils import (  # noqa: PLC0415 -- keeps croniter off this module's import path; only needed when a repeat cron actually validates
             validate_cron_expression,
         )
@@ -337,6 +345,7 @@ class UpdateReminderRequest(BaseModel):
     @field_validator("max_occurrences")
     @classmethod
     def check_max_occurrences(cls, v: int | None) -> int | None:
+        """Reject a non-positive occurrence cap."""
         if v is not None and v <= 0:
             raise ValueError("max_occurrences must be greater than 0")
         return v
@@ -344,6 +353,7 @@ class UpdateReminderRequest(BaseModel):
     @field_validator("stop_after")
     @classmethod
     def check_stop_after_future(cls, v: datetime | None) -> datetime | None:
+        """Treat a naive time as UTC and reject a stop_after already in the past."""
         if v is not None:
             # Ensure timezone-aware datetime
             if v.tzinfo is None:

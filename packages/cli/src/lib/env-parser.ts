@@ -26,7 +26,7 @@ const INFRASTRUCTURE_DEFAULTS: Record<SetupMode, Record<string, string>> = {
     CHROMADB_HOST: "chromadb", // Docker container hostname (internal network)
     CHROMADB_PORT: "8000", // Container-internal port; host maps 8080→8000
     // Docker-internal broker on the compose network; RabbitMQ there serves no TLS listener
-    RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/", // pragma: allowlist secret // NOSONAR typescript:S5332
+    RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/", // NOSONAR typescript:S5332 (pragma: allowlist secret)
   },
   developer: {
     MONGO_DB: "mongodb://localhost:27017/gaia",

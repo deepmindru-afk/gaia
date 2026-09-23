@@ -629,7 +629,7 @@ const DummySlashCommandDropdown: React.FC<DummySlashCommandDropdownProps> = ({
                 <div key={tool.name} className="mx-2 mb-1">
                   <button
                     type="button"
-                    className="relative block w-full cursor-pointer rounded-xl border border-transparent text-left transition-all duration-150 hover:border-zinc-600 hover:bg-white/5"
+                    className="relative block w-full cursor-pointer rounded-xl border border-transparent text-left transition-colors duration-150 hover:border-zinc-600 hover:bg-white/5"
                     onClick={() => handleToolClick(tool.name)}
                   >
                     <div className="flex items-center gap-3 p-3">
