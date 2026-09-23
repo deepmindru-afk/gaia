@@ -45,6 +45,16 @@ class EngineFailure(StrEnum):
     UNRESPONSIVE = "unresponsive"
 
 
+class StateCarry(StrEnum):
+    """Whether a run moving to the fallback engine took the primary's live cookies and localStorage with it."""
+
+    CARRIED = "carried"
+    #: The primary engine had already failed under the run, so there was nothing to read.
+    ENGINE_FAILED = "engine_failed"
+    #: Reading the primary failed: the host lost the session or did not answer.
+    UNREADABLE = "unreadable"
+
+
 # ---------------------------------------------------------------------------
 # SSE card-event key (must match tool_fields in chat_models.py and the frontend TOOL_RENDERERS/toolRegistry registration).
 # ---------------------------------------------------------------------------
@@ -323,6 +333,11 @@ BROWSER_STALL_NOTE = "Still waiting on the page, it's a slow one."
 # on another browser do not read as the run starting over.
 BROWSER_ENGINE_FALLBACK_NOTE = (
     "That page didn't work in the fast browser, continuing in a full one."
+)
+# The same, when the fast browser's state could not come along.
+BROWSER_ENGINE_FALLBACK_WITHOUT_STATE_NOTE = (
+    "That page didn't work in the fast browser, continuing in a full one. "
+    "It starts from your saved logins only, so you may need to sign in again."
 )
 
 # Engine watchdog: the primary engine's liveness is read this often, and this

@@ -190,6 +190,35 @@ def _cookie_scopes_to(cookie: StorageStateCookie, host: str) -> bool:
     return bool(domain) and _cookie_applies_to_host(domain, host)
 
 
+def _cookie_identity(cookie: StorageStateCookie) -> tuple[str | None, str | None, str | None]:
+    """Return what makes two cookies the same cookie to a browser: name, domain and path."""
+    return cookie.get("name"), cookie.get("domain"), cookie.get("path")
+
+
+def overlay_storage_state(base: StorageState | None, live: StorageState) -> StorageState:
+    """Lay live over base: a cookie with the same name, domain and path, or an origin's localStorage, is live's."""
+    if base is None:
+        return live
+    live_cookies = live.get("cookies", [])
+    live_origins = live.get("origins", [])
+    live_cookie_ids = {_cookie_identity(cookie) for cookie in live_cookies}
+    live_origin_names = {origin.get("origin") for origin in live_origins}
+    return StorageState(
+        cookies=[
+            cookie
+            for cookie in base.get("cookies", [])
+            if _cookie_identity(cookie) not in live_cookie_ids
+        ]
+        + live_cookies,
+        origins=[
+            origin
+            for origin in base.get("origins", [])
+            if origin.get("origin") not in live_origin_names
+        ]
+        + live_origins,
+    )
+
+
 def split_storage_state_by_host(state: StorageState) -> dict[str, StorageState]:
     """Split one browser export into per-host slices keyed the way reuse loads them.
 

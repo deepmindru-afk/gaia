@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from app.constants.browser import (
     BROWSER_AGENT_GUIDANCE_MAX,
     BROWSER_ENGINE_FALLBACK_NOTE,
+    BROWSER_ENGINE_FALLBACK_WITHOUT_STATE_NOTE,
     BROWSER_ENGINE_UNRESPONSIVE_SUMMARY,
     BROWSER_RUN_BLOCKED_SUMMARY,
     BROWSER_RUN_HANDOFF_TIMED_OUT,
@@ -34,6 +35,7 @@ from app.constants.browser import (
     EngineFailure,
     HandoffStatus,
     SensitiveCategory,
+    StateCarry,
 )
 from app.constants.log_tags import LogTag
 from app.schemas.browser import (
@@ -351,7 +353,8 @@ class BrowserTaskRunner:
             },
         )
         log.set_ns("browser", primary_session_id=self._session.session_id)
-        self._session = await route.open_session(url, await self._primary_state())
+        carried = await self._primary_state()
+        self._session = await route.open_session(url, carried)
         self.used_fallback = True
         await self._emit(
             BrowserSessionSnapshot(
@@ -362,7 +365,11 @@ class BrowserTaskRunner:
             )
         )
         if self._note is not None:
-            await self._note(BROWSER_ENGINE_FALLBACK_NOTE)
+            await self._note(
+                BROWSER_ENGINE_FALLBACK_NOTE
+                if carried is not None
+                else BROWSER_ENGINE_FALLBACK_WITHOUT_STATE_NOTE
+            )
         route.jev.continue_on_fallback()
         # Continues the step count, so the fallback's first step follows the
         # primary's last on the card, in the recap and in the history.
@@ -371,19 +378,26 @@ class BrowserTaskRunner:
         return replace(outcome, usage=_merged_usage(spent, outcome.usage))
 
     async def _primary_state(self) -> LiveSessionState | None:
-        """Return the primary session's live state for the fallback to open with; None when its engine failed.
-
-        A login finished on the primary (a user handoff) lives only in that
-        browser until the run ends, so the fallback must start from it.
-        """
+        """Read the primary's live state for the fallback, or None when its engine cannot give it; the wide event says which."""
+        state: LiveSessionState | None = None
         if self._engine_failure is not None:
-            log.info(
-                f"{LogTag.BROWSER} The primary engine failed; the fallback opens with saved logins only",
-                browser={"session_id": self._session.session_id, "operation": "hand_over_state"},
-                engine_failure=self._engine_failure.value,
-            )
-            return None
-        return await hand_over_state(self._session)
+            carry = StateCarry.ENGINE_FAILED
+        else:
+            try:
+                state = await hand_over_state(self._session)
+                carry = StateCarry.CARRIED
+            except BrowserUnavailableError as exc:
+                carry = StateCarry.UNREADABLE
+                log.warning(
+                    f"{LogTag.BROWSER} Could not read the primary browser's state to carry over",
+                    error_type=type(exc).__name__,
+                    browser={
+                        "session_id": self._session.session_id,
+                        "operation": "hand_over_state",
+                    },
+                )
+        log.set_ns("browser", state_carry=carry.value)
+        return state
 
     async def _finish_from_handoff(self) -> BrowserResultSnapshot:
         """Judge a run the handoff ended: blocked with no guidance, expired, completed by the user, or stopped."""

@@ -8,7 +8,11 @@ import pytest
 
 from app.constants.browser import HANDOFF_AUTORESOLVED_NOTE
 from app.services.browser import session as session_mod
-from app.services.browser.exceptions import BrowserSessionGone, BrowserUnavailableError
+from app.services.browser.exceptions import (
+    BrowserConcurrencyLimit,
+    BrowserSessionGone,
+    BrowserUnavailableError,
+)
 from app.services.browser.session import BrowserHostSession
 
 # The host a session lives on; every host call must name it, primary or fallback.
@@ -298,10 +302,64 @@ async def test_a_sign_in_is_saved_for_the_site_it_happened_on_whatever_the_run_s
     )
 
 
-_CARRIED_STATE = {"cookies": [{"name": "session", "value": "signed-in"}], "origins": []}
+#: The primary's live browser after the user signed in on flights.example.com.
+_CARRIED_STATE = {
+    "cookies": [
+        {"name": "session", "value": "signed-in", "domain": "flights.example.com", "path": "/"}
+    ],
+    "origins": [
+        {"origin": "https://flights.example.com", "localStorage": [{"name": "t", "value": "live"}]}
+    ],
+}
+#: The user's saved login for news.example.com, holding an older flights cookie too.
+_SAVED_NEWS_LOGIN = {
+    "cookies": [
+        {"name": "session", "value": "stale", "domain": "flights.example.com", "path": "/"},
+        {"name": "sid", "value": "reader", "domain": "news.example.com", "path": "/"},
+    ],
+    "origins": [
+        {"origin": "https://flights.example.com", "localStorage": [{"name": "t", "value": "old"}]},
+        {"origin": "https://news.example.com", "localStorage": [{"name": "k", "value": "v"}]},
+    ],
+}
+_FALLBACK_HOST = "http://fallback-host:8931"
 
 
-async def test_a_session_opened_with_carried_state_is_seeded_with_it_not_a_saved_login(
+def _signed_in_primary() -> BrowserHostSession:
+    primary = _handle("primary")
+    primary.mark_authenticated("https://flights.example.com/account")
+    return primary
+
+
+def _host_per_session(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fallback_error: Exception | None = None,
+    fallback_release_error: Exception | None = None,
+) -> None:
+    """Open "primary" then "fallback"; each disposes to a state naming it, so a save shows whose it was."""
+    _make_session_fakes(monkeypatch)
+    opened = iter(["primary", "fallback"])
+
+    async def _create(storage_state: Any, host_url: str) -> MagicMock:
+        session_id = next(opened)
+        if session_id == "fallback" and fallback_error is not None:
+            raise fallback_error
+        return MagicMock(session_id=session_id, context_id="c", cdp_ws="ws://c", live_ws="ws://l")
+
+    async def _delete(session_id: str, host_url: str) -> dict[str, Any]:
+        if session_id == "fallback" and fallback_release_error is not None:
+            raise fallback_release_error
+        return {"cookies": [session_id]}
+
+    monkeypatch.setattr(session_mod.host_client, "create_session", AsyncMock(side_effect=_create))
+    monkeypatch.setattr(session_mod.host_client, "delete_session", AsyncMock(side_effect=_delete))
+    monkeypatch.setattr(
+        session_mod.host_client, "get_storage_state", AsyncMock(return_value=_CARRIED_STATE)
+    )
+
+
+async def test_a_session_opened_with_carried_state_saves_the_login_under_the_site_it_belongs_to(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _make_session_fakes(monkeypatch)
@@ -310,7 +368,7 @@ async def test_a_session_opened_with_carried_state_is_seeded_with_it_not_a_saved
         session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
     )
     carried = session_mod.LiveSessionState(
-        storage_state=_CARRIED_STATE, persist_login=True, login_domain="flights.example.com"
+        storage_state=_CARRIED_STATE, source=_signed_in_primary()
     )
 
     async with session_mod.browser_session(
@@ -319,7 +377,6 @@ async def test_a_session_opened_with_carried_state_is_seeded_with_it_not_a_saved
         pass
 
     session_mod.host_client.create_session.assert_awaited_once_with(_CARRIED_STATE, _HOST)
-    session_mod.load_storage_state.assert_not_awaited()
     # Saved where the login belongs, not under the page the run moved over on.
     session_mod.save_storage_state.assert_awaited_once_with(
         "u1", "flights.example.com", returned_state
@@ -330,9 +387,7 @@ async def test_carried_state_the_user_never_approved_as_a_login_is_never_saved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _make_session_fakes(monkeypatch)
-    carried = session_mod.LiveSessionState(
-        storage_state=_CARRIED_STATE, persist_login=False, login_domain=None
-    )
+    carried = session_mod.LiveSessionState(storage_state=_CARRIED_STATE, source=_handle())
 
     async with session_mod.browser_session(
         host_url=_HOST, user_id="u1", start_url="https://x.com", carried=carried
@@ -342,65 +397,135 @@ async def test_carried_state_the_user_never_approved_as_a_login_is_never_saved(
     session_mod.save_storage_state.assert_not_awaited()
 
 
-async def test_handing_over_a_live_session_takes_its_state_and_its_login(
+async def test_a_session_opened_with_carried_state_is_also_signed_in_to_the_site_it_resumes_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Carrying the primary's state stopped the fallback loading the saved login for the page it resumes on; the live cookies still win."""
+    _make_session_fakes(monkeypatch)
+    monkeypatch.setattr(
+        session_mod, "load_storage_state", AsyncMock(return_value=_SAVED_NEWS_LOGIN)
+    )
+    carried = session_mod.LiveSessionState(storage_state=_CARRIED_STATE, source=_handle())
+
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://news.example.com/a", carried=carried
+    ):
+        pass
+
+    session_mod.load_storage_state.assert_awaited_once_with("u1", "news.example.com")
+    [(seeded, _)] = [call.args for call in session_mod.host_client.create_session.await_args_list]
+    assert sorted((c["domain"], c["name"], c["value"]) for c in seeded["cookies"]) == [
+        ("flights.example.com", "session", "signed-in"),
+        ("news.example.com", "sid", "reader"),
+    ]
+    assert sorted((o["origin"], o["localStorage"][0]["value"]) for o in seeded["origins"]) == [
+        ("https://flights.example.com", "live"),
+        ("https://news.example.com", "v"),
+    ]
+
+
+async def test_a_carried_session_writes_back_both_the_carried_login_and_the_resume_sites(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A saved login loaded for the resume page is written back with its rotated tokens, beside the login carried in."""
+    _make_session_fakes(monkeypatch)
+    returned_state = {"cookies": ["rotated"]}
+    monkeypatch.setattr(
+        session_mod, "load_storage_state", AsyncMock(return_value=_SAVED_NEWS_LOGIN)
+    )
+    monkeypatch.setattr(
+        session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
+    )
+    carried = session_mod.LiveSessionState(
+        storage_state=_CARRIED_STATE, source=_signed_in_primary()
+    )
+
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://news.example.com/a", carried=carried
+    ):
+        pass
+
+    saved = {call.args[1] for call in session_mod.save_storage_state.await_args_list}
+    assert saved == {"flights.example.com", "news.example.com"}
+
+
+async def test_handing_over_a_live_session_reads_its_state_and_names_it_the_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         session_mod.host_client, "get_storage_state", AsyncMock(return_value=_CARRIED_STATE)
     )
-    primary = _handle()
-    primary.mark_authenticated("https://flights.example.com/account")
+    primary = _signed_in_primary()
 
     state = await session_mod.hand_over_state(primary)
 
-    session_mod.host_client.get_storage_state.assert_awaited_once_with("sess-1", _HOST)
-    assert state == session_mod.LiveSessionState(
-        storage_state=_CARRIED_STATE, persist_login=True, login_domain="flights.example.com"
-    )
-    assert primary.persist_login is False
+    session_mod.host_client.get_storage_state.assert_awaited_once_with("primary", _HOST)
+    assert state == session_mod.LiveSessionState(storage_state=_CARRIED_STATE, source=primary)
 
 
-async def test_handing_over_a_session_whose_engine_is_gone_gives_nothing_and_says_so(
-    monkeypatch: pytest.MonkeyPatch, fake_log: _FakeLog
+async def test_handing_over_a_session_whose_engine_is_gone_raises(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The read used to swallow the failure and return None; the caller decides what a run without the state does."""
     monkeypatch.setattr(
         session_mod.host_client,
         "get_storage_state",
         AsyncMock(side_effect=BrowserSessionGone("Browser host returned 404")),
     )
-    primary = _handle()
-    primary.mark_authenticated("https://flights.example.com/account")
 
-    assert await session_mod.hand_over_state(primary) is None
-
-    # The primary keeps its login: nothing was carried anywhere to save it instead.
-    assert primary.persist_login is True
-    [(message, fields)] = fake_log.warning_calls
-    assert "saved logins only" in message
-    assert fields["error_type"] == "BrowserSessionGone"
+    with pytest.raises(BrowserSessionGone):
+        await session_mod.hand_over_state(_signed_in_primary())
 
 
 async def test_a_login_carried_to_the_fallback_is_saved_once_from_the_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The primary is released after the fallback; saving from both wrote its older cookies over the fallback's."""
-    _make_session_fakes(monkeypatch)
-    hosts = iter(
-        [
-            MagicMock(session_id="primary", context_id="c1", cdp_ws="ws://p", live_ws="ws://pl"),
-            MagicMock(session_id="fallback", context_id="c2", cdp_ws="ws://f", live_ws="ws://fl"),
-        ]
+    _host_per_session(monkeypatch)
+
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://x.com"
+    ) as primary:
+        primary.mark_authenticated("https://x.com/home")
+        carried = await session_mod.hand_over_state(primary)
+        async with session_mod.browser_session(
+            host_url=_FALLBACK_HOST, user_id="u1", start_url="https://x.com/feed", carried=carried
+        ):
+            pass
+
+    session_mod.save_storage_state.assert_awaited_once_with(
+        "u1", "x.com", {"cookies": ["fallback"]}
     )
-    monkeypatch.setattr(
-        session_mod.host_client, "create_session", AsyncMock(side_effect=lambda *_: next(hosts))
-    )
-    monkeypatch.setattr(
-        session_mod.host_client,
-        "delete_session",
-        AsyncMock(side_effect=lambda session_id, _host: {"cookies": [session_id]}),
-    )
-    monkeypatch.setattr(
-        session_mod.host_client, "get_storage_state", AsyncMock(return_value=_CARRIED_STATE)
+
+
+async def test_a_login_is_saved_from_the_primary_when_the_fallback_cannot_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The handover cleared the primary's right to save before the fallback existed, so a full fallback host lost the login."""
+    _host_per_session(monkeypatch, fallback_error=BrowserConcurrencyLimit("at capacity"))
+
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://x.com"
+    ) as primary:
+        primary.mark_authenticated("https://x.com/home")
+        carried = await session_mod.hand_over_state(primary)
+        with pytest.raises(BrowserConcurrencyLimit):
+            async with session_mod.browser_session(
+                host_url=_FALLBACK_HOST,
+                user_id="u1",
+                start_url="https://x.com/feed",
+                carried=carried,
+            ):
+                pytest.fail("the fallback opened on a full host")
+
+    session_mod.save_storage_state.assert_awaited_once_with("u1", "x.com", {"cookies": ["primary"]})
+
+
+async def test_a_login_is_saved_from_the_primary_when_the_fallback_cannot_save_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _host_per_session(
+        monkeypatch, fallback_release_error=BrowserUnavailableError("fallback host gone")
     )
 
     async with session_mod.browser_session(
@@ -409,16 +534,11 @@ async def test_a_login_carried_to_the_fallback_is_saved_once_from_the_fallback(
         primary.mark_authenticated("https://x.com/home")
         carried = await session_mod.hand_over_state(primary)
         async with session_mod.browser_session(
-            host_url="http://fallback-host:8931",
-            user_id="u1",
-            start_url="https://x.com/feed",
-            carried=carried,
+            host_url=_FALLBACK_HOST, user_id="u1", start_url="https://x.com/feed", carried=carried
         ):
             pass
 
-    session_mod.save_storage_state.assert_awaited_once_with(
-        "u1", "x.com", {"cookies": ["fallback"]}
-    )
+    session_mod.save_storage_state.assert_awaited_once_with("u1", "x.com", {"cookies": ["primary"]})
 
 
 async def test_release_failure_is_caught_logged_and_unregister_still_runs(

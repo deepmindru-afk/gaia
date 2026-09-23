@@ -362,12 +362,15 @@ async def browser_job_world(
     world = JobWorld(double)
     scripted_host = host if host is not None else ScriptedHost()
     page: Any = AsyncMock()
+    #: The page the host reports a session on: Jev's page, when the run has one.
+    host_page_url: str | None = None
     llm: Any = object()
     if jev is not None:
         world.jev = ScriptedJevGateway(jev)
         helper = _JevTextHelper(jev.texts)
         llm = JevChatModel(client=world.jev, text_model=helper, structured_call=helper.structured)
         page = _JevPage()
+        host_page_url = page.url
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     create_session(stream_id, RunKind.LIVE)
 
@@ -418,7 +421,9 @@ async def browser_job_world(
             raise BrowserSessionGone(
                 f"Browser host returned 404 for {host_url}/sessions/{session_id}"
             )
-        return HostSessionInfo(session_id=session_id, live=True, last_activity_at=0.0)
+        return HostSessionInfo(
+            session_id=session_id, live=True, last_activity_at=0.0, url=host_page_url
+        )
 
     async def _get_storage_state(session_id: str, host_url: str) -> Any:
         world.storage_reads.append(session_id)

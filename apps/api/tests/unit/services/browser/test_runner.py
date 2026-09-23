@@ -19,11 +19,14 @@ import httpx
 import pytest
 
 from app.constants.browser import (
+    BROWSER_ENGINE_FALLBACK_NOTE,
+    BROWSER_ENGINE_FALLBACK_WITHOUT_STATE_NOTE,
     BROWSER_RUN_HANDOFF_TIMED_OUT,
     HANDOFF_AUTORESOLVED_NOTE,
     BrowserEventKind,
     BrowserSessionStatus,
     HandoffStatus,
+    StateCarry,
 )
 from app.constants.log_tags import LogTag
 from app.schemas.browser import BrowserSessionSnapshot, HandoffOutcome, HandoffRequest
@@ -46,6 +49,7 @@ from app.services.browser.run_contract import (
 from app.services.browser.runner import BrowserRunnerCallbacks, BrowserTaskRunner
 from app.services.browser.session import BrowserHostSession
 from app.services.llm_metering import LLMCallContext, TokenUsage
+from shared.py.wide_events import log, log_context
 
 
 class _Action:
@@ -1959,11 +1963,13 @@ def _fallback_callbacks(
     *,
     is_cancelled: AsyncMock | None = None,
     request_handoff: AsyncMock | None = None,
+    note: AsyncMock | None = None,
 ) -> BrowserRunnerCallbacks:
     return BrowserRunnerCallbacks(
         emit=emit,
         request_handoff=request_handoff or AsyncMock(),
         is_cancelled=is_cancelled or AsyncMock(return_value=False),
+        note=note,
         open_fallback_session=open_fallback_session,
     )
 
@@ -2122,41 +2128,36 @@ async def test_a_login_made_on_the_primary_engine_moves_with_the_run_to_the_fall
     open_fallback = AsyncMock(return_value=_fallback_session())
     runner = _fallback_runner(monkeypatch, _fallback_callbacks(emit, open_fallback))
     primary = runner.session
-    primary.mark_authenticated("https://flights.example.com/account")
 
-    await runner.run("find fares")
+    async with log_context("run_browser_job"):
+        await runner.run("find fares")
+        event = dict(log.get())
 
     assert reads == ["/sessions/s1/storage-state"]
     open_fallback.assert_awaited_once_with(
         _BLOCKED_URL,
-        session_mod.LiveSessionState(
-            storage_state=_SIGNED_IN_STATE,
-            persist_login=True,
-            login_domain="flights.example.com",
-        ),
+        session_mod.LiveSessionState(storage_state=_SIGNED_IN_STATE, source=primary),
     )
-    # The login now lives on the fallback, which saves it; the primary, released
-    # after it with the older state, must not write over it.
-    assert primary.persist_login is False
+    assert event["browser"]["state_carry"] == StateCarry.CARRIED
 
 
-async def test_a_run_that_never_signed_in_carries_its_state_without_the_right_to_save_it(
+async def test_a_primary_whose_state_cannot_be_read_moves_without_it_and_says_so(
     monkeypatch,
 ) -> None:
-    """Only a loaded login or a completed sign-in may be saved; carrying cookies across engines grants neither."""
+    """The unreadable primary was swallowed into None: the run moved on signed out and nothing recorded why."""
     _, emit = _collector()
-    _host_answers(monkeypatch, _host_holding(_SIGNED_IN_STATE, []))
+    _host_answers(monkeypatch, _session_gone)
     open_fallback = AsyncMock(return_value=_fallback_session())
-    runner = _fallback_runner(monkeypatch, _fallback_callbacks(emit, open_fallback))
+    note = AsyncMock()
+    runner = _fallback_runner(monkeypatch, _fallback_callbacks(emit, open_fallback, note=note))
 
-    await runner.run("find fares")
+    async with log_context("run_browser_job"):
+        await runner.run("find fares")
+        event = dict(log.get())
 
-    open_fallback.assert_awaited_once_with(
-        _BLOCKED_URL,
-        session_mod.LiveSessionState(
-            storage_state=_SIGNED_IN_STATE, persist_login=False, login_domain=None
-        ),
-    )
+    open_fallback.assert_awaited_once_with(_BLOCKED_URL, None)
+    assert event["browser"]["state_carry"] == StateCarry.UNREADABLE
+    note.assert_awaited_once_with(BROWSER_ENGINE_FALLBACK_WITHOUT_STATE_NOTE)
 
 
 # ---------------------------------------------------------------------------
@@ -2577,8 +2578,6 @@ async def test_a_run_that_moves_engines_tells_the_user_once(
     two_engines, monkeypatch, cause
 ) -> None:
     """Regression: the user watched the steps start over with no word of why."""
-    from app.constants.browser import BROWSER_ENGINE_FALLBACK_NOTE
-
     _host_answers(
         monkeypatch,
         _session_gone if cause == "engine_failed" else _host_holding(_SIGNED_IN_STATE, []),
@@ -2590,10 +2589,20 @@ async def test_a_run_that_moves_engines_tells_the_user_once(
     if cause == "page_blocked":
         runner._llm.fallback_url = _BLOCKED_URL
 
-    await runner.run("count the comments")
+    async with log_context("run_browser_job"):
+        await runner.run("count the comments")
+        event = dict(log.get())
 
     open_fallback.assert_awaited_once()
-    note.assert_awaited_once_with(BROWSER_ENGINE_FALLBACK_NOTE)
+    assert event["browser"]["state_carry"] == (
+        StateCarry.ENGINE_FAILED if cause == "engine_failed" else StateCarry.CARRIED
+    )
+    # A failed engine has no state to carry, and the user is told it starts from saved logins.
+    note.assert_awaited_once_with(
+        BROWSER_ENGINE_FALLBACK_WITHOUT_STATE_NOTE
+        if cause == "engine_failed"
+        else BROWSER_ENGINE_FALLBACK_NOTE
+    )
 
 
 async def test_a_run_that_stays_on_its_engine_says_nothing_about_engines(
