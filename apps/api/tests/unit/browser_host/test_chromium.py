@@ -33,7 +33,7 @@ from app.browser_host.chromium import (
     cdp_call,
 )
 from app.config.browser_host_settings import browser_host_settings
-from app.constants.browser import HostAdmissionRefusal
+from app.constants.browser import BrowserEngine, HostAdmissionRefusal
 from tests.unit.browser_host.conftest import FakeMux, install_mux, make_host, make_session
 
 
@@ -589,3 +589,56 @@ async def test_session_info_on_an_engine_that_stopped_answering_says_so_within_t
 
     with pytest.raises(chromium.EngineUnresponsiveError):
         await asyncio.wait_for(host.session_info("s1"), timeout=1)
+
+
+# --- a headless Chromium announced itself as HeadlessChrome to every site ---
+
+_HEADLESS_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "HeadlessChrome/153.0.0.0 Safari/537.36"
+)
+
+
+async def _start_on(monkeypatch: pytest.MonkeyPatch, user_agent: str) -> AsyncMock:
+    """Start a Chromium host whose browser reports user_agent; return the spawn fake."""
+    monkeypatch.setattr(browser_host_settings, "BROWSER_ENGINE", BrowserEngine.CHROMIUM)
+    monkeypatch.setattr(chromium, "_resolve_chromium_path", lambda: "/opt/chrome/chrome")
+    spawn = AsyncMock(return_value=MagicMock(returncode=None, pid=1))
+    monkeypatch.setattr("app.browser_host.chromium.asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr("app.browser_host.chromium.ProcessSampler.for_pid", MagicMock())
+    host = ChromiumHost()
+    host._await_cdp_ready = AsyncMock(return_value="ws://ready")  # type: ignore[method-assign]  # the engine never really starts
+    host._shutdown_chromium = AsyncMock()  # type: ignore[method-assign]  # nothing real to stop
+    host._watch_loop = AsyncMock()  # type: ignore[method-assign]  # no process to supervise
+    host._reaper_loop = AsyncMock()  # type: ignore[method-assign]  # no sessions to reap
+    root = FakeMux({"Browser.getVersion": {"userAgent": user_agent}})
+    with patch.object(chromium, "CdpMux", return_value=root):
+        await host.start()
+    await _cancel(*(t for t in (host._watcher_task, host._reaper_task) if t is not None))
+    return spawn
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+async def test_a_headless_chromium_goes_out_as_plain_chrome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fallback engine sent "HeadlessChrome/153" in every User-Agent, a bot flag to any site.
+
+    DuckDuckGo answered the battery's search with a CAPTCHA the run could only hand to the user.
+    """
+    spawn = await _start_on(monkeypatch, _HEADLESS_UA)
+
+    argv = [str(arg) for arg in spawn.call_args.args]
+    assert f"--user-agent={_HEADLESS_UA.replace('HeadlessChrome/', 'Chrome/')}" in argv
+    assert not any("HeadlessChrome" in arg for arg in argv)
+
+
+@pytest.mark.unit
+async def test_a_browser_that_does_not_say_headless_is_launched_once_as_it_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn = await _start_on(monkeypatch, _HEADLESS_UA.replace("HeadlessChrome/", "Chrome/"))
+
+    assert spawn.await_count == 1
+    assert not any(str(arg).startswith("--user-agent") for arg in spawn.call_args.args)

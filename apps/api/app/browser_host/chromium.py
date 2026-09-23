@@ -59,6 +59,8 @@ _HOST_EXTRA_ARGS: tuple[str, ...] = (
 # Playwright names the shell binary per platform: `headless_shell` on Linux (what
 # production runs), `chrome-headless-shell` on macOS, `.exe` on Windows.
 _HEADLESS_SHELL_BINARIES = ("headless_shell", "chrome-headless-shell", "headless_shell.exe")
+# How a headless build names itself in its User-Agent ("HeadlessChrome/153.0.0.0").
+_HEADLESS_MARKER = "HeadlessChrome/"
 # Poll budget for Chromium to publish its DevTools endpoint after launch.
 _CDP_READY_TIMEOUT_SECONDS = 30.0
 _CDP_READY_POLL_SECONDS = 0.2
@@ -252,6 +254,9 @@ class ChromiumHost:
         self._root_ws_url: str | None = None
         self._chromium_path: str | None = None
         self._user_data_dir: str | None = None
+        # The browser's own User-Agent without the headless marker, learned on the
+        # first launch and passed to every launch after it.
+        self._user_agent: str | None = None
         self._sessions: dict[str, HostSession] = {}
         # Slots claimed by a create that has not finished its CDP work yet, so the
         # capacity check stays correct while that work happens outside the lock.
@@ -280,10 +285,29 @@ class ChromiumHost:
         if browser_host_settings.BROWSER_ENGINE is not BrowserEngine.OBSCURA:
             self._chromium_path = await asyncio.to_thread(_resolve_chromium_path)
         await self._launch()
+        if browser_host_settings.BROWSER_ENGINE is not BrowserEngine.OBSCURA:
+            await self._relaunch_without_headless_marker()
         self._base_memory_mb = self._engine_rss_mb() or 0.0
         self._watcher_task = asyncio.create_task(self._watch_loop())
         self._reaper_task = asyncio.create_task(self._reaper_loop())
         log.info(f"{LogTag.BROWSER} browser host started")
+
+    async def _relaunch_without_headless_marker(self) -> None:
+        """Relaunch once announcing the same browser, when it calls itself HeadlessChrome.
+
+        Headless Chromium sends "HeadlessChrome/<v>" in every User-Agent, which any
+        site can read as a bot (DuckDuckGo answered with a CAPTCHA). The launch
+        flag keeps the client-hint brands a CDP override would blank.
+        """
+        root_mux = self._root_mux
+        if root_mux is None:
+            raise RuntimeError("the engine has no root connection")
+        user_agent = str((await cdp_call(root_mux, "Browser.getVersion", {}))["userAgent"])
+        if _HEADLESS_MARKER not in user_agent:
+            return
+        self._user_agent = user_agent.replace(_HEADLESS_MARKER, "Chrome/")
+        await self._shutdown_chromium()
+        await self._launch()
 
     async def stop(self) -> None:
         """Tear everything down: reaper, process watcher, root CDP connection, engine process."""
@@ -781,6 +805,8 @@ class ChromiumHost:
         # Size the window to the viewport so pages paint edge-to-edge instead of into
         # an 800x600 default (which leaves whitespace around the content in the view).
         args.append(f"--window-size={BROWSER_VIEWPORT_WIDTH},{BROWSER_VIEWPORT_HEIGHT}")
+        if self._user_agent is not None:
+            args.append(f"--user-agent={self._user_agent}")
         if not browser_host_settings.BROWSER_HOST_HEADED:
             # The shell build is headless by construction and only understands the
             # bare flag; `--headless=new` selects a mode that binary does not have.
