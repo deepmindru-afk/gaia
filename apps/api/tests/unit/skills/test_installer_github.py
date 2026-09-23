@@ -202,6 +202,12 @@ class TestInstallFromGithubValidation:
         with pytest.raises(ValueError, match="Provide a path"):
             await install_from_github(user_id="u1", repo_url="org/repo")
 
+    async def test_dot_segment_path_is_rejected_before_any_request(self, storage_seams):
+        """Httpx collapses dot segments: unchecked, this path sent the server's GitHub token to /user/keys."""
+        with respx.mock:
+            with pytest.raises(ValueError, match="Invalid GitHub path segment"):
+                await install_from_github(user_id="u1", repo_url="org/repo/../../../../user/keys")
+
 
 _RICH_SKILL_MD = """\
 ---

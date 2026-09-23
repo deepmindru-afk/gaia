@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import respx
 
 from app.agents.skills.github_discovery import (
     DiscoveredSkill,
@@ -15,6 +16,7 @@ from app.agents.skills.github_discovery import (
     discover_skills_from_repo,
     get_skill_from_repo,
 )
+from app.agents.skills.utils import GITHUB_API_BASE
 
 # ---------------------------------------------------------------------------
 # DiscoveredSkill
@@ -454,3 +456,34 @@ class TestGetSkillFromRepo:
         ):
             result = await get_skill_from_repo("o/r", "nonexistent")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# GitHub API traversal
+# ---------------------------------------------------------------------------
+
+
+class TestGithubApiTraversal:
+    """httpx collapses dot segments, so an unchecked ref aims the server's GitHub token at any API path."""
+
+    @pytest.mark.parametrize(
+        ("repo_url", "branch"),
+        [
+            ("../..", "main"),
+            ("owner/repo", "../../../../user"),
+        ],
+    )
+    async def test_dot_segment_is_rejected_before_any_request(
+        self, repo_url: str, branch: str
+    ) -> None:
+        with respx.mock:
+            with pytest.raises(ValueError, match="Invalid GitHub path segment"):
+                await discover_skills_from_repo(repo_url, branch)
+
+    async def test_query_characters_are_encoded_not_interpreted(self) -> None:
+        with respx.mock:
+            route = respx.get(f"{GITHUB_API_BASE}/repos/owner/repo/git/trees/main%3Fx%3D1").mock(
+                return_value=httpx.Response(200, json={"tree": [], "truncated": False})
+            )
+            await discover_skills_from_repo("owner/repo", "main?x=1")
+        assert route.called

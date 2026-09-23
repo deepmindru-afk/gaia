@@ -9,7 +9,7 @@ This module provides utility functions for:
 """
 
 import os
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
@@ -63,6 +63,15 @@ def parse_github_url(url: str) -> tuple[str, str]:
         return owner, repo
 
     raise ValueError(f"Invalid GitHub URL: {url}")
+
+
+def github_url(base: str, *parts: str) -> str:
+    """Join caller-supplied parts onto a GitHub base URL, percent-encoding every path segment."""
+    segments = [segment for part in parts for segment in part.split("/")]
+    # httpx collapses dot segments, so one would steer the server's token to any GitHub endpoint
+    if any(segment in {"", ".", ".."} for segment in segments):
+        raise ValueError(f"Invalid GitHub path segment in {'/'.join(parts)!r}")
+    return "/".join([base, *(quote(segment, safe="") for segment in segments)])
 
 
 def find_skill_files(tree_entries: list[dict]) -> list[str]:

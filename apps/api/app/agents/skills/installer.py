@@ -29,7 +29,7 @@ from app.agents.skills.registry import (
     uninstall_skill,
     update_skill,
 )
-from app.agents.skills.utils import GITHUB_API_BASE, get_github_headers
+from app.agents.skills.utils import GITHUB_API_BASE, get_github_headers, github_url
 from app.constants.log_tags import LogTag
 from app.services.storage import (
     JuiceFSUnavailable,
@@ -86,7 +86,7 @@ async def _fetch_github_contents(
 
     Returns list of file info dicts with 'name', 'path', 'type', 'download_url'.
     """
-    url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents/{path}"
+    url = github_url(GITHUB_API_BASE, "repos", owner, repo, "contents", path)
     params = {"ref": branch}
 
     resp = await client.get(url, params=params, headers=get_github_headers())
