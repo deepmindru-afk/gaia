@@ -854,19 +854,35 @@ class TestFlushHeldApprovalCardsDelivery:
             (USER_ID, CONVERSATION_ID, "ap_2", "summary ap_2"),
         ]
 
-    async def test_a_card_whose_row_cannot_be_read_is_dropped_unseen(self, bridge: dict) -> None:
-        bridge["session"].tool_events = [_card_frame("ap_1", held=True)]
+    async def test_an_unreadable_row_keeps_its_card_held_is_reported_and_the_rest_still_flush(
+        self, bridge: dict
+    ) -> None:
+        async def _get(approval_id: str) -> ApprovalLedgerDocument:
+            if approval_id == "ap_1":
+                raise RuntimeError("mongo down")
+            return _ledger_row(approval_id)
+
+        bridge["session"].tool_events = [
+            _card_frame("ap_1", held=True),
+            _card_frame("ap_2", held=True),
+        ]
 
         with patch(
             f"{MODULE}.approval_ledger_repository.get_by_approval_id",
-            new=AsyncMock(side_effect=RuntimeError("mongo down")),
-        ) as get_row:
-            assert await flush_held_approval_cards(STREAM_ID) == 0
+            new=AsyncMock(side_effect=_get),
+        ):
+            assert await flush_held_approval_cards(STREAM_ID) == 1
 
-        get_row.assert_awaited_once_with("ap_1")
-        assert bridge["session"].tool_events == []
-        bridge["stream"].publish_chunk.assert_not_awaited()
-        bridge["log"].warning.assert_not_called()
+        assert bridge["session"].tool_events == [
+            _card_frame("ap_1", held=True),
+            {"tool_data": _card_frame("ap_2")["tool_data"]},
+        ]
+        bridge["log"].error.assert_called_once()
+        assert "Held card ledger read failed" in bridge["log"].error.call_args.args[0]
+        assert bridge["log"].error.call_args.kwargs == {
+            "approval_id": "ap_1",
+            "error_type": "RuntimeError",
+        }
 
     async def test_a_missed_publish_keeps_its_card_held_and_the_rest_still_flush(
         self, bridge: dict, rows: dict[str, ApprovalLedgerDocument]
@@ -892,13 +908,10 @@ class TestFlushHeldApprovalCardsDelivery:
             "error_type": "RuntimeError",
         }
 
-    async def test_an_aborted_flush_is_reported_and_flushes_nothing(self, bridge: dict) -> None:
+    async def test_a_session_failure_propagates_to_the_finalize_handler(self, bridge: dict) -> None:
         bridge["get_session"].side_effect = RuntimeError("session store gone")
 
-        assert await flush_held_approval_cards(STREAM_ID) == 0
-        bridge["log"].warning.assert_called_once()
-        assert "Held card flush aborted" in bridge["log"].warning.call_args.args[0]
-        assert bridge["log"].warning.call_args.kwargs == {
-            "stream_id": STREAM_ID,
-            "error_type": "RuntimeError",
-        }
+        with pytest.raises(RuntimeError, match="session store gone"):
+            await flush_held_approval_cards(STREAM_ID)
+
+        bridge["stream"].publish_chunk.assert_not_awaited()

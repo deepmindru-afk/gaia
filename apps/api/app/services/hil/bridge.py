@@ -474,64 +474,62 @@ async def flush_held_approval_cards(stream_id: str) -> int:
     Without this they surface only after a full refresh re-fetches messages.
     Only rows still PENDING go live; decided or revoked ones are dropped unseen.
     Each frame clears its held marker as it publishes, so a second flush is a
-    no-op. Best-effort: returns the flushed count, never raises.
+    no-op. A card whose row read or publish fails stays held for the drain.
     """
-    try:
-        session = get_session(stream_id)
-        if session is None:
-            return 0
-        flushed = 0
-        kept: list[dict[str, Any]] = []
-        for event in session.tool_events:
-            if not _is_held(event):
-                kept.append(event)
-                continue
-            tool_data: _FrameToolData | None = _frame_tool_data(event)
-            data: _ApprovalFrameData | None = _frame_approval_data(tool_data)
-            approval_id = data.get("approval_id") if data is not None else None
-            try:
-                row = (
-                    await approval_ledger_repository.get_by_approval_id(approval_id)
-                    if isinstance(approval_id, str)
-                    else None
-                )
-            except Exception:
-                row = None
-            if row is None or row.state not in (
-                LedgerState.PENDING,
-                LedgerState.APPROVED,
-            ):
-                # Decided, revoked, or gone: a card the user never saw needs
-                # no tombstone — drop it so the drain cannot resurrect it.
-                continue
-            try:
-                frame = {"tool_data": tool_data}
-                await stream_manager.publish_chunk(stream_id, f"data: {json.dumps(frame)}\n\n")
-                _schedule_pending_notification(
-                    row.user_id, row.conversation_id, row.approval_id, row.summary
-                )
-            except Exception as e:
-                log.warning(
-                    f"{LogTag.HIL} Held card flush missed its stream",
-                    approval_id=row.approval_id,
-                    error_type=type(e).__name__,
-                )
-                kept.append(event)
-                continue
-            # Marker stripped, frame kept: the end-of-run drain still persists
-            # it (reload-safe), while a second flush sees no marker and stays
-            # a no-op — live frames can never duplicate.
-            kept.append(frame)
-            flushed += 1
-        session.tool_events[:] = kept
-        return flushed
-    except Exception as e:
-        log.warning(
-            f"{LogTag.HIL} Held card flush aborted",
-            stream_id=stream_id,
-            error_type=type(e).__name__,
-        )
+    session = get_session(stream_id)
+    if session is None:
         return 0
+    flushed = 0
+    kept: list[dict[str, Any]] = []
+    for event in session.tool_events:
+        if not _is_held(event):
+            kept.append(event)
+            continue
+        tool_data: _FrameToolData | None = _frame_tool_data(event)
+        data: _ApprovalFrameData | None = _frame_approval_data(tool_data)
+        approval_id = data.get("approval_id") if data is not None else None
+        try:
+            row = (
+                await approval_ledger_repository.get_by_approval_id(approval_id)
+                if isinstance(approval_id, str)
+                else None
+            )
+        except Exception as e:
+            log.error(
+                f"{LogTag.HIL} Held card ledger read failed",
+                approval_id=approval_id,
+                error_type=type(e).__name__,
+            )
+            kept.append(event)
+            continue
+        if row is None or row.state not in (
+            LedgerState.PENDING,
+            LedgerState.APPROVED,
+        ):
+            # Decided, revoked, or gone: a card the user never saw needs
+            # no tombstone — drop it so the drain cannot resurrect it.
+            continue
+        try:
+            frame = {"tool_data": tool_data}
+            await stream_manager.publish_chunk(stream_id, f"data: {json.dumps(frame)}\n\n")
+            _schedule_pending_notification(
+                row.user_id, row.conversation_id, row.approval_id, row.summary
+            )
+        except Exception as e:
+            log.warning(
+                f"{LogTag.HIL} Held card flush missed its stream",
+                approval_id=row.approval_id,
+                error_type=type(e).__name__,
+            )
+            kept.append(event)
+            continue
+        # Marker stripped, frame kept: the end-of-run drain still persists
+        # it (reload-safe), while a second flush sees no marker and stays
+        # a no-op — live frames can never duplicate.
+        kept.append(frame)
+        flushed += 1
+    session.tool_events[:] = kept
+    return flushed
 
 
 def _frame_tool_data(event: object) -> _FrameToolData | None:
