@@ -81,6 +81,7 @@ ignore_decorators = [
   "@app.get",       # bare-FastAPI route handlers (embedding sidecar)
   "@app.post",      # bare-FastAPI route handlers (embedding sidecar)
   "@app.websocket", # Starlette websocket handlers — registered via decorator (browser host)
+  "@app.middleware", # Starlette HTTP middleware — registered via decorator (browser host)
 ]
 ignore_names = [
   "model_config",   # Pydantic v2 config attribute (set on every model)
