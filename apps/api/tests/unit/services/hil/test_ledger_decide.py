@@ -14,6 +14,7 @@ from app.constants.agents import AgentTag
 from app.constants.cache import EXECUTOR_BUSY_PREFIX, EXECUTOR_BUSY_TTL
 from app.constants.log_tags import LogTag
 from app.models.hil_models import ApprovalLedgerDocument, LedgerState
+from app.models.user_models import AuthenticatedUser
 from app.schemas.hil_schemas import BatchDecisionItem, BatchDecisionOutcome
 from app.services.analytics_service import AnalyticsEvents
 from app.services.hil.ledger_decide import (
@@ -1511,7 +1512,7 @@ class TestDecideLedgerOutcomes:
 
         seams.deliver.assert_awaited_once_with(
             "conv-1",
-            {"user_id": "u1"},
+            AuthenticatedUser(user_id="u1"),
             "APPROVAL_READY ap_1: the user approved Send it (2h5m old). Run it now with "
             'execute(tool_name="approve", data={"id": "ap_1"}) and continue with its result. '
             "If it is no longer needed, say so instead of running it.",
@@ -1553,7 +1554,9 @@ class TestDecideLedgerOutcomes:
         await decide_ledger("ap_1", user_id="u1", kind="deny", feedback="nope")
 
         seams.deliver.assert_awaited_once_with(
-            "conv-1", {"user_id": "u1"}, f"DECISION ap_1=DENIED Send it :: nope{_DENY_TAIL}"
+            "conv-1",
+            AuthenticatedUser(user_id="u1"),
+            f"DECISION ap_1=DENIED Send it :: nope{_DENY_TAIL}",
         )
         seams.record_deny.assert_awaited_once_with(row, "nope")
         seams.lock_holder.assert_awaited_once_with("conv-1")

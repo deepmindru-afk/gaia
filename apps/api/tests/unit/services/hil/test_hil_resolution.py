@@ -24,7 +24,7 @@ from app.services.hil.resolution import (
     ApprovalNotResumableError,
     ApprovalRequestForbiddenError,
     ApprovalRequestNotFoundError,
-    _dispatch_resume,
+    _dispatch_decided,
     _observe_hil_dispatch_lag,
     _observe_hil_user_wait,
     _resolve_or_close,
@@ -724,8 +724,6 @@ class TestBackgroundSubagentApprovals:
         assert result == {"expired": 0, "redispatched": 1}
 
     async def test_executor_gate_pauses_still_dispatch_the_executor(self, resume: Any) -> None:
-        from app.services.hil.resolution import _dispatch_decided
-
         with patch(f"{MODULE}.resume_parked_subagent", new=AsyncMock()) as resume_subagent:
             await _dispatch_decided(make_record(status="approved"))
             await asyncio.sleep(0)
@@ -889,52 +887,8 @@ class TestResolutionEdges:
 
         assert resume.prepare.await_args.args == (CONVERSATION_ID, item)
 
-    async def test_a_subagent_parked_dispatch_refusal_is_reported(self, resume: Any) -> None:
-        record = make_record(subagent_thread_id="gmail_executor_conv-1", integration_name="Gmail")
-        with patch(f"{MODULE}.log") as log, pytest.raises(ApprovalNotResumableError):
-            await _dispatch_resume(record, resume_status="approved", feedback=None, scope="once")
-
-        log.error.assert_called_once()
-        assert "cannot resume without the join" in log.error.call_args.args[0]
-        assert log.error.call_args.kwargs == {
-            "approval_id": "appr-1",
-            "integration_name": "Gmail",
-        }
-
 
 class TestSweepAccounting:
-    async def test_every_subagent_park_is_counted_reported_and_the_rest_still_redispatch(
-        self,
-    ) -> None:
-        parked = [
-            make_record(
-                approval_id=f"appr-{i}",
-                status="approved",
-                subagent_thread_id="gmail_executor_conv-1",
-                integration_name="Gmail",
-            )
-            for i in (1, 2)
-        ]
-        normal = make_record(approval_id="appr-3", status="approved")
-        with (
-            patch(f"{MODULE}.list_expired_pending", new=AsyncMock(return_value=[])),
-            patch(
-                f"{MODULE}.list_decided_unresumed",
-                new=AsyncMock(return_value=[*parked, normal]),
-            ),
-            patch(f"{MODULE}._dispatch_resume", new=AsyncMock()) as dispatch,
-            patch(f"{MODULE}.log") as log,
-        ):
-            result = await sweep_approvals()
-
-        assert result == {"expired": 0, "redispatched": 1, "deferred_subagent": 2}
-        assert [c.args[0].approval_id for c in dispatch.await_args_list] == ["appr-3"]
-        assert [c.kwargs for c in log.warning.call_args_list] == [
-            {"approval_id": "appr-1", "integration_name": "Gmail"},
-            {"approval_id": "appr-2", "integration_name": "Gmail"},
-        ]
-        assert "Sweep deferring subagent-parked approval" in log.warning.call_args.args[0]
-
     @pytest.mark.parametrize(
         ("expired", "unresumed", "reported"),
         [
