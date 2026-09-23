@@ -434,6 +434,14 @@ class ChromiumHost:
                     error_type="StorageDumpFailed",
                 )
 
+    async def storage_state(self, session_id: str) -> StorageState:
+        """Dump the live context's storage_state and leave it running.
+
+        A run moving to another engine reads it to open there as the same
+        signed-in browser; dispose_context is the read that ends the session.
+        """
+        return await self._dump_storage_state(self._get(session_id))
+
     def get(self, session_id: str) -> HostSession | None:
         """Return the live session, or None if unknown/disposed."""
         return self._sessions.get(session_id)

@@ -15,6 +15,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from playwright.sync_api import StorageState
+
 from app.constants.browser import (
     BROWSER_ENGINE_PROBE_TIMEOUT_SECONDS,
     BROWSER_HANDOFF_KEEPALIVE_SECONDS,
@@ -52,7 +54,8 @@ class BrowserHostSession:
     #: Whether this run's cookies are worth keeping as a saved login: it was
     #: seeded from one, or a sign-in completed in it.
     persist_login: bool = False
-    #: The site a sign-in completed on, which its saved login is keyed under.
+    #: The site its saved login is keyed under: the one a sign-in completed on,
+    #: or the one the login it was seeded from belongs to.
     login_domain: str | None = None
 
     def mark_authenticated(self, url: str | None) -> None:
@@ -63,6 +66,45 @@ class BrowserHostSession:
         """
         self.persist_login = True
         self.login_domain = domain_of(url)
+
+
+@dataclass(frozen=True, slots=True)
+class LiveSessionState:
+    """A live session's cookies and localStorage, with its right to save them as a login.
+
+    What a run takes with it to another engine, so it opens there as the same
+    signed-in browser. The right travels unchanged: carrying cookies never
+    makes them a login worth saving.
+    """
+
+    storage_state: StorageState
+    persist_login: bool
+    login_domain: str | None
+
+
+async def hand_over_state(session: BrowserHostSession) -> LiveSessionState | None:
+    """Read session's live state for the session taking its run over, or None when its engine cannot give it.
+
+    The saved login goes with the state: the new session saves it on release,
+    and this one, released after it with older cookies, must not overwrite it.
+    """
+    try:
+        storage_state = await host_client.get_storage_state(session.session_id, session.host_url)
+    except BrowserUnavailableError as exc:
+        log.warning(
+            f"{LogTag.BROWSER} Could not read the browser state to carry over; "
+            "the next session opens with saved logins only",
+            error_type=type(exc).__name__,
+            browser={"session_id": session.session_id, "operation": "hand_over_state"},
+        )
+        return None
+    state = LiveSessionState(
+        storage_state=storage_state,
+        persist_login=session.persist_login,
+        login_domain=session.login_domain,
+    )
+    session.persist_login = False
+    return state
 
 
 async def keep_session_alive(session: BrowserHostSession) -> None:
@@ -199,16 +241,23 @@ async def browser_session(
     user_id: str,
     host_url: str,
     start_url: str | None = None,
+    carried: LiveSessionState | None = None,
 ) -> AsyncIterator[BrowserHostSession]:
     """Create a browser-host session, yield it, and always release it.
 
-    Seed the saved storage_state for the start_url domain, register ownership
-    for live-view auth, and on exit persist the returned state only when the
-    session was seeded or marked authenticated. Raise BrowserUnavailableError
-    when the host cannot create the session, BrowserConcurrencyLimit at capacity.
+    Seed carried (a run moving here), else the saved login for start_url's domain;
+    on exit save the returned state only for a session seeded from a login or marked
+    authenticated. Raises BrowserUnavailableError, or BrowserConcurrencyLimit at capacity.
     """
     domain = domain_of(start_url)
-    storage_state = await load_storage_state(user_id, domain)
+    if carried is not None:
+        storage_state: StorageState | None = carried.storage_state
+        persist_login, login_domain = carried.persist_login, carried.login_domain
+    else:
+        storage_state = await load_storage_state(user_id, domain)
+        # A seeded run writes its state back so a rotated token is not lost.
+        persist_login = storage_state is not None
+        login_domain = domain if persist_login else None
 
     host = await host_client.create_session(storage_state, host_url)
     session = BrowserHostSession(
@@ -217,8 +266,8 @@ async def browser_session(
         live_view_url=live_view_url(host.session_id),
         context_id=host.context_id,
         host_url=host_url,
-        # A seeded run writes its state back so a rotated token is not lost.
-        persist_login=storage_state is not None,
+        persist_login=persist_login,
+        login_domain=login_domain,
     )
     log.set(browser={"session_id": session.session_id, "operation": "create"})
     log.info(f"{LogTag.BROWSER} Browser session created")

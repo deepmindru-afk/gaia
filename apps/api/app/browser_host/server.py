@@ -3,6 +3,7 @@
 Endpoints (all internal; the port is never published):
   * POST   /sessions            create an isolated context (429 at capacity)
   * DELETE /sessions/{id}       dispose it, returning its storage_state
+  * GET    /sessions/{id}/storage-state  its live storage_state, session kept
   * GET    /sessions/{id}       liveness + current page url/title
   * GET    /healthz             CDP responsiveness (503 when wedged)
   * WS     /cdp/{id}            the per-session CDP filtering proxy
@@ -24,6 +25,7 @@ from pydantic import BaseModel
 
 from app.browser_host.chromium import (
     AtCapacityError,
+    CDPTimeoutError,
     ChromiumHost,
     EngineUnresponsiveError,
     SessionNotFoundError,
@@ -57,6 +59,12 @@ class CreateSessionResponse(BaseModel):
 
 class DeleteSessionResponse(BaseModel):
     """Result of disposing a context: the storage state to persist, or None."""
+
+    storage_state: StorageState
+
+
+class SessionStorageStateResponse(BaseModel):
+    """A live context's cookies and localStorage, read without disposing it."""
 
     storage_state: StorageState
 
@@ -256,6 +264,23 @@ async def delete_session(request: Request, session_id: str) -> DeleteSessionResp
     except SessionNotFoundError as exc:
         raise _session_not_found() from exc
     return DeleteSessionResponse(storage_state=storage_state)
+
+
+@app.get("/sessions/{session_id}/storage-state")
+async def get_session_storage_state(
+    request: Request, session_id: str
+) -> SessionStorageStateResponse:
+    """Read the live context's storage state; 404 when the session is gone, 503 when its engine does not answer."""
+    _require_host_key(request)
+    log.set(browser={"session_id": session_id, "operation": "storage_state"})
+    try:
+        storage_state = await _host.storage_state(session_id)
+    except SessionNotFoundError as exc:
+        raise _session_not_found() from exc
+    except CDPTimeoutError as exc:
+        log.fail(HostRequestFailure.ENGINE_UNRESPONSIVE)
+        raise HTTPException(status_code=503, detail="browser engine unresponsive") from exc
+    return SessionStorageStateResponse(storage_state=storage_state)
 
 
 @app.post("/sessions/{session_id}/touch")

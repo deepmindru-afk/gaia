@@ -64,6 +64,7 @@ from app.services.browser.runner import (
 )
 from app.services.browser.session import (
     BrowserHostSession,
+    LiveSessionState,
     auto_resolve_handoff_on_navigation,
     browser_session,
     keep_session_alive,
@@ -422,11 +423,15 @@ async def _run_handoff(
 
 
 async def _open_fallback_session(
-    sessions: contextlib.AsyncExitStack, user_id: str, host_url: str, url: str | None
+    sessions: contextlib.AsyncExitStack,
+    user_id: str,
+    host_url: str,
+    url: str | None,
+    carried: LiveSessionState | None,
 ) -> BrowserHostSession:
-    """Open a session on the fallback host for url; released with the job's other sessions."""
+    """Open a session on the fallback host for url, seeded with carried; released with the job's other sessions."""
     return await sessions.enter_async_context(
-        browser_session(user_id=user_id, host_url=host_url, start_url=url)
+        browser_session(user_id=user_id, host_url=host_url, start_url=url, carried=carried)
     )
 
 

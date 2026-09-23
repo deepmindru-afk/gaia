@@ -18,6 +18,7 @@ from app.models.chat_models import ConversationSource
 from app.services.browser import job_runner
 from app.services.browser.jobs import get_conversation_slot
 from tests.e2e._harness.browser_job import (
+    LIVE_STORAGE_STATE,
     REPLAY_URL,
     SHOT_URL_TEMPLATE,
     JevScript,
@@ -572,3 +573,48 @@ async def test_a_run_whose_engine_dies_mid_task_finishes_on_the_fallback_engine(
     ]
     joined = run.result_for("wait_for_browser_task") or ""
     assert joined.startswith("The table is booked for 7pm on Friday.")
+    # A dead engine has no state to give: the fallback opens with saved logins.
+    assert world.storage_reads == []
+    assert world.seeded_states == [None, None]
+
+
+async def test_a_login_the_user_made_is_still_signed_in_after_the_run_moves_engines() -> None:
+    """Regression: a user signed in through the live view, the next page blocked the primary engine, and the fallback opened signed out."""
+    from app.constants.browser import HandoffDecision, HandoffStatus
+    from app.services.browser import session as session_mod
+    from app.services.browser.handoff import resolve_handoff
+
+    steps = [
+        ScriptedStep(actions=[], decide=True),
+        ScriptedStep(actions=[], decide=True),
+        ScriptedStep(actions=[], decide=True, url="https://example.test/book"),
+        ScriptedStep(actions=[], decide=True, url="https://example.test/book"),
+    ]
+    script = JevScript(
+        decisions=[("REQUEST_HUMAN", None), ("BLOCKED", None), ("TYPE_TEXT", "1")],
+        texts=[{"text": "Sign in and come back", "category": "credentials"}, {"text": "Friday"}],
+    )
+
+    async with browser_job_world(
+        STREAM, steps=steps, jev=script, fallback_host="http://fallback.test"
+    ) as world:
+        async with executor_graph([RETRIEVE, START, JOIN, "Booked."]) as graph:
+            run_task = asyncio.create_task(_drive(graph, world))
+            handoff_id = await _wait_for_pending_handoff(world)
+            assert await resolve_handoff(handoff_id, HandoffDecision.CONTINUE, USER) == (
+                HandoffStatus.COMPLETED
+            )
+            await run_task
+        saves = session_mod.save_storage_state.await_args_list
+
+    sessions = [card["session_id"] for card in world.cards() if card["kind"] == "session"]
+    assert sessions == ["sess-1", "sess-2"]
+    # The fallback opened as the browser the user signed in on, not a fresh one.
+    assert world.storage_reads == ["sess-1"]
+    assert world.seeded_states == [None, LIVE_STORAGE_STATE]
+    # The completed sign-in is saved once, from the browser that holds it last.
+    assert len(saves) == 1
+    results = [card for card in world.cards() if card["kind"] == "result"]
+    assert [(card["status"], card["success"]) for card in results] == [
+        (BrowserSessionStatus.COMPLETED.value, True)
+    ]

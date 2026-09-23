@@ -31,8 +31,8 @@ _AT_CAPACITY_STATUS = 429
 _SESSION_GONE_STATUS = 404
 
 
-class _DeletedSession(TypedDict):
-    """The host's DELETE /sessions/{id} body: the state to persist for reuse."""
+class _StorageStateBody(TypedDict):
+    """A session's storage_state as the host returns it, from a dispose or a live read."""
 
     storage_state: StorageState
 
@@ -105,7 +105,26 @@ async def delete_session(session_id: str, host_url: str) -> StorageState:
         ) from exc
 
     _raise_for_status(response)
-    body: _DeletedSession = response.json()
+    body: _StorageStateBody = response.json()
+    return body["storage_state"]
+
+
+async def get_storage_state(session_id: str, host_url: str) -> StorageState:
+    """Read a live session's storage_state, leaving the session running."""
+    try:
+        async with httpx.AsyncClient(
+            base_url=host_url,
+            timeout=_DEFAULT_TIMEOUT_SECONDS,
+            headers=_host_headers(),
+        ) as client:
+            response = await client.get(f"/sessions/{session_id}/storage-state")
+    except httpx.HTTPError as exc:
+        raise BrowserUnavailableError(
+            f"Could not reach the browser host at {host_url}: {exc}"
+        ) from exc
+
+    _raise_for_status(response)
+    body: _StorageStateBody = response.json()
     return body["storage_state"]
 
 

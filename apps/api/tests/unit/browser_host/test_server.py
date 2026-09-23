@@ -44,6 +44,7 @@ class _HostStub:
     def __init__(self) -> None:
         self.create_context = AsyncMock()
         self.dispose_context = AsyncMock()
+        self.storage_state = AsyncMock()
         self.session_info = AsyncMock()
         self.healthz = AsyncMock()
         self.start = AsyncMock()
@@ -146,6 +147,31 @@ def test_delete_unknown_session_404(client) -> None:
     host.dispose_context.side_effect = SessionNotFoundError()
     resp = client[0].delete("/sessions/ghost")
     assert resp.status_code == 404
+
+
+def test_a_live_sessions_storage_state_is_read_without_disposing_it(client) -> None:
+    _, host = client
+    state = {"cookies": [{"name": "session", "value": "signed-in"}], "origins": []}
+    host.storage_state.return_value = state
+    resp = client[0].get("/sessions/s1/storage-state")
+    assert resp.status_code == 200
+    assert resp.json()["storage_state"]["cookies"][0]["value"] == "signed-in"
+    host.storage_state.assert_awaited_once_with("s1")
+    host.dispose_context.assert_not_awaited()
+
+
+def test_the_storage_state_of_a_gone_session_is_404(client) -> None:
+    _, host = client
+    host.storage_state.side_effect = SessionNotFoundError()
+    resp = client[0].get("/sessions/ghost/storage-state")
+    assert resp.status_code == 404
+
+
+def test_the_storage_state_of_a_wedged_engine_is_503(client) -> None:
+    _, host = client
+    host.storage_state.side_effect = chromium.CDPTimeoutError("Storage.getCookies timed out")
+    resp = client[0].get("/sessions/s1/storage-state")
+    assert resp.status_code == 503
 
 
 def test_touch_session_returns_200_and_touches_the_host(client) -> None:

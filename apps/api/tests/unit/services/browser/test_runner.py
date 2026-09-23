@@ -27,7 +27,12 @@ from app.constants.browser import (
 )
 from app.constants.log_tags import LogTag
 from app.schemas.browser import BrowserSessionSnapshot, HandoffOutcome, HandoffRequest
-from app.services.browser import agent_run, host_client, runner as runner_mod
+from app.services.browser import (
+    agent_run,
+    host_client,
+    runner as runner_mod,
+    session as session_mod,
+)
 from app.services.browser.agent_run import outcome_from_history
 from app.services.browser.jev.chat_model import JevChatModel
 from app.services.browser.jev.policy import JevHistoryEntry
@@ -1995,13 +2000,14 @@ def _fallback_runner(
 
 async def test_a_run_blocked_on_the_primary_engine_finishes_on_the_fallback(monkeypatch) -> None:
     events, emit = _collector()
+    _host_answers(monkeypatch, _host_holding(_SIGNED_IN_STATE, []))
     fallback = _fallback_session()
     open_fallback = AsyncMock(return_value=fallback)
     runner = _fallback_runner(monkeypatch, _fallback_callbacks(emit, open_fallback))
 
     result = await runner.run("find fares")
 
-    open_fallback.assert_awaited_once_with(_BLOCKED_URL)
+    open_fallback.assert_awaited_once_with(_BLOCKED_URL, ANY)
     # The user's card moves to the browser the run is now on.
     running = [e for e in events if isinstance(e, BrowserSessionSnapshot)]
     assert [(e.session_id, e.live_view_url) for e in running] == [
@@ -2057,6 +2063,7 @@ async def test_a_run_resumed_on_the_fallback_at_its_page_does_not_reopen_the_sta
 ) -> None:
     """Jev reopens the page it gave up on; opening the start URL first as well navigated twice."""
     _, emit = _collector()
+    _host_answers(monkeypatch, _host_holding(_SIGNED_IN_STATE, []))
     _AgentRunRecordingStart.starts = []
     runner = _fallback_runner(
         monkeypatch,
@@ -2068,6 +2075,88 @@ async def test_a_run_resumed_on_the_fallback_at_its_page_does_not_reopen_the_sta
     await runner.run("find fares")
 
     assert _AgentRunRecordingStart.starts == ["https://flights.example.com/", None]
+
+
+#: What the primary's browser holds after the user signed in on it: the site's
+#: session cookie and the token its app keeps in localStorage.
+_SIGNED_IN_STATE = {
+    "cookies": [
+        {
+            "name": "session",
+            "value": "signed-in",
+            "domain": "flights.example.com",
+            "path": "/",
+            "expires": -1,
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
+        }
+    ],
+    "origins": [
+        {
+            "origin": "https://flights.example.com",
+            "localStorage": [{"name": "token", "value": "abc"}],
+        }
+    ],
+}
+
+
+def _host_holding(state: dict[str, Any], reads: list[str]):
+    """Answer as a host whose live session holds state, recording each storage read."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        reads.append(request.url.path)
+        return httpx.Response(200, json={"storage_state": state})
+
+    return respond
+
+
+@pytest.mark.regression
+async def test_a_login_made_on_the_primary_engine_moves_with_the_run_to_the_fallback(
+    monkeypatch,
+) -> None:
+    """A user signed in on Obscura, the next page blocked it, and the Chromium fallback opened signed out: only saved logins seeded it."""
+    _, emit = _collector()
+    reads: list[str] = []
+    _host_answers(monkeypatch, _host_holding(_SIGNED_IN_STATE, reads))
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    runner = _fallback_runner(monkeypatch, emit, open_fallback)
+    primary = runner.session
+    primary.mark_authenticated("https://flights.example.com/account")
+
+    await runner.run("find fares")
+
+    assert reads == ["/sessions/s1/storage-state"]
+    open_fallback.assert_awaited_once_with(
+        _BLOCKED_URL,
+        session_mod.LiveSessionState(
+            storage_state=_SIGNED_IN_STATE,
+            persist_login=True,
+            login_domain="flights.example.com",
+        ),
+    )
+    # The login now lives on the fallback, which saves it; the primary, released
+    # after it with the older state, must not write over it.
+    assert primary.persist_login is False
+
+
+async def test_a_run_that_never_signed_in_carries_its_state_without_the_right_to_save_it(
+    monkeypatch,
+) -> None:
+    """Only a loaded login or a completed sign-in may be saved; carrying cookies across engines grants neither."""
+    _, emit = _collector()
+    _host_answers(monkeypatch, _host_holding(_SIGNED_IN_STATE, []))
+    open_fallback = AsyncMock(return_value=_fallback_session())
+    runner = _fallback_runner(monkeypatch, emit, open_fallback)
+
+    await runner.run("find fares")
+
+    open_fallback.assert_awaited_once_with(
+        _BLOCKED_URL,
+        session_mod.LiveSessionState(
+            storage_state=_SIGNED_IN_STATE, persist_login=False, login_domain=None
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2155,7 +2244,8 @@ async def test_a_run_whose_engine_failed_finishes_on_the_fallback_from_the_page_
 
     result = await runner.run("count the comments")
 
-    open_fallback.assert_awaited_once_with(_LAST_PAGE)
+    # A dead engine has no state to give: the fallback opens on saved logins.
+    open_fallback.assert_awaited_once_with(_LAST_PAGE, None)
     assert agent.runs == [("s1", True), ("s-fallback", False)]
     running = [e.session_id for e in events if isinstance(e, BrowserSessionSnapshot)]
     assert running == ["s1", "s-fallback"]
@@ -2184,7 +2274,7 @@ async def test_an_engine_that_died_before_the_agent_attached_starts_the_task_ove
 
     result = await runner.run("count the comments")
 
-    open_fallback.assert_awaited_once_with(None)
+    open_fallback.assert_awaited_once_with(None, None)
     assert (result.status, result.summary) == (BrowserSessionStatus.COMPLETED, "67 comments")
 
 
@@ -2489,7 +2579,10 @@ async def test_a_run_that_moves_engines_tells_the_user_once(
     """Regression: the user watched the steps start over with no word of why."""
     from app.constants.browser import BROWSER_ENGINE_FALLBACK_NOTE
 
-    _host_answers(monkeypatch, _session_gone if cause == "engine_failed" else _session_live)
+    _host_answers(
+        monkeypatch,
+        _session_gone if cause == "engine_failed" else _host_holding(_SIGNED_IN_STATE, []),
+    )
     note = AsyncMock()
     _, emit = _collector()
     _EngineAgent.runs = [(_steps("open"), _GAVE_OUT), (_steps("read"), _History())]
@@ -2567,7 +2660,7 @@ async def test_a_frozen_engine_moves_the_run_to_the_fallback_while_the_step_is_s
 
     result = await asyncio.wait_for(runner.run("count the comments"), timeout=5)
 
-    open_fallback.assert_awaited_once_with(None)
+    open_fallback.assert_awaited_once_with(None, None)
     assert probe.reads == BROWSER_ENGINE_WATCH_STRIKES
     # The frozen run's calls are failed at once rather than left holding
     # Browser-Use's global event lock, and so the fallback's first step, to a timeout.

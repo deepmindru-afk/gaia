@@ -59,7 +59,12 @@ from app.services.browser.run_contract import (
     StepFrame,
 )
 from app.services.browser.screenshots import publish_step_screenshot
-from app.services.browser.session import BrowserHostSession, engine_failure
+from app.services.browser.session import (
+    BrowserHostSession,
+    LiveSessionState,
+    engine_failure,
+    hand_over_state,
+)
 from app.services.llm_metering import LLMCallContext, TokenUsage, record_llm_call
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log
@@ -72,7 +77,9 @@ _STALL_POLL_SECONDS = 1.0
 
 EmitFn = Callable[[BrowserCardSnapshot], Awaitable[None]]
 RequestHandoffFn = Callable[[HandoffRequest, BrowserHostSession], Awaitable[HandoffOutcome]]
-OpenFallbackSessionFn = Callable[[str | None], Awaitable[BrowserHostSession]]
+OpenFallbackSessionFn = Callable[
+    [str | None, LiveSessionState | None], Awaitable[BrowserHostSession]
+]
 IsCancelledFn = Callable[[], Awaitable[bool]]
 RequestGuidanceFn = Callable[[AgentGuidanceRequest], Awaitable[HandoffOutcome]]
 NoteFn = Callable[[str], Awaitable[None]]
@@ -108,9 +115,9 @@ class BrowserRunnerCallbacks:
     request_guidance: RequestGuidanceFn | None = None
     #: One plain line to the user when a step has shown nothing for a while.
     note: NoteFn | None = None
-    #: Opens a session on the fallback engine at a url, or at none when the run
-    #: never read a page. Absent when no fallback host is configured, and a run
-    #: blocked on a page or failed by its engine then simply ends failed.
+    #: Opens a fallback-engine session at a url (none when no page was read),
+    #: seeded with the primary's live state when it could give it. Absent with
+    #: no fallback host: a blocked or engine-failed run then just ends failed.
     open_fallback_session: OpenFallbackSessionFn | None = None
 
 
@@ -140,6 +147,9 @@ class BrowserTaskRunner:
         #: Whether the run moved to the fallback engine, for a page it could not pass
         #: or an engine that failed under it.
         self.used_fallback = False
+        #: How the primary engine failed under the run, when it did; its session
+        #: then has no state left to carry to the fallback.
+        self._engine_failure: EngineFailure | None = None
         if isinstance(llm, JevChatModel):
             llm.fallback_available = callbacks.open_fallback_session is not None
         self._config = config
@@ -315,6 +325,7 @@ class BrowserTaskRunner:
         return True
 
     def _fall_back_after_engine_failure(self, jev: JevChatModel, failure: EngineFailure) -> None:
+        self._engine_failure = failure
         log.warning(
             f"{LogTag.BROWSER} Browser engine failed under the run",
             browser={"session_id": self._session.session_id, "operation": "engine_failure"},
@@ -340,7 +351,7 @@ class BrowserTaskRunner:
             },
         )
         log.set_ns("browser", primary_session_id=self._session.session_id)
-        self._session = await route.open_session(url)
+        self._session = await route.open_session(url, await self._primary_state())
         self.used_fallback = True
         await self._emit(
             BrowserSessionSnapshot(
@@ -358,6 +369,21 @@ class BrowserTaskRunner:
         self._agent_run = self._build_agent_run()
         outcome = await self._agent_run.execute(task)
         return replace(outcome, usage=_merged_usage(spent, outcome.usage))
+
+    async def _primary_state(self) -> LiveSessionState | None:
+        """Return the primary session's live state for the fallback to open with; None when its engine failed.
+
+        A login finished on the primary (a user handoff) lives only in that
+        browser until the run ends, so the fallback must start from it.
+        """
+        if self._engine_failure is not None:
+            log.info(
+                f"{LogTag.BROWSER} The primary engine failed; the fallback opens with saved logins only",
+                browser={"session_id": self._session.session_id, "operation": "hand_over_state"},
+                engine_failure=self._engine_failure.value,
+            )
+            return None
+        return await hand_over_state(self._session)
 
     async def _finish_from_handoff(self) -> BrowserResultSnapshot:
         """Judge a run the handoff ended: blocked with no guidance, expired, completed by the user, or stopped."""

@@ -8,7 +8,11 @@ import httpx
 import pytest
 
 from app.services.browser import host_client
-from app.services.browser.exceptions import BrowserConcurrencyLimit, BrowserUnavailableError
+from app.services.browser.exceptions import (
+    BrowserConcurrencyLimit,
+    BrowserSessionGone,
+    BrowserUnavailableError,
+)
 
 # Every call names the host it talks to: the primary engine or the fallback.
 _HOST = "http://browser-host:8930"
@@ -207,6 +211,34 @@ class TestDeleteSession:
         assert cls_mock.call_args[1]["timeout"] == host_client._DEFAULT_TIMEOUT_SECONDS
         assert cls_mock.call_args[1]["headers"] == {"X-Host-Key": "k2"}
         inner.delete.assert_awaited_once_with("/sessions/sess-123")
+
+
+# ---------------------------------------------------------------------------
+# get_storage_state
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetStorageState:
+    async def test_success_reads_the_live_state_without_deleting(self, monkeypatch):
+        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", "k4")
+        stored = {"cookies": [{"name": "session", "value": "signed-in"}], "origins": []}
+        resp = _mock_response(status_code=200, json_data={"storage_state": stored})
+        inner, cm, cls_mock = _patch_async_client(None, resp, verb="get")
+        with patch.object(host_client.httpx, "AsyncClient", cls_mock):
+            result = await host_client.get_storage_state("sess-123", _HOST)
+        assert result == stored
+        assert cls_mock.call_args[1]["base_url"] == _HOST
+        assert cls_mock.call_args[1]["headers"] == {"X-Host-Key": "k4"}
+        inner.get.assert_awaited_once_with("/sessions/sess-123/storage-state")
+        inner.delete.assert_not_awaited()
+
+    async def test_a_gone_session_raises_session_gone(self):
+        resp = _mock_response(status_code=404, raise_for_status_side_effect=_http_status_error(404))
+        inner, cm, cls_mock = _patch_async_client(None, resp, verb="get")
+        with patch.object(host_client.httpx, "AsyncClient", cls_mock):
+            with pytest.raises(BrowserSessionGone):
+                await host_client.get_storage_state("sess-123", _HOST)
 
 
 # ---------------------------------------------------------------------------

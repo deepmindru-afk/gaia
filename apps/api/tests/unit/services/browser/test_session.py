@@ -8,7 +8,7 @@ import pytest
 
 from app.constants.browser import HANDOFF_AUTORESOLVED_NOTE
 from app.services.browser import session as session_mod
-from app.services.browser.exceptions import BrowserUnavailableError
+from app.services.browser.exceptions import BrowserSessionGone, BrowserUnavailableError
 from app.services.browser.session import BrowserHostSession
 
 # The host a session lives on; every host call must name it, primary or fallback.
@@ -295,6 +295,129 @@ async def test_a_sign_in_is_saved_for_the_site_it_happened_on_whatever_the_run_s
 
     session_mod.save_storage_state.assert_awaited_once_with(
         "u1", "the-internet.herokuapp.com", returned_state
+    )
+
+
+_CARRIED_STATE = {"cookies": [{"name": "session", "value": "signed-in"}], "origins": []}
+
+
+async def test_a_session_opened_with_carried_state_is_seeded_with_it_not_a_saved_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_session_fakes(monkeypatch)
+    returned_state = {"cookies": ["still signed in"]}
+    monkeypatch.setattr(
+        session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
+    )
+    carried = session_mod.LiveSessionState(
+        storage_state=_CARRIED_STATE, persist_login=True, login_domain="flights.example.com"
+    )
+
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://cdn.example.net/page", carried=carried
+    ):
+        pass
+
+    session_mod.host_client.create_session.assert_awaited_once_with(_CARRIED_STATE, _HOST)
+    session_mod.load_storage_state.assert_not_awaited()
+    # Saved where the login belongs, not under the page the run moved over on.
+    session_mod.save_storage_state.assert_awaited_once_with(
+        "u1", "flights.example.com", returned_state
+    )
+
+
+async def test_carried_state_the_user_never_approved_as_a_login_is_never_saved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_session_fakes(monkeypatch)
+    carried = session_mod.LiveSessionState(
+        storage_state=_CARRIED_STATE, persist_login=False, login_domain=None
+    )
+
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://x.com", carried=carried
+    ):
+        pass
+
+    session_mod.save_storage_state.assert_not_awaited()
+
+
+async def test_handing_over_a_live_session_takes_its_state_and_its_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        session_mod.host_client, "get_storage_state", AsyncMock(return_value=_CARRIED_STATE)
+    )
+    primary = _handle()
+    primary.mark_authenticated("https://flights.example.com/account")
+
+    state = await session_mod.hand_over_state(primary)
+
+    session_mod.host_client.get_storage_state.assert_awaited_once_with("sess-1", _HOST)
+    assert state == session_mod.LiveSessionState(
+        storage_state=_CARRIED_STATE, persist_login=True, login_domain="flights.example.com"
+    )
+    assert primary.persist_login is False
+
+
+async def test_handing_over_a_session_whose_engine_is_gone_gives_nothing_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, fake_log: _FakeLog
+) -> None:
+    monkeypatch.setattr(
+        session_mod.host_client,
+        "get_storage_state",
+        AsyncMock(side_effect=BrowserSessionGone("Browser host returned 404")),
+    )
+    primary = _handle()
+    primary.mark_authenticated("https://flights.example.com/account")
+
+    assert await session_mod.hand_over_state(primary) is None
+
+    # The primary keeps its login: nothing was carried anywhere to save it instead.
+    assert primary.persist_login is True
+    [(message, fields)] = fake_log.warning_calls
+    assert "saved logins only" in message
+    assert fields["error_type"] == "BrowserSessionGone"
+
+
+async def test_a_login_carried_to_the_fallback_is_saved_once_from_the_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The primary is released after the fallback; saving from both wrote its older cookies over the fallback's."""
+    _make_session_fakes(monkeypatch)
+    hosts = iter(
+        [
+            MagicMock(session_id="primary", context_id="c1", cdp_ws="ws://p", live_ws="ws://pl"),
+            MagicMock(session_id="fallback", context_id="c2", cdp_ws="ws://f", live_ws="ws://fl"),
+        ]
+    )
+    monkeypatch.setattr(
+        session_mod.host_client, "create_session", AsyncMock(side_effect=lambda *_: next(hosts))
+    )
+    monkeypatch.setattr(
+        session_mod.host_client,
+        "delete_session",
+        AsyncMock(side_effect=lambda session_id, _host: {"cookies": [session_id]}),
+    )
+    monkeypatch.setattr(
+        session_mod.host_client, "get_storage_state", AsyncMock(return_value=_CARRIED_STATE)
+    )
+
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://x.com"
+    ) as primary:
+        primary.mark_authenticated("https://x.com/home")
+        carried = await session_mod.hand_over_state(primary)
+        async with session_mod.browser_session(
+            host_url="http://fallback-host:8931",
+            user_id="u1",
+            start_url="https://x.com/feed",
+            carried=carried,
+        ):
+            pass
+
+    session_mod.save_storage_state.assert_awaited_once_with(
+        "u1", "x.com", {"cookies": ["fallback"]}
     )
 
 

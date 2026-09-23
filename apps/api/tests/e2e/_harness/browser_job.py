@@ -43,6 +43,13 @@ LIVE_VIEW_LINK = "https://gaia.test/live/take-a-look"
 #: The recap slideshow link every run closes with.
 REPLAY_URL = "https://gaia.test/replay/the-run"
 
+#: What a live browser session holds when its state is read: the cookie a
+#: sign-in on it left behind.
+LIVE_STORAGE_STATE: dict[str, Any] = {
+    "cookies": [{"name": "session", "value": "signed-in", "domain": "example.test", "path": "/"}],
+    "origins": [],
+}
+
 
 @dataclass
 class ScriptedStep:
@@ -193,6 +200,11 @@ class _ScriptedAgent:
             if on_step_end is not None:
                 self.state = _AgentState(step.outputs)
                 await on_step_end(self)
+            ended = _ended_by(step_actions)
+            if ended is not None:
+                # A done action ends the run where Browser-Use ends it, with its own
+                # text and verdict.
+                return ended
         return _History(self._double.summary, self._double.successful)
 
     async def _decide(self) -> tuple[str, dict[str, Any]] | None:
@@ -239,6 +251,14 @@ class _ScriptedAgent:
         raise AssertionError("the browser run was never told to stop")
 
 
+def _ended_by(step_actions: list[tuple[str, dict[str, Any]]]) -> _History | None:
+    """Return the history a done action among step_actions ends the run with, if one is there."""
+    for name, params in step_actions:
+        if name == "done":
+            return _History(str(params.get("text", "")), bool(params.get("success")))
+    return None
+
+
 class JobWorld:
     """Everything the run touched outside its own process, recorded."""
 
@@ -254,6 +274,10 @@ class JobWorld:
         self.host_sessions = 0
         #: Sessions whose engine died; the host answers 404 for them.
         self.dead_sessions: set[str] = set()
+        #: The storage_state each host session was created with, in order.
+        self.seeded_states: list[Any] = []
+        #: Each session whose live storage_state was read.
+        self.storage_reads: list[str] = []
 
     def frames(self) -> list[dict[str, Any]]:
         """Return each SSE chunk the turn's stream carried, decoded."""
@@ -348,6 +372,7 @@ async def browser_job_world(
     async def _create_host_session(storage_state: Any, host_url: str) -> Any:
         if scripted_host.error is not None:
             raise scripted_host.error
+        world.seeded_states.append(storage_state)
         world.host_sessions += 1
         return MagicMock(
             session_id=f"sess-{world.host_sessions}",
@@ -372,6 +397,14 @@ async def browser_job_world(
                 f"Browser host returned 404 for {host_url}/sessions/{session_id}"
             )
         return HostSessionInfo(session_id=session_id, live=True, last_activity_at=0.0)
+
+    async def _get_storage_state(session_id: str, host_url: str) -> Any:
+        world.storage_reads.append(session_id)
+        if session_id in world.dead_sessions:
+            raise BrowserSessionGone(
+                f"Browser host returned 404 for {host_url}/sessions/{session_id}/storage-state"
+            )
+        return LIVE_STORAGE_STATE
 
     patches = [
         patch("app.db.redis.redis_cache.redis", redis),
@@ -401,6 +434,7 @@ async def browser_job_world(
         patch("app.services.browser.session.host_client.create_session", _create_host_session),
         patch("app.services.browser.session.host_client.delete_session", AsyncMock()),
         patch("app.services.browser.session.host_client.get_session", _get_host_session),
+        patch("app.services.browser.session.host_client.get_storage_state", _get_storage_state),
         patch.object(settings, "BROWSER_FALLBACK_HOST_URL", scripted_host.fallback_url),
         patch("app.services.browser.session.load_storage_state", AsyncMock(return_value=None)),
         patch("app.services.browser.session.save_storage_state", AsyncMock()),

@@ -638,3 +638,25 @@ async def test_a_browser_that_does_not_say_headless_is_launched_once_as_it_is(
 
     assert spawn.await_count == 1
     assert not any(str(arg).startswith("--user-agent") for arg in spawn.call_args.args)
+
+
+@pytest.mark.unit
+async def test_reading_a_sessions_storage_state_leaves_it_running() -> None:
+    """A run moving engines reads the state to carry; the session it reads stays the user's browser until the run ends."""
+    host = make_host()
+    session = make_session(context_id="ctx-live")
+    host._sessions["s1"] = session
+    state = {"cookies": [{"name": "session"}], "origins": []}
+
+    with patch.object(host, "_dump_storage_state", new=AsyncMock(return_value=state)) as dump:
+        assert await host.storage_state("s1") == state
+
+    dump.assert_awaited_once_with(session)
+    assert host.get("s1") is session
+    assert session.mux.closed is False
+
+
+@pytest.mark.unit
+async def test_reading_the_storage_state_of_a_gone_session_raises_not_found() -> None:
+    with pytest.raises(chromium.SessionNotFoundError):
+        await make_host().storage_state("ghost")
