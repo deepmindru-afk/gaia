@@ -19,6 +19,7 @@ from app.agents.core.background.session import (
     get_session,
     mark_executor_spawned,
     note_tool_output_owner,
+    run_user_from_configurable,
     signal_executor_done,
     teardown_session,
 )
@@ -245,3 +246,31 @@ class TestExecutorRunCarriesWorkflowExecution:
         )
 
         assert run.workflow_execution_id is None
+
+
+class TestRunUserFromConfigurable:
+    """A detached run acts for the user its configurable names, rebuilt field by field."""
+
+    def test_every_carried_field_is_the_users_own(self) -> None:
+        user = run_user_from_configurable(
+            {
+                "user_id": "u1",
+                "email": "u1@x.com",
+                "user_name": "Uno",
+                "user_timezone": "Asia/Kolkata",
+            }
+        )
+
+        assert user == AuthenticatedUser(
+            user_id="u1", email="u1@x.com", name="Uno", timezone="Asia/Kolkata"
+        )
+
+    def test_absent_identity_keys_rebuild_as_empty(self) -> None:
+        user = run_user_from_configurable({"conversation_id": "c1"})
+
+        assert (user.user_id, user.email, user.name, user.timezone) == ("", "", "", None)
+
+    def test_an_identity_carried_as_none_stays_none(self) -> None:
+        user = run_user_from_configurable({"user_id": None, "email": None, "user_name": None})
+
+        assert (user.user_id, user.email, user.name) == ("", None, None)
