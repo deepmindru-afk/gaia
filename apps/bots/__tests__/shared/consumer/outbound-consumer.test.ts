@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mock amqplib at the I/O boundary. Everything else (validation, chunking,
 // rendering, ack/nack policy) runs as real production code. The mocks are built
 // via vi.hoisted so the hoisted vi.mock factory can reference them safely.
-const { connection, channel } = vi.hoisted(() => {
+const { connection, channel, connect } = vi.hoisted(() => {
   const channel = {
     assertExchange: vi.fn().mockResolvedValue(undefined),
     assertQueue: vi.fn().mockResolvedValue(undefined),
@@ -18,12 +18,11 @@ const { connection, channel } = vi.hoisted(() => {
     createChannel: vi.fn().mockResolvedValue(channel),
     close: vi.fn().mockResolvedValue(undefined),
   };
-  return { connection, channel };
+  const connect = vi.fn().mockResolvedValue(connection);
+  return { connection, channel, connect };
 });
 
-vi.mock("amqplib", () => ({
-  connect: vi.fn().mockResolvedValue(connection),
-}));
+vi.mock("amqplib", () => ({ connect }));
 
 import type { OutboundAttachment } from "../../../../../libs/shared/ts/src/bots/consumer/envelope";
 import { OutboundConsumer } from "../../../../../libs/shared/ts/src/bots/consumer/outbound-consumer";
@@ -569,5 +568,36 @@ describe("OutboundConsumer message handling", () => {
     await flush();
     await flush();
     expect(order).toEqual(["text:chat-b", "photo:chat-a", "text:chat-a"]);
+  });
+});
+
+describe("OutboundConsumer lifecycle", () => {
+  it("never starts consuming when stopped while still connecting", async () => {
+    // A bot whose boot fails (its health port taken) stops the consumer while
+    // the broker connection is still opening; the connection then completed and
+    // the dead bot kept taking every other process's replies off the queue.
+    let opened!: (value: typeof connection) => void;
+    connect.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          opened = resolve;
+        }),
+    );
+    const consumer = new OutboundConsumer(
+      "telegram",
+      "amqp://test",
+      async () => undefined,
+      async () => undefined,
+      "https://api.gaia.test",
+    );
+
+    const starting = consumer.start();
+    await flush();
+    await consumer.stop();
+    opened(connection);
+    await starting;
+
+    expect(channel.consume).not.toHaveBeenCalled();
+    expect(connection.close).toHaveBeenCalled();
   });
 });

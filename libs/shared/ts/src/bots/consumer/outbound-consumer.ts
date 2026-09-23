@@ -125,7 +125,14 @@ export class OutboundConsumer {
           queue,
         },
         async () => {
-          this.conn = await connect(this.url);
+          const conn = await connect(this.url);
+          if (this.stopped) {
+            // stop() ran while the connection was opening, before there was a
+            // connection for it to close: a bot whose boot failed kept consuming.
+            await conn.close().catch(() => undefined);
+            return;
+          }
+          this.conn = conn;
           this.conn.on("close", () => this.scheduleReconnect());
           // Keeps the reason diagnosable and stops an unhandled 'error' from killing the
           // process; 'close' still drives the reconnect. Without this the only trace of a
