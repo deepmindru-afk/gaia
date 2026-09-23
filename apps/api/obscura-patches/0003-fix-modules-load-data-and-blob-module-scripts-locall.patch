@@ -1,7 +1,7 @@
 From 3dcd2b329dc0c3c36dc18f905b78d154364ba180 Mon Sep 17 00:00:00 2001
 From: Aryan Randeriya <aryan.k.randeriya@gmail.com>
 Date: Wed, 23 Sep 2026 16:33:32 +0530
-Subject: [PATCH 03/13] fix(modules): load data: and blob: module scripts
+Subject: [PATCH 03/15] fix(modules): load data: and blob: module scripts
  locally
 
 Module scripts from data: URLs were sent to the network layer, which only
