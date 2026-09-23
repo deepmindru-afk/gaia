@@ -73,9 +73,8 @@ class JevChoice(StrEnum):
     PERMITTED = "permitted"
 
 
-# JEV reply classifier (a bot user's chat answer to pending approvals). An
-# approve under the line leaves the action pending. From the hil-reply sweep
-# (3 runs, v2): 0.65 scored 77/77, 77/77, 79/79 with zero dangerous approves;
+# JEV reply classifier: an approve under the line leaves the action pending.
+# hil-reply sweep (3 runs, v2): 0.65 scored 77/77, 77/77, 79/79, zero dangerous;
 # injected approves peaked just under 0.60, true ones bottomed at 0.68.
 HIL_JEV_REPLY_APPROVE_LINE = 0.65
 

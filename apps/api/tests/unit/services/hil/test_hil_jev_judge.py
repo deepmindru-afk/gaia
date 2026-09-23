@@ -506,7 +506,9 @@ class TestWire:
         assert posted["state"]["assistant_turns"] == ["your draft is ready"]
 
     async def test_usage_is_reported(self) -> None:
-        with patch(f"{CLIENT_MODULE}.httpx.AsyncClient", return_value=_client(_answer("unclear", 0.5))):
+        with patch(
+            f"{CLIENT_MODULE}.httpx.AsyncClient", return_value=_client(_answer("unclear", 0.5))
+        ):
             with patch(f"{CLIENT_MODULE}.settings") as settings:
                 settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
                 choice, conf, probs, tokens_in, tokens_out = await ask_jev(
