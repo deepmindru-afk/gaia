@@ -202,3 +202,59 @@ class TestErrorText:
 
     def test_an_exception_with_no_message_still_reads_as_an_error(self):
         assert format_tool_error(ValueError()).startswith("Error: ValueError:")
+
+
+async def _never_returns(_request: Any) -> ToolMessage:
+    await asyncio.sleep(5)
+    raise AssertionError("the guard let a hung call run to completion")
+
+
+@pytest.fixture
+def shrunk_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(f"{NODE}.TOOL_EXECUTION_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(f"{NODE}.TOOL_TIMEOUT_BACKSTOP_BUFFER_SECONDS", 0.02)
+
+
+def _proxied(real_name: str) -> MagicMock:
+    request = _request("execute")
+    request.tool_call["args"] = {"tool_name": real_name, "data": {}}
+    return request
+
+
+@pytest.mark.usefixtures("shrunk_bounds")
+class TestTimeoutText:
+    """The exact text the model reads, and which name the error ToolMessage answers to."""
+
+    async def test_a_plain_timeout_names_the_tool_and_the_bound(self) -> None:
+        result = await timeout_guarded_tool_call(_request("GMAIL_SEND_EMAIL"), _never_returns)
+        assert result.name == "GMAIL_SEND_EMAIL"
+        assert result.content == (
+            "Error: TimeoutError: 'GMAIL_SEND_EMAIL' timed out after 0.01s. The operation may "
+            "or may not have completed on the provider side — verify its effect before retrying."
+        )
+
+    async def test_a_proxied_timeout_names_the_real_tool_at_the_backstop_bound(self) -> None:
+        result = await timeout_guarded_tool_call(_proxied("GMAIL_SEND_EMAIL"), _never_returns)
+        assert result.name == "execute"
+        assert result.content.startswith(
+            "Error: TimeoutError: 'GMAIL_SEND_EMAIL' timed out after 0.03s."
+        )
+
+    async def test_a_proxied_exempt_tool_is_not_bounded_by_the_node(self) -> None:
+        expected = ToolMessage(content="report ready", tool_call_id="c1")
+
+        async def slow(_request: Any) -> ToolMessage:
+            await asyncio.sleep(0.1)
+            return expected
+
+        assert await timeout_guarded_tool_call(_proxied("deep_research"), slow) is expected
+
+    async def test_an_exempt_tool_that_times_out_itself_claims_no_bound(self) -> None:
+        async def gives_up(_request: Any) -> ToolMessage:
+            raise TimeoutError
+
+        result = await timeout_guarded_tool_call(_request("deep_research"), gives_up)
+        assert result.content == (
+            "Error: TimeoutError: 'deep_research' timed out. The operation may or may not "
+            "have completed on the provider side — verify its effect before retrying."
+        )

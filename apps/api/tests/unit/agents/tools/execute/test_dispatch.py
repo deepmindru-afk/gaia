@@ -4,14 +4,25 @@ These are the proxy's two load-bearing behaviors.
 """
 
 import asyncio
+from collections.abc import Container
+from dataclasses import dataclass, field
+from datetime import datetime
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pydantic import BaseModel, Field
+from prometheus_client import REGISTRY
+from pydantic import BaseModel, Field, field_validator
 import pytest
 
-from app.agents.tools.execute.dispatch import DispatchErrorKind, dispatch_tool
+from app.agents.tools.execute.dispatch import (
+    DispatchError,
+    DispatchErrorKind,
+    ToolExecutionResult,
+    dispatch_tool,
+)
 from app.agents.tools.execute.resolver import ResolvedTool
 from app.services.analytics_service import AnalyticsEvents
+from tests.helpers import captured_wide_event
 
 MODULE = "app.agents.tools.execute.dispatch"
 CONFIG = {"configurable": {"user_id": "u1"}}
@@ -425,3 +436,267 @@ class TestDispatchOutcomeReporting:
                 user_id="u1", tool_name="deep_research", data={}, config=CONFIG
             )
         assert result.ok is True
+
+
+def _dispatched(outcome: str) -> float:
+    return REGISTRY.get_sample_value("gaia_execute_dispatch_total", {"outcome": outcome}) or 0.0
+
+
+@dataclass(frozen=True)
+class _Refusal:
+    tool_name: str
+    resolved: ResolvedTool | None
+    error: DispatchError
+    warning: str
+    integration_only: bool = False
+    scoped_tool_names: Container[str] | None = None
+    data: dict[str, object] = field(default_factory=dict)
+
+
+_INTERNAL = _tool(name="create_todo")
+_SLACK = _tool(name="SLACK_SEND_MESSAGE")
+_GMAIL = _tool()
+
+REFUSALS = {
+    "unknown_tool": _Refusal(
+        tool_name="NOPE_TOOL",
+        resolved=None,
+        error=DispatchError(
+            kind=DispatchErrorKind.UNKNOWN_TOOL,
+            detail="Unknown tool 'NOPE_TOOL'.",
+            hint=(
+                "The name must be an exact tool name. Discover tools with "
+                "retrieve_tools(query=...) and use the name it returns verbatim."
+            ),
+        ),
+        warning="execute: unknown tool",
+    ),
+    "internal_tool": _Refusal(
+        tool_name="create_todo",
+        resolved=ResolvedTool("create_todo", _INTERNAL, is_integration=False),
+        error=DispatchError(
+            kind=DispatchErrorKind.INTERNAL_TOOL,
+            detail="'create_todo' is an internal tool, not an integration tool.",
+            hint=(
+                "Sandbox scripts can only call integration tools (Gmail, GitHub, "
+                "Notion, MCP, ...). Use internal tools from the conversation instead."
+            ),
+        ),
+        warning="execute: internal tool refused on integration-only surface",
+        integration_only=True,
+    ),
+    "ticket_on_sandbox": _Refusal(
+        tool_name="approve",
+        resolved=None,
+        error=DispatchError(
+            kind=DispatchErrorKind.INTERNAL_TOOL,
+            detail="'approve' is a conversation ticket, not an integration tool.",
+            hint=(
+                "Approve, revoke, and redeem only from the conversation, never from a "
+                "sandbox script."
+            ),
+        ),
+        warning="execute: ticket operation refused on integration-only surface",
+        integration_only=True,
+        data={"id": "ap_1"},
+    ),
+    "out_of_scope": _Refusal(
+        tool_name="SLACK_SEND_MESSAGE",
+        resolved=ResolvedTool("SLACK_SEND_MESSAGE", _SLACK, is_integration=True),
+        error=DispatchError(
+            kind=DispatchErrorKind.OUT_OF_SCOPE,
+            detail="'SLACK_SEND_MESSAGE' is not available inside this subagent.",
+            hint=(
+                "It belongs to the main executor, not this subagent. Do not retry it; "
+                "finish your task here and let the executor handle it."
+            ),
+        ),
+        warning="execute: tool refused outside the calling agent's tool space",
+        scoped_tool_names={"GMAIL_SEND_EMAIL"},
+    ),
+    "invalid_args": _Refusal(
+        tool_name="GMAIL_SEND_EMAIL",
+        resolved=ResolvedTool("GMAIL_SEND_EMAIL", _GMAIL, is_integration=True),
+        error=DispatchError(
+            kind=DispatchErrorKind.INVALID_ARGS,
+            detail=json.dumps(
+                [
+                    {
+                        "type": "missing",
+                        "loc": ["subject"],
+                        "msg": "Field required",
+                        "input": {"recipient": "a@b.c"},
+                    }
+                ]
+            ),
+            hint=(
+                "Fix `data` to match the GMAIL_SEND_EMAIL schema shown by retrieve_tools, "
+                "then retry."
+            ),
+        ),
+        warning="execute: args failed schema validation",
+        data={"recipient": "a@b.c"},
+    ),
+}
+
+
+@pytest.mark.unit
+class TestPredictableFailuresAreFullyReported:
+    """Each refusal: the exact correction the model reads, one warning, metric tick, outcome and analytics event."""
+
+    @pytest.mark.parametrize("case", REFUSALS.values(), ids=REFUSALS.keys())
+    async def test_a_refusal_is_reported_on_every_channel(self, case: _Refusal) -> None:
+        resolver = AsyncMock(return_value=case.resolved)
+        before = _dispatched(str(case.error.kind))
+        with (
+            patch(f"{MODULE}.resolve_tool", new=resolver),
+            patch(f"{MODULE}.capture_event") as capture,
+        ):
+            async with captured_wide_event() as event:
+                result = await dispatch_tool(
+                    user_id="u1",
+                    tool_name=case.tool_name,
+                    data=case.data,
+                    config=CONFIG,
+                    integration_only=case.integration_only,
+                    scoped_tool_names=case.scoped_tool_names,
+                )
+        assert result == ToolExecutionResult(
+            ok=False, resolved_name=case.tool_name, error=case.error
+        )
+        (warning,) = event["warnings"]
+        assert warning["msg"].endswith(case.warning)
+        assert warning["tool_name"] == case.tool_name
+        assert event["execute"] == {"tool": case.tool_name, "outcome": str(case.error.kind)}
+        assert _dispatched(str(case.error.kind)) == before + 1
+        capture.assert_called_once_with(
+            "u1",
+            AnalyticsEvents.EXECUTE_TOOL_FAILED,
+            {"tool_name": case.tool_name, "reason": str(case.error.kind)},
+        )
+
+    async def test_the_tool_is_resolved_for_the_calling_user(self) -> None:
+        resolver = AsyncMock(return_value=None)
+        with patch(f"{MODULE}.resolve_tool", new=resolver), patch(f"{MODULE}.capture_event"):
+            await dispatch_tool(user_id="u1", tool_name="NOPE_TOOL", data={}, config=CONFIG)
+        resolver.assert_awaited_once_with("u1", "NOPE_TOOL")
+
+    async def test_a_timeout_is_counted_and_stamped_as_its_own_outcome(self) -> None:
+        tool = _tool()
+        tool.ainvoke = AsyncMock(side_effect=TimeoutError)
+        before = _dispatched("timeout")
+        with (
+            patch(
+                f"{MODULE}.resolve_tool",
+                new=AsyncMock(return_value=ResolvedTool(tool.name, tool, is_integration=True)),
+            ),
+            patch(f"{MODULE}.capture_event"),
+        ):
+            async with captured_wide_event() as event:
+                result = await dispatch_tool(
+                    user_id="u1",
+                    tool_name="GMAIL_SEND_EMAIL",
+                    data={"recipient": "a@b.c", "subject": "hi"},
+                    config=CONFIG,
+                )
+        assert result.error is not None
+        assert result.error.hint == (
+            "The operation may or may not have completed on the provider side. "
+            "Verify its effect before retrying — an identical retry can duplicate it."
+        )
+        assert event["execute"] == {"tool": "GMAIL_SEND_EMAIL", "outcome": "timeout"}
+        assert _dispatched("timeout") == before + 1
+
+
+@pytest.mark.unit
+class TestSuccessReporting:
+    async def test_a_successful_run_is_stamped_counted_and_learned_from(self) -> None:
+        tool = _tool()
+        before = _dispatched("ok")
+        with (
+            patch(
+                f"{MODULE}.resolve_tool",
+                new=AsyncMock(return_value=ResolvedTool(tool.name, tool, is_integration=True)),
+            ),
+            patch(f"{MODULE}.capture_event"),
+            patch(f"{MODULE}.spawn_logged_task") as spawn,
+        ):
+            async with captured_wide_event() as event:
+                await dispatch_tool(
+                    user_id="u1",
+                    tool_name="GMAIL_SEND_EMAIL",
+                    data={"recipient": "a@b.c", "subject": "hi"},
+                    config=CONFIG,
+                )
+        assert event["execute"] == {"tool": "GMAIL_SEND_EMAIL", "outcome": "ok"}
+        assert _dispatched("ok") == before + 1
+        operation, learn = spawn.call_args.args
+        learn.close()
+        assert operation == "record_tool_output_shape"
+        assert spawn.call_args.kwargs == {"tool_name": "GMAIL_SEND_EMAIL"}
+
+    async def test_an_honored_ticket_counts_as_an_ok_dispatch(self) -> None:
+        before = _dispatched("ok")
+        with patch(
+            "app.services.hil.ledger_decide.revoke_ticket",
+            new=AsyncMock(return_value="Revoked 'ap_1'."),
+        ):
+            await dispatch_tool(
+                user_id="u1", tool_name="revoke", data={"id": "ap_1"}, config=CONFIG
+            )
+        assert _dispatched("ok") == before + 1
+
+
+class _ScheduleArgs(BaseModel):
+    when: datetime
+    title: str
+
+    @field_validator("title")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("title is blank")
+        return value
+
+
+@pytest.mark.unit
+class TestArgsValidation:
+    async def test_validated_args_reach_the_tool_as_json_values(self) -> None:
+        tool = _tool(name="CAL_CREATE", schema=_ScheduleArgs)
+        with (
+            patch(
+                f"{MODULE}.resolve_tool",
+                new=AsyncMock(return_value=ResolvedTool(tool.name, tool, is_integration=False)),
+            ),
+            patch(f"{MODULE}.capture_event"),
+        ):
+            await dispatch_tool(
+                user_id="u1",
+                tool_name="CAL_CREATE",
+                data={"when": "2026-01-02T03:04:05", "title": "sync"},
+                config=CONFIG,
+            )
+        tool.ainvoke.assert_awaited_once_with(
+            {"when": "2026-01-02T03:04:05", "title": "sync"}, config=CONFIG
+        )
+
+    async def test_a_validator_error_detail_is_plain_json_without_doc_links(self) -> None:
+        tool = _tool(name="CAL_CREATE", schema=_ScheduleArgs)
+        with (
+            patch(
+                f"{MODULE}.resolve_tool",
+                new=AsyncMock(return_value=ResolvedTool(tool.name, tool, is_integration=False)),
+            ),
+            patch(f"{MODULE}.capture_event"),
+        ):
+            result = await dispatch_tool(
+                user_id="u1",
+                tool_name="CAL_CREATE",
+                data={"when": "2026-01-02T03:04:05", "title": " "},
+                config=CONFIG,
+            )
+        assert result.error is not None
+        (error,) = json.loads(result.error.detail)
+        assert error["msg"] == "Value error, title is blank"
+        assert error["ctx"] == {"error": "title is blank"}
+        assert "url" not in error

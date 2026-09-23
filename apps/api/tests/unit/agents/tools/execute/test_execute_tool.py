@@ -6,6 +6,7 @@ stops that: the unscoped instance is the executor's (its space IS the registry),
 and a subagent builds one bound to its own dict.
 """
 
+from datetime import UTC, datetime
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +17,8 @@ from app.agents.tools.execute.dispatch import (
     DispatchError,
     DispatchErrorKind,
     ToolExecutionResult,
+    _dispatch_ticket,
+    dispatch_tool,
 )
 from app.agents.tools.execute.execute_tool import build_execute_tool, execute
 from app.constants.execute import EXECUTE_TOOL_NAME
@@ -211,3 +214,91 @@ class TestExecuteToolScope:
             "detail": "not here",
             "next": "ask the executor",
         }
+
+
+@pytest.mark.unit
+class TestTicketIdentity:
+    """A ticket is checked against the caller's own identity; missing parts are blank, never another run's."""
+
+    @pytest.mark.parametrize(
+        ("user_id", "configurable", "expected"),
+        [
+            (
+                "u-param",
+                {"user_id": "u-cfg", "thread_id": "t1", "conversation_id": "c1"},
+                {"user_id": "u-cfg", "conversation_id": "c1", "caller": "t1"},
+            ),
+            ("u-param", {}, {"user_id": "u-param", "conversation_id": "", "caller": ""}),
+            (None, {}, {"user_id": "", "conversation_id": "", "caller": ""}),
+        ],
+        ids=["configurable_wins", "falls_back_to_the_dispatch_user", "nobody"],
+    )
+    async def test_a_revoke_carries_the_callers_identity(
+        self, user_id: str | None, configurable: dict[str, str], expected: dict[str, str]
+    ) -> None:
+        with patch(
+            "app.services.hil.ledger_decide.revoke_ticket",
+            new=AsyncMock(return_value="Revoked 'ap_1'."),
+        ) as revoke:
+            await dispatch_tool(
+                user_id=user_id,
+                tool_name="revoke",
+                data={"id": "ap_1"},
+                config={"configurable": configurable},
+            )
+        revoke.assert_awaited_once_with("ap_1", **expected)
+
+    @pytest.mark.parametrize("ticket_id", ["", 7], ids=["blank", "not_a_string"])
+    async def test_an_unusable_id_is_answered_with_the_expected_shape(
+        self, ticket_id: object
+    ) -> None:
+        with patch("app.services.hil.ledger_decide.revoke_ticket", new=AsyncMock()) as revoke:
+            result = await dispatch_tool(
+                user_id="u1", tool_name="revoke", data={"id": ticket_id}, config=CONFIG
+            )
+        revoke.assert_not_awaited()
+        assert result.output == 'Name the ticket: revoke needs data {"id": "<approval_id>"}.'
+
+    async def test_a_ticket_name_with_no_handler_fails_loud(self) -> None:
+        with pytest.raises(ValueError, match="Unknown ticket operation 'redeem'."):
+            await _dispatch_ticket(
+                user_id="u1", tool_name="redeem", data={"id": "ap_1"}, config=CONFIG
+            )
+
+
+@pytest.mark.unit
+class TestExecuteToolCall:
+    """What a freshly built proxy hands dispatch, and how it renders the answer back to the model."""
+
+    @pytest.mark.parametrize("space", [None, {}], ids=["executor", "subagent"])
+    async def test_the_call_is_dispatched_as_the_calling_user(
+        self, space: dict[str, StructuredTool] | None
+    ) -> None:
+        with patch(f"{MODULE}.dispatch_tool", new=AsyncMock(return_value=_ok())) as dispatch:
+            await build_execute_tool(space).ainvoke(
+                {"task_description": "d", "tool_name": "GMAIL_SEND_EMAIL", "data": {"to": "a"}},
+                config=CONFIG,
+            )
+        kwargs = dispatch.await_args.kwargs
+        assert kwargs["user_id"] == "u1"
+        assert kwargs["tool_name"] == "GMAIL_SEND_EMAIL"
+        assert kwargs["data"] == {"to": "a"}
+        assert kwargs["config"]["configurable"]["user_id"] == "u1"
+
+    @pytest.mark.parametrize(
+        ("output", "rendered"),
+        [
+            ("already text", "already text"),
+            (
+                {"at": datetime(2026, 1, 2, tzinfo=UTC)},
+                json.dumps({"at": "2026-01-02 00:00:00+00:00"}),
+            ),
+        ],
+        ids=["text", "structured"],
+    )
+    async def test_a_tools_output_reaches_the_model_as_text(
+        self, output: object, rendered: str
+    ) -> None:
+        result = ToolExecutionResult(ok=True, resolved_name="GMAIL_SEND_EMAIL", output=output)
+        with patch(f"{MODULE}.dispatch_tool", new=AsyncMock(return_value=result)):
+            assert await _invoke(build_execute_tool()) == rendered

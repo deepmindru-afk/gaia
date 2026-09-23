@@ -83,6 +83,16 @@ class TestUnpackUnwrapsExecute:
         assert call.name == "GMAIL_DELETE_EMAIL"
         assert call.args == {}
 
+    @pytest.mark.parametrize("tool_name", ["", 7], ids=["blank", "not_a_string"])
+    def test_a_proxy_call_with_no_usable_tool_name_stays_an_execute_call(
+        self, tool_name: object
+    ) -> None:
+        """It is gated and dispatched under its own name, where dispatch answers unknown_tool."""
+        args = {"task_description": "d", "tool_name": tool_name, "data": {"x": 1}}
+        call = unpack_tool_call(make_request(name=EXECUTE_TOOL_NAME, args=args))
+        assert call.name == EXECUTE_TOOL_NAME
+        assert call.args == args
+
     def test_direct_call_is_untouched(self) -> None:
         call = unpack_tool_call(make_request(name="send_email", args={"to": "a@b.c"}))
         assert call.name == "send_email"

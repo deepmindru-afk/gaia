@@ -11,9 +11,12 @@ run's context, executed via execute.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from langchain_core.tools import tool as langchain_tool
 import pytest
 
 from app.agents.core.subagents.base_subagent import SubAgentFactory, SubAgentToolConfig
+from app.agents.tools.core import retrieval
+from app.agents.tools.execute.resolver import ResolvedTool
 
 
 def _category(*, require_integration: bool, tool_names: list[str]) -> SimpleNamespace:
@@ -111,6 +114,17 @@ class TestSplitStartupTools:
             )
         assert bind == ["query_json"]
         assert preload == ["GMAIL_A"]
+
+    async def test_mcp_names_are_fetched_for_the_calling_user(self) -> None:
+        registry = _registry(integration_names=set(), internal_names=set())
+        mcp_names = AsyncMock(return_value={"MY_MCP_TOOL"})
+        with (
+            patch.object(retrieval, "get_tool_registry", new=AsyncMock(return_value=registry)),
+            patch.object(retrieval, "_user_mcp_tool_names", new=mcp_names),
+        ):
+            bind, preload = await retrieval.split_startup_tools("u1", ["MY_MCP_TOOL"])
+        assert (bind, preload) == ([], ["MY_MCP_TOOL"])
+        mcp_names.assert_awaited_once_with("u1")
 
 
 @pytest.mark.unit
@@ -388,3 +402,63 @@ class TestPrepareInjectsPreloadDocs:
         assert error is None
         # docgen declares no startup tools and binds direct — no docs appended.
         assert "preloaded below" not in captured["system_message"].content
+
+
+@langchain_tool
+def GMAIL_FETCH_MESSAGES(thread_id: str) -> str:
+    """Fetch one Gmail thread by id."""
+    return thread_id
+
+
+def _integration(
+    *,
+    use_direct_tools: bool = False,
+    auto_bind_tools: list[str] | None = None,
+    extra_initial_tools: list[str] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            use_direct_tools=use_direct_tools,
+            auto_bind_tools=auto_bind_tools,
+            extra_initial_tools=extra_initial_tools,
+        )
+    )
+
+
+@pytest.mark.unit
+class TestPreloadedStartupDocs:
+    @pytest.mark.parametrize(
+        "subagent",
+        [
+            None,
+            _integration(use_direct_tools=True, auto_bind_tools=["GMAIL_FETCH_MESSAGES"]),
+            _integration(),
+        ],
+        ids=["unknown_integration", "direct_tools_graph", "nothing_declared"],
+    )
+    async def test_integrations_with_no_docs_to_preload_get_an_empty_block(
+        self, subagent: SimpleNamespace | None
+    ) -> None:
+        with patch.object(retrieval, "get_subagent_by_id", return_value=subagent):
+            assert await retrieval.preloaded_startup_docs("u1", "gmail") == ""
+
+    async def test_extra_initial_tools_preload_for_the_calling_user(self) -> None:
+        mcp_names = AsyncMock(return_value=set())
+        resolver = AsyncMock(
+            return_value=ResolvedTool("GMAIL_FETCH_MESSAGES", GMAIL_FETCH_MESSAGES, True)
+        )
+        registry = _registry(integration_names={"GMAIL_FETCH_MESSAGES"}, internal_names=set())
+        with (
+            patch.object(
+                retrieval,
+                "get_subagent_by_id",
+                return_value=_integration(extra_initial_tools=["GMAIL_FETCH_MESSAGES"]),
+            ),
+            patch.object(retrieval, "get_tool_registry", new=AsyncMock(return_value=registry)),
+            patch.object(retrieval, "_user_mcp_tool_names", new=mcp_names),
+            patch.object(retrieval, "resolve_tool", new=resolver),
+        ):
+            block = await retrieval.preloaded_startup_docs("u1", "gmail")
+        assert "## GMAIL_FETCH_MESSAGES" in block
+        mcp_names.assert_awaited_once_with("u1")
+        resolver.assert_awaited_once_with("u1", "GMAIL_FETCH_MESSAGES")

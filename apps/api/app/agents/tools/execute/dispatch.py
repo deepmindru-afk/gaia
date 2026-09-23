@@ -349,7 +349,7 @@ def _validate_args(tool: BaseTool, data: dict[str, object]) -> dict[str, object]
     Provider-side constrained decoding is gone under the proxy — this check is
     what stands in for it, so it fails loud with the exact Pydantic errors.
     """
-    schema = getattr(tool, "args_schema", None)
+    schema = tool.args_schema
     if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
         # Dict-style JSON schemas (some MCP adapters) have no Pydantic model to
         # coerce through; the tool's own run performs its validation.

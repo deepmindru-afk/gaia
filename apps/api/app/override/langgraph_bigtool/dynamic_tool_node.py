@@ -69,7 +69,7 @@ def _node_timeout_seconds(tool_call: Mapping[str, Any]) -> float | None:
     tool at the same deadline, so an equal outer bound made its structured error
     unreachable. The node backstops what dispatch does not cover (resolution).
     """
-    name = tool_call.get("name", "")
+    name = tool_call["name"]
     real_name, _ = unwrap_execute_call(name, tool_call.get("args") or {})
     if real_name in TOOL_TIMEOUT_EXEMPT_TOOLS:
         return None
@@ -89,7 +89,7 @@ async def timeout_guarded_tool_call(
     """
     tool_call = request.tool_call
     # Reported on timeout as the real tool, not as the proxy.
-    tool_name, _ = unwrap_execute_call(tool_call.get("name", ""), tool_call.get("args", {}) or {})
+    tool_name, _ = unwrap_execute_call(tool_call["name"], tool_call.get("args", {}) or {})
     bound = _node_timeout_seconds(tool_call)
     try:
         # asyncio.timeout(None) applies no deadline — an exempt tool runs unbounded.
@@ -99,7 +99,7 @@ async def timeout_guarded_tool_call(
         return ToolMessage(
             content=_timeout_error_text(tool_name, bound),
             tool_call_id=tool_call.get("id", ""),
-            name=tool_call.get("name", ""),
+            name=tool_call["name"],
             status="error",
         )
 
@@ -339,18 +339,19 @@ class DynamicToolNode(ToolNode):
         """Invoke one tool via middleware; a middleware may swap the usual ToolMessage for a Command."""
 
         async def invoke_tool(tc: dict[str, Any]) -> ToolMessage | Command:
-            resolved_tool = self.get_tool(tc.get("name", ""))
+            name, call_id = tc["name"], tc["id"]
+            resolved_tool = self.get_tool(name)
             if resolved_tool is None:
                 return ToolMessage(
-                    content=f"Tool '{tc.get('name')}' not found",
-                    tool_call_id=tc.get("id", ""),
+                    content=f"Tool '{name}' not found",
+                    tool_call_id=call_id,
                 )
 
             tool_input = dict(tc)
             tool_input["type"] = "tool_call"
             # Unwrapped for the timeout text only — the tool actually invoked is
             # still the proxy itself.
-            tool_name, _ = unwrap_execute_call(tc.get("name", ""), tc.get("args", {}) or {})
+            tool_name, _ = unwrap_execute_call(name, tc.get("args", {}) or {})
             bound = _node_timeout_seconds(tc)
             try:
                 # asyncio.timeout(None) applies no deadline — an exempt tool runs unbounded.
@@ -364,15 +365,15 @@ class DynamicToolNode(ToolNode):
             except TimeoutError:
                 return ToolMessage(
                     content=_timeout_error_text(tool_name, bound),
-                    tool_call_id=tc.get("id", ""),
-                    name=tc.get("name", ""),
+                    tool_call_id=call_id,
+                    name=name,
                     status="error",
                 )
             except Exception as exc:
                 return ToolMessage(
                     content=format_tool_error(exc),
-                    tool_call_id=tc.get("id", ""),
-                    name=tc.get("name", ""),
+                    tool_call_id=call_id,
+                    name=name,
                     status="error",
                 )
 
@@ -389,8 +390,8 @@ class DynamicToolNode(ToolNode):
             additional_kwargs = mark_offload({}, info) if info else {}
             return ToolMessage(
                 content=str(result) if not isinstance(result, str) else result,
-                tool_call_id=tc.get("id", ""),
-                name=tc.get("name", ""),
+                tool_call_id=call_id,
+                name=name,
                 additional_kwargs=additional_kwargs,
             )
 

@@ -3,10 +3,13 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from langchain_core.tools import StructuredTool
 import pytest
 
+from app.agents.tools.core.registry import CategoryOptions, CategoryRisk, ToolRegistry
 from app.agents.tools.execute import resolver
 from app.agents.tools.execute.resolver import ResolvedTool
+from tests.helpers import captured_wide_event
 
 MODULE = "app.agents.tools.execute.resolver"
 
@@ -167,3 +170,104 @@ class TestResolveTool:
             resolved = await resolver.resolve_tool("u1", "GMAIL_SEND_EMAIL")
         assert resolved is None
         service.get_tools_by_name.assert_awaited_once()
+
+
+def _named(name: str) -> StructuredTool:
+    return StructuredTool.from_function(func=lambda: None, name=name, description=name)
+
+
+def _real_registry(integration: list[str], internal: list[str]) -> ToolRegistry:
+    registry = ToolRegistry()
+    registry._add_category(
+        "GMAIL",
+        tools=[_named(n) for n in integration],
+        options=CategoryOptions(require_integration=True),
+        risk=CategoryRisk(destructive_tools=set()),
+    )
+    registry._add_category(
+        "development",
+        tools=[_named(n) for n in internal],
+        options=CategoryOptions(internal=True),
+        risk=CategoryRisk(destructive_tools=set()),
+    )
+    return registry
+
+
+@pytest.mark.unit
+class TestResolveAgainstARealRegistry:
+    async def test_integration_and_internal_tools_are_classified_by_their_category(
+        self,
+    ) -> None:
+        registry = _real_registry(["GMAIL_SEND_EMAIL"], ["read"])
+        with patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=registry)):
+            gmail = await resolver.resolve_tool("u1", "GMAIL_SEND_EMAIL")
+            read = await resolver.resolve_tool("u1", "read")
+        assert gmail is not None and gmail.is_integration is True
+        assert read is not None and read.is_integration is False
+
+    async def test_an_exact_name_wins_over_a_canonical_alias_twin(self) -> None:
+        """Two names that canonicalize alike: the alias map keeps only one, so an exact name must never go through it."""
+        registry = _real_registry(["SEND-EMAIL", "SEND_EMAIL"], [])
+        with patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=registry)):
+            dashed = await resolver.resolve_tool("u1", "SEND-EMAIL")
+            underscored = await resolver.resolve_tool("u1", "SEND_EMAIL")
+        assert dashed is not None and dashed.name == "SEND-EMAIL"
+        assert underscored is not None and underscored.name == "SEND_EMAIL"
+
+
+@pytest.mark.unit
+class TestMcpResolution:
+    async def test_the_users_client_is_asked_for_the_named_tools_integration(self) -> None:
+        wanted, other = MagicMock(), MagicMock()
+        wanted.name, other.name = "NOTION_MCP_SEARCH", "LINEAR_MCP_SEARCH"
+        client = MagicMock()
+        client.find_integration.side_effect = {
+            "NOTION_MCP_SEARCH": "notion-mcp",
+            "LINEAR_MCP_SEARCH": "linear-mcp",
+        }.get
+        client.get_tools = AsyncMock(
+            side_effect=lambda integration_id: {"notion-mcp": [wanted], "linear-mcp": [other]}[
+                integration_id
+            ]
+        )
+        get_client = AsyncMock(return_value=client)
+        with (
+            patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=_registry_with({}))),
+            patch(f"{MODULE}.get_mcp_client", new=get_client),
+        ):
+            resolved = await resolver.resolve_tool("u1", "NOTION_MCP_SEARCH")
+        get_client.assert_awaited_once_with(user_id="u1")
+        assert resolved == ResolvedTool(
+            "NOTION_MCP_SEARCH", wanted, is_integration=True, shape_scope="mcp:notion-mcp"
+        )
+
+    async def test_an_mcp_outage_is_a_warning_naming_the_user_and_error(self) -> None:
+        service = MagicMock()
+        service.get_tools_by_name = AsyncMock(return_value=[])
+        with (
+            patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=_registry_with({}))),
+            patch(f"{MODULE}.get_mcp_client", new=AsyncMock(side_effect=RuntimeError("down"))),
+            patch(f"{MODULE}.get_composio_service", return_value=service),
+        ):
+            async with captured_wide_event() as event:
+                await resolver.resolve_tool("u1", "GMAIL_SEND_EMAIL")
+        (warning,) = event["warnings"]
+        assert warning["msg"].endswith("execute resolver: MCP client unavailable")
+        assert warning["user_id"] == "u1"
+        assert warning["error_type"] == "RuntimeError"
+
+
+@pytest.mark.unit
+class TestCatalogMaterialization:
+    async def test_the_catalog_is_asked_for_exactly_the_named_slug(self) -> None:
+        client = MagicMock()
+        client.find_integration.return_value = None
+        service = MagicMock()
+        service.get_tools_by_name = AsyncMock(return_value=[])
+        with (
+            patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=_registry_with({}))),
+            patch(f"{MODULE}.get_mcp_client", new=AsyncMock(return_value=client)),
+            patch(f"{MODULE}.get_composio_service", return_value=service),
+        ):
+            await resolver.resolve_tool("u1", "ASANA_CREATE_TASK")
+        service.get_tools_by_name.assert_awaited_once_with(["ASANA_CREATE_TASK"])

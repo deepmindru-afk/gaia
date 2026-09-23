@@ -45,7 +45,7 @@ async def full_tool_info(user_id: str | None, tool_name: str) -> ToolContract | 
     effective = provider_schema or (observed.output_schema if observed is not None else None)
     return ToolContract(
         tool_name=resolved.name,
-        description=(resolved.tool.description or "").strip(),
+        description=resolved.tool.description.strip(),
         input_schema=_args_schema_of(resolved.tool),
         provider_output_schema=provider_schema,
         observed_output_schema=observed.output_schema if observed is not None else None,

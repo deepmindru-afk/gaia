@@ -119,7 +119,7 @@ def pop_injected_messages(state: State) -> list[AnyMessage]:
         return []
     if not isinstance(raw, list):
         raise TypeError(f"{INJECTED_MESSAGES_KEY} must be a list, got {type(raw).__name__}")
-    return cast("list[AnyMessage]", raw)
+    return cast("list[AnyMessage]", raw)  # pragma: no mutate — cast is identity at runtime
 
 
 class RetrieveToolsResult(TypedDict):

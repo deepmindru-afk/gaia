@@ -48,7 +48,7 @@ class _SchemaNode(TypedDict, total=False):
 def render_tool_doc(tool: BaseTool) -> str:
     """One tool's usage doc: description and args schema. Never the returns."""
     lines = [f"## {tool.name}"]
-    description = (tool.description or "").strip()
+    description = tool.description.strip()
     if description:
         lines.append(clip_text(description, _DESCRIPTION_MAX_CHARS))
     lines.append("Args schema for execute(tool_name=..., data={...}):")
@@ -138,7 +138,7 @@ def _compact_array(node: _SchemaNode) -> str | None:
     """An array schema as ``item[]`` (grouped when the item is a union), else None."""
     if node.get("type") != "array":
         return None
-    item = _compact_type(node.get("items", {}))
+    item = _compact_type(node.get("items"))
     # Union item types need grouping so {a}|{b}[] cannot misread.
     return (f"({item})" if "|" in item else item) + "[]"
 
@@ -162,7 +162,7 @@ _COMPACT_ENUM_MAX_MEMBERS = 6
 
 
 def _args_schema_of(tool: BaseTool) -> dict[str, JsonValue]:
-    schema = getattr(tool, "args_schema", None)
+    schema = tool.args_schema
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         raw = schema.model_json_schema()
     elif isinstance(schema, dict):

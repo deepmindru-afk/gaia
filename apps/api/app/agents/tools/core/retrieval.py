@@ -33,7 +33,7 @@ from app.agents.tools.core.registry import (
     ToolRegistry,
     get_tool_registry,
 )
-from app.agents.tools.execute.resolver import ResolvedTool, resolve_tool
+from app.agents.tools.execute.resolver import ResolvedTool, is_catalog_slug, resolve_tool
 from app.agents.tools.execute.schema_docs import render_tool_doc
 from app.agents.tools.research_tool import deep_research
 from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
@@ -57,6 +57,13 @@ from shared.py.wide_events import log
 WEBPAGE_TOOLS = [web_search_tool.name, fetch_webpages.name, deep_research.name]
 
 _SUBAGENT_PREFIX = "subagent:"
+_INTEGRATION_PREFIX = "integration:"
+# How both schema-doc surfaces (startup preload, binding mode) tell the model to run them.
+_EXECUTE_DOCS_INSTRUCTION = (
+    "They are NOT bound as callable tools — do NOT call them by name. Build `data` "
+    "from each schema below and call "
+    'execute(task_description="...", tool_name="<NAME>", data={...}):'
+)
 
 
 def _is_execute_routed(tool_registry: ToolRegistry, name: str, mcp_tool_names: set[str]) -> bool:
@@ -163,12 +170,7 @@ async def render_preload_block(user_id: str | None, preload_names: list[str]) ->
     docs = await _render_proxied_docs(user_id, list(preload_names))
     if not docs:
         return ""
-    header = (
-        f"{len(docs)} integration tool(s) preloaded below. They are NOT bound as "
-        "callable tools — do NOT call them by name. Build `data` from each schema "
-        "below and call "
-        'execute(task_description="...", tool_name="<NAME>", data={...}):'
-    )
+    header = f"{len(docs)} integration tool(s) preloaded below. {_EXECUTE_DOCS_INSTRUCTION}"
     return header + "\n\n" + "\n\n".join(docs)
 
 
@@ -553,9 +555,9 @@ def _process_public_integration_result(
         if integration_id:
             name = item.name
             key = (
-                f"integration:{integration_id} ({name})"
+                f"{_INTEGRATION_PREFIX}{integration_id} ({name})"
                 if name
-                else f"integration:{integration_id}"
+                else f"{_INTEGRATION_PREFIX}{integration_id}"
             )
             processed.append(ScoredToolHit(id=key, score=item.relevance_score))
     return processed
@@ -581,7 +583,8 @@ def _process_chroma_search_result(
         if hasattr(item, "namespace") and item.namespace == ("subagents",):
             if not include_subagents:
                 continue
-            raw_value = getattr(item, "value", None)
+            # value is unpickled from the store: the dict annotation is a claim, not a check.
+            raw_value: object = item.value
             if not isinstance(raw_value, dict):
                 continue
             value: _SubagentPointerValue = cast(_SubagentPointerValue, raw_value)
@@ -607,7 +610,8 @@ def _process_chroma_search_result(
         # activated in-conversation via activate_integration, whose long tail
         # the activation reply promises is retrievable.
         if include_subagents:
-            namespace_key = "::".join(item.namespace) if getattr(item, "namespace", None) else ""
+            # Tool namespaces are single-segment: chroma_tools_store writes (namespace,).
+            namespace_key = "::".join(item.namespace)  # pragma: no mutate — 1-tuple, no separator
             if namespace_key not in (active_namespaces or ()):
                 tool_category_name = tool_registry.get_category_of_tool(tool_key)
                 if tool_category_name:
@@ -737,8 +741,8 @@ def _render_discovery_response(
     for entry in final_tools:
         if entry.startswith(_SUBAGENT_PREFIX):
             mcp.append(_split_prefixed_entry(entry, _SUBAGENT_PREFIX))
-        elif entry.startswith("integration:"):
-            new.append(_split_prefixed_entry(entry, "integration:"))
+        elif entry.startswith(_INTEGRATION_PREFIX):
+            new.append(_split_prefixed_entry(entry, _INTEGRATION_PREFIX))
         else:
             bindable.append(entry)
 
@@ -944,7 +948,7 @@ def get_retrieve_tools_function(
             # resolver instead of reporting a capability the catalog HAS as unknown.
             still_unknown: list[str] = []
             for name in unknown_tool_names:
-                if name.replace("_", "").isupper() and await _resolve_for_retrieval(user_id, name):
+                if is_catalog_slug(name) and await _resolve_for_retrieval(user_id, name):
                     validated_tool_names.append(name)
                 else:
                     still_unknown.append(name)
@@ -957,7 +961,7 @@ def get_retrieve_tools_function(
             still_bound: list[str] = []
             for name in validated_tool_names:
                 if _is_execute_routed(tool_registry, name, mcp_tool_names_set) or (
-                    name not in bindable_set and name.replace("_", "").isupper()
+                    name not in bindable_set and is_catalog_slug(name)
                 ):
                     proxied_names.append(name)
                 else:
@@ -1012,10 +1016,8 @@ def get_retrieve_tools_function(
                 bind_lines.extend(f"  - {name}" for name in validated_tool_names)
             if proxied_docs:
                 bind_lines.append(
-                    f"{len(proxied_docs)} integration tool(s) ready to run via execute. They "
-                    "are NOT bound as callable tools — do NOT call them by name. Build "
-                    "`data` from each schema below and call "
-                    'execute(task_description="...", tool_name="<NAME>", data={...}):'
+                    f"{len(proxied_docs)} integration tool(s) ready to run via execute. "
+                    f"{_EXECUTE_DOCS_INSTRUCTION}"
                 )
                 bind_lines.extend(proxied_docs)
             if renamed_tools:
@@ -1094,12 +1096,8 @@ def get_retrieve_tools_function(
         chroma_preview: list[str] = []
         for result in results:
             if isinstance(result, list) and result and not isinstance(result[0], dict):
-                for item in result:
-                    namespace = getattr(item, "namespace", None)
-                    tool_key = getattr(item, "key", None)
-                    if tool_key is None:
-                        continue
-                    chroma_preview.append(f"{namespace}::{tool_key}")
+                for item in cast(list[SearchItem], result):
+                    chroma_preview.append(f"{item.namespace}::{item.key}")
                     if len(chroma_preview) >= 10:
                         break
             if len(chroma_preview) >= 10:

@@ -5,14 +5,19 @@ slugs) come back as schema docs and are NOT bound; internal tools still bind.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 import pytest
 
+from app.agents.tools.core import retrieval
+from app.agents.tools.core.registry import DESKTOP_TOOL_CATEGORY
 from app.agents.tools.core.retrieval import get_retrieve_tools_function
 from app.agents.tools.execute.resolver import ResolvedTool
+from app.agents.tools.execute.schema_docs import render_tool_doc
+from app.models.chat_models import ConversationSource
+from tests.helpers import captured_wide_event
 
 MODULE = "app.agents.tools.core.retrieval"
 CONFIG: dict[str, Any] = {"configurable": {"user_id": "u1"}}
@@ -84,15 +89,22 @@ class TestSchemaModeCutover:
     async def test_out_of_scope_guidance_still_reaches_the_model(self) -> None:
         """The filter the line above removed was also what carried the subagent and out-of-scope sentences into the rendered text."""
         fn = get_retrieve_tools_function(bindable_tool_names={"read"})
+        registry = _registry()
+        registry.get_tool_names.return_value = ["read", "GMAIL_SEND_EMAIL", "GMAIL_FETCH_EMAILS"]
         with (
-            patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=_registry())),
+            patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=registry)),
             patch(f"{MODULE}._user_mcp_tool_names", new=AsyncMock(return_value=set())),
             patch(f"{MODULE}.resolve_tool", new=AsyncMock(return_value=None)),
         ):
             result = await fn(
-                store=MagicMock(), config=CONFIG, exact_tool_names=["GMAIL_SEND_EMAIL"]
+                store=MagicMock(),
+                config=CONFIG,
+                exact_tool_names=["GMAIL_SEND_EMAIL", "GMAIL_FETCH_EMAILS"],
             )
-        assert "belong to the main executor" in result["response_text"]
+        assert (
+            "bound here: GMAIL_SEND_EMAIL, GMAIL_FETCH_EMAILS. They belong to the main executor"
+            in result["response_text"]
+        )
 
     async def test_internal_tool_still_binds(self) -> None:
         result = await _call(["read"], None)
@@ -144,3 +156,133 @@ class TestResolverOutageDegradation:
             )
         assert result["tools_to_bind"] == []
         assert "Not found" in result["response_text"]
+
+
+def _asana_tool() -> StructuredTool:
+    return StructuredTool.from_function(
+        func=lambda **kwargs: None,
+        name="ASANA_CREATE_TASK",
+        description="Create a task.",
+        args_schema=_GmailSendArgs,
+    )
+
+
+async def _bind(exact: list[str], resolver: AsyncMock, config: dict[str, Any] | None = None) -> Any:
+    fn = get_retrieve_tools_function()
+    with (
+        patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=_registry())),
+        patch(f"{MODULE}._user_mcp_tool_names", new=AsyncMock(return_value=set())),
+        patch(f"{MODULE}.resolve_tool", new=resolver),
+    ):
+        return await fn(store=MagicMock(), config=config or CONFIG, exact_tool_names=exact)
+
+
+@pytest.mark.unit
+class TestProxiedResolutionIsPerUser:
+    async def test_a_proxied_tools_doc_is_resolved_for_the_calling_user(self) -> None:
+        resolver = AsyncMock(return_value=ResolvedTool("GMAIL_SEND_EMAIL", _gmail_tool(), True))
+        await _bind(["GMAIL_SEND_EMAIL"], resolver)
+        resolver.assert_awaited_once_with("u1", "GMAIL_SEND_EMAIL")
+
+    async def test_a_catalog_slug_is_rescued_and_rendered_for_the_calling_user(self) -> None:
+        resolver = AsyncMock(return_value=ResolvedTool("ASANA_CREATE_TASK", _asana_tool(), True))
+        result = await _bind(["ASANA_CREATE_TASK"], resolver)
+        assert "## ASANA_CREATE_TASK" in result["response_text"]
+        assert resolver.await_args_list == [call("u1", "ASANA_CREATE_TASK")] * 2
+
+    async def test_a_resolver_outage_is_a_warning_naming_the_tool_and_error(self) -> None:
+        resolver = AsyncMock(side_effect=RuntimeError("composio unreachable"))
+        async with captured_wide_event() as event:
+            await _bind(["ASANA_CREATE_TASK"], resolver)
+        (warning,) = [w for w in event["warnings"] if "resolver unavailable" in w["msg"]]
+        assert warning["msg"].endswith("retrieve_tools: resolver unavailable; treating as unknown")
+        assert warning["tool_name"] == "ASANA_CREATE_TASK"
+        assert warning["error_type"] == "RuntimeError"
+
+    async def test_binding_text_carries_the_shared_execute_instruction(self) -> None:
+        resolver = AsyncMock(return_value=ResolvedTool("GMAIL_SEND_EMAIL", _gmail_tool(), True))
+        result = await _bind(["GMAIL_SEND_EMAIL"], resolver)
+        assert result["response_text"].splitlines()[0] == (
+            f"1 integration tool(s) ready to run via execute. {retrieval._EXECUTE_DOCS_INSTRUCTION}"
+        )
+
+    async def test_the_wide_event_counts_proxied_tools_apart_from_filtered_ones(self) -> None:
+        resolver = AsyncMock(return_value=ResolvedTool("GMAIL_SEND_EMAIL", _gmail_tool(), True))
+        async with captured_wide_event() as event:
+            await _bind(["read", "GMAIL_SEND_EMAIL", "nope"], resolver)
+        assert event["tool_retrieval"] == {
+            "mode": "binding",
+            "tools_requested": 3,
+            "tools_bound": 1,
+            "tools_proxied": 1,
+            "tools_filtered": 1,
+        }
+
+
+@pytest.mark.unit
+class TestBindingConfigSources:
+    async def test_a_desktop_session_binds_desktop_tools(self) -> None:
+        registry = _registry()
+        registry.get_tool_names.return_value = ["desktop_click"]
+        registry.get_category_of_tool.side_effect = lambda n: DESKTOP_TOOL_CATEGORY
+        registry.get_category.side_effect = lambda name=None: MagicMock(require_integration=False)
+        config = {
+            "configurable": {
+                "user_id": "u1",
+                "conversation_source": ConversationSource.DESKTOP.value,
+            }
+        }
+        fn = get_retrieve_tools_function()
+        with (
+            patch(f"{MODULE}.get_tool_registry", new=AsyncMock(return_value=registry)),
+            patch(f"{MODULE}._user_mcp_tool_names", new=AsyncMock(return_value=set())),
+            patch(f"{MODULE}.resolve_tool", new=AsyncMock(return_value=None)),
+        ):
+            result = await fn(store=MagicMock(), config=config, exact_tool_names=["desktop_click"])
+        assert result["tools_to_bind"] == ["desktop_click"]
+
+    async def test_a_config_with_no_user_and_no_metadata_still_binds(self) -> None:
+        result = await _bind(["read"], AsyncMock(return_value=None), config={"configurable": {}})
+        assert result["tools_to_bind"] == ["read"]
+
+
+@pytest.mark.unit
+class TestRenderPreloadBlockContract:
+    async def test_the_block_is_the_header_then_each_doc(self) -> None:
+        gmail, asana = _gmail_tool(), _asana_tool()
+        resolver = AsyncMock(
+            side_effect=[
+                ResolvedTool("GMAIL_SEND_EMAIL", gmail, True),
+                ResolvedTool("ASANA_CREATE_TASK", asana, True),
+            ]
+        )
+        with patch(f"{MODULE}.resolve_tool", new=resolver):
+            block = await retrieval.render_preload_block(
+                "u1", ["GMAIL_SEND_EMAIL", "ASANA_CREATE_TASK"]
+            )
+        assert block.split("\n\n") == [
+            f"2 integration tool(s) preloaded below. {retrieval._EXECUTE_DOCS_INSTRUCTION}",
+            render_tool_doc(gmail),
+            render_tool_doc(asana),
+        ]
+        assert resolver.await_args_list == [
+            call("u1", "GMAIL_SEND_EMAIL"),
+            call("u1", "ASANA_CREATE_TASK"),
+        ]
+
+    async def test_a_tool_that_vanished_is_skipped_with_a_warning_and_the_rest_render(
+        self,
+    ) -> None:
+        gmail = _gmail_tool()
+        resolver = AsyncMock(side_effect=[None, ResolvedTool("GMAIL_SEND_EMAIL", gmail, True)])
+        with patch(f"{MODULE}.resolve_tool", new=resolver):
+            async with captured_wide_event() as event:
+                block = await retrieval.render_preload_block(
+                    "u1", ["GMAIL_GHOST", "GMAIL_SEND_EMAIL"]
+                )
+        assert block.split("\n\n")[1:] == [render_tool_doc(gmail)]
+        (warning,) = event["warnings"]
+        assert warning["msg"].endswith(
+            "retrieve_tools: proxied tool vanished between validation and doc rendering"
+        )
+        assert warning["tool_name"] == "GMAIL_GHOST"

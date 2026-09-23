@@ -371,6 +371,28 @@ async def test_tool_runtime_config_builders_cover_direct_and_dynamic_modes():
     assert tools_config.retrieve_tools_coroutine is not None
 
 
+def test_a_dynamic_provider_agent_binds_the_execute_proxy_at_startup() -> None:
+    """Provider tools are not pre-bound in dynamic mode, so execute + get_tool_schema are its only way to run one."""
+    config = build_provider_parent_tool_runtime_config(
+        provider_tool_names=["GMAIL_SEND_EMAIL"],
+        todo_tool_names=["create_todo"],
+        auto_bind_tool_names=["GMAIL_FETCH_EMAILS"],
+        use_direct_tools=False,
+        disable_retrieve_tools=False,
+    )
+
+    assert config.initial_tool_names == [
+        "search_memory",
+        "read",
+        "bash",
+        "execute",
+        "get_tool_schema",
+        "finish_task",
+        "create_todo",
+        "GMAIL_FETCH_EMAILS",
+    ]
+
+
 def test_build_create_agent_tool_kwargs_hands_retrieval_scoping_through_verbatim():
     """Nulling or dropping tool_space, the discovery toggle, or the bindable set silently widens what a subagent can discover."""
     sentinel = AsyncMock()
