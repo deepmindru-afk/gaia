@@ -1,7 +1,7 @@
 From e4a0bde68cd229f7f9e473e4c8d5d1cc092b6d08 Mon Sep 17 00:00:00 2001
 From: Aryan Randeriya <aryan.k.randeriya@gmail.com>
 Date: Wed, 23 Sep 2026 19:59:33 +0530
-Subject: [PATCH 15/15] fix(render): retain styles incrementally when shadow
+Subject: [PATCH 15/16] fix(render): retain styles incrementally when shadow
  roots carry stylesheets
 
 Any document with a native shadow root switched the retained-style path
