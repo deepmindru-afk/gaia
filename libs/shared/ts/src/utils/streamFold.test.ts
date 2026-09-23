@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { APPROVAL_REQUEST_TOOL_NAME } from "./approvals";
+import { APPROVAL_REQUEST_TOOL_NAME } from "../chat/approvals";
+import type { StreamToolDataEntry } from "../chat/streaming";
+import type { SubagentGroupData, ToolCallEntry } from "../chat/types";
+import { SUBAGENT_GROUP_TOOL_NAME } from "../chat/types";
 import { createOwnToolDataFold, foldOwnToolData } from "./streamFold";
-import type { StreamToolDataEntry } from "./streaming";
-import type { SubagentGroupData, ToolCallEntry } from "./types";
-import { SUBAGENT_GROUP_TOOL_NAME } from "./types";
 
 const call = (id: string): ToolCallEntry => ({
   tool_name: "create_flowchart",

@@ -1,9 +1,5 @@
-import {
-  createOwnToolDataFold,
-  createTurnAccumulator,
-  foldOwnToolData,
-  type TurnAccumulator,
-} from "@shared/chat";
+import { createTurnAccumulator, type TurnAccumulator } from "@shared/chat";
+import { createOwnToolDataFold, foldOwnToolData } from "@shared/utils";
 import type { TypedToolDataEntry } from "@/config/registries/toolRegistry";
 import type { IMessage } from "@/lib/db/chatDb";
 import type { TodoProgressData } from "@/types/features/todoProgressTypes";

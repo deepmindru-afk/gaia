@@ -24,8 +24,6 @@ export {
 } from "./approvals";
 export type { ToolFixture } from "./fixtures";
 export { getFixture, TOOL_FIXTURES } from "./fixtures";
-export type { OwnToolDataFold } from "./streamFold";
-export { createOwnToolDataFold, foldOwnToolData } from "./streamFold";
 export type {
   ChatStreamEvent,
   StreamToolDataEntry,

@@ -1,7 +1,7 @@
-import { APPROVAL_REQUEST_TOOL_NAME } from "./approvals";
-import type { StreamToolDataEntry } from "./streaming";
-import type { SubagentGroupData } from "./types";
-import { SUBAGENT_GROUP_TOOL_NAME } from "./types";
+import { APPROVAL_REQUEST_TOOL_NAME } from "../chat/approvals";
+import type { StreamToolDataEntry } from "../chat/streaming";
+import type { SubagentGroupData } from "../chat/types";
+import { SUBAGENT_GROUP_TOOL_NAME } from "../chat/types";
 
 const TODO_PROGRESS_TOOL_NAME = "todo_progress";
 
