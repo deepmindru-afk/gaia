@@ -43,6 +43,35 @@ def _doc(**overrides: object) -> ConversationDocument:
     return ConversationDocument.model_validate(data)
 
 
+def _subagent_group(subagent_id: str) -> dict[str, object]:
+    return {
+        "tool_name": "subagent_group",
+        "data": {
+            "subagent_id": subagent_id,
+            "tool_calls": [{"tool_call_id": f"{subagent_id}-before"}],
+            "completed_at": None,
+            "duration_ms": None,
+        },
+    }
+
+
+async def _seed_subagent_group(repo: ConversationRepository, doc: ConversationDocument) -> str:
+    await repo.create(doc)
+    ids = await repo.append_messages(
+        doc.conversation_id,
+        user_id=doc.user_id,
+        messages=[MessageModel(type="bot", response="r")],
+    )
+    assert ids is not None
+    assert await repo.append_message_tool_data(
+        doc.conversation_id,
+        user_id=doc.user_id,
+        message_id=ids[0],
+        entries=[_subagent_group("row-1")],
+    )
+    return ids[0]
+
+
 @pytest.fixture
 def repo(raw_collection) -> ConversationRepository:
     return ConversationRepository()
@@ -301,7 +330,7 @@ class _CachedConversationRepository(ConversationRepository):
     cache_policy = CachePolicy(prefix="contract:conversations")
 
 
-class TestLiveApprovalFlagUnderACachePolicy:
+class TestInPlaceWritesUnderACachePolicy:
     """The module promises a cache policy can be switched on with no call-site changes; these writes must then evict what get() cached."""
 
     @pytest.fixture
@@ -334,6 +363,22 @@ class TestLiveApprovalFlagUnderACachePolicy:
         fetched = await cached_repo.get(doc.conversation_id, user_id=doc.user_id)
         assert fetched is not None
         assert fetched.has_live_approval is True
+
+    async def test_extending_a_subagent_group_evicts_the_cached_conversation(self, cached_repo):
+        doc = _doc()
+        mid = await _seed_subagent_group(cached_repo, doc)
+        assert await cached_repo.get(doc.conversation_id, user_id=doc.user_id) is not None
+
+        await cached_repo.extend_subagent_group(
+            doc.conversation_id,
+            user_id=doc.user_id,
+            message_id=mid,
+            group=SavedSubagentGroup(subagent_id="row-1", duration_ms=1200),
+        )
+
+        fetched = await cached_repo.get(doc.conversation_id, user_id=doc.user_id)
+        assert fetched is not None and fetched.messages[0].tool_data is not None
+        assert fetched.messages[0].tool_data[0]["data"]["duration_ms"] == 1200
 
 
 class TestMessages:
@@ -432,23 +477,15 @@ class TestMessages:
         )
         assert ids is not None
         mid = ids[0]
-
-        def group(subagent_id: str) -> dict[str, object]:
-            return {
-                "tool_name": "subagent_group",
-                "data": {
-                    "subagent_id": subagent_id,
-                    "tool_calls": [{"tool_call_id": f"{subagent_id}-before"}],
-                    "completed_at": None,
-                    "duration_ms": None,
-                },
-            }
-
         assert await repo.append_message_tool_data(
             doc.conversation_id,
             user_id=doc.user_id,
             message_id=mid,
-            entries=[group("row-1"), group("row-2"), {"tool_name": "weather", "data": {}}],
+            entries=[
+                _subagent_group("row-1"),
+                _subagent_group("row-2"),
+                {"tool_name": "weather", "data": {}},
+            ],
         )
 
         assert await repo.extend_subagent_group(
@@ -494,6 +531,22 @@ class TestMessages:
             message_id=ids[0],
             group=SavedSubagentGroup(subagent_id="missing"),
         )
+
+    async def test_extending_is_refused_for_another_user(self, repo):
+        doc = _doc()
+        mid = await _seed_subagent_group(repo, doc)
+
+        extended = await repo.extend_subagent_group(
+            doc.conversation_id,
+            user_id="attacker",
+            message_id=mid,
+            group=SavedSubagentGroup(subagent_id="row-1", tool_calls=[{"tool_call_id": "pwned"}]),
+        )
+
+        assert extended is False
+        msg = await repo.get_message(doc.conversation_id, mid, user_id=doc.user_id)
+        assert msg is not None and msg.tool_data is not None
+        assert msg.tool_data[0]["data"]["tool_calls"] == [{"tool_call_id": "row-1-before"}]
 
     async def test_append_preserves_every_key_emitters_stamp_on_tool_data(self, repo):
         """append_messages must not drop tool_category/mcp_ui/mcp_server_url/subagent_id, invisible live but breaking on reload."""
