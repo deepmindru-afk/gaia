@@ -70,7 +70,9 @@ class TestInstallFromGithubSuccess:
     async def test_installs_skill_and_writes_body_only_skill_md(self, storage_seams):
         write_mock, install_mock, _ = storage_seams
         with respx.mock:
-            respx.get(f"{GITHUB_API_BASE}/repos/org/repo/contents/skills/my-skill").mock(
+            contents_route = respx.get(
+                f"{GITHUB_API_BASE}/repos/org/repo/contents/skills/my-skill"
+            ).mock(
                 return_value=httpx.Response(
                     200,
                     json=[_contents_entry("SKILL.md", "file", "skills/my-skill/SKILL.md")],
@@ -82,6 +84,7 @@ class TestInstallFromGithubSuccess:
 
             result = await install_from_github(user_id="u1", repo_url="org/repo/skills/my-skill")
 
+        assert contents_route.calls.last.request.url.params["ref"] == "main"
         assert result is not None
         install_mock.assert_awaited_once()
         request = install_mock.await_args.args[0]

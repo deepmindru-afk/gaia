@@ -36,6 +36,7 @@ from app.agents.skills.utils import (
     github_url,
 )
 from app.constants.log_tags import LogTag
+from app.constants.skills import SKILL_SOURCE_FILENAME
 from app.services.storage import (
     JuiceFSUnavailable,
     delete_user_skill,
@@ -164,7 +165,7 @@ async def install_from_github(
         )
 
         skill_md_entry: GitHubContentEntry | None = next(
-            (entry for entry in contents if entry["name"] == "SKILL.md"), None
+            (entry for entry in contents if entry["name"] == SKILL_SOURCE_FILENAME), None
         )
         if skill_md_entry is None:
             raise ValueError(
@@ -198,8 +199,8 @@ async def install_from_github(
         file_list: list[str] = []
 
         # Write body-only SKILL.md to JuiceFS (metadata lives in MongoDB)
-        await write_skill_file(user_id, metadata.name, "SKILL.md", body)
-        file_list.append("SKILL.md")
+        await write_skill_file(user_id, metadata.name, SKILL_SOURCE_FILENAME, body)
+        file_list.append(SKILL_SOURCE_FILENAME)
 
         # Download subdirectories and files recursively
         await _download_github_dir(
@@ -265,7 +266,7 @@ async def _download_github_dir(
         name = entry["name"]
         entry_type = entry["type"]
 
-        if name == "SKILL.md":
+        if name == SKILL_SOURCE_FILENAME:
             continue  # Already handled
 
         if entry_type == "file":
@@ -324,7 +325,7 @@ async def install_from_inline(
     # Write body-only to JuiceFS (metadata lives in MongoDB)
     storage_path = _skill_storage_path(user_id, metadata.name)
     await ensure_user_skills_dir(user_id)
-    await write_skill_file(user_id, metadata.name, "SKILL.md", body)
+    await write_skill_file(user_id, metadata.name, SKILL_SOURCE_FILENAME, body)
 
     # Register flat metadata in MongoDB
     # install_skill is wrapped in @CacheInvalidator, whose __call__ erases the
@@ -340,7 +341,7 @@ async def install_from_inline(
                 vfs_path=storage_path,
                 source=SkillSource.INLINE,
                 body_content=body,
-                files=["SKILL.md"],
+                files=[SKILL_SOURCE_FILENAME],
                 license_name=metadata.license,
                 compatibility=metadata.compatibility,
                 metadata=metadata.metadata,
@@ -403,7 +404,7 @@ async def update_skill_inline(
     # metadata-only and never touch the filesystem.
     if body != (skill.body_content or ""):
         await ensure_user_skills_dir(user_id)
-        await write_skill_file(user_id, skill.name, "SKILL.md", body)
+        await write_skill_file(user_id, skill.name, SKILL_SOURCE_FILENAME, body)
 
     # update_skill is wrapped in @CacheInvalidator, whose __call__ erases the
     # return type to Awaitable[Any]; update_skill itself is annotated -> Skill | None.
