@@ -22,7 +22,12 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from playwright.sync_api import StorageState
 from pydantic import BaseModel
 
-from app.browser_host.chromium import AtCapacityError, ChromiumHost, SessionNotFoundError
+from app.browser_host.chromium import (
+    AtCapacityError,
+    ChromiumHost,
+    EngineUnresponsiveError,
+    SessionNotFoundError,
+)
 from app.browser_host.proxy import run_cdp_proxy
 from app.browser_host.screencast import run_live_view
 from app.config.browser_host_settings import browser_host_settings
@@ -271,13 +276,16 @@ async def touch_session(request: Request, session_id: str) -> TouchSessionRespon
 
 @app.get("/sessions/{session_id}")
 async def get_session(request: Request, session_id: str) -> SessionInfoResponse:
-    """Fetch live session info; 404 when the session is gone."""
+    """Fetch live session info; 404 when the session is gone, 503 when its engine does not answer."""
     _require_host_key(request)
     log.set(browser={"session_id": session_id, "operation": "get"})
     try:
         info = await _host.session_info(session_id)
     except SessionNotFoundError as exc:
         raise _session_not_found() from exc
+    except EngineUnresponsiveError as exc:
+        log.fail(HostRequestFailure.ENGINE_UNRESPONSIVE)
+        raise HTTPException(status_code=503, detail="browser engine unresponsive") from exc
     return SessionInfoResponse.model_validate(info)
 
 

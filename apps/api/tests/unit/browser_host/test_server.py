@@ -14,7 +14,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 import pytest
 
-from app.browser_host import server as server_mod
+from app.browser_host import chromium, server as server_mod
 from app.browser_host.chromium import AtCapacityError, SessionNotFoundError
 from app.constants.browser import HostAdmissionRefusal
 from app.constants.log_tags import LogTag
@@ -185,6 +185,13 @@ def test_get_session_returns_info(client) -> None:
     assert resp.status_code == 200
     assert resp.json()["session_id"] == "s1"
     assert resp.json()["url"] == "https://example.com"
+
+
+def test_get_session_on_an_engine_that_stopped_answering_is_503(client) -> None:
+    _, host = client
+    host.session_info.side_effect = chromium.EngineUnresponsiveError()
+    resp = client[0].get("/sessions/s1")
+    assert resp.status_code == 503
 
 
 def test_get_unknown_session_404(client) -> None:

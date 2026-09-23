@@ -544,3 +544,48 @@ async def test_recover_crash_noops_when_engine_already_back_up() -> None:
     assert session.dead is False
     assert session.mux.closed is False
     assert host._sessions == {"s1": session}
+
+
+# --- GET /sessions/{id}: engine liveness, independent of how busy the page is ---
+
+
+@pytest.mark.unit
+async def test_session_info_answers_live_while_the_sessions_own_connection_is_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A heavy page holds its own connection's thread for seconds; the engine still answers on the root one."""
+    monkeypatch.setattr(chromium, "BROWSER_HOST_LIVENESS_TIMEOUT_SECONDS", 0.05)
+    host = make_host()
+    host._root_mux = FakeMux()
+    busy = FakeMux(hang_on="Target.getTargets", hang_call_count=1)
+    host._sessions["s1"] = make_session(mux=busy)
+
+    info = await asyncio.wait_for(host.session_info("s1"), timeout=1)
+
+    assert (info["live"], info["url"], info["title"]) == (True, None, None)
+
+
+@pytest.mark.unit
+async def test_session_info_reads_the_page_from_the_sessions_own_connection() -> None:
+    host = make_host()
+    host._root_mux = FakeMux()
+    page = {"type": "page", "browserContextId": "ctx1", "url": "https://a.test/", "title": "A"}
+    host._sessions["s1"] = make_session(mux=FakeMux({"Target.getTargets": {"targetInfos": [page]}}))
+
+    info = await host.session_info("s1")
+
+    assert (info["live"], info["url"], info["title"]) == (True, "https://a.test/", "A")
+
+
+@pytest.mark.unit
+async def test_session_info_on_an_engine_that_stopped_answering_says_so_within_the_liveness_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SIGSTOPped engine answers nothing: the host says so in its budget, not after a 20 s CDP timeout."""
+    monkeypatch.setattr(chromium, "BROWSER_HOST_LIVENESS_TIMEOUT_SECONDS", 0.05)
+    host = make_host()
+    host._root_mux = FakeMux(hang_on="Target.getTargets", hang_call_count=1)
+    host._sessions["s1"] = make_session(mux=FakeMux(hang_on="Target.getTargets"))
+
+    with pytest.raises(chromium.EngineUnresponsiveError):
+        await asyncio.wait_for(host.session_info("s1"), timeout=1)

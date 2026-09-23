@@ -11,7 +11,7 @@ from app.browser_host import metrics as metrics_module
 from app.browser_host.chromium import ChromiumHost
 from app.browser_host.metrics import Aggregate, ProcessSampler, SessionMetrics
 from app.constants.log_tags import LogTag
-from tests.unit.browser_host.conftest import install_mux, make_host
+from tests.unit.browser_host.conftest import FakeMux, install_mux, make_host
 
 _MB = 1024 * 1024
 
@@ -207,6 +207,7 @@ class TestHostSessionMetrics:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         host = _started_host(monkeypatch)
+        host._root_mux = FakeMux()
         host._sampler = MagicMock()
         host._sampler.sample.return_value = (512.0, 25.0)
 

@@ -126,12 +126,14 @@ async def touch_session(session_id: str, host_url: str) -> None:
     _raise_for_status(response)
 
 
-async def get_session(session_id: str, host_url: str) -> HostSessionInfo:
+async def get_session(
+    session_id: str, host_url: str, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS
+) -> HostSessionInfo:
     """Fetch the host's current view of a session."""
     try:
         async with httpx.AsyncClient(
             base_url=host_url,
-            timeout=_DEFAULT_TIMEOUT_SECONDS,
+            timeout=timeout,
             headers=_host_headers(),
         ) as client:
             response = await client.get(f"/sessions/{session_id}")

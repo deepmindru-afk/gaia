@@ -38,6 +38,7 @@ from app.browser_host.metrics import ProcessSampler, SessionMetrics
 from app.browser_host.obscura_launch import obscura_serve_argv, obscura_serve_env
 from app.config.browser_host_settings import browser_host_settings
 from app.constants.browser import (
+    BROWSER_HOST_LIVENESS_TIMEOUT_SECONDS,
     BROWSER_VIEWPORT_HEIGHT,
     BROWSER_VIEWPORT_WIDTH,
     BrowserEngine,
@@ -134,6 +135,10 @@ class SessionNotFoundError(KeyError):
 
 class CDPTimeoutError(RuntimeError):
     """Raised when a CDP call outruns its budget — Chromium is wedged, not busy."""
+
+
+class EngineUnresponsiveError(RuntimeError):
+    """Raised when the engine does not answer a CDP call on its root connection within the liveness budget."""
 
 
 async def cdp_call(
@@ -458,12 +463,27 @@ class ChromiumHost:
             session.last_activity_at = time.monotonic()
 
     async def session_info(self, session_id: str) -> dict[str, Any]:
-        """Build the GET /sessions/{id} view: liveness, activity, and page url/title."""
+        """Build the GET /sessions/{id} view: liveness, activity, and page url/title.
+
+        Answers within the liveness budget whatever the page is doing. Liveness is
+        read on the root connection, which no page's work can hold up; the page is
+        read on the session's own, which a heavy page holds for seconds at a time.
+        Raise EngineUnresponsiveError when the engine itself does not answer.
+        """
         session = self._get(session_id)
-        url, title = await self._focused_page_meta(session)
+        live = not session.dead and self.chromium_up
+        url: str | None = None
+        title: str | None = None
+        if live:
+            responsive, (url, title) = await asyncio.gather(
+                self._engine_responsive(BROWSER_HOST_LIVENESS_TIMEOUT_SECONDS),
+                self._focused_page_meta(session),
+            )
+            if not responsive:
+                raise EngineUnresponsiveError(session_id)
         return {
             "session_id": session.session_id,
-            "live": not session.dead and self.chromium_up,
+            "live": live,
             "last_activity_at": session.last_activity_at,
             "url": url,
             "title": title,
@@ -478,19 +498,7 @@ class ChromiumHost:
         exactly the outage it exists to catch. Probing the pipe is what lets the
         orchestrator restart the host.
         """
-        responsive = False
-        root_mux = self._root_mux
-        if self.chromium_up and root_mux is not None:
-            try:
-                await cdp_call(
-                    root_mux, "Target.getTargets", {}, timeout=_CDP_HEALTH_TIMEOUT_SECONDS
-                )
-                responsive = True
-            except Exception as exc:
-                log.error(
-                    f"{LogTag.BROWSER} browser host CDP is unresponsive",
-                    error_type=type(exc).__name__,
-                )
+        responsive = await self._engine_responsive(_CDP_HEALTH_TIMEOUT_SECONDS)
         return {
             "ok": responsive,
             "sessions": len(self._sessions),
@@ -690,10 +698,29 @@ class ChromiumHost:
                 origins.append({"origin": value["origin"], "localStorage": value["localStorage"]})
         return origins
 
+    async def _engine_responsive(self, timeout: float) -> bool:
+        """Whether the engine answers a CDP round-trip on the root connection within timeout."""
+        root_mux = self._root_mux
+        if not self.chromium_up or root_mux is None:
+            return False
+        try:
+            await cdp_call(root_mux, "Target.getTargets", {}, timeout=timeout)
+        except Exception as exc:
+            log.error(
+                f"{LogTag.BROWSER} browser host CDP is unresponsive",
+                error_type=type(exc).__name__,
+            )
+            return False
+        return True
+
     async def _focused_page_meta(self, session: HostSession) -> tuple[str | None, str | None]:
-        if not self.chromium_up:
+        """Read the session's page url and title; none while a heavy page holds its connection."""
+        try:
+            targets = await cdp_call(
+                session.mux, "Target.getTargets", {}, timeout=BROWSER_HOST_LIVENESS_TIMEOUT_SECONDS
+            )
+        except CDPTimeoutError:
             return None, None
-        targets = await cdp_call(session.mux, "Target.getTargets", {})
         for ti in targets["targetInfos"]:
             if ti["type"] == "page" and ti.get("browserContextId") == session.context_id:
                 return ti.get("url"), ti.get("title")

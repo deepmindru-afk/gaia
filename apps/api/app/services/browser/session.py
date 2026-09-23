@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from app.constants.browser import (
+    BROWSER_ENGINE_PROBE_TIMEOUT_SECONDS,
     BROWSER_HANDOFF_KEEPALIVE_SECONDS,
     HANDOFF_AUTORESOLVE_POLL_SECONDS,
     HANDOFF_AUTORESOLVE_STABLE_POLLS,
@@ -84,7 +85,9 @@ async def engine_failure(session: BrowserHostSession) -> EngineFailure | None:
     crashed, dropped or wedged engine only as step failures it ends the run on.
     """
     try:
-        info = await host_client.get_session(session.session_id, session.host_url)
+        info = await host_client.get_session(
+            session.session_id, session.host_url, timeout=BROWSER_ENGINE_PROBE_TIMEOUT_SECONDS
+        )
     except BrowserSessionGone:
         return EngineFailure.SESSION_GONE
     except BrowserUnavailableError:

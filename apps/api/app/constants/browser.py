@@ -319,6 +319,11 @@ class JevNoteSource(StrEnum):
 BROWSER_STALL_NOTE_AFTER_SECONDS = 25.0
 BROWSER_STALL_NOTE = "Still waiting on the page, it's a slow one."
 
+# The host answers a liveness read inside its own budget, whatever the engine is
+# doing, and the client allows it a little more before calling it unanswered.
+BROWSER_HOST_LIVENESS_TIMEOUT_SECONDS = 3.0
+BROWSER_ENGINE_PROBE_TIMEOUT_SECONDS = 5.0
+
 # How a decision taken on the handoff card is written into the agent's thread,
 # so the reply it later voices knows the user changed course.
 BROWSER_HANDOFF_CARD_DECISION = "[From the browser handoff card] {decision}"
@@ -468,6 +473,7 @@ class HostRequestFailure(StrEnum):
     INVALID_HOST_KEY = "invalid_host_key"
     SESSION_NOT_FOUND = "session_not_found"
     AT_CAPACITY = "at_capacity"
+    ENGINE_UNRESPONSIVE = "engine_unresponsive"
 
 
 class HostAdmissionRefusal(StrEnum):
