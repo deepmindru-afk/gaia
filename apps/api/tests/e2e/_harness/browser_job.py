@@ -28,6 +28,7 @@ from app.schemas.browser_job import BrowserJobRequest
 from app.services.browser.exceptions import BrowserHandoffCancelled
 from app.services.browser.jev.chat_model import JevChatModel
 from app.services.browser.jev.gateway import JevChoiceAnswer, JevEvaluation, JevUsage
+from app.services.browser.jev.prompts import PART_DONE, PLAN_STEPS
 from app.workers.tasks import browser_tasks
 
 #: What the fake CDN hands back for a step screenshot, per step index.
@@ -35,6 +36,9 @@ SHOT_URL_TEMPLATE = "https://cdn.test/shot-{index}.png"
 
 #: The live-view link a bot conversation is given.
 LIVE_VIEW_LINK = "https://gaia.test/live/take-a-look"
+
+#: The recap slideshow link every run closes with.
+REPLAY_URL = "https://gaia.test/replay/the-run"
 
 
 @dataclass
@@ -283,7 +287,8 @@ async def browser_job_world(
     llm: Any = object()
     if jev is not None:
         world.jev = ScriptedJevGateway(jev)
-        llm = JevChatModel(client=world.jev, text_model=_JevTextHelper(jev.texts))
+        helper = _JevTextHelper(jev.texts)
+        llm = JevChatModel(client=world.jev, text_model=helper, structured_call=helper.structured)
         page = _JevPage()
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     create_session(stream_id, RunKind.LIVE)
@@ -306,7 +311,7 @@ async def browser_job_world(
         world.bot_photos.append(url)
         return True
 
-    async def _create_host_session(storage_state: Any = None) -> Any:
+    async def _create_host_session(storage_state: Any, host_url: str) -> Any:
         if host_error is not None:
             raise host_error
         world.host_sessions += 1
@@ -349,7 +354,7 @@ async def browser_job_world(
         patch("app.services.browser.session.host_client.delete_session", AsyncMock()),
         patch("app.services.browser.session.load_storage_state", AsyncMock(return_value=None)),
         patch("app.services.browser.session.save_storage_state", AsyncMock()),
-        patch("app.services.browser.job_runner.build_browser_llm", lambda: llm),
+        patch("app.services.browser.job_runner.build_browser_llm", lambda user_id=None: llm),
         patch("app.services.browser.job_runner.record_browser_task", AsyncMock()),
         patch("app.services.browser.job_runner.capture_event", MagicMock()),
         patch("app.services.browser.agent_run.build_browser_tools", _tools_of(double)),
@@ -357,7 +362,7 @@ async def browser_job_world(
             "app.services.browser.runner.publish_step_screenshot",
             lambda image, session_id, index: _shot_url(index),
         ),
-        patch("app.services.browser.runner.create_replay_link", AsyncMock(return_value=None)),
+        patch("app.services.browser.runner.create_replay_link", AsyncMock(return_value=REPLAY_URL)),
         patch("app.services.browser.bot_delivery.publish_outbound_message", _outbound_message),
         patch("app.services.browser.bot_delivery.publish_outbound_photo", _outbound_photo),
         patch(
@@ -536,3 +541,23 @@ class _JevTextHelper:
             return ChatInvokeCompletion(completion="", usage=None)
         reply = self._replies.pop(0) if self._replies else {}
         return ChatInvokeCompletion(completion=output_format.model_validate(reply), usage=None)
+
+    async def structured(
+        self, schema: Any, prompt: Any, *, label: str, timeout: float | None = None
+    ) -> Any:
+        """Answer as the loop's writer: plan and part checks answer themselves, the rest take the scripted replies in order."""
+        instructions = prompt[0].content
+        if instructions.startswith(PLAN_STEPS):
+            return schema.model_validate({"steps": []})
+        if instructions.startswith(PART_DONE):
+            if label != "browser_done_check":
+                return schema.model_validate({"done": False})
+            # A DONE the script chose is taken at its word, cited by the page read.
+            pages = json.loads(prompt[1].content)["pages_read"]
+            return schema.model_validate(
+                {"done": True, "evidence": [pages[0]["url"]] if pages else [], "findings": ""}
+            )
+        reply = self._replies.pop(0) if self._replies else {}
+        if "achieved" in schema.model_fields and isinstance(reply, dict):
+            reply = {"achieved": True, **reply}
+        return schema.model_validate(reply)

@@ -44,6 +44,9 @@ class BrowserHostSession:
     cdp_url: str
     live_view_url: str
     context_id: str
+    #: The browser host this context lives on: the primary engine's, or the
+    #: fallback's after a switch.
+    host_url: str
     #: Whether this run's cookies are worth keeping as a saved login: it was
     #: seeded from one, or a sign-in completed in it.
     persist_login: bool = False
@@ -53,7 +56,7 @@ class BrowserHostSession:
         self.persist_login = True
 
 
-async def keep_session_alive(session_id: str) -> None:
+async def keep_session_alive(session: BrowserHostSession) -> None:
     """Periodically reset the host's idle clock while a handoff is pending.
 
     A paused session has no CDP or live-view traffic and the idle TTL is
@@ -64,12 +67,12 @@ async def keep_session_alive(session_id: str) -> None:
     while True:
         await asyncio.sleep(BROWSER_HANDOFF_KEEPALIVE_SECONDS)
         try:
-            await host_client.touch_session(session_id)
+            await host_client.touch_session(session.session_id, session.host_url)
         except BrowserUnavailableError as exc:
             log.warning(
                 f"{LogTag.BROWSER} Browser handoff keepalive failed",
                 error_type=type(exc).__name__,
-                browser={"session_id": session_id, "operation": "handoff_keepalive"},
+                browser={"session_id": session.session_id, "operation": "handoff_keepalive"},
             )
 
 
@@ -130,7 +133,7 @@ def _navigated_away(start: str | None, current: str | None) -> bool:
 
 
 async def auto_resolve_handoff_on_navigation(
-    handoff_id: str, session_id: str, user_id: str
+    handoff_id: str, session: BrowserHostSession, user_id: str
 ) -> None:
     """Auto-complete a login handoff once the page navigates off the sign-in URL.
 
@@ -140,14 +143,14 @@ async def auto_resolve_handoff_on_navigation(
     early. Run under spawn_background_task and cancel when the handoff resolves.
     """
     try:
-        start = (await host_client.get_session(session_id)).url
+        start = (await host_client.get_session(session.session_id, session.host_url)).url
     except BrowserUnavailableError:
         return
     stable = 0
     while True:
         await asyncio.sleep(HANDOFF_AUTORESOLVE_POLL_SECONDS)
         try:
-            current = (await host_client.get_session(session_id)).url
+            current = (await host_client.get_session(session.session_id, session.host_url)).url
         except BrowserUnavailableError:
             return
         if not _navigated_away(start, current):
@@ -168,6 +171,7 @@ async def auto_resolve_handoff_on_navigation(
 async def browser_session(
     *,
     user_id: str,
+    host_url: str,
     start_url: str | None = None,
 ) -> AsyncIterator[BrowserHostSession]:
     """Create a browser-host session, yield it, and always release it.
@@ -180,12 +184,13 @@ async def browser_session(
     domain = domain_of(start_url)
     storage_state = await load_storage_state(user_id, domain)
 
-    host = await host_client.create_session(storage_state)
+    host = await host_client.create_session(storage_state, host_url)
     session = BrowserHostSession(
         session_id=host.session_id,
         cdp_url=host.cdp_ws,
         live_view_url=live_view_url(host.session_id),
         context_id=host.context_id,
+        host_url=host_url,
         # A seeded run writes its state back so a rotated token is not lost.
         persist_login=storage_state is not None,
     )
@@ -204,7 +209,7 @@ async def browser_session(
         yield session
     finally:
         try:
-            returned_state = await host_client.delete_session(session.session_id)
+            returned_state = await host_client.delete_session(session.session_id, host_url)
             # Saving every run turned the login store into an invisible preference
             # cache: one task's Deutsch cookie answered the next task in German.
             if session.persist_login:

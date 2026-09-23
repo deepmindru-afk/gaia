@@ -13,7 +13,7 @@ from pathlib import Path
 
 import psutil
 
-from app.config.settings import settings
+from app.config.browser_host_settings import browser_host_settings
 
 # cgroup v2 (unified) then v1 (legacy) locations.
 _V2_CURRENT = Path("/sys/fs/cgroup/memory.current")
@@ -51,7 +51,7 @@ def memory_usage_mb() -> tuple[float, float]:
     system memory when no cgroup limit is readable. BROWSER_HOST_MEMORY_LIMIT_MB
     caps the detected limit (or supplies it when none is detectable).
     """
-    override = settings.BROWSER_HOST_MEMORY_LIMIT_MB
+    override = browser_host_settings.BROWSER_HOST_MEMORY_LIMIT_MB
     cgroup = _cgroup_used_and_limit_bytes()
 
     if cgroup is not None and cgroup[1] is not None:

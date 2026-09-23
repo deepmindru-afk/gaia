@@ -147,7 +147,7 @@ def test_memory_usage_mb_uses_cgroup_limit_without_override(monkeypatch, tmp_pat
         v2_current=str(256 * _MB),
         v2_max=str(1024 * _MB),
     )
-    monkeypatch.setattr(memory.settings, "BROWSER_HOST_MEMORY_LIMIT_MB", None)
+    monkeypatch.setattr(memory.browser_host_settings, "BROWSER_HOST_MEMORY_LIMIT_MB", None)
 
     used, limit = memory.memory_usage_mb()
 
@@ -163,7 +163,7 @@ def test_memory_usage_mb_override_caps_cgroup_limit(monkeypatch, tmp_path):
         v2_current=str(256 * _MB),
         v2_max=str(1024 * _MB),
     )
-    monkeypatch.setattr(memory.settings, "BROWSER_HOST_MEMORY_LIMIT_MB", 300)
+    monkeypatch.setattr(memory.browser_host_settings, "BROWSER_HOST_MEMORY_LIMIT_MB", 300)
 
     used, limit = memory.memory_usage_mb()
 
@@ -179,7 +179,7 @@ def test_memory_usage_mb_override_above_cgroup_limit_keeps_cgroup_limit(monkeypa
         v2_current=str(256 * _MB),
         v2_max=str(1024 * _MB),
     )
-    monkeypatch.setattr(memory.settings, "BROWSER_HOST_MEMORY_LIMIT_MB", 2000)
+    monkeypatch.setattr(memory.browser_host_settings, "BROWSER_HOST_MEMORY_LIMIT_MB", 2000)
 
     used, limit = memory.memory_usage_mb()
 
@@ -190,7 +190,7 @@ def test_memory_usage_mb_override_above_cgroup_limit_keeps_cgroup_limit(monkeypa
 @pytest.mark.unit
 def test_memory_usage_mb_no_cgroup_limit_uses_psutil_total_without_override(monkeypatch, tmp_path):
     _patch_cgroup_paths(monkeypatch, tmp_path, v2_current=str(123 * _MB), v2_max="max")
-    monkeypatch.setattr(memory.settings, "BROWSER_HOST_MEMORY_LIMIT_MB", None)
+    monkeypatch.setattr(memory.browser_host_settings, "BROWSER_HOST_MEMORY_LIMIT_MB", None)
     monkeypatch.setattr(
         memory.psutil,
         "virtual_memory",
@@ -206,7 +206,7 @@ def test_memory_usage_mb_no_cgroup_limit_uses_psutil_total_without_override(monk
 @pytest.mark.unit
 def test_memory_usage_mb_no_cgroup_limit_override_supplies_limit(monkeypatch, tmp_path):
     _patch_cgroup_paths(monkeypatch, tmp_path, v2_current=str(123 * _MB), v2_max="max")
-    monkeypatch.setattr(memory.settings, "BROWSER_HOST_MEMORY_LIMIT_MB", 500)
+    monkeypatch.setattr(memory.browser_host_settings, "BROWSER_HOST_MEMORY_LIMIT_MB", 500)
     monkeypatch.setattr(
         memory.psutil,
         "virtual_memory",
@@ -222,7 +222,7 @@ def test_memory_usage_mb_no_cgroup_limit_override_supplies_limit(monkeypatch, tm
 @pytest.mark.unit
 def test_memory_usage_mb_off_cgroup_uses_psutil_used_and_total(monkeypatch, tmp_path):
     _patch_cgroup_paths(monkeypatch, tmp_path)
-    monkeypatch.setattr(memory.settings, "BROWSER_HOST_MEMORY_LIMIT_MB", None)
+    monkeypatch.setattr(memory.browser_host_settings, "BROWSER_HOST_MEMORY_LIMIT_MB", None)
     monkeypatch.setattr(
         memory.psutil,
         "virtual_memory",
@@ -238,7 +238,7 @@ def test_memory_usage_mb_off_cgroup_uses_psutil_used_and_total(monkeypatch, tmp_
 @pytest.mark.unit
 def test_memory_usage_mb_off_cgroup_with_override_limit(monkeypatch, tmp_path):
     _patch_cgroup_paths(monkeypatch, tmp_path)
-    monkeypatch.setattr(memory.settings, "BROWSER_HOST_MEMORY_LIMIT_MB", 700)
+    monkeypatch.setattr(memory.browser_host_settings, "BROWSER_HOST_MEMORY_LIMIT_MB", 700)
     monkeypatch.setattr(
         memory.psutil,
         "virtual_memory",

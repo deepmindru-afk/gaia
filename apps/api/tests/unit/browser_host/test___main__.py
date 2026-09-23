@@ -9,7 +9,10 @@ publish the internal-only host on the wrong interface.
 
 from __future__ import annotations
 
+import os
 import runpy
+import subprocess  # nosec B404
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -35,3 +38,14 @@ class TestBrowserHostEntrypoint:
         with patch("uvicorn.run") as mock_run:
             runpy.run_module("app.browser_host", run_name="not_main")
         mock_run.assert_not_called()
+
+    def test_boots_in_production_without_the_app_settings(self) -> None:
+        """The host renders attacker pages, so it must never load the Infisical-backed settings."""
+        probe = (
+            "import sys, app.browser_host.__main__; sys.exit('app.config.settings' in sys.modules)"
+        )
+        env = {"PATH": os.environ["PATH"], "ENV": "production"}
+        result = subprocess.run(  # nosec B603 -- fixed argv
+            [sys.executable, "-c", probe], env=env, capture_output=True, check=False
+        )
+        assert result.returncode == 0, result.stderr.decode()[-2000:]

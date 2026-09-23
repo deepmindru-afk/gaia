@@ -17,6 +17,7 @@ from app.constants.chat import SourceCategory
 from app.models.chat_models import ConversationSource
 from app.services.browser.jobs import get_conversation_slot
 from tests.e2e._harness.browser_job import (
+    REPLAY_URL,
     SHOT_URL_TEMPLATE,
     JevScript,
     JobWorld,
@@ -108,7 +109,7 @@ async def test_every_step_card_reaches_the_turns_stream_and_its_message() -> Non
         ] == ["session", "step", "step", "result"]
 
 
-async def test_a_bot_conversation_gets_one_photo_per_step_and_the_result_line() -> None:
+async def test_a_bot_conversation_gets_one_photo_per_step_and_only_the_recap_line() -> None:
     """Bots never see the SSE stream: a run the worker does not mirror to the platform is a run a Discord user watches in silence."""
     async with browser_job_world(STREAM, steps=TWO_STEPS) as world:
         async with executor_graph([RETRIEVE, START, JOIN, "Booked."]) as graph:
@@ -129,8 +130,10 @@ async def test_a_bot_conversation_gets_one_photo_per_step_and_the_result_line() 
         SHOT_URL_TEMPLATE.format(index=2),
     ]
     # Session start is deliberately silent (the link arrives at a handoff, if
-    # one comes); the run still closes with its result line.
-    assert world.bot_messages[-1].startswith("✅")
+    # one comes). The outcome is the assistant's to voice once, so the progress
+    # channel closes with the recap link alone: a canned outcome line here made
+    # every result arrive twice.
+    assert world.bot_messages == [f"📽 Here's a recap of the run: {REPLAY_URL}"]
 
 
 async def test_a_turn_that_ends_without_joining_has_the_result_delivered_to_the_user() -> None:
@@ -442,23 +445,22 @@ async def test_the_join_keeps_its_claim_on_the_result_while_the_executor_answers
     assert held == [True]
 
 
-async def test_a_blocked_run_with_no_executor_joined_ends_blocked_as_before() -> None:
-    """Asking when nobody is listening would stall the run for the whole guidance timeout and answer nothing."""
-    from app.constants.browser import BROWSER_RUN_BLOCKED_SUMMARY
-
+async def test_a_blocked_run_with_no_executor_joined_ends_failed_with_what_it_read() -> None:
+    """Asking when nobody is listening would stall the run for the whole guidance timeout; ending on "no way forward" would throw away the pages already read."""
+    closing = "The booking page lists tables at 6pm and 8pm; I could not reserve one."
     steps = [ScriptedStep(actions=[], decide=True)]
-    script = JevScript(decisions=[("BLOCKED", None)], texts=[{"text": "nothing here"}])
+    # The script's writer answers the closing message; the run still failed, so a
+    # writer that calls it achieved is overruled.
+    script = JevScript(decisions=[("BLOCKED", None)], texts=[{"text": closing}])
 
     async with browser_job_world(
-        STREAM, steps=steps, jev=script, successful=False, summary=BROWSER_RUN_BLOCKED_SUMMARY
+        STREAM, steps=steps, jev=script, successful=False, summary=closing
     ) as world:
         async with executor_graph([RETRIEVE, START, "I've started on it."]) as graph:
             await _drive(graph, world)
 
     assert world.browser.guidance_reasons == []
-    assert _step_actions(world) == [
-        {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}
-    ]
+    assert _step_actions(world) == [{"done": {"text": closing, "success": False}}]
     results = [card for card in world.cards() if card["kind"] == "result"]
     assert [card["status"] for card in results] == [BrowserSessionStatus.FAILED.value]
     assert results[0]["success"] is False

@@ -8,6 +8,7 @@ is holding a tool call to hear an exception.
 
 import asyncio
 from collections.abc import Awaitable, Callable
+import contextlib
 from functools import partial
 from time import perf_counter
 import uuid
@@ -308,12 +309,10 @@ class ProgressEmitter:
         publish: FramePublisher,
         thread_mirror: BrowserThreadMirror,
         bot_delivery: BotProgressDelivery | None,
-        lease_held: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         self._publish = publish
         self._thread_mirror = thread_mirror
         self._bot_delivery = bot_delivery
-        self._lease_held = lease_held
         # Captions for the recap ("what's going on" per step), keyed by step index.
         self.step_goals: dict[int, str] = {}
         # Only the screenshots that actually reached the CDN. A step whose upload
@@ -335,25 +334,7 @@ class ProgressEmitter:
             if snapshot.screenshot and snapshot.screenshot.startswith("http"):
                 self.step_shots[snapshot.index] = snapshot.screenshot
         if self._bot_delivery is not None:
-            if isinstance(snapshot, BrowserResultSnapshot) and await self._covered_by_joiner():
-                return
             await _deliver_snapshot_to_bot(self._bot_delivery, snapshot)
-
-    async def _covered_by_joiner(self) -> bool:
-        """Whether a live turn is joining on this run and will narrate the result itself.
-
-        Fail-open: on any error the canned mirror still fires, so the user never loses the closing line.
-        """
-        if self._lease_held is None:
-            return False
-        try:
-            return await self._lease_held()
-        except Exception as e:
-            log.warning(
-                f"{LogTag.BROWSER} Joiner-lease check failed; keeping canned result mirror",
-                error_type=type(e).__name__,
-            )
-            return False
 
 
 def _handoff_snapshot(
@@ -373,13 +354,13 @@ def _handoff_snapshot(
 
 
 def _spawn_handoff_watchers(
-    handoff_id: str, req: HandoffRequest, session_id: str, user_id: str
+    handoff_id: str, req: HandoffRequest, session: BrowserHostSession, user_id: str
 ) -> list[asyncio.Task[None]]:
     # The paused session produces no CDP/live-view traffic, so keep its idle
     # clock fresh until the user decides — otherwise the host reaps the browser
     # they were asked to come back to.
     watchers = [
-        spawn_background_task(keep_session_alive(session_id), name="browser_handoff_keepalive")
+        spawn_background_task(keep_session_alive(session), name="browser_handoff_keepalive")
     ]
     # A login handoff can auto-complete when the page navigates off the sign-in
     # URL — the user just signs in, no extra tap. Only for credentials; a
@@ -387,7 +368,7 @@ def _spawn_handoff_watchers(
     if req.category == SensitiveCategory.CREDENTIALS:
         watchers.append(
             spawn_background_task(
-                auto_resolve_handoff_on_navigation(handoff_id, session_id, user_id),
+                auto_resolve_handoff_on_navigation(handoff_id, session, user_id),
                 name="browser_handoff_autoresolve",
             )
         )
@@ -396,9 +377,9 @@ def _spawn_handoff_watchers(
 
 async def _run_handoff(
     req: HandoffRequest,
+    session: BrowserHostSession,
     *,
     emit: Callable[[BrowserCardSnapshot], Awaitable[None]],
-    session: BrowserHostSession,
     user_id: str,
     conversation_id: str,
 ) -> HandoffOutcome:
@@ -410,7 +391,7 @@ async def _run_handoff(
     handoff_id = uuid.uuid4().hex
     await create_pending_handoff(handoff_id, user_id, conversation_id, req.reason)
     await emit(_handoff_snapshot(handoff_id, req, session, HandoffStatus.PENDING))
-    watchers = _spawn_handoff_watchers(handoff_id, req, session.session_id, user_id)
+    watchers = _spawn_handoff_watchers(handoff_id, req, session, user_id)
     try:
         outcome = await await_handoff(handoff_id, settings.BROWSER_USE_HANDOFF_TIMEOUT_SECONDS)
     finally:
@@ -420,6 +401,15 @@ async def _run_handoff(
         session.mark_authenticated()
     await emit(_handoff_snapshot(handoff_id, req, session, outcome.status))
     return outcome
+
+
+async def _open_fallback_session(
+    sessions: contextlib.AsyncExitStack, user_id: str, host_url: str, url: str
+) -> BrowserHostSession:
+    """Open a session on the fallback host for url; released with the job's other sessions."""
+    return await sessions.enter_async_context(
+        browser_session(user_id=user_id, host_url=host_url, start_url=url)
+    )
 
 
 async def _run_guidance(
@@ -452,6 +442,7 @@ async def persist_run_outcome(
     result: BrowserResultSnapshot,
     run_t0: float,
     emitter: ProgressEmitter,
+    engine_fallback: bool,
 ) -> None:
     """Record analytics + the browser-history row for a finished run.
 
@@ -471,6 +462,9 @@ async def persist_run_outcome(
             "steps": result.steps,
             "duration_ms": round((perf_counter() - run_t0) * 1000),
             "source": request.source_category or "web",
+            # With success, says whether the fallback engine recovered a run
+            # the primary could not finish, and so points at engine gaps.
+            "engine_fallback": engine_fallback,
         },
     )
     await record_browser_task(
@@ -525,7 +519,6 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
         emit_frame,
         thread_mirror,
         _build_bot_delivery(request),
-        lease_held=partial(joiner_lease_held, request.job_id),
     )
 
     try:
@@ -547,7 +540,14 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
     session_id: str | None = None
 
     try:
-        async with browser_session(user_id=request.user_id, start_url=request.start_url) as session:
+        async with contextlib.AsyncExitStack() as sessions:
+            session = await sessions.enter_async_context(
+                browser_session(
+                    user_id=request.user_id,
+                    host_url=settings.BROWSER_HOST_URL,
+                    start_url=request.start_url,
+                )
+            )
             session_id = session.session_id
             log.set(browser={"session_id": session.session_id})
             await put_job_state(
@@ -568,9 +568,13 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
                     request_handoff=partial(
                         _run_handoff,
                         emit=emitter.emit,
-                        session=session,
                         user_id=request.user_id,
                         conversation_id=request.conversation_id,
+                    ),
+                    open_fallback_session=(
+                        partial(_open_fallback_session, sessions, request.user_id, fallback_host)
+                        if (fallback_host := settings.BROWSER_FALLBACK_HOST_URL)
+                        else None
                     ),
                     is_cancelled=partial(_is_cancelled, request),
                     action_results=thread_mirror.results,
@@ -600,10 +604,11 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
             result = await runner.run(full_task)
             await persist_run_outcome(
                 request,
-                session_id=session.session_id,
+                session_id=runner.session.session_id,
                 result=result,
                 run_t0=run_t0,
                 emitter=emitter,
+                engine_fallback=runner.used_fallback,
             )
             return result
     except BrowserConcurrencyLimit as exc:

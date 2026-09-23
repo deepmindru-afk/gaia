@@ -36,6 +36,7 @@ from app.services.browser import job_runner as jr
 from app.services.browser.exceptions import BrowserConcurrencyLimit, BrowserUnavailableError
 from app.services.browser.fingerprint import current_fingerprint_seed, seed_for_user
 from app.services.browser.runner import BrowserRunConfig, BrowserRunnerCallbacks
+from app.services.browser.session import BrowserHostSession
 from app.services.browser.tasks import BrowserTaskRecord
 
 pytestmark = pytest.mark.unit
@@ -261,6 +262,8 @@ def test_a_cancelled_run_reports_no_result_whatever_the_run_left_behind() -> Non
 # ---------------------------------------------------------------------------
 
 LLM_SENTINEL = object()
+# Not the settings default, so a job that opened its session on any other host shows.
+PRIMARY_HOST = "http://primary-host:8930"
 
 RunBody = Callable[["Harness"], Awaitable[BrowserResultSnapshot]]
 
@@ -274,6 +277,8 @@ class Harness:
         self.session = MagicMock(session_id="sess-1", live_view_url="https://live/abc")
         self.session_kwargs: dict[str, Any] = {}
         self.runner_kwargs: dict[str, Any] = {}
+        #: The runner the job built; a run body can move it onto a fallback session.
+        self.runner: Any = None
         self.run_task: str | None = None
         self.record_calls: list[dict[str, Any]] = []
         self.spawn_names: list[str | None] = []
@@ -319,7 +324,8 @@ class Harness:
         return result
 
     async def request_handoff(self, req: HandoffRequest) -> HandoffOutcome:
-        outcome: HandoffOutcome = await self.callbacks.request_handoff(req)
+        # The runner hands over the session it is on now, primary or fallback.
+        outcome: HandoffOutcome = await self.callbacks.request_handoff(req, self.session)
         return outcome
 
     async def action_results(self, step_index: int, outputs: object) -> None:
@@ -364,6 +370,8 @@ def _install(
     final = result if result is not None else _result(BrowserSessionStatus.COMPLETED, True, "Done")
 
     monkeypatch.setattr(jr, "build_browser_llm", lambda user_id=None: LLM_SENTINEL)
+    monkeypatch.setattr(jr.settings, "BROWSER_HOST_URL", PRIMARY_HOST)
+    monkeypatch.setattr(jr.settings, "BROWSER_FALLBACK_HOST_URL", None)
     monkeypatch.setattr(jr, "publish_frame_to_job", h.publish)
 
     async def _put_state(state: BrowserJobState) -> None:
@@ -389,6 +397,9 @@ def _install(
     class _Runner:
         def __init__(self, **kwargs: Any) -> None:
             h.runner_kwargs = kwargs
+            h.runner = self
+            self.session = kwargs["session"]
+            self.used_fallback = False
 
         async def run(self, task: str) -> BrowserResultSnapshot:
             h.run_task = task
@@ -641,7 +652,11 @@ async def test_task_is_passed_through_unchanged_without_a_start_url(
     h = _install(monkeypatch)
     await _run(h, _request(task="book a table"))
     assert h.run_task == "book a table"
-    assert h.session_kwargs == {"user_id": "u1", "start_url": None}
+    assert h.session_kwargs == {
+        "user_id": "u1",
+        "host_url": PRIMARY_HOST,
+        "start_url": None,
+    }
 
 
 async def test_start_url_is_appended_to_the_task_and_opened(
@@ -650,7 +665,11 @@ async def test_start_url_is_appended_to_the_task_and_opened(
     h = _install(monkeypatch)
     await _run(h, _request(task="book a table", start_url="https://resy.com"))
     assert h.run_task == "book a table\n\nStart at: https://resy.com"
-    assert h.session_kwargs == {"user_id": "u1", "start_url": "https://resy.com"}
+    assert h.session_kwargs == {
+        "user_id": "u1",
+        "host_url": PRIMARY_HOST,
+        "start_url": "https://resy.com",
+    }
 
 
 async def test_blank_start_url_is_not_appended(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -712,7 +731,7 @@ async def test_missing_identifiers_degrade_to_blank_and_none(
     await _run(h, _request(user_id="", conversation_id="", stream_id=None))
     assert h.runner_kwargs["user_id"] is None
     assert h.runner_kwargs["root_request_id"] is None
-    assert h.session_kwargs == {"user_id": "", "start_url": None}
+    assert h.session_kwargs == {"user_id": "", "host_url": PRIMARY_HOST, "start_url": None}
 
 
 # ---------------------------------------------------------------------------
@@ -917,7 +936,7 @@ async def test_handoff_keepalive_is_cancelled_after_the_handoff_resolves(
     """request_handoff spawns a keepalive to hold the host's idle clock open; cancel it once the handoff resolves so it stops touching an abandoned session."""
     tasks: list[asyncio.Task[None]] = []
 
-    async def _fake_keep_alive(session_id: str) -> None:
+    async def _fake_keep_alive(session: BrowserHostSession) -> None:
         await asyncio.Event().wait()  # runs until cancelled
 
     def _spawn(coro: Any, **kwargs: Any) -> asyncio.Task[None]:
@@ -947,7 +966,7 @@ async def test_handoff_keepalive_is_cancelled_when_await_handoff_raises(
     """Cancel the keepalive on the failure path too; a raised await_handoff must not leak the keepalive task running forever, and the run still owes a terminal card."""
     tasks: list[asyncio.Task[None]] = []
 
-    async def _fake_keep_alive(session_id: str) -> None:
+    async def _fake_keep_alive(session: BrowserHostSession) -> None:
         await asyncio.Event().wait()
 
     def _spawn(coro: Any, **kwargs: Any) -> asyncio.Task[None]:
@@ -1190,11 +1209,12 @@ async def test_credentials_handoff_also_watches_for_the_navigation_that_ends_it(
 ) -> None:
     """A login handoff resolves itself when the page navigates off the sign-in URL, so it gets the auto-resolve watcher on top of the keepalive -- and both must be aimed at the session/handoff actually being waited on."""
     w = _record_watchers(monkeypatch)
+    session = MagicMock(session_id="s-9")
 
     watchers = jr._spawn_handoff_watchers(
         "handoff-7",
         HandoffRequest(category=SensitiveCategory.CREDENTIALS, reason="log in"),
-        "s-9",
+        session,
         "u1",
     )
 
@@ -1203,8 +1223,8 @@ async def test_credentials_handoff_also_watches_for_the_navigation_that_ends_it(
         "browser_handoff_keepalive",
         "browser_handoff_autoresolve",
     ]
-    w.keep_alive.assert_called_once_with("s-9")
-    w.auto_resolve.assert_called_once_with("handoff-7", "s-9", "u1")
+    w.keep_alive.assert_called_once_with(session)
+    w.auto_resolve.assert_called_once_with("handoff-7", session, "u1")
     assert [coro for coro, _ in w.spawned] == [
         w.keep_alive.return_value,
         w.auto_resolve.return_value,
@@ -1221,7 +1241,10 @@ async def test_non_credentials_handoff_gets_only_the_keepalive(
     w = _record_watchers(monkeypatch)
 
     watchers = jr._spawn_handoff_watchers(
-        "handoff-7", HandoffRequest(category=category, reason="confirm"), "s-9", "u1"
+        "handoff-7",
+        HandoffRequest(category=category, reason="confirm"),
+        MagicMock(session_id="s-9"),
+        "u1",
     )
 
     assert len(watchers) == 1
@@ -1246,8 +1269,8 @@ async def test_handoff_watchers_are_aimed_at_this_run_handoff_session_and_user(
     await _run(h, _request(task="x"))
 
     handoff_id = h.handoffs_created[0][0]
-    w.keep_alive.assert_called_once_with("sess-1")
-    w.auto_resolve.assert_called_once_with(handoff_id, "sess-1", "u1")
+    w.keep_alive.assert_called_once_with(h.session)
+    w.auto_resolve.assert_called_once_with(handoff_id, h.session, "u1")
 
 
 async def test_a_completed_login_takeover_marks_the_session_worth_saving(
@@ -1315,6 +1338,27 @@ async def test_finished_run_is_captured_against_the_user_who_ran_it(
     assert props["status"] == "completed"
     assert props["success"] is True
     assert props["steps"] == 3
+    assert props["engine_fallback"] is False
+
+
+async def test_a_run_finished_on_the_fallback_engine_is_recorded_against_that_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The history row names the session the run ended on, and the event says the fallback recovered it."""
+    captured = _capture(monkeypatch)
+    fallback = MagicMock(session_id="sess-fallback", live_view_url="https://live/fb")
+
+    async def body(h: Harness) -> BrowserResultSnapshot:
+        h.runner.session = fallback
+        h.runner.used_fallback = True
+        return _result(BrowserSessionStatus.COMPLETED, True, "done")
+
+    h = _install(monkeypatch, run_body=body)
+
+    await _run(h, _request(task="x"))
+
+    assert h.record_calls[0]["record"].session_id == "sess-fallback"
+    assert captured[0][2]["engine_fallback"] is True
 
 
 def _capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:

@@ -119,9 +119,9 @@ async def test_a_full_run_screenshots_hands_off_and_reports() -> None:
                     )
                 )
                 handoff_id = await _wait_for_pending_handoff(world)
-                assert await resolve_handoff(
-                    handoff_id, HandoffDecision.CONTINUE, USER, NOTE
-                ) == (HandoffStatus.COMPLETED)
+                assert await resolve_handoff(handoff_id, HandoffDecision.CONTINUE, USER, NOTE) == (
+                    HandoffStatus.COMPLETED
+                )
                 run = await run_task
                 await world.settle()
 

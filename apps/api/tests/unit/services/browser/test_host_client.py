@@ -10,6 +10,9 @@ import pytest
 from app.services.browser import host_client
 from app.services.browser.exceptions import BrowserConcurrencyLimit, BrowserUnavailableError
 
+# Every call names the host it talks to: the primary engine or the fallback.
+_HOST = "http://browser-host:8930"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -120,7 +123,6 @@ class TestRaiseForStatus:
 @pytest.mark.unit
 class TestCreateSession:
     async def test_success(self, monkeypatch):
-        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_URL", "http://browser-host:8930")
         monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", "k1")
         resp = _mock_response(
             status_code=200,
@@ -133,19 +135,18 @@ class TestCreateSession:
         )
         inner, cm, cls_mock = _patch_async_client(None, resp, verb="post")
         with patch.object(host_client.httpx, "AsyncClient", cls_mock):
-            result = await host_client.create_session(storage_state=None)
+            result = await host_client.create_session(storage_state=None, host_url=_HOST)
         assert result.session_id == "s1"
         assert result.cdp_ws == "ws://cdp"
         assert result.live_ws == "ws://live"
         assert result.context_id == "ctx1"
         # Verify AsyncClient was constructed with expected args
-        assert cls_mock.call_args[1]["base_url"] == "http://browser-host:8930"
+        assert cls_mock.call_args[1]["base_url"] == _HOST
         assert cls_mock.call_args[1]["timeout"] == host_client._CREATE_TIMEOUT_SECONDS
         assert cls_mock.call_args[1]["headers"] == {"X-Host-Key": "k1"}
         inner.post.assert_awaited_once_with("/sessions", json={"storage_state": None})
 
     async def test_success_with_storage_state(self, monkeypatch):
-        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_URL", "http://browser-host:8930")
         monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", None)
         state = {"cookies": [], "origins": []}
         resp = _mock_response(
@@ -159,22 +160,20 @@ class TestCreateSession:
         )
         inner, cm, cls_mock = _patch_async_client(None, resp, verb="post")
         with patch.object(host_client.httpx, "AsyncClient", cls_mock):
-            await host_client.create_session(storage_state=state)
+            await host_client.create_session(storage_state=state, host_url=_HOST)
         inner.post.assert_awaited_once_with("/sessions", json={"storage_state": state})
         # No header when key is None
         assert cls_mock.call_args[1]["headers"] == {}
 
     async def test_at_capacity_raises_concurrency_limit(self, monkeypatch):
-        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_URL", "http://browser-host:8930")
         monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", None)
         resp = _mock_response(status_code=429)
         inner, cm, cls_mock = _patch_async_client(None, resp, verb="post")
         with patch.object(host_client.httpx, "AsyncClient", cls_mock):
             with pytest.raises(BrowserConcurrencyLimit, match="capacity"):
-                await host_client.create_session(storage_state=None)
+                await host_client.create_session(storage_state=None, host_url=_HOST)
 
     async def test_http_error_connect_raises_unavailable(self, monkeypatch):
-        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_URL", "http://browser-host:8930")
         monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", None)
         inner = AsyncMock()
         inner.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
@@ -183,8 +182,10 @@ class TestCreateSession:
         cm.__aexit__ = AsyncMock(return_value=False)
         cls_mock = MagicMock(return_value=cm)
         with patch.object(host_client.httpx, "AsyncClient", cls_mock):
-            with pytest.raises(BrowserUnavailableError, match="Could not reach"):
-                await host_client.create_session(storage_state=None)
+            with pytest.raises(BrowserUnavailableError, match="Could not reach") as exc_info:
+                await host_client.create_session(storage_state=None, host_url=_HOST)
+        # The message names the host that failed, so a fallback outage reads as one.
+        assert _HOST in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -195,14 +196,14 @@ class TestCreateSession:
 @pytest.mark.unit
 class TestDeleteSession:
     async def test_success_returns_storage_state(self, monkeypatch):
-        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_URL", "http://browser-host:8930")
         monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", "k2")
         stored = {"cookies": [{"name": "a", "value": "b"}]}
         resp = _mock_response(status_code=200, json_data={"storage_state": stored})
         inner, cm, cls_mock = _patch_async_client(None, resp, verb="delete")
         with patch.object(host_client.httpx, "AsyncClient", cls_mock):
-            result = await host_client.delete_session("sess-123")
+            result = await host_client.delete_session("sess-123", _HOST)
         assert result == stored
+        assert cls_mock.call_args[1]["base_url"] == _HOST
         assert cls_mock.call_args[1]["timeout"] == host_client._DEFAULT_TIMEOUT_SECONDS
         assert cls_mock.call_args[1]["headers"] == {"X-Host-Key": "k2"}
         inner.delete.assert_awaited_once_with("/sessions/sess-123")
@@ -216,15 +217,14 @@ class TestDeleteSession:
 @pytest.mark.unit
 class TestTouchSession:
     async def test_success_posts_to_the_touch_endpoint(self, monkeypatch):
-        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_URL", "http://browser-host:8930")
         monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", "k3")
         resp = _mock_response(status_code=200, json_data={})
         inner, cm, cls_mock = _patch_async_client(None, resp, verb="post")
         with patch.object(host_client.httpx, "AsyncClient", cls_mock):
-            await host_client.touch_session("sess-123")
+            await host_client.touch_session("sess-123", _HOST)
         # Without the configured base_url the relative touch path would never
         # reach the host, so the keepalive would silently stop working.
-        assert cls_mock.call_args[1]["base_url"] == "http://browser-host:8930"
+        assert cls_mock.call_args[1]["base_url"] == _HOST
         assert cls_mock.call_args[1]["timeout"] == host_client._DEFAULT_TIMEOUT_SECONDS
         assert cls_mock.call_args[1]["headers"] == {"X-Host-Key": "k3"}
         inner.post.assert_awaited_once_with("/sessions/sess-123/touch")
@@ -238,7 +238,6 @@ class TestTouchSession:
 @pytest.mark.unit
 class TestGetSession:
     async def test_success_with_all_fields(self, monkeypatch):
-        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_URL", "http://browser-host:8930")
         monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", None)
         resp = _mock_response(
             status_code=200,
@@ -252,17 +251,17 @@ class TestGetSession:
         )
         inner, cm, cls_mock = _patch_async_client(None, resp, verb="get")
         with patch.object(host_client.httpx, "AsyncClient", cls_mock):
-            result = await host_client.get_session("s1")
+            result = await host_client.get_session("s1", _HOST)
         assert result.session_id == "s1"
         assert result.live is True
         assert result.last_activity_at == 1234567890.0
         assert result.url == "https://example.com"
         assert result.title == "Example"
+        assert cls_mock.call_args[1]["base_url"] == _HOST
         assert cls_mock.call_args[1]["timeout"] == host_client._DEFAULT_TIMEOUT_SECONDS
         inner.get.assert_awaited_once_with("/sessions/s1")
 
     async def test_success_with_null_url_title(self, monkeypatch):
-        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_URL", "http://browser-host:8930")
         monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", None)
         resp = _mock_response(
             status_code=200,
@@ -276,13 +275,12 @@ class TestGetSession:
         )
         inner, cm, cls_mock = _patch_async_client(None, resp, verb="get")
         with patch.object(host_client.httpx, "AsyncClient", cls_mock):
-            result = await host_client.get_session("s2")
+            result = await host_client.get_session("s2", _HOST)
         assert result.url is None
         assert result.title is None
         assert result.live is False
 
     async def test_host_key_forwarded(self, monkeypatch):
-        monkeypatch.setattr(host_client.settings, "BROWSER_HOST_URL", "http://browser-host:8930")
         monkeypatch.setattr(host_client.settings, "BROWSER_HOST_KEY", "my-secret")
         resp = _mock_response(
             status_code=200,
@@ -296,6 +294,6 @@ class TestGetSession:
         )
         inner, cm, cls_mock = _patch_async_client(None, resp, verb="get")
         with patch.object(host_client.httpx, "AsyncClient", cls_mock):
-            await host_client.get_session("s1")
+            await host_client.get_session("s1", _HOST)
         assert cls_mock.call_args[1]["headers"] == {"X-Host-Key": "my-secret"}
-        assert cls_mock.call_args[1]["base_url"] == "http://browser-host:8930"
+        assert cls_mock.call_args[1]["base_url"] == _HOST

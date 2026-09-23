@@ -32,7 +32,7 @@ from app.browser_host.chromium import (
     ChromiumHost,
     cdp_call,
 )
-from app.config.settings import settings
+from app.config.browser_host_settings import browser_host_settings
 from tests.unit.browser_host.conftest import FakeMux, install_mux, make_host, make_session
 
 
@@ -66,7 +66,7 @@ async def test_create_context_second_call_is_not_blocked_by_a_hung_first_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A wedged first create must not hold the session lock across its CDP I/O."""
-    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 10)
+    monkeypatch.setattr(chromium.browser_host_settings, "BROWSER_HOST_MAX_SESSIONS", 10)
     mux = install_mux(
         monkeypatch, FakeMux(hang_on="Target.createBrowserContext", hang_call_count=2)
     )
@@ -88,8 +88,8 @@ async def test_create_context_second_call_is_not_blocked_by_a_hung_first_call(
 async def test_reserve_slot_counts_in_flight_creates_toward_capacity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """In-flight reservations must count toward _MAX_SESSIONS, not just finished sessions."""
-    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 2)
+    """In-flight reservations must count toward BROWSER_HOST_MAX_SESSIONS, not just finished sessions."""
+    monkeypatch.setattr(chromium.browser_host_settings, "BROWSER_HOST_MAX_SESSIONS", 2)
     mux = install_mux(
         monkeypatch, FakeMux(hang_on="Target.createBrowserContext", hang_call_count=2)
     )
@@ -113,7 +113,7 @@ async def test_create_context_failure_releases_its_reserved_slot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A create that fails its CDP work must give its reserved slot back."""
-    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 1)
+    monkeypatch.setattr(chromium.browser_host_settings, "BROWSER_HOST_MAX_SESSIONS", 1)
     install_mux(
         monkeypatch,
         FakeMux(
@@ -152,7 +152,7 @@ async def test_dispose_context_removes_session_when_storage_dump_raises() -> Non
     # connection itself is closed — otherwise the socket outlives the session.
     assert ("Target.disposeBrowserContext", {"browserContextId": "ctx1"}, None) in session.mux.calls
     assert session.mux.closed is True
-    # A session stuck here forever burns one of only _MAX_SESSIONS
+    # A session stuck here forever burns one of only BROWSER_HOST_MAX_SESSIONS
     # slots, with no way for a caller to ever reclaim it.
     assert host.get("s1") is None
 
@@ -257,7 +257,7 @@ async def test_reap_idle_keeps_a_session_sitting_exactly_on_the_ttl_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The TTL is the point at which a session becomes reapable, not before it."""
-    monkeypatch.setattr(settings, "BROWSER_HOST_IDLE_TTL_SECONDS", 60)
+    monkeypatch.setattr(browser_host_settings, "BROWSER_HOST_IDLE_TTL_SECONDS", 60)
     monkeypatch.setattr(chromium, "time", SimpleNamespace(monotonic=lambda: 1000.0))
     host = make_host()
     on_the_line = make_session(
@@ -283,7 +283,7 @@ async def test_reap_idle_spares_a_session_someone_is_watching(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A live viewer holds the context open however long the tab sits idle."""
-    monkeypatch.setattr(settings, "BROWSER_HOST_IDLE_TTL_SECONDS", 60)
+    monkeypatch.setattr(browser_host_settings, "BROWSER_HOST_IDLE_TTL_SECONDS", 60)
     monkeypatch.setattr(chromium, "time", SimpleNamespace(monotonic=lambda: 1000.0))
     host = make_host()
     watched = replace(make_session(session_id="watched", context_id="ctx-watched"), viewer_count=1)
@@ -323,7 +323,7 @@ async def test_create_context_opens_and_starts_exactly_one_connection(
     monkeypatch: pytest.MonkeyPatch, mux: FakeMux
 ) -> None:
     """A session IS its connection: one socket, dialed at the engine's root url, and started."""
-    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium.browser_host_settings, "BROWSER_HOST_MAX_SESSIONS", 5)
     host = make_host()
 
     session = await host.create_context(None)
@@ -339,7 +339,7 @@ async def test_create_context_closes_the_connection_when_its_cdp_work_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A connection opened before the failure has no session to carry it — it must not leak."""
-    monkeypatch.setattr(chromium, "_MAX_SESSIONS", 5)
+    monkeypatch.setattr(chromium.browser_host_settings, "BROWSER_HOST_MAX_SESSIONS", 5)
     mux = install_mux(
         monkeypatch,
         FakeMux(fail_on_first_call={"Target.createTarget": RuntimeError("no target")}),
@@ -376,7 +376,7 @@ async def test_reap_idle_closes_the_connection_of_every_session_it_reaps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A reaped session whose socket stays open leaks a connection the host can never find again."""
-    monkeypatch.setattr(settings, "BROWSER_HOST_IDLE_TTL_SECONDS", 10)
+    monkeypatch.setattr(browser_host_settings, "BROWSER_HOST_IDLE_TTL_SECONDS", 10)
     monkeypatch.setattr(chromium, "time", SimpleNamespace(monotonic=lambda: 1000.0))
     host = make_host()
     first = make_session(session_id="a", context_id="ctx-a", last_activity_at=0.0)

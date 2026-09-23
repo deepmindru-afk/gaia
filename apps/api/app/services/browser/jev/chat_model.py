@@ -245,9 +245,10 @@ class JevChatModel:
         #: sees only the current one, so a compound task cannot loop on its first part.
         self._plan: list[_PlanStep] | None = None
         self._plan_index = 0
-        #: The (part, pages read) the writer last judged, so each part is judged
-        #: on every page count once.
-        self._judged: tuple[int, int] | None = None
+        #: The part and the pages_read it was last judged on, so each part is judged
+        #: once per state of what was read: a new page, a page read to the end, or a
+        #: new document on a url already read (a wall that cleared into the list).
+        self._judged: tuple[int, tuple[tuple[str, ...], ...]] | None = None
         #: What each finished part produced, in the writer's words: the list a
         #: later part works through, the fact the closing answer reports.
         self._findings: list[str] = []
@@ -256,6 +257,13 @@ class JevChatModel:
         self._history: list[JevHistoryEntry] = []
         self._last_fingerprint: str | None = None
         self._steps = 0
+        #: Whether a run blocked on a page may retry it once on the fallback
+        #: engine (the runner says so when a fallback host is configured).
+        self.fallback_available = False
+        #: The page the run gave up on, once it asked for the fallback engine.
+        self.fallback_url: str | None = None
+        #: Where the run resumes after the switch: its first step opens it.
+        self._resume_url: str | None = None
         #: Actual gateway-reported spend across this run's decisions (Vercel
         #: reports cost 0 on free allowance); None the moment one decision
         #: arrives without cost metadata, so metering falls back to the table.
@@ -380,6 +388,13 @@ class JevChatModel:
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
         self._steps += 1
+        if self._resume_url is not None:
+            # First step on the fallback engine: back to the page the run could
+            # not pass, with the plan, findings and history it already has.
+            url, self._resume_url = self._resume_url, None
+            return self._direct(
+                output_format, {"navigate": {"url": url, "new_tab": False}}, observation
+            )
         # The part check and Jev's choice run side by side: the check only
         # matters when it finds the part done, and waiting for it first put a
         # writer call (3 s typical, far more on a slow provider) on every page.
@@ -616,9 +631,15 @@ class JevChatModel:
         self, goal: str, observation: JevObservation, registered: set[str]
     ) -> tuple[dict[str, dict[str, object]], str | None]:
         """Ask the agent that started the run how to proceed, or end the run failed when nobody can answer."""
+        unopened = self._page_that_never_opened(observation)
+        if self.fallback_available and self.fallback_url is None and not unopened:
+            # Before giving up on a page, try it once on the fallback engine: a
+            # page the primary engine renders wrongly is not a page with no way
+            # forward. A site that does not resolve is not an engine problem.
+            self.fallback_url = observation.url
+            return {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}, None
         action = BrowserHandoffAction.REQUEST_AGENT_GUIDANCE
         if action not in registered or not await self._may_ask_for_guidance():
-            unopened = self._page_that_never_opened(observation)
             if unopened:
                 # A site that never loaded is what blocked the run; "no way
                 # forward on this page" would describe a blank tab instead.
@@ -918,12 +939,13 @@ class JevChatModel:
         done_chosen asks again on the current screen whatever was judged
         before: Jev chose DONE, and only this evidence check may accept it.
         """
-        pages = len(self._seen_text.pages)
+        read = tuple(tuple(page.values()) for page in self._seen_text.pages)
+        pages = len(read)
         if pages == 0 or self._plan is None:
             return False
-        if not done_chosen and self._judged == (self._plan_index, pages):
+        if not done_chosen and self._judged == (self._plan_index, read):
             return False
-        self._judged = (self._plan_index, pages)
+        self._judged = (self._plan_index, read)
         # pages_read (titles and urls) and every action are in the context; the
         # pages' full text is not what a "was every requirement met" judgement needs.
         verdict = await self._structured(
@@ -939,14 +961,14 @@ class JevChatModel:
         # run actually read (not the part's own listing) or an action it actually
         # took. The writer once declared three stories opened from the front page
         # alone, and a radio button chosen that was never clicked.
-        read = {page_key(page["url"]) for page in self._seen_text.pages}
+        opened = {page_key(page["url"]) for page in self._seen_text.pages}
         listing = page_key(self._plan[self._plan_index].url)
         taken = {entry.action for entry in self._history}
         evidence = [item.strip() for item in (verdict.evidence if verdict else []) if item.strip()]
         unverified = [
             item
             for item in evidence
-            if item not in taken and (page_key(item) not in read or page_key(item) == listing)
+            if item not in taken and (page_key(item) not in opened or page_key(item) == listing)
         ]
         done = bool(verdict and verdict.done and evidence and not unverified)
         if verdict and verdict.done and not done:
@@ -1169,6 +1191,14 @@ class JevChatModel:
             # and the run decides from there; twenty of them once spent a whole run.
             offered -= {JevOperation.GO_BACK}
         return opening, offered - _stalled_operations(self._history)
+
+    def continue_on_fallback(self) -> None:
+        """Resume on a fresh browser at the page the run gave up on, keeping plan, findings and history."""
+        self._resume_url = self.fallback_url
+        self.fallback_available = False
+        self._handles = NodeHandles()
+        self._last_fingerprint = None
+        self._shot = None
 
     def _page_stalled(self) -> bool:
         return _page_stalled_in(self._history, self._stall_handled_at)

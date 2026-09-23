@@ -5,6 +5,7 @@ from __future__ import annotations
 import uvicorn
 
 from app.browser_host.server import app
+from app.config.browser_host_settings import browser_host_settings
 
 if __name__ == "__main__":
     # Binds all interfaces by design: the host runs in its own container on the
@@ -12,6 +13,6 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",  # noqa: S104  # nosec B104 — internal overlay only, port never published
-        port=8930,
+        port=browser_host_settings.BROWSER_HOST_PORT,
         log_config=None,
     )

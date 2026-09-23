@@ -66,18 +66,18 @@ def _host_headers() -> dict[str, str]:
     return headers
 
 
-async def create_session(storage_state: StorageState | None) -> HostSession:
+async def create_session(storage_state: StorageState | None, host_url: str) -> HostSession:
     """Create an isolated browser session, seeding storage_state when given."""
     try:
         async with httpx.AsyncClient(
-            base_url=settings.BROWSER_HOST_URL,
+            base_url=host_url,
             timeout=_CREATE_TIMEOUT_SECONDS,
             headers=_host_headers(),
         ) as client:
             response = await client.post("/sessions", json={"storage_state": storage_state})
     except httpx.HTTPError as exc:
         raise BrowserUnavailableError(
-            f"Could not reach the browser host at {settings.BROWSER_HOST_URL}: {exc}"
+            f"Could not reach the browser host at {host_url}: {exc}"
         ) from exc
 
     if response.status_code == _AT_CAPACITY_STATUS:
@@ -87,18 +87,18 @@ async def create_session(storage_state: StorageState | None) -> HostSession:
     return HostSession.model_validate(response.json())
 
 
-async def delete_session(session_id: str) -> StorageState:
+async def delete_session(session_id: str, host_url: str) -> StorageState:
     """Dispose the session and return its storage_state for persistence."""
     try:
         async with httpx.AsyncClient(
-            base_url=settings.BROWSER_HOST_URL,
+            base_url=host_url,
             timeout=_DEFAULT_TIMEOUT_SECONDS,
             headers=_host_headers(),
         ) as client:
             response = await client.delete(f"/sessions/{session_id}")
     except httpx.HTTPError as exc:
         raise BrowserUnavailableError(
-            f"Could not reach the browser host at {settings.BROWSER_HOST_URL}: {exc}"
+            f"Could not reach the browser host at {host_url}: {exc}"
         ) from exc
 
     _raise_for_status(response)
@@ -106,35 +106,35 @@ async def delete_session(session_id: str) -> StorageState:
     return body["storage_state"]
 
 
-async def touch_session(session_id: str) -> None:
+async def touch_session(session_id: str, host_url: str) -> None:
     """Reset the session's idle clock on the host (handoff keepalive)."""
     try:
         async with httpx.AsyncClient(
-            base_url=settings.BROWSER_HOST_URL,
+            base_url=host_url,
             timeout=_DEFAULT_TIMEOUT_SECONDS,
             headers=_host_headers(),
         ) as client:
             response = await client.post(f"/sessions/{session_id}/touch")
     except httpx.HTTPError as exc:
         raise BrowserUnavailableError(
-            f"Could not reach the browser host at {settings.BROWSER_HOST_URL}: {exc}"
+            f"Could not reach the browser host at {host_url}: {exc}"
         ) from exc
 
     _raise_for_status(response)
 
 
-async def get_session(session_id: str) -> HostSessionInfo:
+async def get_session(session_id: str, host_url: str) -> HostSessionInfo:
     """Fetch the host's current view of a session."""
     try:
         async with httpx.AsyncClient(
-            base_url=settings.BROWSER_HOST_URL,
+            base_url=host_url,
             timeout=_DEFAULT_TIMEOUT_SECONDS,
             headers=_host_headers(),
         ) as client:
             response = await client.get(f"/sessions/{session_id}")
     except httpx.HTTPError as exc:
         raise BrowserUnavailableError(
-            f"Could not reach the browser host at {settings.BROWSER_HOST_URL}: {exc}"
+            f"Could not reach the browser host at {host_url}: {exc}"
         ) from exc
 
     _raise_for_status(response)

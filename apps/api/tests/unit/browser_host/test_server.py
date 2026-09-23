@@ -56,7 +56,10 @@ def client(monkeypatch: pytest.MonkeyPatch):
     host = _HostStub()
     monkeypatch.setattr(server_mod, "_host", host)
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "http://browser-host:8930",
+        raising=False,
     )
     with TestClient(server_mod.app) as c:
         yield c, host
@@ -183,8 +186,8 @@ def test_control_plane_requires_host_key(client) -> None:
     """A rendered page in the same container can fetch() localhost:8930, so the host must never serve the control plane unauthenticated when production."""
     test_cli, host = client
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(server_mod.settings, "ENV", "production")
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret!" * 4)
+    monkeypatch.setattr(server_mod.browser_host_settings, "ENV", "production")
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret!" * 4)
     try:
         # No key -> 401 on every REST surface.
         assert test_cli.post("/sessions", json={"storage_state": None}).status_code == 401
@@ -210,8 +213,8 @@ def test_ws_requires_host_key(client) -> None:
     """WS /cdp + /live refuse sockets without the ?hk= key (4401)."""
     test_cli, host = client
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(server_mod.settings, "ENV", "production")
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "k" * 32)
+    monkeypatch.setattr(server_mod.browser_host_settings, "ENV", "production")
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", "k" * 32)
     try:
         with pytest.raises(WebSocketDisconnect) as exc:
             with test_cli.websocket_connect("/cdp/s1"):
@@ -296,8 +299,8 @@ def test_live_endpoint_does_not_touch_host_get_when_unauthorized(
     client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     test_cli, host = client
-    monkeypatch.setattr(server_mod.settings, "ENV", "production")
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "k" * 32)
+    monkeypatch.setattr(server_mod.browser_host_settings, "ENV", "production")
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", "k" * 32)
     with pytest.raises(WebSocketDisconnect) as exc:
         with test_cli.websocket_connect("/live/s1"):
             pass
@@ -409,41 +412,58 @@ def test_create_session_at_capacity_body(client) -> None:
 
 def test_ws_url_rewrites_https_to_wss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "https://browser-host:8930", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "https://browser-host:8930",
+        raising=False,
     )
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", None, raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", None, raising=False)
     assert server_mod._ws_url("/cdp/s1") == "wss://browser-host:8930/cdp/s1"
 
 
 def test_ws_url_rewrites_http_to_ws(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "http://browser-host:8930",
+        raising=False,
     )
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", None, raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", None, raising=False)
     assert server_mod._ws_url("/cdp/s1") == "ws://browser-host:8930/cdp/s1"
 
 
 def test_ws_url_strips_trailing_slash_on_base(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930/", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "http://browser-host:8930/",
+        raising=False,
     )
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", None, raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", None, raising=False)
     assert server_mod._ws_url("/cdp/s1") == "ws://browser-host:8930/cdp/s1"
 
 
 def test_ws_url_no_key_omits_query_param(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "http://browser-host:8930",
+        raising=False,
     )
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", None, raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", None, raising=False)
     assert "?" not in server_mod._ws_url("/cdp/s1")
 
 
 def test_ws_url_key_appends_hk_query_param(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "http://browser-host:8930",
+        raising=False,
     )
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_url("/cdp/s1") == "ws://browser-host:8930/cdp/s1?hk=s3cret"
 
 
@@ -452,9 +472,14 @@ def test_ws_url_key_uses_ampersand_when_path_already_has_query(
 ) -> None:
     """A path that already carries a query string must get an &hk= suffix, not a second ? that would produce an invalid URL."""
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "http://browser-host:8930",
+        raising=False,
     )
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert (
         server_mod._ws_url("/cdp/s1?foo=bar") == "ws://browser-host:8930/cdp/s1?foo=bar&hk=s3cret"
     )
@@ -465,16 +490,16 @@ def test_ws_url_key_uses_ampersand_when_path_already_has_query(
 
 def test_key_valid_no_key_configured_allows_in_development(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing key is fine outside production (local dev tooling)."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", None, raising=False)
-    monkeypatch.setattr(server_mod.settings, "ENV", "development", raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", None, raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "ENV", "development", raising=False)
     assert server_mod._key_valid("anything") is True
     assert server_mod._key_valid(None) is True
 
 
 def test_key_valid_no_key_configured_refuses_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing key must fail loud, not silently serve unauthenticated, in prod."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", None, raising=False)
-    monkeypatch.setattr(server_mod.settings, "ENV", "production", raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", None, raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "ENV", "production", raising=False)
     assert server_mod._key_valid("anything") is False
     assert server_mod._key_valid(None) is False
 
@@ -482,24 +507,32 @@ def test_key_valid_no_key_configured_refuses_in_production(monkeypatch: pytest.M
 def test_key_valid_rejects_none_candidate_when_key_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._key_valid(None) is False
 
 
 def test_key_valid_rejects_empty_candidate_when_key_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._key_valid("") is False
 
 
 def test_key_valid_rejects_wrong_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._key_valid("wrong") is False
 
 
 def test_key_valid_accepts_matching_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._key_valid("s3cret") is True
 
 
@@ -507,7 +540,9 @@ def test_key_valid_accepts_matching_candidate(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_require_host_key_raises_401_with_exact_detail(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     request = MagicMock()
     request.headers.get.return_value = None
     with pytest.raises(HTTPException) as exc:
@@ -518,7 +553,9 @@ def test_require_host_key_raises_401_with_exact_detail(monkeypatch: pytest.Monke
 
 
 def test_require_host_key_passes_silently_with_valid_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     request = MagicMock()
     request.headers.get.return_value = "s3cret"
     server_mod._require_host_key(request)  # must not raise
@@ -547,38 +584,50 @@ def _fake_ws(hk: str | None, origin: str | None = None) -> WebSocket:
 
 
 def test_ws_authorized_rejects_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws(None)) is False
 
 
 def test_ws_authorized_rejects_wrong_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("wrong")) is False
 
 
 def test_ws_authorized_accepts_valid_key_with_no_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     """Server-side clients (browser-use, the API's live-view proxy) send no Origin header at all -- that must not be treated as a rejection."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", None)) is True
 
 
 def test_ws_authorized_accepts_loopback_origin_without_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", "https://127.0.0.1")) is True
 
 
 def test_ws_authorized_accepts_loopback_origin_with_port_and_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost:3000/some/path")) is True
 
 
 def test_ws_authorized_rejects_cross_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     """A valid key does not save a request whose Origin is a rendered, attacker-controlled page -- that is the defense-in-depth this exists for."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", "https://evil.example.com")) is False
 
 
@@ -586,7 +635,9 @@ def test_ws_authorized_rejects_cross_origin_even_with_loopback_substring(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Guards against a naive substring/prefix check standing in for the exact host comparison."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert (
         server_mod._ws_authorized(_fake_ws("s3cret", "https://localhost.evil.example.com")) is False
     )
@@ -594,7 +645,9 @@ def test_ws_authorized_rejects_cross_origin_even_with_loopback_substring(
 
 def test_ws_authorized_rejects_unparsable_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     """An Origin value that blows up while being parsed is a rejection, not a 500 -- the except clause must actually return False."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", _BadOrigin("http://bad"))) is False
 
 
@@ -602,13 +655,17 @@ def test_ws_authorized_accepts_loopback_origin_with_path_but_no_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Only the authority is compared: a port-less Origin carrying a multi-segment path still resolves to localhost, so the socket is allowed."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost/some/path")) is True
 
 
 def test_ws_authorized_accepts_bare_ipv6_loopback_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     """::1 is in the allow-list, and its colons must not be mistaken for the port separator -- only the last one is."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://::1:8930")) is True
 
 
@@ -616,7 +673,9 @@ def test_ws_authorized_rejects_origin_with_a_second_scheme_in_the_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """http://localhost:8080://x has localhost:8080: as its authority, not localhost -- only the first :// separates the scheme, so this stays a rejection rather than being smuggled through as loopback."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost:8080://x")) is False
 
 
@@ -624,7 +683,9 @@ def test_ws_authorized_accepts_loopback_origin_with_a_scheme_inside_its_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A :// later in the path does not move the host boundary -- the host is read from the first ://, so this is still loopback."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost/x://y")) is True
 
 
@@ -632,7 +693,9 @@ def test_ws_authorized_rejects_origin_with_two_port_separators(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """localhost:1:2 is not localhost: only the last colon is a port separator, so the leftover localhost:1 fails the allow-list."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     assert server_mod._ws_authorized(_fake_ws("s3cret", "https://localhost:1:2")) is False
 
 
@@ -640,7 +703,9 @@ def test_ws_authorized_logs_exact_context_and_message_for_unparsable_origin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The rejection must be observable: exact wide-event field, exact message, and the real exception type -- that is all an operator has to go on."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     with patch.object(server_mod, "log") as mock_log:
         assert server_mod._ws_authorized(_fake_ws("s3cret", _BadOrigin("http://bad"))) is False
     mock_log.set.assert_called_once_with(browser={"operation": "ws_origin_reject"})
@@ -654,7 +719,9 @@ def test_ws_authorized_logs_exact_context_and_message_for_cross_origin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The cross-origin rejection carries its own message, distinct from the unparsable-Origin one, under the same wide-event operation."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     with patch.object(server_mod, "log") as mock_log:
         assert server_mod._ws_authorized(_fake_ws("s3cret", "https://evil.example.com")) is False
     mock_log.set.assert_called_once_with(browser={"operation": "ws_origin_reject"})
@@ -667,7 +734,9 @@ def test_ws_authorized_logs_nothing_when_it_allows_the_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An accepted socket emits no rejection event -- otherwise the operation field would be noise instead of a signal."""
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
+    monkeypatch.setattr(
+        server_mod.browser_host_settings, "BROWSER_HOST_KEY", "s3cret", raising=False
+    )
     with patch.object(server_mod, "log") as mock_log:
         assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost:3000")) is True
     mock_log.set.assert_not_called()
@@ -680,17 +749,23 @@ def test_ws_authorized_logs_nothing_when_it_allows_the_socket(
 def test_ws_url_rewrites_only_the_leading_http_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
     """A later http:// inside the URL is data, not a scheme -- rewriting it too would corrupt the address."""
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "http://proxy/http://inner", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "http://proxy/http://inner",
+        raising=False,
     )
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", None, raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", None, raising=False)
     assert server_mod._ws_url("/cdp/s1") == "ws://proxy/http://inner/cdp/s1"
 
 
 def test_ws_url_rewrites_only_the_leading_https_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "https://proxy/https://inner", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "https://proxy/https://inner",
+        raising=False,
     )
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", None, raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", None, raising=False)
     assert server_mod._ws_url("/cdp/s1") == "wss://proxy/https://inner/cdp/s1"
 
 
@@ -699,9 +774,12 @@ def test_ws_url_strips_only_a_trailing_slash_not_path_characters(
 ) -> None:
     """A base URL mounted under a path prefix keeps that prefix intact -- only a trailing slash is removed."""
     monkeypatch.setattr(
-        server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930/PREFIX", raising=False
+        server_mod.browser_host_settings,
+        "BROWSER_HOST_URL",
+        "http://browser-host:8930/PREFIX",
+        raising=False,
     )
-    monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", None, raising=False)
+    monkeypatch.setattr(server_mod.browser_host_settings, "BROWSER_HOST_KEY", None, raising=False)
     assert server_mod._ws_url("/cdp/s1") == "ws://browser-host:8930/PREFIX/cdp/s1"
 
 

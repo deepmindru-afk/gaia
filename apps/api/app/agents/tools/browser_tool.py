@@ -35,7 +35,7 @@ from app.services.browser.agent_guidance import (
     get_guidance_request,
     guidance_message,
 )
-from app.services.browser.handoff import get_conversation_pending_handoff, resolve_handoff
+from app.services.browser.handoff import resolve_handoff
 from app.services.browser.job_relay import relay_job_events
 from app.services.browser.job_runner import agent_result_message
 from app.services.browser.jobs import (
@@ -64,15 +64,6 @@ _DEAD_WORKER_RESULT = BrowserResultSnapshot(
     status=BrowserSessionStatus.FAILED,
     success=False,
     summary="the browser worker stopped unexpectedly",
-)
-
-#: Handed back while the run waits on the user in the live browser: the wait ends
-#: here, since polling through a handoff once held the executor, and with it
-#: every later message from the user, for the whole half-hour handoff window.
-_PAUSED_FOR_USER_RESULT = (
-    "The browser task is paused, waiting for the user to act in the live browser. "
-    "Do not wait on it again and do not start it again: it resumes when the user "
-    "replies, and its outcome is delivered to the user as a follow-up message."
 )
 
 
@@ -273,8 +264,6 @@ async def _poll_job(
         pending = await get_guidance_request(job_id)
         if pending is not None:
             return _JoinOutcome(guidance_message(pending.request), keep_lease=True)
-        if await get_conversation_pending_handoff(conversation_id) is not None:
-            return _JoinOutcome(_PAUSED_FOR_USER_RESULT)
         # A QUEUED job has never had a worker, so the enqueuer's un-heartbeaten
         # lease expiring says nothing about liveness: a worker still busy booting
         # will run it. Only from RUNNING on does a missing slot mean a dead run.

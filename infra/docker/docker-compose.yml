@@ -54,6 +54,7 @@ services:
       SEARXNG_BASE_URL: http://searxng:8080
       # gaia-browser-host — self-hosted Chromium for the browser-automation tool.
       BROWSER_HOST_URL: http://browser-host:8930
+      BROWSER_FALLBACK_HOST_URL: http://browser-host-fallback:8931
       # Public base fronting the authenticated live view (served by THIS api at
       # /live/{id}). Left unset in dev so it falls back to HOST; in prod a
       # browser.heygaia.io vhost reverse-proxies here (see docker-compose.prod.yml).
@@ -317,6 +318,7 @@ services:
       - MEMORY_EMBEDDING_SIDECAR_URL=http://embedding-sidecar:8200
       - SEARXNG_BASE_URL=http://searxng:8080
       - BROWSER_HOST_URL=http://browser-host:8930
+      - BROWSER_FALLBACK_HOST_URL=http://browser-host-fallback:8931
       - ARQ_METRICS_PORT=9100
       - JUICEFS_HOST_MOUNT_PATH=/mnt/jfs
       - UV_NO_SYNC=1
@@ -806,6 +808,42 @@ services:
       retries: 5
     mem_limit: 3g
     cpus: "1.5"
+
+  # Chromium fallback for browser-host: a run about to end blocked on a page the
+  # primary engine could not get past retries that page here once, keeping its
+  # plan and findings. Same image, same hostile-content island, same SECURITY
+  # rules as browser-host above; capped at two sessions because Chromium is heavy.
+  # Its BROWSER_HOST_URL is its OWN address: a host builds the CDP and live-view
+  # URLs it hands out from it.
+  browser-host-fallback:
+    container_name: browser-host-fallback
+    profiles: ["backend", "worker", "all"]
+    image: gaia
+    working_dir: /app/apps/api
+    command: ["python", "-m", "app.browser_host"]
+    environment:
+      PYTHONUNBUFFERED: 1
+      PYTHONPATH: /app/apps/api
+      UV_NO_SYNC: "1"
+      LOG_FORMAT: json
+      LOG_COLORIZE: "false"
+      BROWSER_ENGINE: chromium
+      BROWSER_HOST_URL: http://browser-host-fallback:8931
+      BROWSER_HOST_PORT: 8931
+      BROWSER_HOST_MAX_SESSIONS: 2
+      PLAYWRIGHT_BROWSERS_PATH: /opt/browsers
+      BROWSER_HOST_KEY: ${BROWSER_HOST_KEY:-}
+    networks:
+      - gaia_browser_net
+    shm_size: "512mb"
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header=\"X-Host-Key: $BROWSER_HOST_KEY\" http://localhost:8931/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    mem_limit: 2g
+    cpus: "1.0"
 
 volumes:
   chroma_data:

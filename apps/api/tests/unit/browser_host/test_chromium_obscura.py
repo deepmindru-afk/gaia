@@ -15,14 +15,14 @@ import pytest
 from app.browser_host import chromium
 from app.browser_host.chromium import ChromiumHost
 from app.browser_host.obscura_launch import obscura_serve_argv
-from app.config.settings import settings
+from app.config.browser_host_settings import browser_host_settings
 from app.constants.browser import BrowserEngine
 
 
 @pytest.mark.unit
 def test_private_targets_are_always_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     """No switch disables the guard: Obscura never gets private-network access."""
-    monkeypatch.setattr(settings, "OBSCURA_BIN", "/opt/obscura/obscura")
+    monkeypatch.setattr(browser_host_settings, "OBSCURA_BIN", "/opt/obscura/obscura")
     assert "--allow-private-network" not in obscura_serve_argv(9931)
 
 
@@ -31,9 +31,9 @@ async def test_launch_obscura_builds_the_serve_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """engine=obscura spawns <bin> serve --port <port> --stealth --allow-private-network."""
-    monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
-    monkeypatch.setattr(settings, "OBSCURA_BIN", "/opt/obscura/obscura")
-    monkeypatch.setattr(settings, "OBSCURA_PORT", 9931)
+    monkeypatch.setattr(browser_host_settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
+    monkeypatch.setattr(browser_host_settings, "OBSCURA_BIN", "/opt/obscura/obscura")
+    monkeypatch.setattr(browser_host_settings, "OBSCURA_PORT", 9931)
     # Obscura needs no user-data-dir; the chromium path must never be touched.
     mkdtemp = MagicMock()
     monkeypatch.setattr(chromium.tempfile, "mkdtemp", mkdtemp)
@@ -56,10 +56,11 @@ async def test_launch_obscura_builds_the_serve_command(
         "9931",
         "--stealth",
     ]
-    assert spawn.call_args.kwargs == {
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-    }
+    kwargs = spawn.call_args.kwargs
+    assert (kwargs["stdout"], kwargs["stderr"]) == (subprocess.DEVNULL, subprocess.DEVNULL)
+    assert kwargs["env"]["OBSCURA_NAV_TIMEOUT_MS"] == str(
+        browser_host_settings.OBSCURA_NAV_TIMEOUT_SECONDS * 1000
+    )
     mkdtemp.assert_not_called()
     assert host._user_data_dir is None
 
@@ -69,8 +70,8 @@ async def test_launch_obscura_without_bin_fails_loud(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A missing OBSCURA_BIN must raise, not silently fall back to Chromium."""
-    monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
-    monkeypatch.setattr(settings, "OBSCURA_BIN", None)
+    monkeypatch.setattr(browser_host_settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
+    monkeypatch.setattr(browser_host_settings, "OBSCURA_BIN", None)
     host = ChromiumHost()
 
     # Anchored: the message is the operator's entire diagnosis, so it must be
@@ -84,8 +85,8 @@ async def test_await_cdp_ready_obscura_derives_endpoint_from_json_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Obscura's ws endpoint comes from /json/version at OBSCURA_PORT, no port file."""
-    monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
-    monkeypatch.setattr(settings, "OBSCURA_PORT", 9931)
+    monkeypatch.setattr(browser_host_settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
+    monkeypatch.setattr(browser_host_settings, "OBSCURA_PORT", 9931)
     host = ChromiumHost()
     # Obscura writes no DevToolsActivePort — reaching for it would be the bug.
     host._read_devtools_port = AsyncMock(side_effect=AssertionError("obscura has no port file"))  # type: ignore[method-assign]  # rebinds the _read_devtools_port method with an AsyncMock fake
@@ -109,8 +110,8 @@ async def test_await_cdp_ready_obscura_named_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed discovery names Obscura, not Chromium."""
-    monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
-    monkeypatch.setattr(settings, "OBSCURA_PORT", 9931)
+    monkeypatch.setattr(browser_host_settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
+    monkeypatch.setattr(browser_host_settings, "OBSCURA_PORT", 9931)
     monkeypatch.setattr(chromium, "_CDP_READY_TIMEOUT_SECONDS", 0.1)
     monkeypatch.setattr(chromium, "_CDP_READY_POLL_SECONDS", 0.01)
     host = ChromiumHost()
@@ -129,7 +130,7 @@ async def test_start_skips_chromium_path_resolution_for_obscura(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """engine=obscura must not resolve (or require) a Chromium binary at start."""
-    monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
+    monkeypatch.setattr(browser_host_settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
     resolve = MagicMock(side_effect=AssertionError("resolved chromium under obscura"))
     monkeypatch.setattr(chromium, "_resolve_chromium_path", resolve)
     host = ChromiumHost()

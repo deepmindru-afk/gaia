@@ -20,11 +20,11 @@ from typing import Any, Literal, Self
 
 from dotenv import load_dotenv
 from pydantic import computed_field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
+from app.config.browser_host_settings import BrowserHostSettings
 from app.config.secrets import inject_infisical_secrets
 from app.config.settings_validator import settings_validator
-from app.constants.browser import BrowserEngine
 from app.constants.log_tags import LogTag
 from app.constants.search import (
     CRAWL4AI_DEFAULT_MAX_BROWSERS,
@@ -35,10 +35,8 @@ from shared.py.wide_events import log
 load_dotenv()
 
 
-class BaseAppSettings(BaseSettings):
+class BaseAppSettings(BrowserHostSettings):
     """Base configuration settings for the application."""
-
-    ENV: Literal["production", "development"] = "production"
 
     SHOW_MISSING_KEY_WARNINGS: bool = True
 
@@ -237,48 +235,12 @@ class CommonSettings(BaseAppSettings):
     # One long-lived Chromium, one isolated context per session, proxied over
     # CDP with an authenticated screencast live view. Reached internally by
     # service name; override locally to http://localhost:8930.
-    BROWSER_HOST_URL: str = "http://browser-host:8930"  # NOSONAR python:S5332 — internal docker service, plain HTTP on the private network by design (TLS terminates at the edge)
-    # Shared secret the API/worker must present to every host endpoint. Required
-    # in production: the host renders attacker-controlled pages in the SAME
-    # container, so a page could otherwise reach the control plane on localhost.
-    BROWSER_HOST_KEY: str | None = None
-    # Memory-based admission reading the cgroup's used/limit: admits while a new
-    # session's projected cost stays under HIGH_WATERMARK, sheds idle sessions
-    # between SOFT and HIGH. LIMIT_MB pins the budget when the cgroup is unreadable.
-    BROWSER_HOST_MEMORY_LIMIT_MB: int | None = None
-    BROWSER_HOST_MEMORY_HIGH_WATERMARK: float = 0.85
-    BROWSER_HOST_MEMORY_SOFT_WATERMARK: float = 0.75
-    # Dispose a context after this many seconds with no activity and no live viewer.
-    BROWSER_HOST_IDLE_TTL_SECONDS: int = 300
-    # Run Chromium headed (under Xvfb) instead of --headless=new, for anti-bot.
-    BROWSER_HOST_HEADED: bool = False
-    # Which engine the host launches. Obscura (a low-RAM Rust CDP server) is the
-    # default; Chromium (headless-shell) is the flag-selectable break-glass engine
-    # over the same CDP plane. Set BROWSER_ENGINE=chromium to fall back.
-    BROWSER_ENGINE: BrowserEngine = BrowserEngine.OBSCURA
-    # Path to the Obscura binary; required when BROWSER_ENGINE=obscura (the gaia
-    # image sets it via ENV). Missing it fails the host launch loud, no fallback.
-    OBSCURA_BIN: str | None = None
-    # Obscura's Page.navigate blocks until the page has loaded or this many
-    # seconds have passed, and past it the page's remaining scripts are never
-    # run (Chrome keeps loading). Measured 2026-09-22 on a 70 KB/s link: one
-    # 353 KB stylesheet took 25 s, so a 30 s deadline left jQuery pages inert.
-    OBSCURA_NAV_TIMEOUT_SECONDS: int = 90
-    # How long Obscura gives a page's script phase before it stops running them.
-    OBSCURA_SCRIPT_DEADLINE_SECONDS: int = 60
-    # Once no session is open and the engine process tree holds more than this,
-    # the host relaunches the engine. Measured 2026-09-22: Obscura kept ~50 MB
-    # per disposed context (601 MB -> 1325 MB over 15 sessions), and an
-    # eleven-hour process answered a full-document read in 57 s where a fresh
-    # one took 0.8 s. None disables the recycle.
-    BROWSER_ENGINE_RECYCLE_MB: int | None = 1500
-    # Path to a Chromium/Chrome binary for BROWSER_ENGINE=chromium. Unset, the
-    # host resolves Playwright's headless shell (its download can be
-    # unreachable from a dev box); set, that binary is used as is.
-    CHROMIUM_BIN: str | None = None
-    # Port Obscura's CDP server binds. Fixed (not ephemeral) because Obscura only
-    # publishes its /json/version — and thus its ws endpoint — at a port we name.
-    OBSCURA_PORT: int = 9222
+    # A second browser host running Chromium, for pages the primary engine could
+    # not get past: a run about to end blocked retries that page there once.
+    # Unset, runs end blocked as before. That host runs with BROWSER_ENGINE=
+    # chromium, a small BROWSER_HOST_MAX_SESSIONS, and its OWN address as its
+    # BROWSER_HOST_URL (a host builds the CDP/live URLs it hands out from it).
+    BROWSER_FALLBACK_HOST_URL: str | None = None
     # Base port for the dedicated Obscura the crawl4ai engine drives, distinct
     # from OBSCURA_PORT so the two never collide; the manager probes upward from
     # here if taken. High range on purpose: 9222/9223 collide with local Chrome.

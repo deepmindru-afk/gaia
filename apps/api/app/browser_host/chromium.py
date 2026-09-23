@@ -36,7 +36,7 @@ from app.browser_host.cdp_mux import CdpMux, CdpTransport
 from app.browser_host.memory import memory_usage_mb
 from app.browser_host.metrics import ProcessSampler, SessionMetrics
 from app.browser_host.obscura_launch import obscura_serve_argv, obscura_serve_env
-from app.config.settings import settings
+from app.config.browser_host_settings import browser_host_settings
 from app.constants.browser import (
     BROWSER_VIEWPORT_HEIGHT,
     BROWSER_VIEWPORT_WIDTH,
@@ -76,10 +76,6 @@ _ADMISSION_POLL_SECONDS = 0.25
 # the floor) so idle sessions are reclaimed faster to make room for new ones.
 _PRESSURE_IDLE_TTL_DIVISOR = 4
 _MIN_PRESSURE_IDLE_TTL_SECONDS = 30.0
-# Absolute anti-runaway backstop on concurrent contexts, NOT the real gate:
-# admission is memory-based (memory watermarks below), so this only guards
-# against a pathological leak spawning unbounded contexts. 0 disables it.
-_MAX_SESSIONS = 200
 # Conservative floor reserved for each in-flight/next session so a burst of
 # concurrent creates cannot collectively overshoot the watermark before their
 # memory materializes; the live estimate rises above this as real cost shows.
@@ -110,7 +106,7 @@ class HostSession:
 
 
 class AtCapacityError(RuntimeError):
-    """Raised when the host already holds _MAX_SESSIONS contexts."""
+    """Raised when the host already holds BROWSER_HOST_MAX_SESSIONS contexts."""
 
 
 class SessionNotFoundError(KeyError):
@@ -171,8 +167,8 @@ def _resolve_chromium_path() -> str:
     when the shell is absent. Playwright's resolver uses its sync API, which
     refuses to run inside a running event loop, so call this in a worker thread.
     """
-    if settings.CHROMIUM_BIN:
-        configured = Path(settings.CHROMIUM_BIN)
+    if browser_host_settings.CHROMIUM_BIN:
+        configured = Path(browser_host_settings.CHROMIUM_BIN)
         if not configured.is_file():
             raise RuntimeError(f"CHROMIUM_BIN is set but is not a file: {configured}")
         return str(configured)
@@ -222,7 +218,7 @@ class ChromiumHost:
     """Owns the single browser process and every live context on it.
 
     Named for its default engine, but fronts either Chromium (headless-shell) or
-    the Obscura CDP server, selected by settings.BROWSER_ENGINE. Everything
+    the Obscura CDP server, selected by browser_host_settings.BROWSER_ENGINE. Everything
     past launch — contexts, the CDP connection, proxy, screencast — speaks plain
     CDP and is identical for both."""
 
@@ -257,7 +253,7 @@ class ChromiumHost:
 
     async def start(self) -> None:
         """Resolve the binary, launch the engine, connect CDP, start the watcher + reaper."""
-        if settings.BROWSER_ENGINE is not BrowserEngine.OBSCURA:
+        if browser_host_settings.BROWSER_ENGINE is not BrowserEngine.OBSCURA:
             self._chromium_path = await asyncio.to_thread(_resolve_chromium_path)
         await self._launch()
         self._base_memory_mb = self._engine_rss_mb() or 0.0
@@ -302,7 +298,7 @@ class ChromiumHost:
     async def create_context(self, storage_state: StorageState | None) -> HostSession:
         """Create an isolated context, plus one blank page, optionally seeding cookies.
 
-        Fails fast with :class:AtCapacityError once _MAX_SESSIONS
+        Fails fast with :class:AtCapacityError once BROWSER_HOST_MAX_SESSIONS
         contexts are live, so a caller gets a clean 429 instead of a Chromium that
         slowly runs out of memory.
         """
@@ -540,11 +536,13 @@ class ChromiumHost:
         wait budget is spent. The lock guards the registry, never the CDP calls.
         """
         deadline = time.monotonic() + _ADMISSION_WAIT_SECONDS
-        ceiling = _MAX_SESSIONS
+        # Backstop on concurrent contexts, not the real gate (admission is memory
+        # based); a fallback Chromium host sets it low. 0 disables it.
+        ceiling = browser_host_settings.BROWSER_HOST_MAX_SESSIONS
         while True:
             used, limit = memory_usage_mb()
             estimate = self._estimate_session_cost_mb()
-            hard_mb = limit * settings.BROWSER_HOST_MEMORY_HIGH_WATERMARK
+            hard_mb = limit * browser_host_settings.BROWSER_HOST_MEMORY_HIGH_WATERMARK
             async with self._lock:
                 over_ceiling = ceiling > 0 and len(self._sessions) + self._pending_slots >= ceiling
                 projected = used + (self._pending_slots + 1) * estimate
@@ -673,7 +671,7 @@ class ChromiumHost:
         return None, None
 
     async def _launch(self) -> None:
-        if settings.BROWSER_ENGINE is BrowserEngine.OBSCURA:
+        if browser_host_settings.BROWSER_ENGINE is BrowserEngine.OBSCURA:
             args, env = self._obscura_command(), obscura_serve_env()
         else:
             args, env = self._chromium_command(), None
@@ -727,7 +725,7 @@ class ChromiumHost:
         # Size the window to the viewport so pages paint edge-to-edge instead of into
         # an 800x600 default (which leaves whitespace around the content in the view).
         args.append(f"--window-size={BROWSER_VIEWPORT_WIDTH},{BROWSER_VIEWPORT_HEIGHT}")
-        if not settings.BROWSER_HOST_HEADED:
+        if not browser_host_settings.BROWSER_HOST_HEADED:
             # The shell build is headless by construction and only understands the
             # bare flag; `--headless=new` selects a mode that binary does not have.
             is_shell = Path(self._chromium_path).name in _HEADLESS_SHELL_BINARIES
@@ -741,11 +739,11 @@ class ChromiumHost:
         name (never ephemeral, so we can poll for it), stealthed, and always kept
         off the private network.
         """
-        return obscura_serve_argv(settings.OBSCURA_PORT)
+        return obscura_serve_argv(browser_host_settings.OBSCURA_PORT)
 
     async def _await_cdp_ready(self) -> str:
-        if settings.BROWSER_ENGINE is BrowserEngine.OBSCURA:
-            return await self._poll_devtools_endpoint(settings.OBSCURA_PORT, "Obscura")
+        if browser_host_settings.BROWSER_ENGINE is BrowserEngine.OBSCURA:
+            return await self._poll_devtools_endpoint(browser_host_settings.OBSCURA_PORT, "Obscura")
         port = await self._read_devtools_port()
         return await self._poll_devtools_endpoint(port, "Chromium")
 
@@ -844,7 +842,7 @@ class ChromiumHost:
         A long-lived engine keeps memory from every context it has disposed and
         slows with it; with no session open a relaunch costs nobody anything.
         """
-        limit = settings.BROWSER_ENGINE_RECYCLE_MB
+        limit = browser_host_settings.BROWSER_ENGINE_RECYCLE_MB
         if limit is None or self._sessions:
             return
         rss = self.engine_rss_mb()
@@ -862,11 +860,11 @@ class ChromiumHost:
             await self._launch()
 
     async def _reap_idle(self) -> None:
-        ttl = float(settings.BROWSER_HOST_IDLE_TTL_SECONDS)
+        ttl = float(browser_host_settings.BROWSER_HOST_IDLE_TTL_SECONDS)
         used, limit = memory_usage_mb()
         # Under memory pressure, reclaim idle sessions sooner to free room for new
         # ones instead of waiting out the full idle TTL.
-        if limit > 0 and used > limit * settings.BROWSER_HOST_MEMORY_SOFT_WATERMARK:
+        if limit > 0 and used > limit * browser_host_settings.BROWSER_HOST_MEMORY_SOFT_WATERMARK:
             ttl = max(_MIN_PRESSURE_IDLE_TTL_SECONDS, ttl / _PRESSURE_IDLE_TTL_DIVISOR)
         now = time.monotonic()
         stale = [

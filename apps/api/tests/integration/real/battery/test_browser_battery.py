@@ -51,10 +51,10 @@ def battery(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Battery]:
     stack.close()
 
 
-#: Lines the run itself sends while it works, none of them its outcome: step
-#: captions, stall notes, and the three lines of a handoff prompt.
+#: Lines the run itself sends, none of them its outcome: step captions, stall
+#: notes, the three lines of a handoff prompt, and the closing recap link.
 _PROGRESS_LINE = re.compile(
-    r"^(Step \d+ ·|Still (on step|waiting)|Open the live browser:|Reply \"done\")"
+    r"^(Step \d+ ·|Still (on step|waiting)|Open the live browser:|Reply \"done\"|📽 )"
 )
 #: One reply delivered as several messages arrives within this many seconds.
 _ONE_REPLY_SECONDS = 2.0
@@ -338,7 +338,7 @@ def test_a_captcha_is_handed_over_and_a_cancel_ends_the_run_cleanly(battery: Bat
         r"captcha|robot", outcome.handoffs[0].get("reason", ""), re.I
     )
     assert outcome.success is not True
-    assert outcome.transcript.texts_matching(r"🛑 Stopped"), outcome.transcript.texts
+    assert outcome.status == "cancelled", outcome.state
     _one_final_message(outcome)
 
 
@@ -408,8 +408,7 @@ def test_a_stop_from_the_user_ends_the_run_with_one_message(battery: Battery) ->
 
     assert outcome.success is not True
     assert outcome.status in ("stopped", "cancelled", "failed"), outcome.state
-    finals = outcome.transcript.texts_matching(r"🛑 Stopped|⚠️ Couldn't finish")
-    assert len(finals) == 1, finals
+    _one_final_message(outcome)
     _no_contradiction(outcome)
 
 

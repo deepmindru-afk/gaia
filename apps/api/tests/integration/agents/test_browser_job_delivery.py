@@ -65,7 +65,8 @@ class _ScriptedBrowser:
 
     def __init__(self, **kwargs: Any) -> None:
         self._callbacks = kwargs["callbacks"]
-        self._session = kwargs["session"]
+        self.session = kwargs["session"]
+        self.used_fallback = False
 
     async def run(self, task: str) -> BrowserResultSnapshot:
         emit: EmitFn = self._callbacks.emit
@@ -73,8 +74,8 @@ class _ScriptedBrowser:
             BrowserSessionSnapshot(
                 task=task,
                 status=BrowserSessionStatus.RUNNING,
-                session_id=self._session.session_id,
-                live_view_url=self._session.live_view_url,
+                session_id=self.session.session_id,
+                live_view_url=self.session.live_view_url,
             )
         )
         await emit(
@@ -162,7 +163,7 @@ def browser(monkeypatch: pytest.MonkeyPatch) -> None:
         yield session
 
     monkeypatch.setattr(jr, "browser_session", _session)
-    monkeypatch.setattr(jr, "build_browser_llm", lambda: object())
+    monkeypatch.setattr(jr, "build_browser_llm", lambda **_: object())
     monkeypatch.setattr(jr, "BrowserTaskRunner", _ScriptedBrowser)
     monkeypatch.setattr(jr, "record_browser_task", AsyncMock())
     monkeypatch.setattr(jr, "capture_event", MagicMock())

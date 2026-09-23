@@ -49,6 +49,7 @@ from app.services.browser.jev.prompts import (
     TEXT_VALUE,
     URL_VALUE,
 )
+from app.services.browser.jev.viewport import ViewportRead
 
 from .conftest import FakeNode, make_state
 
@@ -1301,3 +1302,108 @@ async def test_an_honest_answer_to_a_goal_not_achieved_is_not_a_success(flights_
     done = _action(result.completion)["done"]
     assert done["text"] == "There is no Buy now button on this page."
     assert done["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# Engine fallback: a blocked page is retried once on the other engine
+# ---------------------------------------------------------------------------
+
+
+async def test_a_blocked_page_asks_for_the_fallback_engine_once_and_resumes_there(
+    flights_state,
+) -> None:
+    model, gateway, helper, _ = _model(
+        flights_state,
+        [("BLOCKED", None), ("BLOCKED", None)],
+        [{"text": "Found the flights page; no fares shown."}],
+    )
+    model.fallback_available = True
+
+    blocked = await model.ainvoke([], _agent_output())
+
+    # Handing the page to the other engine is not a closing answer: no writer call.
+    assert model.fallback_url == flights_state.url
+    assert _action(blocked.completion)["done"]["success"] is False
+    assert helper.calls == []
+
+    model.continue_on_fallback()
+    resumed = await model.ainvoke([], _agent_output())
+
+    assert _action(resumed.completion) == {"navigate": {"url": flights_state.url, "new_tab": False}}
+    assert len(gateway.requests) == 1
+
+    blocked_again = await model.ainvoke([], _agent_output())
+
+    # Blocked on the fallback too: the run ends with what it read, no second switch.
+    done = _action(blocked_again.completion)["done"]
+    assert (done["text"], done["success"]) == ("Found the flights page; no fares shown.", False)
+    assert model.fallback_available is False
+
+
+# ---------------------------------------------------------------------------
+# A wall that clears on the same url: the page it turns into is judged again
+# ---------------------------------------------------------------------------
+
+_QUESTIONS_URL = "https://stackoverflow.com/questions"
+
+
+@pytest.mark.regression
+async def test_a_list_that_replaces_a_wall_on_the_same_url_is_judged_and_answers_the_task(
+    monkeypatch,
+) -> None:
+    """Regression: the wall was judged, the list that replaced it never was, and the run failed."""
+    wall = make_state(
+        {1: FakeNode("A", text="Privacy")}, url=_QUESTIONS_URL, title="Just a moment..."
+    )
+    questions = make_state(
+        {1: FakeNode("A", text="How to keep direct initialization errors?")},
+        url=_QUESTIONS_URL,
+        title="Newest Questions - Stack Overflow",
+    )
+    screens = iter(
+        [
+            ViewportRead(
+                text="Ray ID: a3f9\nPerformance and Security by Cloudflare", at_bottom=True
+            ),
+            ViewportRead(text="Newest Questions\nHow to keep direct initialization errors?"),
+        ]
+    )
+
+    async def screen(*args: object) -> ViewportRead:
+        return next(screens)
+
+    monkeypatch.setattr(chat_model_mod, "read_viewport", screen)
+    helper = FakeTextModel(replies=[{"text": 'The first question is "How to keep direct..."'}])
+    judged: list[dict[str, Any]] = []
+
+    async def writer(schema, prompt, *, label, timeout=None):
+        # Judges like the real writer: done when the page shows the list, not while the wall does.
+        if not prompt[0].content.startswith(PART_DONE):
+            return await helper.structured(schema, prompt, label=label, timeout=timeout)
+        context = json.loads(prompt[1].content)
+        judged.append(context)
+        shown = "How to keep" in context["page"]["text"]
+        return schema.model_validate(
+            {"done": shown, "evidence": [_QUESTIONS_URL] if shown else [], "findings": ""}
+        )
+
+    gateway = ScriptedGateway(script=[("WAIT", None), ("SCROLL_DOWN", None)])
+    model = JevChatModel(client=gateway, text_model=helper, structured_call=writer)  # type: ignore[arg-type]  # a scripted gateway and a fake text model stand in for the real ones
+    session = FakeSession(wall)
+    model.bind(
+        session, f"Go to {_QUESTIONS_URL} and tell me the exact title of the first question listed."
+    )  # type: ignore[arg-type]  # a fake session stands in for Browser-Use's
+    await model.ainvoke([], _agent_output())
+    session.state = questions
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion)["done"]["success"] is True
+    # The list, not the wall: its own title, and only its top part read.
+    assert judged[-1]["pages_read"] == [
+        {
+            "url": _QUESTIONS_URL,
+            "title": "Newest Questions - Stack Overflow",
+            "read": "top part only",
+        }
+    ]

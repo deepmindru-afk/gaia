@@ -9,9 +9,6 @@ instead of a pasted link.
 
 from app.constants.browser import (
     BROWSER_CREDENTIALS_SAVED_NOTE,
-    BROWSER_RUN_STOPPED_LABEL,
-    BROWSER_TASK_FAILED_PREFIX,
-    BrowserSessionStatus,
     HandoffStatus,
     SensitiveCategory,
 )
@@ -100,9 +97,7 @@ class BotProgressDelivery:
             )
             if sent:
                 return
-        await self.note(
-            _step_caption(self._steps_shown, snapshot.goal, snapshot.actions)
-        )
+        await self.note(_step_caption(self._steps_shown, snapshot.goal, snapshot.actions))
 
     async def handoff(self, snapshot: BrowserHandoffSnapshot) -> None:
         # Only PENDING needs a message: resolution is already acked in-chat and
@@ -125,32 +120,18 @@ class BotProgressDelivery:
         await self.note(NEW_MESSAGE_BREAKER.join(blocks))
 
     async def result(self, snapshot: BrowserResultSnapshot) -> None:
-        """Emit the final task result to the conversation."""
-        # Don't echo Browser-Use's raw final text: the assistant sends the
-        # user-facing summary right after. This just closes out the progress.
-        if snapshot.success:
-            summary = (snapshot.summary or "").strip()
-            msg = f"✅ Done. {summary}" if summary else "✅ Done."
-        elif snapshot.status is BrowserSessionStatus.CANCELLED:
-            # The user stopped this themselves, so telling them it could not be
-            # finished reads as a failure they did not cause.
-            msg = "🛑 Stopped."
-        else:
-            reason = _failure_reason(snapshot.summary)
-            msg = f"⚠️ Couldn't finish that: {reason}" if reason else "⚠️ Couldn't finish that."
+        """Close out the progress with the run's recap link, and nothing else.
+
+        The outcome itself is the assistant's to say, once: the joined turn
+        narrates it, or the worker's follow-up does when nobody is joined. A
+        canned "Done"/"Stopped" line here made every outcome arrive twice.
+        """
         if snapshot.replay_url:
-            msg += f"\n\n📽 Here's a recap of the run: {snapshot.replay_url}"
-        await self.note(msg)
+            await self.note(f"📽 Here's a recap of the run: {snapshot.replay_url}")
 
     async def note(self, message: str) -> None:
         """Send one plain message to the user."""
         await publish_outbound_message(self._platform, self._user_id, [message])
-
-
-def _failure_reason(summary: str) -> str:
-    """Collapse a runner failure summary to one line, or "" when it carried none. Never clipped."""
-    reason = " ".join(summary.removeprefix(BROWSER_TASK_FAILED_PREFIX).split())
-    return reason.removeprefix(BROWSER_RUN_STOPPED_LABEL)
 
 
 def _is_blank_tab(url: str | None) -> bool:

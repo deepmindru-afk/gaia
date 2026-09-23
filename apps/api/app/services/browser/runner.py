@@ -65,7 +65,8 @@ if TYPE_CHECKING:
 _STALL_POLL_SECONDS = 1.0
 
 EmitFn = Callable[[BrowserCardSnapshot], Awaitable[None]]
-RequestHandoffFn = Callable[[HandoffRequest], Awaitable[HandoffOutcome]]
+RequestHandoffFn = Callable[[HandoffRequest, BrowserHostSession], Awaitable[HandoffOutcome]]
+OpenFallbackSessionFn = Callable[[str], Awaitable[BrowserHostSession]]
 IsCancelledFn = Callable[[], Awaitable[bool]]
 RequestGuidanceFn = Callable[[AgentGuidanceRequest], Awaitable[HandoffOutcome]]
 NoteFn = Callable[[str], Awaitable[None]]
@@ -93,6 +94,9 @@ class BrowserRunnerCallbacks:
     request_guidance: RequestGuidanceFn | None = None
     #: One plain line to the user when a step has shown nothing for a while.
     note: NoteFn | None = None
+    #: Opens a session on the fallback engine at a url. Absent when no fallback
+    #: host is configured, and a run blocked on a page then simply ends blocked.
+    open_fallback_session: OpenFallbackSessionFn | None = None
 
 
 class BrowserTaskRunner:
@@ -117,6 +121,11 @@ class BrowserTaskRunner:
         self._agent_joined = callbacks.agent_joined
         self._note = callbacks.note
         self._request_guidance = callbacks.request_guidance
+        self._open_fallback_session = callbacks.open_fallback_session
+        #: Whether the run moved to the fallback engine for a page it could not pass.
+        self.used_fallback = False
+        if isinstance(llm, JevChatModel):
+            llm.fallback_available = callbacks.open_fallback_session is not None
         self._config = config
         self._task_timeout = config.task_timeout_seconds
         # A step that hands off waits on the human, so its budget is active work
@@ -151,6 +160,11 @@ class BrowserTaskRunner:
         self._waiting_on_someone = False
         self._agent_run = self._build_agent_run()
 
+    @property
+    def session(self) -> BrowserHostSession:
+        """The browser session the run is on now; the fallback's after a switch."""
+        return self._session
+
     def _build_agent_run(self) -> BrowserAgentRun:
         hooks = RunHooks(
             step=self._record_step,
@@ -183,7 +197,7 @@ class BrowserTaskRunner:
         try:
             try:
                 outcome = await asyncio.wait_for(
-                    self._agent_run.execute(task), timeout=self._wall_clock_timeout
+                    self._execute(task), timeout=self._wall_clock_timeout
                 )
             except (BrowserHandoffCancelled, InterruptedError):
                 return await self._finish_from_handoff()
@@ -219,6 +233,31 @@ class BrowserTaskRunner:
             return await self._finish_after_execute(outcome)
         finally:
             stall_watch.cancel()
+
+    async def _execute(self, task: str) -> RunOutcome:
+        """Run the agent; when it gave up on a page the primary engine could not pass, finish on the fallback engine."""
+        outcome = await self._agent_run.execute(task)
+        jev = self._llm if isinstance(self._llm, JevChatModel) else None
+        if jev is None or jev.fallback_url is None or self._open_fallback_session is None:
+            return outcome
+        url = jev.fallback_url
+        log.info(
+            f"{LogTag.BROWSER} Browser run moving to the fallback engine for {url[:120]}",
+            browser={"session_id": self._session.session_id, "operation": "engine_fallback"},
+        )
+        self._session = await self._open_fallback_session(url)
+        self.used_fallback = True
+        await self._emit(
+            BrowserSessionSnapshot(
+                task=task,
+                status=BrowserSessionStatus.RUNNING,
+                session_id=self._session.session_id,
+                live_view_url=self._session.live_view_url,
+            )
+        )
+        jev.continue_on_fallback()
+        self._agent_run = self._build_agent_run()
+        return await self._agent_run.execute(task)
 
     async def _finish_from_handoff(self) -> BrowserResultSnapshot:
         """Judge a run the handoff ended: blocked with no guidance, expired, completed by the user, or stopped."""
@@ -282,7 +321,9 @@ class BrowserTaskRunner:
 
         self._waiting_on_someone = True
         try:
-            outcome = await self._request_handoff(HandoffRequest(category=cat, reason=reason))
+            outcome = await self._request_handoff(
+                HandoffRequest(category=cat, reason=reason), self._session
+            )
         finally:
             self._waiting_on_someone = False
             self._last_frame_at = perf_counter()

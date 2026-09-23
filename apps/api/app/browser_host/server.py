@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from app.browser_host.chromium import AtCapacityError, ChromiumHost, SessionNotFoundError
 from app.browser_host.proxy import run_cdp_proxy
 from app.browser_host.screencast import run_live_view
-from app.config.settings import settings
+from app.config.browser_host_settings import browser_host_settings
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
 
@@ -115,12 +115,12 @@ _host = ChromiumHost()
 
 
 def _key_valid(candidate: str | None) -> bool:
-    key: str | None = settings.BROWSER_HOST_KEY
+    key: str | None = browser_host_settings.BROWSER_HOST_KEY
     if key is None:
         # No key configured: fine outside production (local dev tooling). In
         # production this host is unsafe to serve — fail loud instead of
         # silently running unauthenticated.
-        return bool(settings.ENV != "production")
+        return bool(browser_host_settings.ENV != "production")
     return bool(candidate) and secrets.compare_digest(candidate, key)
 
 
@@ -163,10 +163,12 @@ def _ws_url(path: str) -> str:
     # One replace per line so each carries its own suppression: the literals only
     # UPGRADE the configured scheme to its websocket form (https becomes wss); the
     # http arm applies only when the operator configured a plaintext host URL.
-    base = settings.BROWSER_HOST_URL.replace("https://", "wss://", 1)  # NOSONAR python:S5332
+    base = browser_host_settings.BROWSER_HOST_URL.replace(
+        "https://", "wss://", 1
+    )  # NOSONAR python:S5332
     base = base.replace("http://", "ws://", 1)  # NOSONAR python:S5332
     url = f"{base.rstrip('/')}{path}"
-    key = settings.BROWSER_HOST_KEY
+    key = browser_host_settings.BROWSER_HOST_KEY
     if key:
         url = f"{url}?hk={key}" if "?" not in url else f"{url}&hk={key}"
     return url

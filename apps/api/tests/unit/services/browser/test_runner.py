@@ -25,7 +25,7 @@ from app.constants.browser import (
     HandoffStatus,
 )
 from app.constants.log_tags import LogTag
-from app.schemas.browser import HandoffOutcome, HandoffRequest
+from app.schemas.browser import BrowserSessionSnapshot, HandoffOutcome, HandoffRequest
 from app.services.browser import agent_run, runner as runner_mod
 from app.services.browser.agent_run import outcome_from_history
 from app.services.browser.jev.chat_model import JevChatModel
@@ -161,6 +161,7 @@ def _session() -> BrowserHostSession:
         cdp_url="ws://x",  # NOSONAR
         live_view_url="http://v",  # NOSONAR
         context_id="ctx-1",
+        host_url="http://browser-host:8930",
     )
 
 
@@ -1091,9 +1092,14 @@ async def test_takeover_forwards_the_reason_and_category_to_the_handoff() -> Non
     runner = _make_runner(emit=emit, request_handoff=handoff)
     await runner._handle_takeover("Enter your password and click Login", "credentials")
 
-    request = handoff.await_args.args[0]
-    assert request.category == SensitiveCategory.CREDENTIALS
-    assert request.reason == "Enter your password and click Login"
+    # The handoff also gets the session the run is on, so it pauses that browser.
+    assert handoff.await_args.args == (
+        HandoffRequest(
+            category=SensitiveCategory.CREDENTIALS,
+            reason="Enter your password and click Login",
+        ),
+        runner.session,
+    )
 
 
 async def test_unknown_takeover_category_falls_back_to_irreversible() -> None:
@@ -1830,7 +1836,7 @@ async def test_a_step_that_shows_nothing_for_a_while_gets_one_line_saying_so(
 
     async def slow_run(task: str) -> RunOutcome:
         await asyncio.sleep(0.3)
-        return RunOutcome(success=True, summary="done", steps=1)
+        return RunOutcome(success=True, summary="done")
 
     runner._agent_run = SimpleNamespace(execute=slow_run, stop=lambda: None)
     await runner.run("read the page")
@@ -1845,7 +1851,7 @@ async def test_waiting_on_the_user_is_not_a_stall(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(runner_mod, "_STALL_POLL_SECONDS", 0.01)
     note = AsyncMock()
 
-    async def a_slow_human(request: HandoffRequest) -> HandoffOutcome:
+    async def a_slow_human(request: HandoffRequest, session: BrowserHostSession) -> HandoffOutcome:
         await asyncio.sleep(0.3)
         return HandoffOutcome(status=HandoffStatus.COMPLETED)
 
@@ -1854,9 +1860,119 @@ async def test_waiting_on_the_user_is_not_a_stall(monkeypatch: pytest.MonkeyPatc
 
     async def run_that_hands_off(task: str) -> RunOutcome:
         await runner._handle_takeover("sign in", "credentials")
-        return RunOutcome(success=True, summary="done", steps=1)
+        return RunOutcome(success=True, summary="done")
 
     runner._agent_run = SimpleNamespace(execute=run_that_hands_off, stop=lambda: None)
     await runner.run("sign in and read")
 
     note.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Engine fallback: a page the primary engine could not pass is retried once
+# ---------------------------------------------------------------------------
+
+_BLOCKED_URL = "https://flights.example.com/results"
+
+
+def _fallback_session() -> BrowserHostSession:
+    return BrowserHostSession(
+        session_id="s-fallback",
+        cdp_url="ws://fallback",  # NOSONAR
+        live_view_url="http://v-fallback",  # NOSONAR
+        context_id="ctx-2",
+        host_url="http://fallback-host:8930",
+    )
+
+
+class _AgentRunThatBlocksOnce:
+    """Stands in for BrowserAgentRun: the first run gives up on a page and asks for the fallback."""
+
+    runs: ClassVar[list[tuple[BrowserHostSession, bool]]] = []
+
+    def __init__(self, *, session, llm, config, hooks, step_timeout) -> None:
+        self._session = session
+        self._llm = llm
+
+    async def execute(self, task: str) -> RunOutcome:
+        type(self).runs.append((self._session, self._llm.fallback_available))
+        if len(type(self).runs) == 1:
+            self._llm.fallback_url = _BLOCKED_URL
+            return RunOutcome(success=False, summary="blocked on the primary")
+        return RunOutcome(success=True, summary="fares found on the fallback")
+
+    def stop(self) -> None:
+        return None
+
+
+def _fallback_runner(monkeypatch, emit, open_fallback_session) -> BrowserTaskRunner:
+    _AgentRunThatBlocksOnce.runs = []
+    monkeypatch.setattr(runner_mod, "BrowserAgentRun", _AgentRunThatBlocksOnce)
+    return BrowserTaskRunner(
+        session=_session(),
+        llm=JevChatModel(client=MagicMock(), text_model=MagicMock()),
+        callbacks=BrowserRunnerCallbacks(
+            emit=emit,
+            request_handoff=AsyncMock(),
+            is_cancelled=AsyncMock(return_value=False),
+            open_fallback_session=open_fallback_session,
+        ),
+        config=BrowserRunConfig(
+            max_steps=10,
+            max_actions_per_step=5,
+            task_timeout_seconds=30,
+            step_timeout_seconds=180,
+            handoff_timeout_seconds=0,
+            stream_screenshots=False,
+            solve_captcha=False,
+        ),
+    )
+
+
+async def test_a_run_blocked_on_the_primary_engine_finishes_on_the_fallback(monkeypatch) -> None:
+    events, emit = _collector()
+    fallback = _fallback_session()
+    open_fallback = AsyncMock(return_value=fallback)
+    runner = _fallback_runner(monkeypatch, emit, open_fallback)
+
+    result = await runner.run("find fares")
+
+    open_fallback.assert_awaited_once_with(_BLOCKED_URL)
+    # The user's card moves to the browser the run is now on.
+    running = [e for e in events if isinstance(e, BrowserSessionSnapshot)]
+    assert [(e.session_id, e.live_view_url) for e in running] == [
+        ("s1", "http://v"),
+        ("s-fallback", "http://v-fallback"),
+    ]
+    # The second run is on the fallback session, and may not ask for a fallback again.
+    assert [(s.session_id, available) for s, available in _AgentRunThatBlocksOnce.runs] == [
+        ("s1", True),
+        ("s-fallback", False),
+    ]
+    assert runner.used_fallback is True
+    assert runner.session is fallback
+    assert (result.status, result.success, result.summary) == (
+        BrowserSessionStatus.COMPLETED,
+        True,
+        "fares found on the fallback",
+    )
+
+
+async def test_a_run_blocked_with_no_fallback_engine_ends_on_its_first_outcome(
+    monkeypatch,
+) -> None:
+    events, emit = _collector()
+    runner = _fallback_runner(monkeypatch, emit, None)
+
+    result = await runner.run("find fares")
+
+    assert [(s.session_id, available) for s, available in _AgentRunThatBlocksOnce.runs] == [
+        ("s1", False)
+    ]
+    assert runner.used_fallback is False
+    assert runner.session.session_id == "s1"
+    assert (result.status, result.success, result.summary) == (
+        BrowserSessionStatus.FAILED,
+        False,
+        "blocked on the primary",
+    )

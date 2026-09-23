@@ -15,7 +15,7 @@ import time
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.config.settings import settings
+from app.config.browser_host_settings import browser_host_settings
 
 # Poll budget for Obscura to publish its DevTools endpoint after launch.
 _CDP_READY_TIMEOUT_SECONDS = 30.0
@@ -28,7 +28,7 @@ def obscura_serve_argv(port: int) -> list[str]:
     Raises when OBSCURA_BIN is unset — fail loud, never silently fall back to
     another engine.
     """
-    obscura_bin = settings.OBSCURA_BIN
+    obscura_bin = browser_host_settings.OBSCURA_BIN
     if not obscura_bin:
         raise RuntimeError("Obscura requires OBSCURA_BIN to be set")
     argv = [obscura_bin, "serve", "--port", str(port), "--stealth"]
@@ -39,8 +39,10 @@ def obscura_serve_env() -> dict[str, str]:
     """Return the environment an Obscura process runs with: ours plus its load deadlines."""
     return {
         **os.environ,
-        "OBSCURA_NAV_TIMEOUT_MS": str(settings.OBSCURA_NAV_TIMEOUT_SECONDS * 1000),
-        "OBSCURA_SCRIPT_DEADLINE_MS": str(settings.OBSCURA_SCRIPT_DEADLINE_SECONDS * 1000),
+        "OBSCURA_NAV_TIMEOUT_MS": str(browser_host_settings.OBSCURA_NAV_TIMEOUT_SECONDS * 1000),
+        "OBSCURA_SCRIPT_DEADLINE_MS": str(
+            browser_host_settings.OBSCURA_SCRIPT_DEADLINE_SECONDS * 1000
+        ),
     }
 
 

@@ -550,133 +550,45 @@ class TestBotProgressDeliveryHandoff:
                 mp.assert_not_awaited()
 
 
+#: One run of every outcome the result used to voice its own line for.
+_OUTCOMES = (
+    ("completed", True, "Posted the tweet with exactly the requested text"),
+    ("failed", False, "Browser task failed: Failed to establish CDP connection"),
+    ("cancelled", False, "Browser task was cancelled."),
+    ("failed", False, "Stopped: nobody finished the step in the live browser in time."),
+)
+
+
 class TestBotProgressDeliveryResult:
-    async def test_success_message_includes_the_run_summary(self, delivery):
+    """The outcome is the assistant's to voice once; the progress channel sends only the recap link."""
+
+    @pytest.mark.parametrize(("status", "success", "summary"), _OUTCOMES)
+    async def test_a_run_with_a_recap_sends_exactly_the_recap_line(
+        self, delivery, status, success, summary
+    ):
+        """A canned "Done"/"Stopped"/"Couldn't finish" line here made every outcome arrive twice."""
         snap = BrowserResultSnapshot(
-            status="completed",
-            success=True,
-            summary="Posted the tweet with exactly the requested text",
-            steps=3,
-        )
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert msg.startswith("✅")
-            assert "Posted the tweet with exactly the requested text" in msg
-
-    async def test_success_message_without_summary(self, delivery):
-        snap = BrowserResultSnapshot(status="completed", success=True, summary="", steps=3)
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert msg.startswith("✅")
-
-    async def test_failure_message(self, delivery):
-        snap = BrowserResultSnapshot(status="failed", success=False, summary="Failed", steps=2)
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert "⚠️" in msg
-            assert "Failed" in msg
-
-    async def test_a_user_cancelled_run_reads_as_stopped_not_as_a_failure(self, delivery):
-        snap = BrowserResultSnapshot(
-            status="cancelled", success=False, summary="Browser task was cancelled.", steps=2
-        )
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert "🛑" in msg
-            assert "Stopped" in msg
-            assert "Couldn't" not in msg
-
-    async def test_failure_message_empty_summary_uses_bare_sentence(self, delivery):
-        snap = BrowserResultSnapshot(status="failed", success=False, summary="", steps=2)
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert "⚠️" in msg
-
-    async def test_failure_message_strips_prefix_and_surfaces_reason(self, delivery):
-        snap = BrowserResultSnapshot(
-            status="failed",
-            success=False,
-            summary="Browser task failed: Failed to establish CDP connection",
+            status=status,
+            success=success,
+            summary=summary,
             steps=2,
-        )
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert "Browser task failed: " not in msg
-            assert "Failed to establish CDP connection" in msg
-
-    async def test_a_long_reason_is_sent_whole(self, delivery):
-        """No clip: a reason of any length reaches the conversation intact."""
-        reason = "x" * 300
-        snap = BrowserResultSnapshot(
-            status="failed", success=False, summary=f"Browser task failed: {reason}", steps=2
-        )
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            assert reason in mp.call_args[0][2][0]
-
-    async def test_a_handoff_timeout_summary_does_not_stack_two_stop_words(self, delivery):
-        """BROWSER_RUN_HANDOFF_TIMED_OUT already starts with its own "Stopped:" label; the failure prefix must not stack a second one on top of it."""
-        snap = BrowserResultSnapshot(
-            status="failed",
-            success=False,
-            summary="Stopped: nobody finished the step in the live browser in time.",
-            steps=3,
-        )
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert "Stopped: Stopped" not in msg
-            assert "nobody finished the step in the live browser in time." in msg
-
-    async def test_failure_message_collapses_multiline_summary_to_one_line(self, delivery):
-        summary = "Browser task failed: " + "\n".join(["line " + str(i) * 20 for i in range(20)])
-        snap = BrowserResultSnapshot(status="failed", success=False, summary=summary, steps=2)
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert "\n" not in msg
-            assert "…" not in msg
-            assert "line 0" in msg
-
-    async def test_with_replay_url_appended(self, delivery):
-        snap = BrowserResultSnapshot(
-            status="completed",
-            success=True,
-            summary="Done",
-            steps=1,
             replay_url="https://cdn.example.com/replay",
         )
         with patch(
             "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
         ) as mp:
             await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert msg.startswith("✅")
-            assert "https://cdn.example.com/replay" in msg
+        mp.assert_awaited_once()
+        assert mp.call_args[0][2] == ["📽 Here's a recap of the run: https://cdn.example.com/replay"]
+
+    @pytest.mark.parametrize(("status", "success", "summary"), _OUTCOMES)
+    async def test_a_run_without_a_recap_sends_nothing(self, delivery, status, success, summary):
+        snap = BrowserResultSnapshot(status=status, success=success, summary=summary, steps=2)
+        with patch(
+            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+        ) as mp:
+            await delivery.result(snap)
+        mp.assert_not_awaited()
 
 
 class TestOneLinkPerRun:

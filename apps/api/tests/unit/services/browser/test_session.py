@@ -9,6 +9,20 @@ import pytest
 from app.constants.browser import HANDOFF_AUTORESOLVED_NOTE
 from app.services.browser import session as session_mod
 from app.services.browser.exceptions import BrowserUnavailableError
+from app.services.browser.session import BrowserHostSession
+
+# The host a session lives on; every host call must name it, primary or fallback.
+_HOST = "http://browser-host:8930"
+
+
+def _handle(session_id: str = "sess-1") -> BrowserHostSession:
+    return BrowserHostSession(
+        session_id=session_id,
+        cdp_url="ws://cdp",  # NOSONAR
+        live_view_url="https://live",
+        context_id="ctx-1",
+        host_url=_HOST,
+    )
 
 
 class _FakeLog:
@@ -60,7 +74,7 @@ async def test_registry_write_failure_aborts_before_yield(
     monkeypatch.setattr(session_mod, "register_session", AsyncMock(return_value=False))
 
     with pytest.raises(BrowserUnavailableError, match="register"):
-        async with session_mod.browser_session(user_id="u1", start_url="https://x"):
+        async with session_mod.browser_session(host_url=_HOST, user_id="u1", start_url="https://x"):
             pytest.fail("browser_session yielded despite the failed registration")
 
     # The host context was still released on the way out — never orphaned.
@@ -74,7 +88,9 @@ async def test_registry_write_success_yields_and_releases(
     """Happy path: registration succeeds, the session yields, and release runs."""
     _make_session_fakes(monkeypatch)
 
-    async with session_mod.browser_session(user_id="u1", start_url="https://x") as s:
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://x"
+    ) as s:
         assert s.session_id == "s1"
     session_mod.host_client.delete_session.assert_awaited_once()
     # With the id, not merely "was called": deregistering the wrong session (or
@@ -89,7 +105,9 @@ async def test_domain_derived_from_start_url_feeds_storage_lookup(
     """Look up with domain_of(start_url), not start_url itself."""
     _make_session_fakes(monkeypatch)
 
-    async with session_mod.browser_session(user_id="u42", start_url="https://Example.com/page"):
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u42", start_url="https://Example.com/page"
+    ):
         pass
 
     session_mod.load_storage_state.assert_awaited_once_with("u42", "example.com")
@@ -100,7 +118,7 @@ async def test_none_start_url_looks_up_with_none_domain(
 ) -> None:
     _make_session_fakes(monkeypatch)
 
-    async with session_mod.browser_session(user_id="u1", start_url=None):
+    async with session_mod.browser_session(host_url=_HOST, user_id="u1", start_url=None):
         pass
 
     session_mod.load_storage_state.assert_awaited_once_with("u1", None)
@@ -113,10 +131,10 @@ async def test_create_session_receives_the_loaded_storage_state(
     sentinel_state = {"cookies": ["loaded"]}
     monkeypatch.setattr(session_mod, "load_storage_state", AsyncMock(return_value=sentinel_state))
 
-    async with session_mod.browser_session(user_id="u1", start_url="https://x"):
+    async with session_mod.browser_session(host_url=_HOST, user_id="u1", start_url="https://x"):
         pass
 
-    session_mod.host_client.create_session.assert_awaited_once_with(sentinel_state)
+    session_mod.host_client.create_session.assert_awaited_once_with(sentinel_state, _HOST)
     assert host is session_mod.host_client.create_session.return_value
 
 
@@ -139,11 +157,14 @@ async def test_session_fields_are_mapped_from_the_host_response(
         lambda session_id: live_view_calls.append(session_id) or f"LV:{session_id}",
     )
 
-    async with session_mod.browser_session(user_id="u1", start_url="https://x") as s:
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://x"
+    ) as s:
         assert s.session_id == "sid-x"
         assert s.cdp_url == "ws://cdp-endpoint"
         assert s.context_id == "ctx-y"
         assert s.live_view_url == "LV:sid-x"
+        assert s.host_url == _HOST
     assert live_view_calls == ["sid-x"]
 
 
@@ -152,7 +173,9 @@ async def test_register_session_called_with_session_id_user_id_and_live_ws(
 ) -> None:
     host = _make_session_fakes(monkeypatch)
 
-    async with session_mod.browser_session(user_id="user-77", start_url="https://x"):
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="user-77", start_url="https://x"
+    ):
         pass
 
     session_mod.register_session.assert_awaited_once_with(
@@ -172,7 +195,7 @@ async def test_host_create_failure_skips_all_cleanup(
     )
 
     with pytest.raises(BrowserUnavailableError, match="host unreachable"):
-        async with session_mod.browser_session(user_id="u1", start_url="https://x"):
+        async with session_mod.browser_session(host_url=_HOST, user_id="u1", start_url="https://x"):
             pytest.fail("browser_session yielded despite the host create failure")
 
     session_mod.register_session.assert_not_awaited()
@@ -187,7 +210,7 @@ async def test_body_exception_propagates_and_release_still_runs(
     _make_session_fakes(monkeypatch)
 
     with pytest.raises(ValueError, match="body boom"):
-        async with session_mod.browser_session(user_id="u1", start_url="https://x"):
+        async with session_mod.browser_session(host_url=_HOST, user_id="u1", start_url="https://x"):
             raise ValueError("body boom")
 
     session_mod.host_client.delete_session.assert_awaited_once()
@@ -199,10 +222,10 @@ async def test_delete_session_called_with_this_sessions_id(
 ) -> None:
     host = _make_session_fakes(monkeypatch)
 
-    async with session_mod.browser_session(user_id="u1", start_url="https://x"):
+    async with session_mod.browser_session(host_url=_HOST, user_id="u1", start_url="https://x"):
         pass
 
-    session_mod.host_client.delete_session.assert_awaited_once_with(host.session_id)
+    session_mod.host_client.delete_session.assert_awaited_once_with(host.session_id, _HOST)
 
 
 async def test_save_storage_state_called_with_user_domain_and_returned_state(
@@ -218,7 +241,9 @@ async def test_save_storage_state_called_with_user_domain_and_returned_state(
         session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
     )
 
-    async with session_mod.browser_session(user_id="u42", start_url="https://foo.example.com/x"):
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u42", start_url="https://foo.example.com/x"
+    ):
         pass
 
     session_mod.save_storage_state.assert_awaited_once_with(
@@ -230,7 +255,9 @@ async def test_a_run_that_never_signed_in_saves_nothing(monkeypatch: pytest.Monk
     """Regression: a wikipedia.org language cookie was kept as a saved login and answered the next task in German."""
     _make_session_fakes(monkeypatch)
 
-    async with session_mod.browser_session(user_id="u1", start_url="https://www.wikipedia.org"):
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://www.wikipedia.org"
+    ):
         pass
 
     session_mod.save_storage_state.assert_not_awaited()
@@ -245,7 +272,9 @@ async def test_a_run_whose_login_takeover_completed_saves_its_state(
         session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
     )
 
-    async with session_mod.browser_session(user_id="u1", start_url="https://x.com") as session:
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://x.com"
+    ) as session:
         session.mark_authenticated()
 
     session_mod.save_storage_state.assert_awaited_once_with("u1", "x.com", returned_state)
@@ -262,7 +291,7 @@ async def test_release_failure_is_caught_logged_and_unregister_still_runs(
         AsyncMock(side_effect=RuntimeError("host down")),
     )
 
-    async with session_mod.browser_session(user_id="u1", start_url="https://x"):
+    async with session_mod.browser_session(host_url=_HOST, user_id="u1", start_url="https://x"):
         pass
 
     session_mod.save_storage_state.assert_not_awaited()
@@ -282,7 +311,9 @@ async def test_save_storage_state_failure_is_also_caught(
         session_mod, "save_storage_state", AsyncMock(side_effect=ValueError("disk full"))
     )
 
-    async with session_mod.browser_session(user_id="u1", start_url="https://x") as session:
+    async with session_mod.browser_session(
+        host_url=_HOST, user_id="u1", start_url="https://x"
+    ) as session:
         session.mark_authenticated()
 
     session_mod.unregister_session.assert_awaited_once()
@@ -306,10 +337,10 @@ async def test_keep_session_alive_touches_the_session_each_iteration(
     monkeypatch.setattr(session_mod.host_client, "touch_session", touch)
 
     with pytest.raises(asyncio.CancelledError):
-        await session_mod.keep_session_alive("sess-1")
+        await session_mod.keep_session_alive(_handle("sess-1"))
 
     assert touch.await_count == 2
-    touch.assert_awaited_with("sess-1")
+    touch.assert_awaited_with("sess-1", _HOST)
 
 
 async def test_keep_session_alive_waits_the_configured_keepalive_interval(
@@ -321,7 +352,7 @@ async def test_keep_session_alive_waits_the_configured_keepalive_interval(
     monkeypatch.setattr(session_mod.host_client, "touch_session", AsyncMock())
 
     with pytest.raises(asyncio.CancelledError):
-        await session_mod.keep_session_alive("sess-1")
+        await session_mod.keep_session_alive(_handle("sess-1"))
 
     sleep_mock.assert_awaited_with(session_mod.BROWSER_HANDOFF_KEEPALIVE_SECONDS)
 
@@ -336,7 +367,7 @@ async def test_keep_session_alive_logs_a_failed_touch_and_keeps_looping(
     monkeypatch.setattr(session_mod.host_client, "touch_session", touch)
 
     with pytest.raises(asyncio.CancelledError):
-        await session_mod.keep_session_alive("sess-1")
+        await session_mod.keep_session_alive(_handle("sess-1"))
 
     assert touch.await_count == 2
     assert len(fake_log.warning_calls) == 1
@@ -350,13 +381,13 @@ def _info(url: str | None) -> MagicMock:
     return MagicMock(url=url)
 
 
-def _serve_urls(monkeypatch: pytest.MonkeyPatch, *urls: str) -> list[str]:
-    """Serve urls in order from get_session, recording the session id asked for."""
-    asked: list[str] = []
+def _serve_urls(monkeypatch: pytest.MonkeyPatch, *urls: str) -> list[tuple[str, str]]:
+    """Serve urls in order from get_session, recording the session id and host asked for."""
+    asked: list[tuple[str, str]] = []
     remaining = list(urls)
 
-    async def _get(session_id: str) -> MagicMock:
-        asked.append(session_id)
+    async def _get(session_id: str, host_url: str) -> MagicMock:
+        asked.append((session_id, host_url))
         return _info(remaining.pop(0))
 
     monkeypatch.setattr(session_mod.host_client, "get_session", AsyncMock(side_effect=_get))
@@ -426,7 +457,7 @@ class TestAutoResolveHandoffOnNavigation:
         resolve = AsyncMock()
         monkeypatch.setattr(session_mod, "resolve_handoff", resolve)
 
-        await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
+        await session_mod.auto_resolve_handoff_on_navigation("h1", _handle("sess-1"), "user-1")
 
         resolve.assert_awaited_once()
         args = resolve.await_args[0]
@@ -453,7 +484,7 @@ class TestAutoResolveHandoffOnNavigation:
         resolve = AsyncMock()
         monkeypatch.setattr(session_mod, "resolve_handoff", resolve)
 
-        await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
+        await session_mod.auto_resolve_handoff_on_navigation("h1", _handle("sess-1"), "user-1")
         resolve.assert_not_awaited()
 
     async def test_every_poll_asks_about_the_handoffs_own_session(
@@ -464,9 +495,9 @@ class TestAutoResolveHandoffOnNavigation:
         asked = _serve_urls(monkeypatch, "https://x/login", "https://x/", "https://x/")
         monkeypatch.setattr(session_mod, "resolve_handoff", AsyncMock())
 
-        await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
+        await session_mod.auto_resolve_handoff_on_navigation("h1", _handle("sess-1"), "user-1")
 
-        assert asked == ["sess-1", "sess-1", "sess-1"]
+        assert asked == [("sess-1", _HOST)] * 3
 
     async def test_polling_waits_the_configured_interval_between_reads(
         self, monkeypatch: pytest.MonkeyPatch
@@ -476,7 +507,7 @@ class TestAutoResolveHandoffOnNavigation:
         _serve_urls(monkeypatch, "https://x/login", "https://x/", "https://x/")
         monkeypatch.setattr(session_mod, "resolve_handoff", AsyncMock())
 
-        await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
+        await session_mod.auto_resolve_handoff_on_navigation("h1", _handle("sess-1"), "user-1")
 
         sleep_mock.assert_awaited_with(session_mod.HANDOFF_AUTORESOLVE_POLL_SECONDS)
 
@@ -489,7 +520,7 @@ class TestAutoResolveHandoffOnNavigation:
         resolve = AsyncMock()
         monkeypatch.setattr(session_mod, "resolve_handoff", resolve)
 
-        await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
+        await session_mod.auto_resolve_handoff_on_navigation("h1", _handle("sess-1"), "user-1")
 
         assert resolve.await_args[0][3] == HANDOFF_AUTORESOLVED_NOTE
 
@@ -502,7 +533,7 @@ class TestAutoResolveHandoffOnNavigation:
         resolve = AsyncMock()
         monkeypatch.setattr(session_mod, "resolve_handoff", resolve)
 
-        await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
+        await session_mod.auto_resolve_handoff_on_navigation("h1", _handle("sess-1"), "user-1")
 
         resolve.assert_awaited_once()
 
@@ -525,7 +556,7 @@ class TestAutoResolveHandoffOnNavigation:
         resolve = AsyncMock()
         monkeypatch.setattr(session_mod, "resolve_handoff", resolve)
 
-        await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
+        await session_mod.auto_resolve_handoff_on_navigation("h1", _handle("sess-1"), "user-1")
         resolve.assert_not_awaited()
 
 
