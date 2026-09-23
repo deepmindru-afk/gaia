@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 import pytest
+import time_machine
 
 from app.models.reminder_models import (
     AgentType,
@@ -96,6 +97,13 @@ class TestReminderModel:
         assert m.occurrence_count == 0
         assert m.status == ScheduledTaskStatus.SCHEDULED
         assert m.stop_after is not None  # default is 6 months from now
+
+    def test_default_stop_after_counts_from_creation_not_import(self):
+        """The default was evaluated once at import, so a long-lived worker stamped every reminder with boot time + 180 days."""
+        later = datetime.now(UTC) + timedelta(days=30)
+        with time_machine.travel(later, tick=False):
+            m = ReminderModel(**self._base_data(scheduled_at=later + timedelta(hours=1)))
+        assert m.stop_after == later + timedelta(days=180)
 
     def test_payload_as_static_reminder(self):
         m = ReminderModel(**self._base_data())
