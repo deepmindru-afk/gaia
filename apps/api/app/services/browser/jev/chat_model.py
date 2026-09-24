@@ -59,7 +59,7 @@ from app.constants.browser import (
     JevOperation,
     SensitiveCategory,
 )
-from app.constants.llm import REASONING_DISABLED, OpenRouterReasoning
+from app.constants.llm import ReasoningLevel
 from app.constants.log_tags import LogTag
 from app.patches.browser_use_deferred_screenshot_patch import defer_screenshots_for
 from app.schemas.browser import AgentGuidanceRequest, GuidanceAction, GuidanceElement
@@ -183,7 +183,7 @@ class StructuredCall(Protocol):
         *,
         label: str,
         timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
-        reasoning: OpenRouterReasoning | None = None,
+        reasoning: ReasoningLevel | None = None,
     ) -> T: ...
 
 
@@ -196,7 +196,7 @@ def canonical_structured_call(user_id: str | None) -> StructuredCall:
         *,
         label: str,
         timeout: float = JEV_TEXT_TIMEOUT_SECONDS,
-        reasoning: OpenRouterReasoning | None = None,
+        reasoning: ReasoningLevel | None = None,
     ) -> T:
         return await ainvoke_structured(
             schema,
@@ -275,7 +275,7 @@ class _WriterCall:
     timeout: float = JEV_TEXT_TIMEOUT_SECONDS
     hedge_after: float = JEV_TEXT_HEDGE_SECONDS
     label: str | None = None
-    reasoning: OpenRouterReasoning | None = None
+    reasoning: ReasoningLevel | None = None
 
 
 _DEFAULT_WRITER_CALL = _WriterCall()
@@ -850,7 +850,7 @@ class JevChatModel:
             return {"done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}}, None
         # With reasoning on, half the replies were prose with no tool call (measured).
         reason = await self._field_text(
-            GUIDANCE_REASON, goal, observation, None, reasoning=REASONING_DISABLED
+            GUIDANCE_REASON, goal, observation, None, reasoning=ReasoningLevel.OFF
         )
         text = reason or _DEFAULT_GUIDANCE_REASON
         return {action: {"reason": text}}, text
@@ -952,7 +952,7 @@ class JevChatModel:
         goal: str,
         observation: JevObservation,
         field: JevElement | None,
-        reasoning: OpenRouterReasoning | None = None,
+        reasoning: ReasoningLevel | None = None,
     ) -> str | None:
         answer = await self._structured(
             _TextValue, instructions, goal, observation, field, _WriterCall(reasoning=reasoning)
@@ -1206,7 +1206,7 @@ class JevChatModel:
                 seen_text=self._seen_text.all_text,
                 whole_history=True,
                 label="browser_done_check" if done_chosen else None,
-                reasoning=REASONING_DISABLED,
+                reasoning=ReasoningLevel.OFF,
                 start_page=start_page,
             ),
         )

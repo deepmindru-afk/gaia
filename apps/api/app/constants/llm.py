@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from typing_extensions import TypedDict
 
@@ -25,6 +25,35 @@ class LLMProviderKey(StrEnum):
     GEMINI = "gemini_llm"
     OPENROUTER = "openrouter_llm"
     CUSTOM = "custom_llm"
+
+
+class ModelUse(StrEnum):
+    """What a one-shot model call is for; resolve_model maps it to a provider, model and routing."""
+
+    #: Every small auxiliary one-shot: titles, follow-ups, structured helpers, the browser writer.
+    HELPER = "helper"
+    #: The HIL approval judge, which runs on its own model (see HIL_JUDGE_MODEL_NAME).
+    JUDGE = "judge"
+    #: The memory pipeline's own provider (see MEMORY_MODEL_NAME).
+    MEMORY = "memory"
+    #: Every image -> text call (see VISION_MODEL_NAME).
+    VISION = "vision"
+
+
+class ReasoningLevel(StrEnum):
+    """How much a one-shot call wants the model to think, independent of any provider's wire shape."""
+
+    #: No reasoning at all.
+    OFF = "off"
+    #: The provider's cheapest non-zero effort.
+    LIGHT = "light"
+
+
+class DevLLMApi(StrEnum):
+    """Which OpenAI-compatible API the custom dev endpoint (DEV_LLM_*) is called through."""
+
+    CHAT_COMPLETIONS = "chat_completions"
+    RESPONSES = "responses"
 
 
 class DevModelOption(TypedDict):
@@ -182,7 +211,7 @@ AUX_SESSION_SUFFIX = "-aux"
 LLM_INVOKE_TIMEOUT_SECONDS = 300
 
 # Near-deterministic default for every LLM call; creative tasks opt into more
-# variation via get_default_llm(temperature=...).
+# variation via resolve_model(temperature=...).
 DEFAULT_LLM_TEMPERATURE = 0.1
 
 # Context window of the default model, in input tokens; update whenever
@@ -275,19 +304,20 @@ OPENROUTER_REASONING: dict[str, Any] = {"effort": "medium"}
 PAID_COMMS_REASONING: dict[str, Any] = {"effort": "medium"}
 
 
-class OpenRouterReasoning(TypedDict, total=False):
-    """OpenRouter's request-level reasoning object, for a one-shot that overrides the model default."""
-
-    enabled: bool
-    effort: str
-    max_tokens: int
-    exclude: bool
-
-
-# effort "none": deepseek-v4-flash reasoned at "minimal" and "low", and at
+# OFF is "none": deepseek-v4-flash reasoned at "minimal" and "low", and at
 # enabled=False too (111-167 tokens on a short prompt, its 8000 cap on a part
 # judgement); "none" measured 0. tests/model_onboarding/test_reasoning_off.py.
-REASONING_DISABLED: Final[OpenRouterReasoning] = {"effort": "none"}
+OPENROUTER_REASONING_EFFORT: Final[dict[ReasoningLevel, Literal["none", "minimal"]]] = {
+    ReasoningLevel.OFF: "none",
+    ReasoningLevel.LIGHT: "minimal",
+}
+# OpenAI's own efforts, for the reasoning_effort (chat completions) and
+# reasoning.effort (Responses) fields. LIGHT is "low": gpt-6-luna rejects
+# "minimal" on both APIs, and every OpenAI reasoning model accepts "low".
+OPENAI_REASONING_EFFORT: Final[dict[ReasoningLevel, Literal["none", "low"]]] = {
+    ReasoningLevel.OFF: "none",
+    ReasoningLevel.LIGHT: "low",
+}
 
 # Output cap for the env-defined custom dev provider, well under the model's
 # 65,536 ceiling: these cheap lanes RESERVE max_tokens per request, so a 64k cap
@@ -307,6 +337,10 @@ OPENROUTER_APP_TITLE = "GAIA"
 OPENROUTER_DEV_APP_URL = "https://dev.heygaia.io"
 OPENROUTER_DEV_APP_TITLE = "GAIA (dev)"
 OPENROUTER_APP_CATEGORIES = ["personal-agent", "general-chat"]
+
+# The dev menu key of the env-defined custom endpoint. DEV_DEFAULT_MODEL set to
+# it, in development, sends every LLM call there (see app/agents/llm/dev_lane.py).
+DEV_CUSTOM_MODEL_OPTION = "custom"
 
 # DEV-ONLY model menu: the dev chat-header selector sends a stable id per role
 # and the backend pins the matching model. Gemini models route direct and ignore
@@ -347,7 +381,7 @@ DEV_MODEL_OPTIONS: dict[str, DevModelOption] = {
         "model_kwargs": None,
         "reasoning": False,
     },
-    "custom": {
+    DEV_CUSTOM_MODEL_OPTION: {
         # The env-defined endpoint (DEV_LLM_* settings). `model` None = don't pin
         # one here; the client's own default (DEV_LLM_MODEL) serves the request.
         "provider": LLMProviderName.CUSTOM,

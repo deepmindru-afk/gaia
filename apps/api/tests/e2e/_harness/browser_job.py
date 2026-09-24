@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from app.agents.core.background.session import RunKind, create_session
 from app.agents.tools import browser_tool
 from app.config.settings import settings
-from app.constants.llm import OpenRouterReasoning
+from app.constants.llm import ReasoningLevel
 from app.models.hil_models import HILPreferences
 from app.schemas.browser_job import BrowserJobRequest
 from app.services.browser.exceptions import BrowserHandoffCancelled, BrowserSessionGone
@@ -666,7 +666,7 @@ class _JevTextHelper:
         *,
         label: str,
         timeout: float | None = None,
-        reasoning: OpenRouterReasoning | None = None,
+        reasoning: ReasoningLevel | None = None,
     ) -> Any:
         """Answer as the loop's writer: plan and part checks answer themselves, the rest take the scripted replies in order."""
         instructions = prompt[0].content

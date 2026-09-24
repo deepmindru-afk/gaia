@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from redis.exceptions import DataError
 
-from app.agents.llm import lane as lane_module
+from app.agents.llm import dev_lane as dev_lane_module, lane as lane_module
 from app.agents.llm.client import PROVIDER_MODELS
 from app.agents.llm.lane import (
     AgentRole,
@@ -27,11 +27,13 @@ from app.agents.llm.lane import (
     resolve_lane,
 )
 from app.config.rate_limits import RateLimitPeriod
+from app.config.settings import settings
 from app.constants.cache import COST_BUDGET_NOTIFIED_KEY
 from app.constants.llm import (
     DEFAULT_LLM_PROVIDER,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_NAME,
+    DEV_MODEL_OPTIONS,
     MONTHLY_BUDGET_TTL_SECONDS,
     OPENROUTER_REASONING,
     PAID_COMMS_REASONING,
@@ -532,31 +534,50 @@ class TestDevOverride:
     def test_an_unknown_dev_id_selects_nothing(self) -> None:
         assert dev_option_for("no-such-model", use_defaults=False) is None
 
-    def test_no_selection_falls_back_to_the_env_configured_dev_default(self) -> None:
-        with patch.object(lane_module.settings, "DEV_DEFAULT_MODEL", "deepseek-v4"):
-            option = dev_option_for(None, use_defaults=True)
+    async def test_a_run_with_no_selection_starts_on_the_env_configured_dev_default(self) -> None:
+        """Every top-level run, not only chat: a background narration picked nothing either."""
+        with patch.object(settings, "DEV_DEFAULT_MODEL", "deepseek-v4"):
+            resolved, plan = await resolve_lane(None, AgentRole.COMMS)
 
-        assert option is not None
-        assert option["model"] == "deepseek/deepseek-v4-pro"
+        assert resolved.model == "deepseek/deepseek-v4-pro"
+        assert plan is None
 
-    def test_an_explicit_choice_wins_over_the_env_default(self) -> None:
-        with patch.object(lane_module.settings, "DEV_DEFAULT_MODEL", "deepseek-v4"):
-            option = dev_option_for("minimax-m3", use_defaults=False)
+    async def test_an_explicit_choice_wins_over_the_env_default(self) -> None:
+        option = dev_option_for("minimax-m3", use_defaults=False)
 
-        assert option is not None
-        assert option["model"] == "minimax/minimax-m3"
+        with patch.object(settings, "DEV_DEFAULT_MODEL", "deepseek-v4"):
+            resolved, _ = await resolve_lane(None, AgentRole.COMMS, dev_option=option)
 
-    def test_a_bogus_env_dev_default_selects_nothing(self) -> None:
-        with patch.object(lane_module.settings, "DEV_DEFAULT_MODEL", "not-a-real-id"):
-            assert dev_option_for(None, use_defaults=True) is None
+        assert resolved.model == "minimax/minimax-m3"
 
-    def test_a_bogus_env_dev_default_says_so_naming_the_value(self) -> None:
+    def test_a_request_that_keeps_the_defaults_selects_the_env_default(self) -> None:
+        with patch.object(settings, "DEV_DEFAULT_MODEL", "deepseek-v4"):
+            option = dev_option_for("minimax-m3", use_defaults=True)
+
+        assert option == DEV_MODEL_OPTIONS["deepseek-v4"]
+
+    async def test_the_env_default_never_applies_outside_development(self) -> None:
+        with (
+            patch.object(settings, "DEV_DEFAULT_MODEL", "deepseek-v4"),
+            patch.object(settings, "ENV", "production"),
+        ):
+            resolved, _ = await resolve_lane(None, AgentRole.COMMS)
+
+        assert resolved.model == DEFAULT_MODEL_NAME
+
+    async def test_a_bogus_env_dev_default_keeps_the_plan_lane(self) -> None:
+        with patch.object(settings, "DEV_DEFAULT_MODEL", "not-a-real-id"):
+            resolved, _ = await resolve_lane(None, AgentRole.COMMS)
+
+        assert resolved.model == DEFAULT_MODEL_NAME
+
+    async def test_a_bogus_env_dev_default_says_so_naming_the_value(self) -> None:
         """Silence here would look to a developer like the selector simply not working."""
         with (
-            patch.object(lane_module.settings, "DEV_DEFAULT_MODEL", "not-a-real-id"),
-            patch.object(lane_module, "log") as log,
+            patch.object(settings, "DEV_DEFAULT_MODEL", "not-a-real-id"),
+            patch.object(dev_lane_module, "log") as log,
         ):
-            dev_option_for(None, use_defaults=True)
+            await resolve_lane(None, AgentRole.COMMS)
 
         assert log.warning.call_args.args == (
             (
@@ -568,7 +589,7 @@ class TestDevOverride:
 
     def test_the_stashed_executor_id_is_looked_up_without_the_env_default(self) -> None:
         """dev_option takes an id comms already resolved; the env default must not get a second chance."""
-        with patch.object(lane_module.settings, "DEV_DEFAULT_MODEL", "deepseek-v4"):
+        with patch.object(settings, "DEV_DEFAULT_MODEL", "deepseek-v4"):
             option = dev_option("minimax-m3")
 
         assert option is not None

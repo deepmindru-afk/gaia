@@ -23,6 +23,9 @@ class TestJevIsTheBrowserModel:
         assert isinstance(result.text_model, ChatOpenAI)
         assert result.text_model.model == settings.BROWSER_USE_JEV_TEXT_MODEL
         assert result.text_model.base_url == "https://openrouter.ai/api/v1"
+        assert result.text_model.reasoning_models == [settings.BROWSER_USE_JEV_TEXT_MODEL]
+        assert result.text_model.reasoning_effort == "minimal"
+        assert result.text_model.max_completion_tokens == 4096
 
     def test_without_the_openrouter_key_it_refuses_with_the_reason(self, monkeypatch):
         monkeypatch.setattr("app.services.browser.llm.settings.OPENROUTER_API_KEY", None)

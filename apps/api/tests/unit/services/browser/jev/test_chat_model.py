@@ -31,7 +31,7 @@ from app.constants.browser import (
     JEV_DONE_REASK_BUDGET,
     JevOperation,
 )
-from app.constants.llm import REASONING_DISABLED
+from app.constants.llm import ReasoningLevel
 from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev import chat_model as chat_model_mod
@@ -1024,7 +1024,7 @@ async def test_the_guidance_reason_is_written_without_reasoning(flights_state) -
 
     await model.ainvoke([], _guidance_output())
 
-    assert [r for r, _ in text_model.asked_with(GUIDANCE_REASON)] == [REASONING_DISABLED]
+    assert [r for r, _ in text_model.asked_with(GUIDANCE_REASON)] == [ReasoningLevel.OFF]
 
 
 async def test_a_blocked_step_with_nobody_to_ask_still_ends_the_run_failed(flights_state) -> None:
@@ -1617,7 +1617,7 @@ async def test_the_part_judge_answers_without_reasoning_from_the_text_read(fligh
 
     judgements = helper.asked_with(PART_DONE)
     assert judgements
-    assert all(reasoning == REASONING_DISABLED for reasoning, _ in judgements)
+    assert all(reasoning is ReasoningLevel.OFF for reasoning, _ in judgements)
     assert "Search" in judgements[-1][1]["seen_on_pages_read"]
     assert [r for r, _ in helper.asked_with(PLAN_STEPS) + helper.asked_with(DONE_SUMMARY)] == [
         None,

@@ -26,7 +26,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from app.agents.llm.client import ainvoke_llm, background_structured_runnable, metered_config
+from app.agents.llm.client import ainvoke_structured, metered_config
 from app.agents.middleware.factory import (
     AccountingOptions,
     ContextOptions,
@@ -889,9 +889,8 @@ async def _structured_call(
     label: str,
 ) -> _Structured:
     """One metered structured call; None from the runnable is a failure, not a value."""
-    config = metered_config(playbook.user_id)
-    reply: _Structured | None = await ainvoke_llm(
-        background_structured_runnable(schema, config=config), prompt, label=label, config=config
+    reply: _Structured | None = await ainvoke_structured(
+        schema, prompt, label=label, config=metered_config(playbook.user_id)
     )
     run.llm_calls += 1
     if reply is None:

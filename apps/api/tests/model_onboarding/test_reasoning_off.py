@@ -1,6 +1,6 @@
-"""Onboarding gate: does REASONING_DISABLED really stop the helper model from reasoning?
+"""Onboarding gate: does ReasoningLevel.OFF really stop the helper model from reasoning?
 
-Run it before changing AUX_MODEL_NAME or REASONING_DISABLED:
+Run it before changing AUX_MODEL_NAME or OPENROUTER_REASONING_EFFORT:
 uv run pytest tests/model_onboarding/test_reasoning_off.py -m model_onboarding -v.
 
 Only a live call answers it: OpenRouter accepts every reasoning object and
@@ -15,7 +15,7 @@ from pydantic import BaseModel
 import pytest
 
 from app.agents.llm.client import StructuredCallOptions, ainvoke_structured
-from app.constants.llm import REASONING_DISABLED
+from app.constants.llm import ReasoningLevel
 
 pytestmark = pytest.mark.model_onboarding
 
@@ -51,7 +51,7 @@ async def test_the_helper_model_spends_no_reasoning_tokens_when_reasoning_is_off
         _PROMPT,
         label="onboarding_reasoning_off",
         config={"callbacks": [recorder]},
-        options=StructuredCallOptions(timeout=60, reasoning=REASONING_DISABLED),
+        options=StructuredCallOptions(timeout=60, reasoning=ReasoningLevel.OFF),
     )
 
     assert recorder.seen, "the call reported no usage to check"

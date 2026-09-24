@@ -26,6 +26,7 @@ from app.config.browser_host_settings import BrowserHostSettings
 from app.config.secrets import inject_infisical_secrets
 from app.config.settings_validator import settings_validator
 from app.constants.execute import SANDBOX_EXECUTE_TOKEN_SECRET_MIN_CHARS
+from app.constants.llm import DevLLMApi
 from app.constants.log_tags import LogTag
 from app.constants.search import (
     CRAWL4AI_DEFAULT_MAX_BROWSERS,
@@ -296,6 +297,9 @@ class CommonSettings(BaseAppSettings):
     DEV_LLM_BASE_URL: str | None = None
     DEV_LLM_API_KEY: str | None = None
     DEV_LLM_MODEL: str | None = None
+    # Which API the endpoint is called through. OpenAI's reasoning models need
+    # "responses": their chat completions reject function tools with reasoning on.
+    DEV_LLM_API: DevLLMApi = DevLLMApi.CHAT_COMPLETIONS
     # Default model for every dev request that doesn't pick one in the chat-header
     # selector — any DEV_MODEL_OPTIONS key from app/constants/llm.py ("custom" =
     # the endpoint above). An explicit selector choice still wins.
