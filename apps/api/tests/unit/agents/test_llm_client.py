@@ -5,7 +5,7 @@ Covers:
 - _get_available_providers: registry lookups
 - _get_ordered_providers: priority ordering with/without preferred provider
 - _create_configurable_llm: primary-only vs. primary+alternatives
-- get_default_llm: the default model for auxiliary tasks
+- resolve_model: the one place a one-shot's model is chosen
 - ainvoke_llm: the single invoke primitive — retry, fallback to default, fail-loud
 - _record_auxiliary_usage: what auxiliary (non-graph) spend gets booked as
 - chatbot: default-model one-shot path, error handling
@@ -26,6 +26,8 @@ from langchain_core.runnables import (
     RunnableLambda,
     RunnableSequence,
 )
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_openrouter import ChatOpenRouter
 from pydantic import BaseModel, SecretStr
 import pytest
@@ -40,8 +42,6 @@ from app.agents.llm.client import (
     LLMInvokeOptions,
     ResponseFacts,
     StructuredCallOptions,
-    _aux_structured_runnable,
-    _build_custom_default_llm,
     _build_default_llm,
     _create_configurable_llm,
     _GenerationIdCallback,
@@ -52,15 +52,15 @@ from app.agents.llm.client import (
     _reported_cost,
     _requested_model,
     _stamp_fallback,
+    _structured_runnable,
     _with_usage_handler,
     ainvoke_llm,
     ainvoke_structured,
     ainvoke_structured_gemini,
-    background_structured_runnable,
-    get_default_llm,
     init_llm,
     invoke_llm,
     register_llm_providers,
+    resolve_model,
 )
 from app.agents.llm.exceptions import (
     LLM_FALLBACK_EXCEPTIONS,
@@ -68,23 +68,27 @@ from app.agents.llm.exceptions import (
     MalformedStructuredOutputError,
 )
 from app.agents.llm.types import LLMProvider
+from app.config.settings import settings
 from app.constants.llm import (
     AUX_MODEL_NAME,
     DEFAULT_GEMINI_MODEL_NAME,
     DEFAULT_LLM_TEMPERATURE,
-    DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_NAME,
-    DEV_LLM_MAX_OUTPUT_TOKENS,
     HELPER_MAX_OUTPUT_TOKENS,
+    HIL_JUDGE_FALLBACK_MODEL_NAMES,
+    HIL_JUDGE_MODEL_NAME,
+    MEMORY_MODEL_NAME,
     OPENROUTER_APP_CATEGORIES,
     OPENROUTER_APP_TITLE,
     OPENROUTER_DEV_APP_TITLE,
     OPENROUTER_DEV_APP_URL,
     OPENROUTER_MAX_OUTPUT_TOKENS,
     PROVIDER_NAME_METADATA_KEY,
-    REASONING_DISABLED,
     UNKNOWN_MODEL_NAME,
+    VISION_MODEL_NAME,
     LLMProviderName,
+    ModelUse,
+    ReasoningLevel,
 )
 from app.core.lazy_loader import ProviderRegistry
 from app.services.llm_metering import LLMCallContext
@@ -522,7 +526,7 @@ class TestInitLlm:
 
 
 # ---------------------------------------------------------------------------
-# get_default_llm
+# OpenRouter attribution and resolve_model
 # ---------------------------------------------------------------------------
 
 
@@ -610,346 +614,124 @@ class TestOpenRouterAppAttribution:
         }
 
 
-class TestGetDefaultLlm:
+class TestResolveModelOnOpenRouter:
+    """Without the forced dev lane, every OpenRouter one-shot is the cached default client, re-pointed and capped."""
+
     @pytest.fixture(autouse=True)
     def _fresh_cache(self):
-        # get_default_llm caches instances per temperature; isolate each test.
         _build_default_llm.cache_clear()
         yield
         _build_default_llm.cache_clear()
 
-    @patch("app.agents.llm.client.ChatOpenRouter")
-    @patch("app.agents.llm.client.settings")
-    def test_returns_the_openrouter_default_model(
-        self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
+    @pytest.fixture
+    def openrouter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "GAIA_SIM_MODE", False)
+        monkeypatch.setattr(settings, "DEV_DEFAULT_MODEL", None)
+        monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "or-key")
+
+    @pytest.mark.usefixtures("openrouter")
+    def test_a_helper_runs_the_aux_model_capped_to_the_helper_budget(self) -> None:
+        llm = resolve_model()
+
+        assert isinstance(llm, ChatOpenRouter)
+        assert llm.model_name == AUX_MODEL_NAME
+        assert llm.max_tokens == HELPER_MAX_OUTPUT_TOKENS
+        # stream_usage only attaches usage to a STREAM; without streaming it is inert.
+        assert llm.streaming is True
+        assert llm.stream_usage is True
+        assert llm.reasoning is None
+
+    @pytest.mark.usefixtures("openrouter")
+    def test_the_cap_is_a_copy_so_the_shared_client_keeps_the_full_reservation(self) -> None:
+        resolve_model()
+
+        assert (
+            _build_default_llm(DEFAULT_LLM_TEMPERATURE).max_tokens == OPENROUTER_MAX_OUTPUT_TOKENS
+        )
+
+    @pytest.mark.usefixtures("openrouter")
+    def test_one_client_is_built_per_temperature(self) -> None:
+        with patch(f"{_CLIENT}.ChatOpenRouter", side_effect=lambda **_: MagicMock()) as built:
+            resolve_model()
+            resolve_model()
+            resolve_model(temperature=0.7)
+
+        assert built.call_count == 2
+        assert built.call_args.kwargs["temperature"] == 0.7
+
+    @pytest.mark.usefixtures("openrouter")
+    def test_the_judge_runs_its_own_model_with_its_fallbacks_primary_first(self) -> None:
+        llm = resolve_model(ModelUse.JUDGE)
+
+        assert isinstance(llm, ChatOpenRouter)
+        assert llm.model_name == HIL_JUDGE_MODEL_NAME
+        assert llm.max_tokens == HELPER_MAX_OUTPUT_TOKENS
+        assert llm.model_kwargs["models"] == [HIL_JUDGE_MODEL_NAME, *HIL_JUDGE_FALLBACK_MODEL_NAMES]
+
+    def test_the_judge_keeps_the_configured_provider_order(
+        self, monkeypatch: pytest.MonkeyPatch, openrouter: None
     ) -> None:
-        mock_settings.GAIA_SIM_MODE = False
-        # get_default_llm prefers the custom endpoint when DEV_LLM_* is fully
-        # set, and a MagicMock's attributes are all truthy — pin them off so
-        # these tests exercise the OpenRouter lane they assert on.
-        mock_settings.DEV_LLM_BASE_URL = None
-        mock_settings.DEV_LLM_API_KEY = None
-        mock_settings.DEV_LLM_MODEL = None
-        mock_settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
-        mock_chat_openrouter.return_value = MagicMock()
+        monkeypatch.setattr(settings, "OPENROUTER_PROVIDER_ORDER", "google")
 
-        assert get_default_llm() is mock_chat_openrouter.return_value
-        kwargs = mock_chat_openrouter.call_args.kwargs
-        assert kwargs["model"] == DEFAULT_MODEL_NAME
-        # stream_usage only attaches usage metadata to a STREAM; without
-        # streaming it is inert, and the model fallback built from this factory
-        # would arrive as one lump instead of streaming like the primary.
-        assert kwargs["streaming"] is True
-        assert kwargs["stream_usage"] is True
-        # get_default_llm feeds the agent-graph fallback (create_agent) and the
-        # summarization/compaction middleware — both legitimately need the full
-        # reservation, not the helper cap.
-        assert kwargs["max_tokens"] == OPENROUTER_MAX_OUTPUT_TOKENS
+        llm = resolve_model(ModelUse.JUDGE)
 
-    @patch("app.agents.llm.client.ChatOpenRouter")
-    @patch("app.agents.llm.client.settings")
-    def test_caches_per_temperature(
-        self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
-    ) -> None:
-        mock_settings.GAIA_SIM_MODE = False
-        # get_default_llm prefers the custom endpoint when DEV_LLM_* is fully
-        # set, and a MagicMock's attributes are all truthy — pin them off so
-        # these tests exercise the OpenRouter lane they assert on.
-        mock_settings.DEV_LLM_BASE_URL = None
-        mock_settings.DEV_LLM_API_KEY = None
-        mock_settings.DEV_LLM_MODEL = None
-        mock_settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
-        mock_chat_openrouter.side_effect = lambda **_: MagicMock()
-
-        assert get_default_llm() is get_default_llm()
-        assert get_default_llm() is not get_default_llm(temperature=0.7)
-        assert mock_chat_openrouter.call_count == 2
-
-    @patch("app.agents.llm.client.settings")
-    def test_no_openrouter_key_raises(self, mock_settings: MagicMock) -> None:
-        mock_settings.GAIA_SIM_MODE = False
-        # get_default_llm prefers the custom endpoint when DEV_LLM_* is fully
-        # set, and a MagicMock's attributes are all truthy — pin them off so
-        # these tests exercise the OpenRouter lane they assert on.
-        mock_settings.DEV_LLM_BASE_URL = None
-        mock_settings.DEV_LLM_API_KEY = None
-        mock_settings.DEV_LLM_MODEL = None
-        mock_settings.OPENROUTER_API_KEY = None
-
-        with pytest.raises(LLMNotConfiguredError, match="Default LLM not configured"):
-            get_default_llm()
-
-    @patch("app.agents.llm.client._sim_llm")
-    @patch("app.agents.llm.client.settings")
-    def test_sim_mode_returns_stub_client(
-        self, mock_settings: MagicMock, mock_sim_llm: MagicMock
-    ) -> None:
-        mock_settings.GAIA_SIM_MODE = True
-        mock_settings.GOOGLE_API_KEY = None
-
-        assert get_default_llm() is mock_sim_llm.return_value
-
-
-class TestGetDefaultLlmCustomLane:
-    """DEV_LLM_* takes precedence over OpenRouter for auxiliary work — but only when all three settings are present."""
-
-    @pytest.fixture(autouse=True)
-    def _fresh_cache(self):
-        _build_custom_default_llm.cache_clear()
-        yield
-        _build_custom_default_llm.cache_clear()
-
-    @patch("app.agents.llm.client.ChatOpenRouter")
-    @patch("app.agents.llm.client.settings")
-    def test_a_configured_custom_lane_serves_the_requested_temperature(
-        self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
-    ) -> None:
-        mock_settings.GAIA_SIM_MODE = False
-        mock_settings.DEV_LLM_BASE_URL = "https://gw/v1"
-        mock_settings.DEV_LLM_API_KEY = "dev-key"  # pragma: allowlist secret
-        mock_settings.DEV_LLM_MODEL = "zai/glm-5.3-flash"
-        mock_settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
-
-        assert get_default_llm(temperature=0.9) is mock_chat_openrouter.return_value
-        kwargs = mock_chat_openrouter.call_args.kwargs
-        assert kwargs["model"] == "zai/glm-5.3-flash"
-        assert kwargs["base_url"] == "https://gw/v1"
-        assert kwargs["api_key"].get_secret_value() == "dev-key"  # pragma: allowlist secret
-        # A creative caller's temperature must survive the custom lane; dropping
-        # it silently pins every auxiliary task to the endpoint's own default.
-        assert kwargs["temperature"] == 0.9
+        assert isinstance(llm, ChatOpenRouter)
+        assert llm.model_kwargs["provider"] == {"order": ["google"], "allow_fallbacks": False}
 
     @pytest.mark.parametrize(
-        ("base_url", "api_key", "model"),
+        ("level", "sent"),
+        [(ReasoningLevel.OFF, {"effort": "none"}), (ReasoningLevel.LIGHT, {"effort": "minimal"})],
+    )
+    @pytest.mark.usefixtures("openrouter")
+    def test_a_reasoning_level_becomes_openrouters_reasoning_object(
+        self, level: ReasoningLevel, sent: dict[str, str]
+    ) -> None:
+        llm = resolve_model(reasoning=level)
+
+        assert isinstance(llm, ChatOpenRouter)
+        assert llm.reasoning == sent
+
+    @pytest.mark.parametrize(
+        ("use", "model"),
+        [(ModelUse.MEMORY, MEMORY_MODEL_NAME), (ModelUse.VISION, VISION_MODEL_NAME)],
+    )
+    def test_memory_and_vision_run_direct_gemini(
+        self, monkeypatch: pytest.MonkeyPatch, openrouter: None, use: ModelUse, model: str
+    ) -> None:
+        monkeypatch.setattr(settings, "GOOGLE_API_KEY", "g-key")
+
+        llm = resolve_model(use)
+
+        assert isinstance(llm, ChatGoogleGenerativeAI)
+        assert llm.model == model
+
+    @pytest.mark.parametrize(
+        ("use", "missing"),
         [
-            (None, None, "zai/glm-5.3-flash"),
-            (None, "dev-key", "zai/glm-5.3-flash"),  # pragma: allowlist secret
-            ("https://gw/v1", None, None),
-            ("https://gw/v1", "dev-key", None),  # pragma: allowlist secret
-            ("https://gw/v1", None, "zai/glm-5.3-flash"),
+            (ModelUse.HELPER, "OPENROUTER_API_KEY"),
+            (ModelUse.JUDGE, "OPENROUTER_API_KEY"),
+            (ModelUse.MEMORY, "GOOGLE_API_KEY"),
+            (ModelUse.VISION, "GOOGLE_API_KEY"),
         ],
     )
-    @patch("app.agents.llm.client.ChatOpenRouter")
-    @patch("app.agents.llm.client.settings")
-    def test_a_partial_custom_lane_stays_on_openrouter(
-        self,
-        mock_settings: MagicMock,
-        mock_chat_openrouter: MagicMock,
-        base_url: str | None,
-        api_key: str | None,
-        model: str | None,
+    def test_a_missing_key_raises_naming_it(
+        self, monkeypatch: pytest.MonkeyPatch, openrouter: None, use: ModelUse, missing: str
     ) -> None:
-        _build_default_llm.cache_clear()
-        mock_settings.GAIA_SIM_MODE = False
-        mock_settings.DEV_LLM_BASE_URL = base_url
-        mock_settings.DEV_LLM_API_KEY = api_key
-        mock_settings.DEV_LLM_MODEL = model
-        mock_settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
+        monkeypatch.setattr(settings, "OPENROUTER_API_KEY", None)
+        monkeypatch.setattr(settings, "GOOGLE_API_KEY", None)
 
-        get_default_llm()
+        with pytest.raises(LLMNotConfiguredError, match=missing):
+            resolve_model(use)
 
-        assert mock_chat_openrouter.call_args.kwargs["model"] == DEFAULT_MODEL_NAME
-
-    @patch("app.agents.llm.client.ChatOpenRouter")
-    @patch("app.agents.llm.client.settings")
-    def test_the_custom_lane_streams_with_usage_and_a_bounded_output(
-        self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
+    @pytest.mark.parametrize("use", list(ModelUse))
+    def test_sim_mode_serves_every_use_from_the_stub(
+        self, monkeypatch: pytest.MonkeyPatch, use: ModelUse
     ) -> None:
-        """Same wire contract as the OpenRouter lane it replaces: streaming on, usage metadata attached to that stream, and the output capped — an unbounded auxiliary call runs to the endpoint's own 64k ceiling."""
-        mock_settings.GAIA_SIM_MODE = False
-        mock_settings.DEV_LLM_BASE_URL = "https://gw/v1"
-        mock_settings.DEV_LLM_API_KEY = "dev-key"  # pragma: allowlist secret
-        mock_settings.DEV_LLM_MODEL = "zai/glm-5.3-flash"
+        monkeypatch.setattr(settings, "GAIA_SIM_MODE", True)
 
-        get_default_llm()
-
-        kwargs = mock_chat_openrouter.call_args.kwargs
-        assert kwargs["streaming"] is True
-        assert kwargs["stream_usage"] is True
-        assert kwargs["max_tokens"] == DEV_LLM_MAX_OUTPUT_TOKENS
-
-    @patch("app.agents.llm.client.ChatOpenRouter")
-    @patch("app.agents.llm.client.settings")
-    def test_the_custom_lane_carries_the_context_window_profile(
-        self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
-    ) -> None:
-        """The fractional-window middleware reads profile["max_input_tokens"] at graph-build time and raises without it; an arbitrary custom endpoint has no curated LangChain profile, so this lane must supply one."""
-        mock_settings.GAIA_SIM_MODE = False
-        mock_settings.DEV_LLM_BASE_URL = "https://gw/v1"
-        mock_settings.DEV_LLM_API_KEY = "dev-key"  # pragma: allowlist secret
-        mock_settings.DEV_LLM_MODEL = "zai/glm-5.3-flash"
-
-        llm = get_default_llm()
-
-        assert llm.profile == {"max_input_tokens": DEFAULT_MAX_TOKENS}
-
-    @patch("app.agents.llm.client.ChatOpenRouter")
-    @patch("app.agents.llm.client.settings")
-    def test_an_unset_model_asks_for_no_model_rather_than_a_placeholder(
-        self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
-    ) -> None:
-        """DEV_LLM_MODEL is str or None; the or "" only keeps the kwarg typed as str, never a stand-in model id."""
-        mock_settings.DEV_LLM_MODEL = None
-        mock_settings.DEV_LLM_API_KEY = "dev-key"  # pragma: allowlist secret
-        mock_settings.DEV_LLM_BASE_URL = "https://gw/v1"
-
-        _build_custom_default_llm(DEFAULT_LLM_TEMPERATURE)
-
-        assert mock_chat_openrouter.call_args.kwargs["model"] == ""
-
-
-class TestBackgroundStructuredRunnable:
-    class _Shape(BaseModel):
-        text: str
-
-    @patch("app.agents.llm.client._structured_tool_runnable")
-    @patch("app.agents.llm.client._build_custom_llm")
-    @patch("app.agents.llm.client._sim_llm")
-    @patch("app.agents.llm.client.settings")
-    def test_sim_mode_wins_over_the_custom_endpoint(
-        self,
-        mock_settings: MagicMock,
-        mock_sim_llm: MagicMock,
-        mock_build_custom: MagicMock,
-        mock_structured_tool: MagicMock,
-    ) -> None:
-        """A sim run with DEV_LLM_* set must land on the scripted stub, like every other factory, not the real custom endpoint."""
-        mock_settings.GAIA_SIM_MODE = True
-        mock_settings.DEV_DEFAULT_MODEL = LLMProviderName.CUSTOM
-        mock_settings.DEV_LLM_BASE_URL = "https://custom.example/v1"
-
-        runnable = background_structured_runnable(self._Shape, temperature=0.3)
-
-        mock_build_custom.assert_not_called()
-        mock_sim_llm.assert_called_once_with(0.3)
-        mock_structured_tool.assert_called_once_with(mock_sim_llm.return_value, self._Shape)
-        assert runnable is mock_structured_tool.return_value
-
-    @patch("app.agents.llm.client._structured_tool_runnable")
-    @patch("app.agents.llm.client._aux_structured_runnable")
-    @patch("app.agents.llm.client._build_custom_llm")
-    @patch("app.agents.llm.client.settings")
-    def test_outside_sim_mode_the_custom_endpoint_is_used_when_configured(
-        self,
-        mock_settings: MagicMock,
-        mock_build_custom: MagicMock,
-        mock_aux: MagicMock,
-        mock_structured_tool: MagicMock,
-    ) -> None:
-        mock_settings.GAIA_SIM_MODE = False
-        mock_settings.DEV_DEFAULT_MODEL = LLMProviderName.CUSTOM
-        mock_settings.DEV_LLM_BASE_URL = "https://custom.example/v1"
-
-        runnable = background_structured_runnable(self._Shape, temperature=0.3)
-
-        mock_aux.assert_not_called()
-        mock_build_custom.assert_called_once_with(0.3)
-        # Bounded like the helper lane. Seen live: a replay's narration on the
-        # custom endpoint ran to the endpoint's 64k output cap, took 257 seconds,
-        # and delivered a result cut mid-sentence.
-        bounded = mock_build_custom.return_value.model_copy
-        bounded.assert_called_once_with(update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS})
-        # The caller's schema is what the endpoint is asked to fill; a runnable
-        # bound to anything else parses the one model call of the whole replay.
-        mock_structured_tool.assert_called_once_with(bounded.return_value, self._Shape)
-        assert runnable is mock_structured_tool.return_value
-
-    @patch("app.agents.llm.client._aux_structured_runnable")
-    @patch("app.agents.llm.client._build_custom_llm")
-    @patch("app.agents.llm.client.settings")
-    def test_a_base_url_alone_does_not_make_this_a_custom_deployment(
-        self, mock_settings: MagicMock, mock_build_custom: MagicMock, mock_aux: MagicMock
-    ) -> None:
-        """Both halves must hold: a DEV base URL alone still runs on OpenRouter, so its one-shot must not hit the custom endpoint."""
-
-        def _aux(schema: Any, temperature: float, config: RunnableConfig | None) -> str:
-            return "aux-runnable"
-
-        mock_aux.side_effect = _aux
-        mock_settings.GAIA_SIM_MODE = False
-        mock_settings.DEV_DEFAULT_MODEL = LLMProviderName.OPENROUTER
-        mock_settings.DEV_LLM_BASE_URL = "https://custom.example/v1"
-        run_config: RunnableConfig = {"configurable": {"session_id": "sess-1"}}
-
-        runnable = background_structured_runnable(self._Shape, temperature=0.3, config=run_config)
-
-        mock_build_custom.assert_not_called()
-        mock_aux.assert_called_once_with(self._Shape, 0.3, run_config)
-        assert runnable == "aux-runnable"
-
-    @patch("app.agents.llm.client._aux_structured_runnable")
-    @patch("app.agents.llm.client._build_custom_llm")
-    @patch("app.agents.llm.client.settings")
-    def test_a_custom_model_with_no_base_url_falls_back_to_the_aux_lane(
-        self, mock_settings: MagicMock, mock_build_custom: MagicMock, mock_aux: MagicMock
-    ) -> None:
-        """The other half: naming the custom provider without an endpoint leaves nowhere to build the client from."""
-        mock_settings.GAIA_SIM_MODE = False
-        mock_settings.DEV_DEFAULT_MODEL = LLMProviderName.CUSTOM
-        mock_settings.DEV_LLM_BASE_URL = None
-
-        runnable = background_structured_runnable(self._Shape, temperature=0.3)
-
-        mock_build_custom.assert_not_called()
-        mock_aux.assert_called_once_with(self._Shape, 0.3, None)
-        assert runnable is mock_aux.return_value
-
-    @patch("app.agents.llm.client.get_helper_llm")
-    def test_model_override_repoints_the_alias(self, mock_helper: MagicMock) -> None:
-        """A one-shot naming its own model must ask for it — the default must not leak in."""
-        mock_helper.return_value.model_kwargs = None
-
-        _aux_structured_runnable(self._Shape, 0.1, None, model_name="google/gemini-3.5-flash-lite")
-
-        mock_helper.return_value.model_copy.assert_called_once_with(
-            update={"model_name": "google/gemini-3.5-flash-lite"}
-        )
-
-    @patch("app.agents.llm.client.get_helper_llm")
-    def test_no_override_keeps_the_aux_default(self, mock_helper: MagicMock) -> None:
-        """Every existing caller passes nothing: the aux lane must not move under them."""
-        mock_helper.return_value.model_kwargs = None
-
-        _aux_structured_runnable(self._Shape, 0.1, None)
-
-        mock_helper.return_value.model_copy.assert_called_once_with(
-            update={"model_name": AUX_MODEL_NAME}
-        )
-
-    @patch("app.agents.llm.client.get_helper_llm")
-    def test_fallbacks_ride_the_models_array_primary_first(self, mock_helper: MagicMock) -> None:
-        """OpenRouter tries models in order on transport errors only — the primary stays first, and the provider order it already carried survives."""
-        mock_helper.return_value.model_kwargs = {"provider": {"order": ["google"]}}
-
-        _aux_structured_runnable(
-            self._Shape,
-            0.1,
-            None,
-            model_name="google/gemini-3.5-flash-lite",
-            fallback_model_names=("deepseek/deepseek-v4-flash-0731",),
-        )
-
-        mock_helper.return_value.model_copy.assert_called_once_with(
-            update={
-                "model_name": "google/gemini-3.5-flash-lite",
-                "model_kwargs": {
-                    "provider": {"order": ["google"]},
-                    "models": [
-                        "google/gemini-3.5-flash-lite",
-                        "deepseek/deepseek-v4-flash-0731",
-                    ],
-                },
-            }
-        )
-
-    @patch("app.agents.llm.client.get_helper_llm")
-    def test_no_fallbacks_means_no_models_array(self, mock_helper: MagicMock) -> None:
-        """Without fallbacks there is exactly one model_copy — no empty array for OpenRouter to interpret."""
-        mock_helper.return_value.model_kwargs = None
-
-        _aux_structured_runnable(self._Shape, 0.1, None)
-
-        assert mock_helper.return_value.model_copy.call_count == 1
+        with patch(f"{_CLIENT}._sim_llm") as sim:
+            assert resolve_model(use, temperature=0.3) is sim.return_value
+        sim.assert_called_once_with(0.3)
 
 
 # ---------------------------------------------------------------------------
@@ -1267,8 +1049,8 @@ class TestMemoryLaneProviderSelection:
     def test_the_default_model_is_built_with_the_routing_preference(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(client_module.settings, "OPENROUTER_API_KEY", "test-key")
-        monkeypatch.setattr(client_module.settings, "OPENROUTER_PROVIDER_ORDER", "deepseek")
+        monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "test-key")
+        monkeypatch.setattr(settings, "OPENROUTER_PROVIDER_ORDER", "deepseek")
         client_module._build_default_llm.cache_clear()
 
         try:
@@ -1287,17 +1069,21 @@ class TestMemoryLaneProviderSelection:
 
         mock_settings.GAIA_SIM_MODE = False
         mock_settings.OPENROUTER_API_KEY = "or-key"
-        assert aux_lane_available() is True
+        with patch(f"{_CLIENT}.custom_lane_forced", return_value=False):
+            assert aux_lane_available() is True
 
-        mock_settings.OPENROUTER_API_KEY = None
-        assert aux_lane_available() is False
+            mock_settings.OPENROUTER_API_KEY = None
+            assert aux_lane_available() is False
+
+        with patch(f"{_CLIENT}.custom_lane_forced", return_value=True):
+            assert aux_lane_available() is True
 
         mock_settings.GAIA_SIM_MODE = True
         assert aux_lane_available() is True
 
-    @patch("app.agents.llm.client._aux_structured_runnable")
+    @patch("app.agents.llm.client._structured_runnable")
     @patch("app.agents.llm.client.ainvoke_llm", new_callable=AsyncMock)
-    @patch("app.agents.llm.client.get_memory_llm")
+    @patch("app.agents.llm.client.resolve_model")
     @patch("app.agents.llm.client.memory_lane_available", return_value=True)
     @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=True)
     async def test_the_aux_lane_is_preferred_and_carries_a_gemini_fallback(
@@ -1311,19 +1097,17 @@ class TestMemoryLaneProviderSelection:
         mock_ainvoke.return_value = _Extracted(fact="from-aux")
         config = RunnableConfig(configurable={"user_id": "u1"})
 
+        options = StructuredCallOptions(temperature=0.4, timeout=9.0)
+
         result = await ainvoke_structured_gemini(
-            _Extracted,
-            "transcript",
-            label="memory:extract",
-            config=config,
-            options=StructuredCallOptions(temperature=0.4, timeout=9.0),
+            _Extracted, "transcript", label="memory:extract", config=config, options=options
         )
 
         assert result.fact == "from-aux"
         # The handover is the whole call, not just the runnable: a dropped
         # argument here silently re-defaults it on the lane that actually runs.
         assert mock_ainvoke.await_args.args == (mock_aux_runnable.return_value, "transcript")
-        assert mock_aux_runnable.call_args.args == (_Extracted, 0.4, config)
+        assert mock_aux_runnable.call_args.args == (_Extracted, config, options)
         kwargs = dict(mock_ainvoke.await_args.kwargs)
         fallback = kwargs.pop("fallback")
         assert kwargs == {
@@ -1335,10 +1119,11 @@ class TestMemoryLaneProviderSelection:
         # Gemini structured runnable with this call's schema and temperature.
         mock_memory_llm.assert_not_called()
         assert fallback() is mock_memory_llm.return_value.with_structured_output.return_value
+        assert mock_memory_llm.call_args.args == (ModelUse.MEMORY,)
         assert mock_memory_llm.call_args.kwargs["temperature"] == 0.4
         assert mock_memory_llm.return_value.with_structured_output.call_args.args[0] is _Extracted
 
-    @patch("app.agents.llm.client._aux_structured_runnable")
+    @patch("app.agents.llm.client._structured_runnable")
     @patch("app.agents.llm.client.ainvoke_llm", new_callable=AsyncMock)
     @patch("app.agents.llm.client.memory_lane_available", return_value=False)
     @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=True)
@@ -1357,7 +1142,7 @@ class TestMemoryLaneProviderSelection:
         assert mock_ainvoke.await_args.kwargs["fallback"] is None
 
     @patch("app.agents.llm.client.ainvoke_llm", new_callable=AsyncMock)
-    @patch("app.agents.llm.client.get_memory_llm")
+    @patch("app.agents.llm.client.resolve_model")
     @patch("app.agents.llm.client.memory_lane_available", return_value=True)
     @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=False)
     async def test_without_the_aux_lane_gemini_still_serves_alone(
@@ -1392,7 +1177,7 @@ class TestMemoryLaneProviderSelection:
         }
 
     @patch("app.agents.llm.client.ainvoke_structured", new_callable=AsyncMock)
-    @patch("app.agents.llm.client.get_memory_llm")
+    @patch("app.agents.llm.client.resolve_model")
     @patch("app.agents.llm.client.memory_lane_available", return_value=False)
     @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=False)
     async def test_neither_lane_configured_surfaces_the_canonical_not_configured(
@@ -1425,18 +1210,16 @@ class TestMemoryLaneProviderSelection:
             "options": StructuredCallOptions(temperature=0.4, timeout=9.0),
         }
 
-    @patch("app.agents.llm.client.get_memory_llm")
     @patch("app.agents.llm.client._structured_tool_runnable")
-    @patch("app.agents.llm.client.get_helper_llm")
+    @patch("app.agents.llm.client.resolve_model")
     @patch("app.agents.llm.client.memory_lane_available", return_value=True)
     @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=True)
     async def test_an_aux_outage_is_served_by_gemini(
         self,
         mock_aux_available: MagicMock,
         mock_available: MagicMock,
-        mock_helper: MagicMock,
-        mock_structured_tool: MagicMock,
         mock_memory_llm: MagicMock,
+        mock_structured_tool: MagicMock,
     ) -> None:
         failing = NonCallableMagicMock()
         failing.with_retry = MagicMock(return_value=failing)
@@ -1548,7 +1331,7 @@ class TestConstants:
 
 class TestChatbot:
     @patch("app.agents.llm.chatbot.ainvoke_llm")
-    @patch("app.agents.llm.chatbot.get_helper_llm")
+    @patch("app.agents.llm.chatbot.resolve_model")
     async def test_chatbot_runs_on_the_helper_model(
         self, mock_get_helper: MagicMock, mock_ainvoke: AsyncMock
     ) -> None:
@@ -1564,7 +1347,7 @@ class TestChatbot:
         assert result["messages"][0].content == "default response"
 
     @patch("app.agents.llm.chatbot.log")
-    @patch("app.agents.llm.chatbot.get_helper_llm")
+    @patch("app.agents.llm.chatbot.resolve_model")
     async def test_no_provider_is_raised_not_degraded(
         self, mock_get_helper: MagicMock, mock_log: MagicMock
     ) -> None:
@@ -1577,7 +1360,7 @@ class TestChatbot:
 
     @patch("app.agents.llm.chatbot.log")
     @patch("app.agents.llm.chatbot.ainvoke_llm")
-    @patch("app.agents.llm.chatbot.get_helper_llm")
+    @patch("app.agents.llm.chatbot.resolve_model")
     async def test_provider_error_is_logged_and_reraised(
         self, mock_get_helper: MagicMock, mock_ainvoke: AsyncMock, mock_log: MagicMock
     ) -> None:
@@ -1590,7 +1373,7 @@ class TestChatbot:
 
     @patch("app.agents.llm.chatbot.log")
     @patch("app.agents.llm.chatbot.ainvoke_llm")
-    @patch("app.agents.llm.chatbot.get_helper_llm")
+    @patch("app.agents.llm.chatbot.resolve_model")
     async def test_chatbot_programming_bug_propagates_unlogged(
         self, mock_get_helper: MagicMock, mock_ainvoke: AsyncMock, mock_log: MagicMock
     ) -> None:
@@ -1999,80 +1782,75 @@ class TestAuxiliaryMeteringWiring:
 
 
 class TestAinvokeStructured:
-    """The one canonical one-shot structured call.
-
-    It runs on get_helper_llm, not get_default_llm: structured output is
-    always a small JSON blob, so reserving the full output budget for it wastes
-    the reservation on every helper call in the app.
-    """
+    """The one canonical one-shot structured call, on the model options.use resolves to."""
 
     class _Schema(BaseModel):
         answer: str
 
-    async def test_runs_on_the_capped_helper_re_pointed_at_the_aux_model(self) -> None:
-        """Built from get_helper_llm (8k output cap) then re-pointed at AUX_MODEL_NAME (its own cache namespace) — losing either wastes 64k or misplaces the cache."""
+    async def test_the_schema_runs_on_the_model_its_use_resolves_to(self) -> None:
+        """The use, temperature and reasoning all reach resolve_model: a dropped one silently re-defaults the lane."""
         structured = MagicMock(name="structured_runnable")
-        aux = MagicMock(name="aux_model")
-        helper = MagicMock()
-        helper.model_copy = MagicMock(return_value=aux)
+        model = MagicMock(name="resolved_model")
 
         with (
-            patch("app.agents.llm.client.get_helper_llm", return_value=helper) as mock_helper,
+            patch(f"{_CLIENT}.resolve_model", return_value=model) as mock_resolve,
             patch(
-                "app.agents.llm.client._structured_tool_runnable", return_value=structured
+                f"{_CLIENT}._structured_tool_runnable", return_value=structured
             ) as mock_structured_tool,
             patch(
-                "app.agents.llm.client.ainvoke_llm",
-                new=AsyncMock(return_value=self._Schema(answer="42")),
+                f"{_CLIENT}.ainvoke_llm", new=AsyncMock(return_value=self._Schema(answer="42"))
             ) as mock_invoke,
         ):
             result = await ainvoke_structured(
                 self._Schema,
                 "what is the answer?",
                 label="the_judge",
-                options=StructuredCallOptions(temperature=0.3),
+                options=StructuredCallOptions(
+                    temperature=0.3, use=ModelUse.JUDGE, reasoning=ReasoningLevel.OFF
+                ),
             )
 
-        assert mock_helper.call_args.kwargs["temperature"] == 0.3
-        assert helper.model_copy.call_args.kwargs["update"] == {"model_name": AUX_MODEL_NAME}
-        assert mock_structured_tool.call_args.args == (aux, self._Schema)
+        assert mock_resolve.call_args.args == (ModelUse.JUDGE,)
+        assert mock_resolve.call_args.kwargs == {
+            "temperature": 0.3,
+            "reasoning": ReasoningLevel.OFF,
+        }
+        assert mock_structured_tool.call_args.args == (model, self._Schema)
         assert mock_invoke.call_args.args[0] is structured
         assert result.answer == "42"
 
-    async def test_reasoning_off_reaches_the_request_and_the_default_sends_none(self) -> None:
+    async def test_reasoning_off_reaches_the_request_and_the_default_sends_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A call that turns reasoning off must say so on the wire; every other call keeps the model default."""
-        helper = ChatOpenRouter(model="test/model", api_key=SecretStr("sk-test"))
+        monkeypatch.setattr(settings, "GAIA_SIM_MODE", False)
+        monkeypatch.setattr(settings, "DEV_DEFAULT_MODEL", None)
+        monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "sk-test")
         sent: list[object] = []
 
-        async def capture(runnable: Runnable, *_: object, **__: object) -> BaseModel:
+        async def capture(runnable: RunnableSequence, *_: object, **__: object) -> BaseModel:
             sent.append(runnable.first.bound._default_params.get("reasoning"))
             return self._Schema(answer="ok")
 
-        with (
-            patch(f"{_CLIENT}.get_helper_llm", return_value=helper),
-            patch(f"{_CLIENT}.ainvoke_llm", new=capture),
-        ):
+        with patch(f"{_CLIENT}.ainvoke_llm", new=capture):
             await ainvoke_structured(
                 self._Schema,
                 "q",
                 label="judge",
-                options=StructuredCallOptions(reasoning=REASONING_DISABLED),
+                options=StructuredCallOptions(reasoning=ReasoningLevel.OFF),
             )
             await ainvoke_structured(self._Schema, "q", label="judge")
 
-        assert sent == [dict(REASONING_DISABLED), None]
+        assert sent == [{"effort": "none"}, None]
 
     async def test_the_label_and_config_reach_the_invoke(self) -> None:
         """Label names the call in the COGS event and config carries the user attribution; losing either drops it."""
-        helper = MagicMock()
-        helper.model_copy = MagicMock(return_value=MagicMock())
         config = RunnableConfig(configurable={"user_id": "user-3"})
 
         with (
-            patch("app.agents.llm.client.get_helper_llm", return_value=helper),
+            patch(f"{_CLIENT}._structured_runnable"),
             patch(
-                "app.agents.llm.client.ainvoke_llm",
-                new=AsyncMock(return_value=self._Schema(answer="ok")),
+                f"{_CLIENT}.ainvoke_llm", new=AsyncMock(return_value=self._Schema(answer="ok"))
             ) as mock_invoke,
         ):
             await ainvoke_structured(
@@ -2082,78 +1860,51 @@ class TestAinvokeStructured:
         assert mock_invoke.call_args.kwargs["label"] == "memory_extraction"
         assert mock_invoke.call_args.kwargs["config"] is config
 
-    async def test_the_prompt_and_timeout_reach_the_invoke(self) -> None:
-        """A dropped timeout would silently revert to the module default, defeating an interactive caller's tight budget."""
-        helper = MagicMock()
-        helper.model_copy = MagicMock(return_value=MagicMock())
+    async def test_the_prompt_timeout_and_attempts_reach_the_invoke(self) -> None:
+        """A dropped timeout or attempt budget silently reverts to the module default, defeating an interactive caller's tight budget."""
         prompt = [HumanMessage(content="classify this")]
 
         with (
-            patch("app.agents.llm.client.get_helper_llm", return_value=helper),
+            patch(f"{_CLIENT}._structured_runnable"),
             patch(
-                "app.agents.llm.client.ainvoke_llm",
-                new=AsyncMock(return_value=self._Schema(answer="ok")),
+                f"{_CLIENT}.ainvoke_llm", new=AsyncMock(return_value=self._Schema(answer="ok"))
             ) as mock_invoke,
         ):
             await ainvoke_structured(
                 self._Schema,
                 prompt,
                 label="classifier",
-                options=StructuredCallOptions(timeout=12.0),
+                options=StructuredCallOptions(timeout=12.0, max_attempts=1),
             )
 
         assert mock_invoke.call_args.args[1] is prompt
-        assert mock_invoke.call_args.kwargs["options"].timeout == 12.0
+        assert mock_invoke.call_args.kwargs["options"] == LLMInvokeOptions(
+            timeout=12.0, max_attempts=1
+        )
 
-    async def test_a_model_override_and_its_fallbacks_reach_the_runnable(self) -> None:
-        """Dropped, the one-shot silently runs on the aux default with no fallback chain."""
-        config = RunnableConfig(configurable={"user_id": "user-3"})
-
-        with (
-            patch("app.agents.llm.client._aux_structured_runnable") as runnable,
-            patch(
-                "app.agents.llm.client.ainvoke_llm",
-                new=AsyncMock(return_value=self._Schema(answer="ok")),
-            ),
-        ):
-            await ainvoke_structured(
-                self._Schema,
-                "prompt",
-                label="judge",
-                config=config,
-                options=StructuredCallOptions(
-                    temperature=0.2,
-                    model_name="google/gemini-3.5-flash-lite",
-                    fallback_model_names=("deepseek/deepseek-v4-flash-0731",),
-                ),
-            )
-
-        assert runnable.call_args.args == (self._Schema, 0.2, config)
-        assert runnable.call_args.kwargs == {
-            "reasoning": None,
-            "model_name": "google/gemini-3.5-flash-lite",
-            "fallback_model_names": ("deepseek/deepseek-v4-flash-0731",),
-        }
-
-    async def test_the_aux_lane_runs_on_its_own_sticky_session(self) -> None:
+    async def test_the_aux_lane_runs_on_its_own_sticky_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The session id must be suffixed and bound after bind_tools, which drops the outer binding's kwargs if bound before."""
-        bound = MagicMock(name="bound_runnable")
-        structured = MagicMock(name="structured_runnable")
-        structured.bind = MagicMock(return_value=bound)
+        monkeypatch.setattr(settings, "GAIA_SIM_MODE", False)
+        monkeypatch.setattr(settings, "DEV_DEFAULT_MODEL", None)
+        monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "sk-test")
         config = RunnableConfig(configurable={"session_id": "conv-1"})
 
-        with (
-            patch("app.agents.llm.client.get_helper_llm"),
-            patch("app.agents.llm.client._structured_tool_runnable", return_value=structured),
-            patch(
-                "app.agents.llm.client.ainvoke_llm",
-                new=AsyncMock(return_value=self._Schema(answer="ok")),
-            ) as mock_invoke,
-        ):
-            await ainvoke_structured(self._Schema, "prompt", label="judge", config=config)
+        runnable = _structured_runnable(self._Schema, config, StructuredCallOptions())
 
-        assert structured.bind.call_args.kwargs == {"session_id": "conv-1-aux"}
-        assert mock_invoke.call_args.args[0] is bound
+        assert isinstance(runnable, RunnableBinding)
+        assert runnable.kwargs == {"session_id": "conv-1-aux"}
+
+    def test_no_sticky_session_reaches_a_non_openrouter_endpoint(self) -> None:
+        """session_id is an OpenRouter routing hint; the custom endpoint rejects it."""
+        custom = ChatOpenAI(model="m", api_key=SecretStr("k"), base_url="https://x/v1")
+        config = RunnableConfig(configurable={"session_id": "conv-1"})
+
+        with patch(f"{_CLIENT}.resolve_model", return_value=custom):
+            runnable = _structured_runnable(self._Schema, config, StructuredCallOptions())
+
+        assert isinstance(runnable, RunnableSequence)
 
 
 class _Closing(BaseModel):
@@ -2224,16 +1975,18 @@ class TestStructuredReplyParsing:
     the first, whose text stopped where the model had opened a quote.
     """
 
+    @pytest.fixture(autouse=True)
+    def _openrouter(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "GAIA_SIM_MODE", False)
+        monkeypatch.setattr(settings, "DEV_DEFAULT_MODEL", None)
+        monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "sk-test")
+        _build_default_llm.cache_clear()
+        yield
+        _build_default_llm.cache_clear()
+
     @staticmethod
     def _aux_runnable() -> Runnable:
-        helper = ChatOpenRouter(
-            model="test/model",
-            api_key=SecretStr("sk-test"),
-            streaming=True,
-            max_tokens=HELPER_MAX_OUTPUT_TOKENS,
-        )
-        with patch(f"{_CLIENT}.get_helper_llm", return_value=helper):
-            return client_module._aux_structured_runnable(_Closing, 0.0, None)
+        return _structured_runnable(_Closing, None, StructuredCallOptions(temperature=0.0))
 
     async def test_a_well_formed_reply_is_returned_whole(self) -> None:
         raw = '{"text": "The first question is: \\"Why does \\\\\\"foo\\\\\\" print?\\"", "achieved": true}'

@@ -19,6 +19,7 @@ from app.constants.llm import (
     DEFAULT_MODEL_NAME,
     VISION_MODEL_NAME,
     VISION_MODEL_PROVIDER,
+    ModelUse,
 )
 from app.utils.multimodal import image_content_block
 
@@ -48,14 +49,14 @@ class TestTheDescriberCanSee:
     async def test_it_does_not_describe_with_the_default_chat_model(self) -> None:
         """The default chat model is chosen for cheap text and may be text-only; the describer must not inherit it."""
         with (
-            patch(f"{_MOD}.get_vision_llm") as vision_llm,
+            patch(f"{_MOD}.resolve_model") as vision_llm,
             patch(
                 f"{_MOD}.ainvoke_llm", AsyncMock(return_value=MagicMock(text="a red login screen"))
             ),
         ):
             await describe_image("BASE64", "image/png", prompt="what is this?")
 
-        vision_llm.assert_called_once()
+        vision_llm.assert_called_once_with(ModelUse.VISION)
 
     async def test_the_configured_vision_model_is_not_merely_the_default(self) -> None:
         # Not a style preference: if these collapse to one name, a future default
@@ -70,7 +71,7 @@ class TestTheDescriberCanSee:
 
 @pytest.mark.unit
 class TestDescribeImage:
-    @patch(f"{_MOD}.get_vision_llm")
+    @patch(f"{_MOD}.resolve_model")
     @patch(f"{_MOD}.ainvoke_llm", new_callable=AsyncMock)
     async def test_happy_path_returns_trimmed_text(
         self, mock_ainvoke: AsyncMock, mock_llm: AsyncMock
@@ -89,14 +90,14 @@ class TestDescribeImage:
 
     async def test_provider_failure_returns_none(self) -> None:
         with (
-            patch(f"{_MOD}.get_vision_llm"),
+            patch(f"{_MOD}.resolve_model"),
             patch(f"{_MOD}.ainvoke_llm", AsyncMock(side_effect=RuntimeError("provider down"))),
         ):
             assert await describe_image(IMAGE_B64, MIME, PROMPT) is None
 
     async def test_empty_completion_returns_none(self) -> None:
         with (
-            patch(f"{_MOD}.get_vision_llm"),
+            patch(f"{_MOD}.resolve_model"),
             patch(f"{_MOD}.ainvoke_llm", AsyncMock(return_value=AIMessage(content="   "))),
         ):
             assert await describe_image(IMAGE_B64, MIME, PROMPT) is None
@@ -106,14 +107,14 @@ class TestDescribeImage:
 class TestDegradation:
     async def test_a_provider_failure_returns_none_rather_than_raising(self) -> None:
         with (
-            patch(f"{_MOD}.get_vision_llm"),
+            patch(f"{_MOD}.resolve_model"),
             patch(f"{_MOD}.ainvoke_llm", AsyncMock(side_effect=RuntimeError("provider down"))),
         ):
             assert await describe_image("BASE64", "image/png", prompt="p") is None
 
     async def test_an_empty_description_is_reported_as_no_description(self) -> None:
         with (
-            patch(f"{_MOD}.get_vision_llm"),
+            patch(f"{_MOD}.resolve_model"),
             patch(f"{_MOD}.ainvoke_llm", AsyncMock(return_value=MagicMock(text="   "))),
         ):
             assert await describe_image("BASE64", "image/png", prompt="p") is None

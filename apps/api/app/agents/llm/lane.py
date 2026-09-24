@@ -19,8 +19,8 @@ from enum import StrEnum
 from typing import Any
 
 from app.agents.llm.client import PROVIDER_MODELS, next_fallback_provider
+from app.agents.llm.dev_lane import dev_default_model_id, dev_default_option
 from app.config.rate_limits import RateLimitPeriod, get_reset_time, get_time_window_key
-from app.config.settings import settings
 from app.constants.cache import COST_BUDGET_NOTIFIED_KEY
 from app.constants.llm import (
     DEFAULT_LLM_PROVIDER,
@@ -216,15 +216,7 @@ def dev_model_id(model_id: str | None, use_defaults: bool) -> str | None:
     an unknown id selects nothing.
     """
     if use_defaults:
-        dev_default = settings.DEV_DEFAULT_MODEL
-        if dev_default and dev_default not in DEV_MODEL_OPTIONS:
-            log.warning(
-                f"{LogTag.AGENT} DEV_DEFAULT_MODEL is not a DEV_MODEL_OPTIONS key; "
-                "keeping the plan-resolved lane",
-                dev_default=dev_default,
-            )
-            return None
-        model_id = dev_default
+        return dev_default_model_id()
     return model_id if model_id in DEV_MODEL_OPTIONS else None
 
 
@@ -251,8 +243,10 @@ async def resolve_lane(
 
     Free runs the default model; every paid tier gets the paid model. A paid
     user past the monthly economic guard degrades to the free lane rather than
-    being blocked. dev_option (development only) wins over all of it.
+    being blocked. In development an explicit dev_option, else DEV_DEFAULT_MODEL,
+    wins over all of it: every top-level run, not only chat, starts on it.
     """
+    dev_option = dev_option or dev_default_option()
     if dev_option is not None:
         return _dev_lane(dev_option, role), None
 
