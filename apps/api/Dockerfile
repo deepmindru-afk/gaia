@@ -240,6 +240,9 @@ WORKDIR /app/apps/api
 
 USER appuser
 EXPOSE 8000
+# A browser-host container (python -m app.browser_host) serves the internal
+# network; its port is never published. Natively the host binds loopback.
+ENV BROWSER_HOST_BIND_ADDRESS=0.0.0.0
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--proxy-headers", "--forwarded-allow-ips", "*"]

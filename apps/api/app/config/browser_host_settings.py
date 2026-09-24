@@ -21,6 +21,9 @@ class BrowserHostSettings(BaseSettings):
 
     ENV: Literal["production", "development"] = "production"
 
+    # Interface the host binds. Loopback for a native run; the api image sets
+    # 0.0.0.0, where the container sits on the internal network, port unpublished.
+    BROWSER_HOST_BIND_ADDRESS: str = "127.0.0.1"
     # Port this process serves on when it runs as a browser host.
     BROWSER_HOST_PORT: int = 8930
     # Concurrent sessions one browser host accepts before it answers 429.

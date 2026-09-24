@@ -84,7 +84,7 @@ function parseIpv6ToBigInt(ip: string): bigint {
       throw new RangeError(`malformed IPv6 address: ${ip}`);
     }
     const zeros = 8 - l.length - r.length;
-    groups = [...l, ...Array<string>(zeros).fill("0"), ...r];
+    groups = [...l, ...new Array<string>(zeros).fill("0"), ...r];
   } else {
     groups = ip.split(":").filter(Boolean);
     if (groups.length !== 8) {
@@ -96,7 +96,7 @@ function parseIpv6ToBigInt(ip: string): bigint {
     if (!/^[0-9a-f]{1,4}$/i.test(hex)) {
       throw new RangeError(`malformed IPv6 hextet: ${hex}`);
     }
-    value = (value << 16n) | BigInt(parseInt(hex, 16));
+    value = (value << 16n) | BigInt(Number.parseInt(hex, 16));
   }
   return value;
 }

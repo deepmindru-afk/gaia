@@ -1,7 +1,7 @@
 """Tests for the python -m app.browser_host entrypoint.
 
 The entrypoint's whole job is wiring: hand the browser-host FastAPI app to
-uvicorn on the hardcoded bind/port with logging left to the app. Running the
+uvicorn on the configured bind/port with logging left to the app. Running the
 module under __main__ with uvicorn.run faked pins that the guard fires
 and that the exact app + address flow through -- a swapped host/port here would
 publish the internal-only host on the wrong interface.
@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from app.browser_host.server import app
+from app.config.browser_host_settings import browser_host_settings
 
 
 @pytest.mark.unit
@@ -32,9 +33,18 @@ class TestBrowserHostEntrypoint:
         mock_run.assert_called_once()
         (passed_app,), kwargs = mock_run.call_args
         assert passed_app is app
-        assert kwargs["host"] == "0.0.0.0"  # noqa: S104 -- asserting the hardcoded bind, not binding
+        assert kwargs["host"] == "127.0.0.1"
         assert kwargs["port"] == 8930
         assert kwargs["log_config"] is None
+
+    def test_the_image_bind_address_reaches_uvicorn(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(browser_host_settings, "BROWSER_HOST_BIND_ADDRESS", "10.0.0.7")
+        with (
+            patch("uvicorn.run") as mock_run,
+            patch("shared.py.logging.configure_file_logging"),
+        ):
+            runpy.run_module("app.browser_host", run_name="__main__")
+        assert mock_run.call_args.kwargs["host"] == "10.0.0.7"
 
     def test_does_not_run_uvicorn_on_plain_import(self) -> None:
         # The ``if __name__ == "__main__"`` guard must keep a normal import inert;

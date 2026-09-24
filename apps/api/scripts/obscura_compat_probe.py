@@ -22,13 +22,15 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 from typing import Any
 
 import httpx
 import websockets
+
+#: The checkout this script lives in (apps/api/scripts/ -> the repo root).
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: Sites people commonly send a browser task to, one per shape of page:
 #: search, forms, docs, news, shopping, travel, SPAs built on the big frameworks.
@@ -212,8 +214,10 @@ def _gaps(obscura: PageReport, chrome: PageReport) -> list[str]:
     return gaps
 
 
-def _start(argv: list[str], env: dict[str, str] | None = None) -> subprocess.Popen[bytes]:
-    return subprocess.Popen(argv, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+async def _start(argv: list[str], env: dict[str, str] | None = None) -> asyncio.subprocess.Process:
+    return await asyncio.create_subprocess_exec(
+        *argv, env=env, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+    )
 
 
 async def _await_endpoint(port: int) -> None:
@@ -240,8 +244,8 @@ async def _load(port: int, url: str) -> PageReport:
         return PageReport(failure=f"{type(exc).__name__}: {exc}"[:200])
 
 
-def _start_obscura(obscura_bin: str) -> subprocess.Popen[bytes]:
-    return _start(
+async def _start_obscura(obscura_bin: str) -> asyncio.subprocess.Process:
+    return await _start(
         [obscura_bin, "serve", "--port", str(OBSCURA_PORT), "--stealth"],
         env={
             **os.environ,
@@ -254,8 +258,8 @@ def _start_obscura(obscura_bin: str) -> subprocess.Popen[bytes]:
 async def probe(urls: list[str], obscura_bin: str, chrome_bin: str) -> set[str]:
     """Probe each site in both engines, print what differs, and return the sites with a gap."""
     profile = tempfile.mkdtemp(prefix="compat-chrome-")
-    obscura = _start_obscura(obscura_bin)
-    chrome = _start(
+    obscura = await _start_obscura(obscura_bin)
+    chrome = await _start(
         [
             chrome_bin,
             "--headless=new",
@@ -269,16 +273,16 @@ async def probe(urls: list[str], obscura_bin: str, chrome_bin: str) -> set[str]:
     try:
         await asyncio.gather(_await_endpoint(OBSCURA_PORT), _await_endpoint(CHROME_PORT))
         for url in urls:
-            if obscura.poll() is not None:
+            if obscura.returncode is not None:
                 # A crash is itself a gap on the site that caused it; the next
                 # site still gets an engine to run in.
-                obscura = _start_obscura(obscura_bin)
+                obscura = await _start_obscura(obscura_bin)
                 await _await_endpoint(OBSCURA_PORT)
             o, c = await asyncio.gather(_load(OBSCURA_PORT, url), _load(CHROME_PORT, url))
-            if o.failure and obscura.poll() is None:
+            if o.failure and obscura.returncode is None:
                 # A wedged engine would fail every later site too.
                 obscura.kill()
-                obscura.wait()
+                await obscura.wait()
             gaps = _gaps(o, c)
             if gaps:
                 gapped.add(url)
@@ -293,15 +297,23 @@ async def probe(urls: list[str], obscura_bin: str, chrome_bin: str) -> set[str]:
             for gap in gaps:
                 print(f"      {gap}", flush=True)
     finally:
-        obscura.terminate()
-        chrome.terminate()
+        for process in (obscura, chrome):
+            if process.returncode is None:
+                process.terminate()
+        await asyncio.gather(obscura.wait(), chrome.wait())
         shutil.rmtree(profile, ignore_errors=True)
     return gapped
 
 
 def _read_baseline(path: Path) -> set[str]:
-    """URLs of sites with known gaps: one per line, lines starting with # ignored."""
-    lines = (line.strip() for line in path.read_text().splitlines())
+    """URLs of sites with known gaps: one per line, lines starting with # ignored.
+
+    The file must sit inside this repository; the baseline is a checked-in ratchet.
+    """
+    resolved = path.resolve()
+    if not resolved.is_relative_to(REPO_ROOT):
+        sys.exit(f"--baseline must be a file in this repository, not {path}")
+    lines = (line.strip() for line in resolved.read_text().splitlines())
     return {line for line in lines if line and not line.startswith("#")}
 
 

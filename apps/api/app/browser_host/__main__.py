@@ -22,11 +22,9 @@ def main() -> None:
     """Give this process its own log identity and local log files, then serve the host."""
     os.environ.setdefault("GAIA_SERVICE_NAME", BROWSER_HOST_SERVICE_NAME)
     configure_file_logging(BROWSER_HOST_LOG_DIR)
-    # Binds all interfaces by design: the host runs in its own container on the
-    # internal overlay network and its port is never published to the outside.
     uvicorn.run(
         app,
-        host="0.0.0.0",  # noqa: S104  # nosec B104 — internal overlay only, port never published
+        host=browser_host_settings.BROWSER_HOST_BIND_ADDRESS,
         port=browser_host_settings.BROWSER_HOST_PORT,
         log_config=None,
     )

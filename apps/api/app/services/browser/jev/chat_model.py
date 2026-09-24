@@ -141,7 +141,7 @@ _OPERATIONS_BY_ACTION: dict[str, tuple[JevOperation, ...]] = {
 _DEFAULT_TAKEOVER_REASON = "Complete this step in the live browser"
 _DEFAULT_GUIDANCE_REASON = "No operation on this page moves the task forward."
 _DEFAULT_CAPTCHA_CHALLENGE = "Solve the CAPTCHA, then continue"
-_USER_REQUEST = re.compile(r"<user_request>\s*(.*?)\s*</user_request>", re.DOTALL)
+_USER_REQUEST = re.compile(r"<user_request>(.*?)</user_request>", re.DOTALL)
 # Neither ends the run on a real next action, so neither counts as an alternative
 # to an unconfident DONE.
 _TERMINAL_OPERATIONS = frozenset({JevOperation.DONE, JevOperation.BLOCKED})
@@ -1657,7 +1657,7 @@ def _goal_from_messages(messages: list[BaseMessage]) -> str:
             continue
         match = _USER_REQUEST.search(text)
         if match:
-            return match.group(1)
+            return match.group(1).strip()
     return ""
 
 
