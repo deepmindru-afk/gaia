@@ -142,6 +142,10 @@ class CommonSettings(BaseAppSettings):
     # (49/50 on the calibration set, zero dangerous accepts), LLM intent judge as
     # the transport-failure fallback. On by default; a JEV outage never opens the gate.
     ENABLE_HIL_JEV_JUDGE: bool = True
+    # JEV reply classifier for bot users' chat answers to pending approvals —
+    # one structured decision call per reply (hil-reply calibration: 0 dangerous
+    # approves vs the LLM's 2), LLM classifier as the transport-failure fallback.
+    ENABLE_HIL_JEV_REPLY: bool = True
 
     @field_validator("HOST", "FRONTEND_URL", mode="after")
     @classmethod

@@ -4126,7 +4126,7 @@
                 "type": "null"
               }
             ],
-            "description": "Stop executing after this date (optional)",
+            "description": "Stop executing after this date (optional); defaults to 180 days after creation",
             "title": "Stop After"
           },
           "timezone": {

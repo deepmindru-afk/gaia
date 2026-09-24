@@ -40,6 +40,8 @@ from app.services.hil.prompts import JEV_FORBID_QUESTION
 from app.services.hil.utils import PriorCall
 
 MODULE = "app.services.hil.jev_judge"
+# The Decisions transport: the network boundary every JEV question crosses.
+CLIENT_MODULE = "app.services.hil.jev_client"
 
 
 def _call(**overrides: Any) -> JudgedCall:
@@ -96,8 +98,8 @@ async def _decide(
             **{"decide.return_value": None},
         ),
     )
-    with patch(f"{MODULE}.httpx.AsyncClient", return_value=_client(answer)):
-        with patch(f"{MODULE}.settings") as settings:
+    with patch(f"{CLIENT_MODULE}.httpx.AsyncClient", return_value=_client(answer)):
+        with patch(f"{CLIENT_MODULE}.settings") as settings:
             settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
             return await judge.decide(
                 user_id="u",
@@ -417,7 +419,7 @@ class TestFallback:
     async def test_missing_api_key_runs_the_fallback(self) -> None:
         fallback = AsyncMock()
         judge = JevIntentJudge(fallback=fallback)
-        with patch(f"{MODULE}.settings") as settings:
+        with patch(f"{CLIENT_MODULE}.settings") as settings:
             settings.OPENROUTER_API_KEY = None
             await judge.decide(
                 user_id="u",
@@ -433,8 +435,8 @@ class TestWire:
     async def test_state_names_its_evidence_fields(self) -> None:
         """The criteria reference these names; a renamed field blinds the judge."""
         client = _client(_answer("unclear", 0.5))
-        with patch(f"{MODULE}.httpx.AsyncClient", return_value=client):
-            with patch(f"{MODULE}.settings") as settings:
+        with patch(f"{CLIENT_MODULE}.httpx.AsyncClient", return_value=client):
+            with patch(f"{CLIENT_MODULE}.settings") as settings:
                 settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
                 await ask_jev(
                     user_messages=["send it"],
@@ -461,8 +463,8 @@ class TestWire:
     async def test_enrichment_rides_only_when_it_exists(self) -> None:
         """Empty evidence reads as missing evidence and costs confidence, so an old-shape call posts the old-shape state — and a rich call carries it all."""
         client = _client(_answer("unclear", 0.5))
-        with patch(f"{MODULE}.httpx.AsyncClient", return_value=client):
-            with patch(f"{MODULE}.settings") as settings:
+        with patch(f"{CLIENT_MODULE}.httpx.AsyncClient", return_value=client):
+            with patch(f"{CLIENT_MODULE}.settings") as settings:
                 settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
                 await ask_jev(
                     user_messages=["send it"],
@@ -481,8 +483,8 @@ class TestWire:
         assert "assistant_turns" not in posted["state"]
 
         client = _client(_answer("unclear", 0.5))
-        with patch(f"{MODULE}.httpx.AsyncClient", return_value=client):
-            with patch(f"{MODULE}.settings") as settings:
+        with patch(f"{CLIENT_MODULE}.httpx.AsyncClient", return_value=client):
+            with patch(f"{CLIENT_MODULE}.settings") as settings:
                 settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
                 await ask_jev(
                     user_messages=["send it"],
@@ -504,8 +506,10 @@ class TestWire:
         assert posted["state"]["assistant_turns"] == ["your draft is ready"]
 
     async def test_usage_is_reported(self) -> None:
-        with patch(f"{MODULE}.httpx.AsyncClient", return_value=_client(_answer("unclear", 0.5))):
-            with patch(f"{MODULE}.settings") as settings:
+        with patch(
+            f"{CLIENT_MODULE}.httpx.AsyncClient", return_value=_client(_answer("unclear", 0.5))
+        ):
+            with patch(f"{CLIENT_MODULE}.settings") as settings:
                 settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
                 choice, conf, probs, tokens_in, tokens_out = await ask_jev(
                     user_messages=["send it"],
@@ -565,8 +569,8 @@ def _sequence_client(*answers: dict[str, Any] | Exception) -> AsyncMock:
 def _jev(client: AsyncMock, key: str | None = "or-key") -> Iterator[MagicMock]:
     """Serve client as the Decisions API with key configured; yields the AsyncClient factory."""
     with (
-        patch(f"{MODULE}.httpx.AsyncClient", return_value=client) as factory,
-        patch(f"{MODULE}.settings") as settings,
+        patch(f"{CLIENT_MODULE}.httpx.AsyncClient", return_value=client) as factory,
+        patch(f"{CLIENT_MODULE}.settings") as settings,
     ):
         settings.OPENROUTER_API_KEY = key
         yield factory

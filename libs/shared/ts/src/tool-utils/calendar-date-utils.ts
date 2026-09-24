@@ -73,7 +73,7 @@ export function formatTimeRange(startTime: string, endTime: string): string {
   if (start.getHours() >= 12 && end.getHours() >= 12) {
     return `${startStr.replace(" PM", "")} to ${endStr}`;
   }
-  if (start.getHours() < 12 && start.getHours() < 12 && end.getHours() < 12) {
+  if (start.getHours() < 12 && end.getHours() < 12) {
     return `${startStr.replace(" AM", "")} to ${endStr}`;
   }
   return `${startStr} to ${endStr}`;

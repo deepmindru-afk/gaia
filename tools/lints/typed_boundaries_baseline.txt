@@ -46,14 +46,8 @@ apps/api/app/agents/middleware/summarization.py	TB002
 apps/api/app/agents/prompts/trigger_prompts.py	TB002
 apps/api/app/agents/skills/builtin/create-spreadsheet/templates/report.py	TB001	deferred-until=2026-10-15; #876's dash sweep changed string punctuation in this file only, no code or signature (decided 2026-09-18)
 apps/api/app/agents/skills/builtin/create-spreadsheet/templates/report.py	TB002	deferred-until=2026-10-15; #876's dash sweep changed string punctuation in this file only, no code or signature (decided 2026-09-18)
-apps/api/app/agents/skills/github_discovery.py	TB001
-apps/api/app/agents/skills/github_discovery.py	TB002
-apps/api/app/agents/skills/installer.py	TB001
-apps/api/app/agents/skills/installer.py	TB002
 apps/api/app/agents/skills/parser.py	TB002
 apps/api/app/agents/skills/registry.py	TB001
-apps/api/app/agents/skills/utils.py	TB001
-apps/api/app/agents/skills/utils.py	TB002
 apps/api/app/agents/templates/mail_templates.py	TB001
 apps/api/app/agents/templates/mail_templates.py	TB002
 apps/api/app/agents/tools/coding/_context.py	TB001

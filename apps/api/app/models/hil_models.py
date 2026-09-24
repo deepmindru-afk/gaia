@@ -252,3 +252,31 @@ class ApprovalLedgerDocument(MongoDocument, ApprovalProposal):
     # When this row entered EXECUTING. The lazy reconciler treats EXECUTING
     # older than the cutoff as crashed (UNKNOWN) — never blind-retried.
     executing_started_at: datetime | None = None
+
+
+# What a bot user's chat reply to pending approvals resolves to (services/hil/conversational.py).
+DecisionAction = Literal["approve", "deny", "unrelated"]
+
+
+class DecisionResult(BaseModel):
+    """Classification of a user's reply to a single pending approval."""
+
+    action: DecisionAction
+    feedback: str | None = None
+
+
+class BatchItemDecision(BaseModel):
+    """One pending action's verdict from the user's reply."""
+
+    index: int = Field(description="1-based index of the pending action")
+    action: Literal["approve", "deny", "leave"]
+    feedback: str | None = None
+
+
+class BatchDecisionResult(BaseModel):
+    """Classification of a reply against several pending approvals."""
+
+    unrelated: bool = Field(
+        description="True when the message is a new request, not an answer to the pending actions"
+    )
+    decisions: list[BatchItemDecision] = Field(default_factory=list)

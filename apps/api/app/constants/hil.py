@@ -73,6 +73,27 @@ class JevChoice(StrEnum):
     PERMITTED = "permitted"
 
 
+# JEV reply classifier: an approve under the line leaves the action pending.
+# hil-reply sweep (3 runs, v2): 0.65 scored 77/77, 77/77, 79/79, zero dangerous;
+# injected approves peaked just under 0.60, true ones bottomed at 0.68.
+HIL_JEV_REPLY_APPROVE_LINE = 0.65
+# Deny/unrelated under this floor leave the action pending too. Sweep (3 runs): 78/79
+# each; the miss is a 0.25-0.38 true deny, but a v1 wrong deny sat at 0.40.
+HIL_JEV_REPLY_DECIDE_FLOOR = 0.50
+
+# Decisions question name per pending action: "action_1", "action_2", ...
+HIL_JEV_REPLY_QUESTION_PREFIX = "action_"
+
+
+class ReplyChoice(StrEnum):
+    """What a chat reply means for one pending action: the JEV reply question's labels."""
+
+    APPROVE = "approve"
+    DENY = "deny"
+    LEAVE = "leave"
+    UNRELATED = "unrelated"
+
+
 # The only statuses a `Command(resume=...)` payload may carry. Anything else
 # is treated as a denial. "abandoned" is absent: resolution.py maps it to a deny before sending.
 HIL_RESUMABLE_STATUSES: frozenset[str] = frozenset({"approved", "denied", "timeout"})
@@ -175,3 +196,6 @@ APPROVAL_TOOL_CATEGORY = "hil"
 # starting a new turn.
 HIL_ACK_APPROVED = "Got it, going ahead."
 HIL_ACK_DENIED = "Understood, I will not do that."
+
+# Auto-deny reason when a bot user moves on without answering a pending approval.
+UNRELATED_FEEDBACK = "The user moved on to a different request; do not perform the action."

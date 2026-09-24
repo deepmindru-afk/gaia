@@ -16,16 +16,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import re
 
-import httpx
-from pydantic import BaseModel
-
-from app.config.settings import settings
 from app.constants.hil import (
     HIL_JEV_ACCEPT_LINE,
-    HIL_JEV_MODEL_NAME,
     HIL_JEV_REJECT_FLOOR,
-    HIL_JEV_TIMEOUT_SECONDS,
-    HIL_JEV_URL,
     JEV_FORBID_CHECK_FAILED,
     JevChoice,
 )
@@ -41,6 +34,7 @@ from app.services.hil.intent import (
     history_line,
     ungrounded_targets,
 )
+from app.services.hil.jev_client import post_decisions
 from app.services.hil.prompts import (
     JEV_FORBID_QUESTION,
     JEV_QUESTION,
@@ -48,49 +42,6 @@ from app.services.hil.prompts import (
 )
 from app.services.hil.utils import PriorCall
 from shared.py.wide_events import log
-
-
-class _JevUsage(BaseModel):
-    """Token counts a Decisions API response reports."""
-
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-
-
-class _JevChoiceAnswer(BaseModel):
-    """One question's answer; only type "choice" carries a verdict."""
-
-    type: str | None = None
-    choice: str
-    confidence: float | None = None
-
-
-class _JevDecisionAnswer(_JevChoiceAnswer):
-    """The main question's answer, which also carries per-choice probabilities."""
-
-    probabilities: dict[str, float] | None = None
-
-
-class _JevForbidAnswers(BaseModel):
-    forbid: _JevChoiceAnswer
-
-
-class _JevDecisionAnswers(BaseModel):
-    decision: _JevDecisionAnswer
-
-
-class _JevForbidResponse(BaseModel):
-    """A Decisions API body for the focused forbid question, validated where received."""
-
-    answers: _JevForbidAnswers
-    usage: _JevUsage | None = None
-
-
-class _JevDecisionResponse(BaseModel):
-    """A Decisions API body for the main decision question, validated where received."""
-
-    answers: _JevDecisionAnswers
-    usage: _JevUsage | None = None
 
 
 def map_jev_choice(
@@ -188,39 +139,14 @@ async def ask_jev_forbid(
     out) tokens; transport failure raises (caller degrades to ask, never to
     a run).
     """
-    key = settings.OPENROUTER_API_KEY
-    if not key:
-        raise RuntimeError("OPENROUTER_API_KEY unset; cannot reach the JEV judge")
     state = {
         "earlier_turns": user_messages[:-1],
         "latest_turns": user_messages[-1:],
         "pending_action": {"tool": call.tool_name, "args": call.args},
     }
-    async with httpx.AsyncClient(timeout=HIL_JEV_TIMEOUT_SECONDS) as client:
-        resp = await client.post(
-            HIL_JEV_URL,
-            json={
-                "model": HIL_JEV_MODEL_NAME,
-                "state": state,
-                "questions": {"forbid": JEV_FORBID_QUESTION},
-            },
-            headers={"Authorization": f"Bearer {key}"},
-        )
-        resp.raise_for_status()
-        body = _JevForbidResponse.model_validate(resp.json())
-    answer = body.answers.forbid
-    if answer.type != "choice":
-        raise ValueError(f"non-choice JEV forbid answer: {answer!r}"[:300])
-    choice = answer.choice
-    if choice not in (JevChoice.FORBIDDEN, JevChoice.PERMITTED):
-        raise ValueError(f"unknown JEV forbid choice: {choice!r}")
-    usage = body.usage or _JevUsage()
-    return (
-        choice,
-        float(answer.confidence or 0.0),
-        int(usage.input_tokens or 0),
-        int(usage.output_tokens or 0),
-    )
+    body = await post_decisions(state, {"forbid": JEV_FORBID_QUESTION})
+    answer = body.choice("forbid", (JevChoice.FORBIDDEN, JevChoice.PERMITTED), label="forbid ")
+    return (answer.choice, float(answer.confidence or 0.0), *body.tokens())
 
 
 def needs_forbid_check(mapped_outcome: AutoOutcome, user_messages: list[str]) -> bool:
@@ -257,9 +183,6 @@ async def ask_jev(
     Raises on transport failure or a malformed answer — the caller falls back
     to the LLM judge, never to an allow.
     """
-    key = settings.OPENROUTER_API_KEY
-    if not key:
-        raise RuntimeError("OPENROUTER_API_KEY unset; cannot reach the JEV judge")
     pending_action: dict[str, object] = {
         "tool": call.tool_name,
         "description": call.description,
@@ -286,31 +209,13 @@ async def ask_jev(
     }
     if assistant_turns:
         state["assistant_turns"] = list(assistant_turns)
-    async with httpx.AsyncClient(timeout=HIL_JEV_TIMEOUT_SECONDS) as client:
-        resp = await client.post(
-            HIL_JEV_URL,
-            json={
-                "model": HIL_JEV_MODEL_NAME,
-                "state": state,
-                "questions": {"decision": JEV_QUESTION},
-            },
-            headers={"Authorization": f"Bearer {key}"},
-        )
-        resp.raise_for_status()
-        body = _JevDecisionResponse.model_validate(resp.json())
-    answer = body.answers.decision
-    if answer.type != "choice":
-        raise ValueError(f"non-choice JEV answer: {answer!r}"[:300])
-    choice = answer.choice
-    if choice not in (JevChoice.AUTHORIZED, JevChoice.FORBIDDEN, JevChoice.UNCLEAR):
-        raise ValueError(f"unknown JEV choice: {choice!r}")
-    usage = body.usage or _JevUsage()
+    body = await post_decisions(state, {"decision": JEV_QUESTION})
+    answer = body.choice("decision", (JevChoice.AUTHORIZED, JevChoice.FORBIDDEN, JevChoice.UNCLEAR))
     return (
-        choice,
+        answer.choice,
         float(answer.confidence or 0.0),
         dict(answer.probabilities or {}),
-        int(usage.input_tokens or 0),
-        int(usage.output_tokens or 0),
+        *body.tokens(),
     )
 
 

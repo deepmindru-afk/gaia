@@ -86,7 +86,7 @@ function DownloadSectionLayout({
         <div
           className={`flex flex-col items-center gap-6 text-center ${CONTENT_ALIGNMENT_CLASSES[contentAlignment]}`}
         >
-          {chip && chip}
+          {chip}
           <div className="flex flex-col gap-2">
             <h2 className="text-5xl font-medium text-white font-serif">
               {title}
