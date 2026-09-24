@@ -223,24 +223,22 @@ def overlay_storage_state(
     )
 
 
+def storage_state_for_host(state: StorageState, host: str) -> StorageState:
+    """Return host's own slice of state: every cookie a browser would send to it, and its localStorage."""
+    return StorageState(
+        cookies=[c for c in state.get("cookies", []) if _cookie_scopes_to(c, host)],
+        origins=[o for o in state.get("origins", []) if _origin_host(o) == host],
+    )
+
+
 def split_storage_state_by_host(state: StorageState) -> dict[str, StorageState]:
     """Split one browser export into per-host slices keyed the way reuse loads them.
 
     The store keys on the exact hostname a task starts at (domain_of), so each
     host gets every cookie that applies to it (a leading-dot cookie lands in
-    the registrable host and each subdomain) plus its own localStorage. A host
-    with no cookies or origins is dropped rather than saved empty.
+    the registrable host and each subdomain) plus its own localStorage.
     """
-    cookies = state.get("cookies", [])
-    origins = state.get("origins", [])
-
-    slices: dict[str, StorageState] = {}
-    for host in _hosts_in(state):
-        host_cookies = [c for c in cookies if _cookie_scopes_to(c, host)]
-        host_origins = [o for o in origins if _origin_host(o) == host]
-        if host_cookies or host_origins:
-            slices[host] = StorageState(cookies=host_cookies, origins=host_origins)
-    return slices
+    return {host: storage_state_for_host(state, host) for host in _hosts_in(state)}
 
 
 async def import_browser_profile(

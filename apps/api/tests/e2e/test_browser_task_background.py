@@ -613,7 +613,7 @@ async def test_a_login_the_user_made_is_still_signed_in_after_the_run_moves_engi
     assert world.storage_reads == ["sess-1"]
     assert world.seeded_states == [None, LIVE_STORAGE_STATE]
     # The completed sign-in is saved once, from the browser that holds it last.
-    assert [call.args[1] for call in saves] == ["example.test"]
+    assert [call.args[1:] for call in saves] == [("example.test", LIVE_STORAGE_STATE)]
     results = [card for card in world.cards() if card["kind"] == "result"]
     assert [(card["status"], card["success"]) for card in results] == [
         (BrowserSessionStatus.COMPLETED.value, True)

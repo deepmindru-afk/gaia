@@ -54,6 +54,14 @@ def fake_log(monkeypatch: pytest.MonkeyPatch) -> _FakeLog:
     return fl
 
 
+def _login_on(host: str, value: str) -> dict[str, Any]:
+    """Return a browser's state after signing in on host, the cookie valued so a save shows whose it was."""
+    return {
+        "cookies": [{"name": "session", "value": value, "domain": host, "path": "/"}],
+        "origins": [],
+    }
+
+
 def _make_session_fakes(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     host = MagicMock(
         session_id="s1",
@@ -62,7 +70,9 @@ def _make_session_fakes(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         live_ws="ws://live",  # NOSONAR
     )
     monkeypatch.setattr(session_mod.host_client, "create_session", AsyncMock(return_value=host))
-    monkeypatch.setattr(session_mod.host_client, "delete_session", AsyncMock())
+    monkeypatch.setattr(
+        session_mod.host_client, "delete_session", AsyncMock(return_value=_login_on("x.com", "s1"))
+    )
     monkeypatch.setattr(session_mod, "load_storage_state", AsyncMock(return_value=None))
     monkeypatch.setattr(session_mod, "save_storage_state", AsyncMock())
     monkeypatch.setattr(session_mod, "register_session", AsyncMock(return_value=True))
@@ -237,7 +247,7 @@ async def test_save_storage_state_called_with_user_domain_and_returned_state(
 ) -> None:
     """A run seeded from a saved login writes the rotated state back."""
     _make_session_fakes(monkeypatch)
-    returned_state = {"cookies": ["returned"]}
+    returned_state = _login_on("foo.example.com", "returned")
     monkeypatch.setattr(
         session_mod, "load_storage_state", AsyncMock(return_value={"cookies": ["seeded"]})
     )
@@ -271,7 +281,7 @@ async def test_a_run_whose_login_takeover_completed_saves_its_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _make_session_fakes(monkeypatch)
-    returned_state = {"cookies": ["signed-in"]}
+    returned_state = _login_on("x.com", "signed-in")
     monkeypatch.setattr(
         session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
     )
@@ -289,7 +299,7 @@ async def test_a_sign_in_is_saved_for_the_site_it_happened_on_whatever_the_run_s
 ) -> None:
     """Regression: a login was keyed on the start URL's domain, so a run with none saved nothing."""
     _make_session_fakes(monkeypatch)
-    returned_state = {"cookies": ["signed-in"]}
+    returned_state = _login_on("the-internet.herokuapp.com", "signed-in")
     monkeypatch.setattr(
         session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
     )
@@ -350,7 +360,7 @@ def _host_per_session(
     async def _delete(session_id: str, host_url: str) -> dict[str, Any]:
         if session_id == "fallback" and fallback_release_error is not None:
             raise fallback_release_error
-        return {"cookies": [session_id]}
+        return _login_on("x.com", session_id)
 
     monkeypatch.setattr(session_mod.host_client, "create_session", AsyncMock(side_effect=_create))
     monkeypatch.setattr(session_mod.host_client, "delete_session", AsyncMock(side_effect=_delete))
@@ -363,7 +373,7 @@ async def test_a_session_opened_with_carried_state_saves_the_login_under_the_sit
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _make_session_fakes(monkeypatch)
-    returned_state = {"cookies": ["still signed in"]}
+    returned_state = _login_on("flights.example.com", "still signed in")
     monkeypatch.setattr(
         session_mod.host_client, "delete_session", AsyncMock(return_value=returned_state)
     )
@@ -424,12 +434,22 @@ async def test_a_session_opened_with_carried_state_is_also_signed_in_to_the_site
     ]
 
 
-async def test_a_carried_session_writes_back_both_the_carried_login_and_the_resume_sites(
+async def test_each_site_a_carried_session_saves_gets_only_its_own_cookies_and_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A saved login loaded for the resume page is written back with its rotated tokens, beside the login carried in."""
+    """Regression (Greptile on #876): the whole returned state was saved under every login site, so each record held the other's cookies."""
     _make_session_fakes(monkeypatch)
-    returned_state = {"cookies": ["rotated"]}
+    returned_state = {
+        "cookies": [
+            {"name": "session", "value": "f", "domain": "flights.example.com", "path": "/"},
+            {"name": "sid", "value": "n", "domain": "news.example.com", "path": "/"},
+            {"name": "sso", "value": "s", "domain": ".example.com", "path": "/"},
+        ],
+        "origins": [
+            {"origin": "https://flights.example.com", "localStorage": []},
+            {"origin": "https://news.example.com", "localStorage": []},
+        ],
+    }
     monkeypatch.setattr(
         session_mod, "load_storage_state", AsyncMock(return_value=_SAVED_NEWS_LOGIN)
     )
@@ -445,8 +465,12 @@ async def test_a_carried_session_writes_back_both_the_carried_login_and_the_resu
     ):
         pass
 
-    saved = {call.args[1] for call in session_mod.save_storage_state.await_args_list}
-    assert saved == {"flights.example.com", "news.example.com"}
+    saved = {call.args[1]: call.args[2] for call in session_mod.save_storage_state.await_args_list}
+    cookies, origins = returned_state["cookies"], returned_state["origins"]
+    assert saved == {
+        "flights.example.com": {"cookies": [cookies[0], cookies[2]], "origins": [origins[0]]},
+        "news.example.com": {"cookies": [cookies[1], cookies[2]], "origins": [origins[1]]},
+    }
 
 
 #: The user's saved login for flights.example.com, from before the run signed out.
@@ -553,7 +577,7 @@ async def test_a_login_carried_to_the_fallback_is_saved_once_from_the_fallback(
             pass
 
     session_mod.save_storage_state.assert_awaited_once_with(
-        "u1", "x.com", {"cookies": ["fallback"]}
+        "u1", "x.com", _login_on("x.com", "fallback")
     )
 
 
@@ -577,7 +601,9 @@ async def test_a_login_is_saved_from_the_primary_when_the_fallback_cannot_open(
             ):
                 pytest.fail("the fallback opened on a full host")
 
-    session_mod.save_storage_state.assert_awaited_once_with("u1", "x.com", {"cookies": ["primary"]})
+    session_mod.save_storage_state.assert_awaited_once_with(
+        "u1", "x.com", _login_on("x.com", "primary")
+    )
 
 
 async def test_a_login_is_saved_from_the_primary_when_the_fallback_cannot_save_it(
@@ -597,7 +623,9 @@ async def test_a_login_is_saved_from_the_primary_when_the_fallback_cannot_save_i
         ):
             pass
 
-    session_mod.save_storage_state.assert_awaited_once_with("u1", "x.com", {"cookies": ["primary"]})
+    session_mod.save_storage_state.assert_awaited_once_with(
+        "u1", "x.com", _login_on("x.com", "primary")
+    )
 
 
 async def test_release_failure_is_caught_logged_and_unregister_still_runs(

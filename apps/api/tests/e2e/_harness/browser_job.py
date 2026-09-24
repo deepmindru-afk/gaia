@@ -459,7 +459,10 @@ async def browser_job_world(
             AsyncMock(return_value=HILPreferences(mode="always_allow")),
         ),
         patch("app.services.browser.session.host_client.create_session", _create_host_session),
-        patch("app.services.browser.session.host_client.delete_session", AsyncMock()),
+        patch(
+            "app.services.browser.session.host_client.delete_session",
+            AsyncMock(return_value=LIVE_STORAGE_STATE),
+        ),
         patch("app.services.browser.session.host_client.get_session", _get_host_session),
         patch("app.services.browser.session.host_client.get_storage_state", _get_storage_state),
         patch.object(settings, "BROWSER_FALLBACK_HOST_URL", scripted_host.fallback_url),

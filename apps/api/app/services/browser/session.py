@@ -37,6 +37,7 @@ from app.services.browser.storage_persistence import (
     load_storage_state,
     overlay_storage_state,
     save_storage_state,
+    storage_state_for_host,
 )
 from shared.py.wide_events import log
 
@@ -227,7 +228,7 @@ async def browser_session(
     """Create a browser-host session, yield it, and always release it.
 
     Seed the saved login for start_url's domain, under carried's live state when a run
-    moves here; on exit save the returned state under each of login_domains. Raises
+    moves here; on exit save each of login_domains its own slice of the returned state. Raises
     BrowserUnavailableError, or BrowserConcurrencyLimit at capacity.
     """
     domain = domain_of(start_url)
@@ -271,7 +272,9 @@ async def browser_session(
             # Saving every run turned the login store into an invisible preference
             # cache: one task's Deutsch cookie answered the next task in German.
             for login_domain in session.login_domains:
-                await save_storage_state(user_id, login_domain, returned_state)
+                await save_storage_state(
+                    user_id, login_domain, storage_state_for_host(returned_state, login_domain)
+                )
                 if carried is not None:
                     # Saved newer than the source holds; its later release must not write over it.
                     carried.source.login_domains.discard(login_domain)
