@@ -189,10 +189,10 @@ async def test_a_stop_reaches_the_browser_and_releases_the_conversation() -> Non
                 {"task_ids": []}, config={"configurable": {"thread_id": CONVERSATION}}
             )
             await world.settle()
+        assert await get_conversation_slot(CONVERSATION) is None
 
     assert world.browser.stop_observed
     assert world.cards()[-1]["status"] == BrowserSessionStatus.CANCELLED.value
-    assert await get_conversation_slot(CONVERSATION) is None
 
 
 async def test_a_worker_crash_still_reports_a_failure_and_frees_the_conversation() -> None:
@@ -202,10 +202,10 @@ async def test_a_worker_crash_still_reports_a_failure_and_frees_the_conversation
     ) as world:
         async with executor_graph([RETRIEVE, START, "Started."]) as graph:
             await _drive(graph, world)
+        assert await get_conversation_slot(CONVERSATION) is None
 
     assert len(world.deliveries) == 1
     assert "DID NOT COMPLETE" in world.deliveries[0]["text"]
-    assert await get_conversation_slot(CONVERSATION) is None
 
 
 async def test_a_handoff_note_reaches_the_run_and_the_policy_deciding_it() -> None:
@@ -503,13 +503,13 @@ async def test_the_fourth_blocked_step_ends_the_run_instead_of_asking_again() ->
     ) as world:
         async with executor_graph(plan) as graph:
             run = await _drive(graph, world)
+        assert await get_conversation_slot(CONVERSATION) is None
 
     assert len(world.browser.guidance_reasons) == BROWSER_AGENT_GUIDANCE_MAX
     assert _step_actions(world)[-1] == {
         "done": {"text": BROWSER_RUN_BLOCKED_SUMMARY, "success": False}
     }
     assert "DID NOT COMPLETE" in ((run.results_from("tools") or [])[-1])
-    assert await get_conversation_slot(CONVERSATION) is None
 
 
 async def test_giving_up_ends_the_run_failed_and_frees_the_conversation() -> None:
@@ -522,6 +522,7 @@ async def test_giving_up_ends_the_run_failed_and_frees_the_conversation() -> Non
     async with browser_job_world(STREAM, steps=BLOCK_THEN_ACT, jev=_blocked_script()) as world:
         async with executor_graph([RETRIEVE, START, JOIN, give_up, JOIN_AGAIN, "Sorry."]) as graph:
             run = await _drive(graph, world)
+        assert await get_conversation_slot(CONVERSATION) is None
 
     results = [card for card in world.cards() if card["kind"] == "result"]
     assert [card["status"] for card in results] == [BrowserSessionStatus.FAILED.value]
@@ -530,7 +531,6 @@ async def test_giving_up_ends_the_run_failed_and_frees_the_conversation() -> Non
     assert results[0]["summary"] == BROWSER_RUN_BLOCKED_SUMMARY
     assert "the site needs an account" not in results[0]["summary"]
     assert "DID NOT COMPLETE" in ((run.results_from("tools") or [])[-1])
-    assert await get_conversation_slot(CONVERSATION) is None
 
 
 async def test_a_run_whose_engine_dies_mid_task_finishes_on_the_fallback_engine() -> None:

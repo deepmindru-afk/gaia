@@ -124,6 +124,8 @@ async def test_a_full_run_screenshots_hands_off_and_reports() -> None:
                 )
                 run = await run_task
                 await world.settle()
+        # The conversation can browse again.
+        assert await get_conversation_slot(CONVERSATION) is None
 
     # One job crossed the queue.
     assert len(world.enqueued) == 1
@@ -160,9 +162,6 @@ async def test_a_full_run_screenshots_hands_off_and_reports() -> None:
     assert [card["status"] for card in results] == [BrowserSessionStatus.COMPLETED.value]
     assert results[0]["summary"] == SUMMARY
     assert results[0]["success"] is True
-
-    # The conversation can browse again.
-    assert await get_conversation_slot(CONVERSATION) is None
 
 
 async def test_every_frame_on_the_stream_is_a_shaped_browser_card() -> None:
