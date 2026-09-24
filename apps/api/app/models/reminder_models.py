@@ -6,8 +6,16 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
+from app.constants.reminders import REMINDER_DEFAULT_LIFETIME
 from app.db.repositories.base import MongoDocument
 from app.models.scheduler_models import BaseScheduledTask, ScheduledTaskStatus
 from app.utils.cron_utils import validate_cron_expression
@@ -65,10 +73,6 @@ class ReminderModel(BaseScheduledTask):
             "reminders re-arm at the right wall-clock hour instead of in UTC."
         ),
     )
-    stop_after: datetime | None = Field(
-        default_factory=lambda: datetime.now(UTC) + timedelta(days=180),
-        description="Stop executing after this date (optional), defaults to 6 months from now",
-    )
     payload: Union[StaticReminderPayload, dict[str, Any]] = Field(
         ..., description="Task-specific data based on agent type"
     )
@@ -84,7 +88,8 @@ class CreateReminderRequest(BaseModel):
     )
     max_occurrences: int | None = Field(None, description="Maximum number of executions (optional)")
     stop_after: datetime | None = Field(
-        None, description="Stop executing after this date (optional)"
+        None,
+        description="Stop executing after this date (optional); defaults to 180 days after creation",
     )
     payload: StaticReminderPayload = Field(
         ..., description="Task-specific data for static reminder"
@@ -158,6 +163,13 @@ class CreateReminderRequest(BaseModel):
             if v <= datetime.now(UTC):
                 raise ValueError("stop_after must be in the future")
         return v
+
+    @model_validator(mode="after")
+    def default_stop_after(self) -> "CreateReminderRequest":
+        """Resolve an omitted stop_after here, so the schedule and the stored reminder get one value."""
+        if self.stop_after is None:
+            self.stop_after = datetime.now(UTC) + REMINDER_DEFAULT_LIFETIME
+        return self
 
     @field_serializer("scheduled_at", "stop_after", when_used="json")
     def serialize_datetime(self, value: datetime | None) -> str | None:

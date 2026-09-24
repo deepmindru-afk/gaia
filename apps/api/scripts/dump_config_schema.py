@@ -51,15 +51,10 @@ def extract_settings_validator(file_path):
 
 
 def _field_default(item: ast.AnnAssign) -> tuple[bool, object]:
-    """Whether a settings field needs no user input (Optional or defaulted), and its literal default."""
-    annotation = item.annotation
-    is_optional = (
-        isinstance(annotation, ast.Subscript)
-        and isinstance(annotation.value, ast.Name)
-        and annotation.value.id == "Optional"
-    )
+    """Whether a settings field has a default (so needs no user input), and its literal value."""
+    # an Optional[...] annotation alone is not a default: pydantic v2 still requires the field
     default_val = item.value.value if isinstance(item.value, ast.Constant) else None
-    return is_optional or item.value is not None, default_val
+    return item.value is not None, default_val
 
 
 def extract_settings(file_path):

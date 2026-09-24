@@ -96,14 +96,9 @@ class TestReminderModel:
         assert m.agent == AgentType.STATIC
         assert m.occurrence_count == 0
         assert m.status == ScheduledTaskStatus.SCHEDULED
-        assert m.stop_after is not None  # default is 6 months from now
-
-    def test_default_stop_after_counts_from_creation_not_import(self):
-        """The default was evaluated once at import, so a long-lived worker stamped every reminder with boot time + 180 days."""
-        later = datetime.now(UTC) + timedelta(days=30)
-        with time_machine.travel(later, tick=False):
-            m = ReminderModel(**self._base_data(scheduled_at=later + timedelta(hours=1)))
-        assert m.stop_after == later + timedelta(days=180)
+        # the six-month default is resolved on CreateReminderRequest at creation, not
+        # invented on every read of a stored document that lacks one
+        assert m.stop_after is None
 
     def test_payload_as_static_reminder(self):
         m = ReminderModel(**self._base_data())
@@ -314,11 +309,13 @@ class TestCreateReminderToolRequestConversion:
         return data
 
     def test_basic_conversion_no_schedule(self):
-        m = CreateReminderToolRequest(**self._base_data())
-        result = m.to_create_reminder_request()
+        """The agent's path passes stop_after=None explicitly; it still gets the six-month cutoff."""
+        now = datetime.now(UTC)
+        with time_machine.travel(now, tick=False):
+            result = CreateReminderToolRequest(**self._base_data()).to_create_reminder_request()
         assert isinstance(result, CreateReminderRequest)
         assert result.scheduled_at is None
-        assert result.stop_after is None
+        assert result.stop_after == now + timedelta(days=180)
 
     def test_source_conversation_id_is_threaded_through(self):
         # The originating chat captured at the tool boundary must survive the
