@@ -4,35 +4,47 @@ BUTTON-LESS CHANNELS ONLY: the caller (_resolve_pending_approval_turn in
 app/services/chat/stream.py) invokes this for messaging-platform bots alone;
 web/mobile/desktop resolve via POST /approvals/{id}/decision instead.
 
-Single pending approval maps to approve (resume, run as proposed), deny (refuse,
-carrying any correction as next-turn feedback), or unrelated (abandon, run the
-new message normally). An approve runs EXACTLY as proposed; a reply that changes
-anything is a deny with the change as feedback.
-
-Several pending approvals decide per-item against the numbered list: yes/no
-approve/decline all, a selective reply decides only what it names, unnamed items
-deny on an exclusive reply and stay pending on a partial one. Fails safe: an LLM
+A reply approves (runs EXACTLY as proposed), denies (any change is a deny with
+the change as feedback), or is unrelated (abandon, run the new message). Several
+pending approvals decide per item: unnamed items deny on an exclusive reply and
+stay pending on a partial one. JEV (jev_reply.py) classifies first when the
+user's flag is on, the LLM on its transport failure. Fails safe: a classifier
 error leaves approvals pending, never approves.
 """
 
 import contextlib
-from typing import Literal
-
-from pydantic import BaseModel, Field
+from typing import Literal, assert_never
 
 from app.agents.llm.client import StructuredCallOptions, ainvoke_structured, silent_metered_config
 from app.constants.hil import (
     HIL_CLASSIFIER_MAX_ARG_CHARS,
     HIL_CLASSIFIER_MAX_DETAIL_CHARS,
     HIL_LLM_TIMEOUT_SECONDS,
+    UNRELATED_FEEDBACK,
+    ReplyChoice,
 )
 from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
-from app.models.hil_models import ApprovalLedgerDocument, HILApprovalRecord, LedgerState
+from app.models.hil_models import (
+    ApprovalLedgerDocument,
+    BatchDecisionResult,
+    BatchItemDecision,
+    DecisionAction,
+    DecisionResult,
+    HILApprovalRecord,
+    LedgerState,
+)
 from app.models.message_models import MessageDict
+from app.services.feature_flags import is_jev_reply_enabled
 from app.services.hil.approvals_store import list_pending_for_conversation
 from app.services.hil.bridge import build_action_detail
+from app.services.hil.jev_reply import ask_jev_reply, settle_reply
 from app.services.hil.ledger_decide import LedgerDecision, decide_ledger
+from app.services.hil.prompts import (
+    CONVERSATIONAL_BATCH_PROMPT,
+    CONVERSATIONAL_CONTEXT_BLOCK,
+    CONVERSATIONAL_REPLY_PROMPT,
+)
 from app.services.hil.resolution import (
     ApprovalRequestForbiddenError,
     ApprovalRequestNotFoundError,
@@ -41,11 +53,6 @@ from app.services.hil.resolution import (
 )
 from app.utils.general_utils import clip_text
 from shared.py.wide_events import log
-
-DecisionAction = Literal["approve", "deny", "unrelated"]
-
-# Auto-deny reason when the user moves on without answering the approval.
-UNRELATED_FEEDBACK = "The user moved on to a different request; do not perform the action."
 
 # Ground truth for a settled ledger row in the bot reply's words. Lives here, not
 # result_delivery (which only knows barrier statuses), so the bot path can narrate
@@ -63,30 +70,6 @@ LEDGER_OUTCOME_TEXT: dict[LedgerState, str] = {
 def ledger_outcome_text(state: LedgerState) -> str:
     """One line of ground truth for a settled ledger row."""
     return LEDGER_OUTCOME_TEXT.get(state, state.value)
-
-
-class DecisionResult(BaseModel):
-    """LLM classification of a user's reply to a pending approval."""
-
-    action: DecisionAction
-    feedback: str | None = None
-
-
-class BatchItemDecision(BaseModel):
-    """One pending action's verdict from the user's reply."""
-
-    index: int = Field(description="1-based index of the pending action")
-    action: Literal["approve", "deny", "leave"]
-    feedback: str | None = None
-
-
-class BatchDecisionResult(BaseModel):
-    """LLM classification of a reply against several pending approvals."""
-
-    unrelated: bool = Field(
-        description="True when the message is a new request, not an answer to the pending actions"
-    )
-    decisions: list[BatchItemDecision] = Field(default_factory=list)
 
 
 async def resolve_pending_from_message(
@@ -124,7 +107,7 @@ async def _resolve_single(
     history: list[MessageDict] | None,
 ) -> DecisionAction | None:
     action_detail = build_action_detail(record.summary, record.args)
-    result = await interpret_decision_message(message, [action_detail], history, user_id=user_id)
+    result = await interpret_decision_message(message, action_detail, history, user_id=user_id)
     if result is None:
         # The classifier errored. Leave the approval pending rather than abandon it —
         # a transient hiccup must not silently decline a legitimate pending action
@@ -139,7 +122,7 @@ async def _resolve_single(
             await abandon_conversation_approvals(conversation_id, user_id, UNRELATED_FEEDBACK)
         return "unrelated"
 
-    action, feedback = _no_arg_edit(result.action, result.feedback)
+    action, feedback = no_arg_edit(result.action, result.feedback)
     if isinstance(record, ApprovalLedgerDocument):
         await _safe_resolve_ledger(record.approval_id, user_id, action, feedback)
     else:
@@ -190,7 +173,7 @@ async def _apply_decisions(
         if decision.action == "leave" or not 1 <= decision.index <= len(pending):
             continue
         record = pending[decision.index - 1]
-        action, feedback = _no_arg_edit(decision.action, decision.feedback)
+        action, feedback = no_arg_edit(decision.action, decision.feedback)
         if isinstance(record, ApprovalLedgerDocument):
             await _safe_resolve_ledger(record.approval_id, user_id, action, feedback)
         else:
@@ -210,6 +193,85 @@ async def interpret_batch_decision_message(
     user_id: str,
 ) -> BatchDecisionResult:
     """Classify a chat reply against several pending approvals, per item.
+
+    JEV first when the user's flag is on; its failure falls back to the LLM.
+    """
+    if await is_jev_reply_enabled(user_id):
+        try:
+            verdicts, _in, _out = await ask_jev_reply(message, action_details, history)
+        except Exception as e:
+            _log_jev_fallback(e)
+        else:
+            return batch_from_jev_reply(settle_reply(verdicts), message)
+    return await classify_batch_with_llm(message, action_details, history, user_id=user_id)
+
+
+async def interpret_decision_message(
+    message: str,
+    action_detail: str,
+    history: list[MessageDict] | None = None,
+    *,
+    user_id: str,
+) -> DecisionResult | None:
+    """Classify a chat reply against one pending approval; None leaves it pending.
+
+    JEV first when the user's flag is on; its failure falls back to the LLM.
+    """
+    if await is_jev_reply_enabled(user_id):
+        try:
+            verdicts, _in, _out = await ask_jev_reply(message, [action_detail], history)
+        except Exception as e:
+            _log_jev_fallback(e)
+        else:
+            return decision_from_jev_reply(settle_reply(verdicts)[0], message)
+    return await classify_with_llm(message, action_detail, history, user_id=user_id)
+
+
+def decision_from_jev_reply(choice: ReplyChoice, message: str) -> DecisionResult | None:
+    """Map one settled JEV choice onto the single-approval result; leave is None.
+
+    A deny carries the reply verbatim: JEV returns no text, and the user's own
+    words are the correction the agent needs.
+    """
+    match choice:
+        case ReplyChoice.APPROVE:
+            return DecisionResult(action="approve")
+        case ReplyChoice.DENY:
+            return DecisionResult(action="deny", feedback=message)
+        case ReplyChoice.UNRELATED:
+            return DecisionResult(action="unrelated")
+        case ReplyChoice.LEAVE:
+            return None
+        case _:
+            assert_never(choice)
+
+
+def batch_from_jev_reply(choices: list[ReplyChoice], message: str) -> BatchDecisionResult:
+    """Map settled JEV choices onto the per-item batch result (1-based indexes)."""
+    if all(choice is ReplyChoice.UNRELATED for choice in choices):
+        return BatchDecisionResult(unrelated=True)
+    decisions = []
+    for index, choice in enumerate(choices, start=1):
+        match choice:
+            case ReplyChoice.APPROVE:
+                decisions.append(BatchItemDecision(index=index, action="approve"))
+            case ReplyChoice.DENY:
+                decisions.append(BatchItemDecision(index=index, action="deny", feedback=message))
+            case ReplyChoice.LEAVE | ReplyChoice.UNRELATED:
+                decisions.append(BatchItemDecision(index=index, action="leave"))
+            case _:
+                assert_never(choice)
+    return BatchDecisionResult(unrelated=False, decisions=decisions)
+
+
+async def classify_batch_with_llm(
+    message: str,
+    action_details: list[str],
+    history: list[MessageDict] | None = None,
+    *,
+    user_id: str,
+) -> BatchDecisionResult:
+    """LLM per-item classification of a reply against several pending approvals.
 
     Fails toward leaving everything pending (empty decisions, not unrelated) —
     never toward acting, and never toward abandoning on an LLM hiccup.
@@ -231,14 +293,14 @@ async def interpret_batch_decision_message(
         return BatchDecisionResult(unrelated=False)
 
 
-async def interpret_decision_message(
+async def classify_with_llm(
     message: str,
-    action_details: list[str],
+    action_detail: str,
     history: list[MessageDict] | None = None,
     *,
     user_id: str,
 ) -> DecisionResult | None:
-    """Classify a chat reply against pending approvals.
+    """LLM classification of a reply against one pending approval.
 
     None on an LLM error, so the caller leaves the approval pending — never toward
     silently executing an action, and never toward abandoning a legitimate one on a
@@ -246,7 +308,7 @@ async def interpret_decision_message(
     try:
         return await ainvoke_structured(
             DecisionResult,
-            _prompt(message, action_details, history),
+            _prompt(message, action_detail, history),
             label="hil_conversational_resolve",
             config=silent_metered_config(user_id),
             options=StructuredCallOptions(timeout=HIL_LLM_TIMEOUT_SECONDS),
@@ -260,10 +322,7 @@ async def interpret_decision_message(
         return None
 
 
-# --- internals -----------------------------------------------------------------
-
-
-def _no_arg_edit(
+def no_arg_edit(
     action: Literal["approve", "deny"], feedback: str | None
 ) -> tuple[Literal["approve", "deny"], str | None]:
     """Turn an 'approve' carrying feedback into a deny, since there is no arg-editing.
@@ -275,6 +334,17 @@ def _no_arg_edit(
     if action == "approve" and (feedback or "").strip():
         return "deny", feedback
     return action, feedback
+
+
+# --- internals -----------------------------------------------------------------
+
+
+def _log_jev_fallback(error: Exception) -> None:
+    log.warning(
+        f"{LogTag.HIL} JEV reply classifier failed; falling back to the LLM classifier",
+        error=str(error),
+        error_type=type(error).__name__,
+    )
 
 
 async def _safe_resolve(
@@ -345,46 +415,14 @@ def _history_block(history: list[MessageDict] | None) -> str:
     return clip_text("\n".join(lines), HIL_CLASSIFIER_MAX_DETAIL_CHARS)
 
 
-def _prompt(message: str, action_details: list[str], history: list[MessageDict] | None) -> str:
-    action = "\n\n".join(action_details)
+def _context(history: list[MessageDict] | None) -> str:
     history_block = _history_block(history)
-    context = (
-        f"RECENT CONVERSATION (oldest to newest, context only):\n{history_block}\n\n"
-        if history_block
-        else ""
-    )
-    return (
-        "The user has a pending action awaiting their approval. They did NOT click "
-        "approve or decline — they replied in chat. Classify what the reply means.\n\n"
-        f"PENDING ACTION (what the assistant is waiting to do):\n{action}\n\n"
-        f"{context}"
-        f"THE USER'S REPLY:\n{message!r}\n\n"
-        "Classify the reply as exactly one of:\n"
-        "- 'approve' — the user accepts the pending action EXACTLY as proposed, with "
-        "no change (e.g. 'yes', 'go ahead', 'ok send it'). Leave `feedback` empty.\n"
-        "- 'deny' — the user does NOT want the action run as proposed. This INCLUDES a "
-        "plain refusal ('no', 'don't'), a redirect or correction ('no, send it to Bob "
-        "instead', 'actually make it tomorrow'), AND an acceptance that attaches ANY "
-        "change, addition, or condition to it ('yes but cc finance', 'ok, but shorten "
-        "it first'). The assistant cannot edit the action's arguments, so any requested "
-        "change means the current action is wrong: mark it 'deny' and put the change "
-        "verbatim in `feedback`.\n"
-        "- 'unrelated' — a brand-new, standalone request that does NOT object to the "
-        "pending action and does not reference it (e.g. the pending action is 'send "
-        "email' and the user asks 'what's on my calendar tomorrow?').\n\n"
-        "Rules:\n"
-        "- An unambiguous 'yes'/'no' is decisive on its own. Honor it directly. The "
-        "recent conversation and action details are background for interpreting an "
-        "ambiguous reply — never grounds to overturn a clear yes or no.\n"
-        "- Only 'approve' when the action should run UNCHANGED. If the reply adds, "
-        "changes, or conditions anything about it, that is 'deny' with the change in "
-        "`feedback` — never approve an action the user wants changed.\n"
-        "- If the reply objects to, corrects, or countermands the pending action, it "
-        "is 'deny' (with the correction in `feedback`) even when it also proposes a "
-        "different action. 'unrelated' is only for a reply that adds a new topic "
-        "WITHOUT objecting to the pending action.\n"
-        "- If unsure whether the reply bears on the pending action and it expresses "
-        "any objection, choose 'deny'."
+    return CONVERSATIONAL_CONTEXT_BLOCK.format(history=history_block) if history_block else ""
+
+
+def _prompt(message: str, action_detail: str, history: list[MessageDict] | None) -> str:
+    return CONVERSATIONAL_REPLY_PROMPT.format(
+        action=action_detail, context=_context(history), message=message
     )
 
 
@@ -394,36 +432,6 @@ def _batch_prompt(
     actions = "\n\n".join(
         f"{index}. {detail}" for index, detail in enumerate(action_details, start=1)
     )
-    history_block = _history_block(history)
-    context = (
-        f"RECENT CONVERSATION (oldest to newest, context only):\n{history_block}\n\n"
-        if history_block
-        else ""
-    )
-    return (
-        "The assistant is waiting for the user to approve or decline these "
-        "numbered pending actions:\n"
-        f"{actions}\n\n"
-        f"{context}"
-        f"THE USER'S REPLY:\n{message!r}\n\n"
-        "Decide per action. A blanket answer applies to all of them: a plain "
-        "'yes'/'go ahead' approves every action, a plain 'no'/'don't' declines "
-        "every action. A selective answer names some actions — mark each named one "
-        "approve or deny. Decide the UNNAMED actions by whether the reply is "
-        "exclusive: an exclusive answer ('just the email', 'only the email', 'just "
-        "do that and nothing else', 'skip the rest') means the user wants ONLY the "
-        "named actions — mark every unnamed action 'deny'. A non-exclusive partial "
-        "answer ('approve the email', 'yes to the first one') decides only what it "
-        "names and leaves each unnamed action 'leave' (the user may still answer the "
-        "rest separately). Also mark an action 'deny' when the reply rejects, "
-        "corrects, redirects, or attaches any change/condition to THAT action (put "
-        "the correction in its `feedback`) — the assistant cannot edit an action's "
-        "arguments, so 'do it but change X' is 'deny' with X in `feedback`, never "
-        "'approve'. "
-        "If the message asks a question about the actions or is otherwise not a "
-        "decision on any of them, mark all 'leave'. Set unrelated=true ONLY when the "
-        "message is clearly a new, different request that ignores the pending actions "
-        "without objecting to them. An unambiguous 'yes'/'no' is decisive on its own; "
-        "the recent conversation is background for ambiguous replies, never grounds to "
-        "overturn a clear answer. Extract any feedback or conditions per action."
+    return CONVERSATIONAL_BATCH_PROMPT.format(
+        actions=actions, context=_context(history), message=message
     )

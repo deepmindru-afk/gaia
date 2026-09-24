@@ -34,6 +34,7 @@ class FeatureFlag(StrEnum):
     CODE_MODE = "CODE_MODE"
     HIL_LEDGER = "HIL_LEDGER"
     HIL_JEV_JUDGE = "HIL_JEV_JUDGE"
+    HIL_JEV_REPLY = "HIL_JEV_REPLY"
 
 
 # Human description per flag, kept next to the key so the dashboard setup and
@@ -56,6 +57,11 @@ FEATURE_FLAG_DESCRIPTIONS: dict[FeatureFlag, str] = {
         "to the LLM intent judge on transport failure; off keeps the LLM judge."
         " On by default (see ENABLE_HIL_JEV_JUDGE)."
     ),
+    FeatureFlag.HIL_JEV_REPLY: (
+        "A bot user's chat reply to pending approvals is classified by the JEV "
+        "reply classifier first, falling back to the LLM classifier on transport "
+        "failure; off keeps the LLM classifier. On by default (see ENABLE_HIL_JEV_REPLY)."
+    ),
 }
 
 
@@ -70,6 +76,8 @@ def _default(flag: FeatureFlag) -> bool:
             return bool(settings.ENABLE_HIL_LEDGER)
         case FeatureFlag.HIL_JEV_JUDGE:
             return bool(settings.ENABLE_HIL_JEV_JUDGE)
+        case FeatureFlag.HIL_JEV_REPLY:
+            return bool(settings.ENABLE_HIL_JEV_REPLY)
 
 
 def _coerce_result(result: object, default: bool) -> bool:
@@ -185,3 +193,8 @@ async def is_hil_ledger_enabled(user_id: str | None) -> bool:
 async def is_jev_judge_enabled(user_id: str | None) -> bool:
     """Whether the user's auto mode classifies with JEV first (LLM fallback on transport failure); off keeps the LLM judge."""
     return await is_enabled(FeatureFlag.HIL_JEV_JUDGE, user_id)
+
+
+async def is_jev_reply_enabled(user_id: str | None) -> bool:
+    """Whether the user's chat replies to pending approvals are classified by JEV first (LLM fallback on transport failure)."""
+    return await is_enabled(FeatureFlag.HIL_JEV_REPLY, user_id)
