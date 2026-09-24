@@ -1,5 +1,6 @@
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Final, Literal
+from typing import Final, Literal
 
 from typing_extensions import TypedDict
 
@@ -56,23 +57,69 @@ class DevLLMApi(StrEnum):
     RESPONSES = "responses"
 
 
-class DevModelOption(TypedDict):
+#: OpenRouter's reasoning efforts, the values its request's reasoning.effort accepts.
+OpenRouterEffort = Literal["xhigh", "high", "medium", "low", "minimal", "none"]
+
+
+class OpenRouterReasoning(TypedDict):
+    """OpenRouter's reasoning request object, as GAIA sends it: an effort and nothing else.
+
+    ChatOpenRouter declares its reasoning field dict[str, Any]; this is the part
+    of that free-form object GAIA writes.
+    """
+
+    effort: OpenRouterEffort
+
+
+class OpenRouterProviderRouting(TypedDict, total=False):
+    """OpenRouter's provider-routing block: a soft order, or a hard only-these pin.
+
+    total=False because the two uses set different keys: the client's
+    OPENROUTER_PROVIDER_ORDER writes order + allow_fallbacks, a dev-menu pin
+    writes only.
+    """
+
+    order: list[str]
+    only: list[str]
+    allow_fallbacks: bool
+
+
+class OpenRouterModelKwargs(TypedDict):
+    """The model_kwargs payload carrying a provider-routing block."""
+
+    provider: OpenRouterProviderRouting
+
+
+@dataclass(frozen=True, slots=True)
+class DevModelOption:
     """One entry of the DEV-ONLY model menu (DEV_MODEL_OPTIONS below).
 
-    A TypedDict, not a model: it is a fixed in-process shape that is only ever
-    spread onto a LangGraph configurable, so it crosses no validation boundary.
-
-    model_kwargs and reasoning's effort payload stay dict[str, Any] because
-    that is how ChatOpenRouter declares them: free-form OpenRouter request
-    params, not a shape we own.
+    A frozen dataclass: a fixed in-process record, read by attribute, that
+    crosses no validation boundary.
     """
 
     #: Keyed like PROVIDER_MODELS and PROVIDER_PRIORITY; the enum stops the menu
     #: naming a lane the client cannot resolve.
     provider: LLMProviderName
-    model: str
-    model_kwargs: dict[str, Any] | None
+    #: None = pin no model; the client's own default serves the request.
+    model: str | None
+    #: The OpenRouter provider-routing pin the lane carries as model_kwargs.
+    provider_pin: OpenRouterModelKwargs | None
     reasoning: bool
+
+
+class LaneConfig(TypedDict):
+    """A ModelLane's JSON-safe form, stored on configurable[LANE_FIELD_ID].
+
+    Here, not beside ModelLane, so AgentConfigurable (a leaf module) can
+    declare the key without importing the LLM client.
+    """
+
+    provider: LLMProviderName
+    model: str | None
+    reasoning: OpenRouterReasoning | None
+    provider_pin: OpenRouterModelKwargs | None
+    max_input_tokens: int
 
 
 # LangChain's field-resolution keys, written at TWO definition sites (Gemini's
@@ -297,11 +344,11 @@ HELPER_MAX_OUTPUT_TOKENS = 8_000
 
 # Default reasoning effort for OpenRouter thinking models (executor + subagents),
 # passed to ChatOpenRouter's native `reasoning` field.
-OPENROUTER_REASONING: dict[str, Any] = {"effort": "medium"}
+OPENROUTER_REASONING: OpenRouterReasoning = {"effort": "medium"}
 # Its own constant so raising it doesn't move the executor's default. It sat at
 # "low" while free comms inherited "medium" — a paying user's agent thought LESS
 # than a free user's; paid comms must never be thinner than free.
-PAID_COMMS_REASONING: dict[str, Any] = {"effort": "medium"}
+PAID_COMMS_REASONING: OpenRouterReasoning = {"effort": "medium"}
 
 
 # OFF is "none": deepseek-v4-flash reasoned at "minimal" and "low", and at
@@ -346,55 +393,55 @@ DEV_CUSTOM_MODEL_OPTION = "custom"
 # and the backend pins the matching model. Gemini models route direct and ignore
 # model_kwargs/reasoning. Never used in production.
 DEV_MODEL_OPTIONS: dict[str, DevModelOption] = {
-    "minimax-m3": {
-        "provider": LLMProviderName.OPENROUTER,
-        "model": "minimax/minimax-m3",
-        "model_kwargs": {"provider": {"only": ["minimax"]}},
-        "reasoning": True,
-    },
-    "glm-5.2": {
-        "provider": LLMProviderName.OPENROUTER,
-        "model": "z-ai/glm-5.2",
-        "model_kwargs": {"provider": {"only": ["z-ai"]}},
-        "reasoning": True,
-    },
-    "gemini-3.5-flash": {
-        "provider": LLMProviderName.OPENROUTER,
-        "model": "google/gemini-3.5-flash",
-        "model_kwargs": None,
-        "reasoning": False,
-    },
-    "deepseek-v4": {
-        "provider": LLMProviderName.OPENROUTER,
-        "model": "deepseek/deepseek-v4-pro",
-        "model_kwargs": None,
-        "reasoning": False,
-    },
-    "deepseek-v4-flash": {
+    "minimax-m3": DevModelOption(
+        provider=LLMProviderName.OPENROUTER,
+        model="minimax/minimax-m3",
+        provider_pin={"provider": {"only": ["minimax"]}},
+        reasoning=True,
+    ),
+    "glm-5.2": DevModelOption(
+        provider=LLMProviderName.OPENROUTER,
+        model="z-ai/glm-5.2",
+        provider_pin={"provider": {"only": ["z-ai"]}},
+        reasoning=True,
+    ),
+    "gemini-3.5-flash": DevModelOption(
+        provider=LLMProviderName.OPENROUTER,
+        model="google/gemini-3.5-flash",
+        provider_pin=None,
+        reasoning=False,
+    ),
+    "deepseek-v4": DevModelOption(
+        provider=LLMProviderName.OPENROUTER,
+        model="deepseek/deepseek-v4-pro",
+        provider_pin=None,
+        reasoning=False,
+    ),
+    "deepseek-v4-flash": DevModelOption(
         # Pinned snapshot — same id also served by the cheap OpenRouter-compatible
         # lanes (e.g. Nous Research), so the custom endpoint below can run the
         # identical model for A/B-ing routes.
-        "provider": LLMProviderName.OPENROUTER,
-        "model": "deepseek/deepseek-v4-flash-0731",
+        provider=LLMProviderName.OPENROUTER,
+        model="deepseek/deepseek-v4-flash-0731",
         # Deliberately unpinned — the pin measured worse on the real graph
         # (see the paid-lane rationale above).
-        "model_kwargs": None,
-        "reasoning": False,
-    },
-    DEV_CUSTOM_MODEL_OPTION: {
+        provider_pin=None,
+        reasoning=False,
+    ),
+    DEV_CUSTOM_MODEL_OPTION: DevModelOption(
         # The env-defined endpoint (DEV_LLM_* settings). `model` None = don't pin
         # one here; the client's own default (DEV_LLM_MODEL) serves the request.
-        "provider": LLMProviderName.CUSTOM,
-        "model": None,
-        "model_kwargs": None,
-        "reasoning": False,
-    },
-    "gemini-3.1-flash-lite": {
-        "provider": LLMProviderName.GEMINI,
-        "model": "gemini-3.1-flash-lite",
-        "model_kwargs": None,
-        "reasoning": False,
-    },
+        provider=LLMProviderName.CUSTOM,
+        model=None,
+        provider_pin=None,
+        reasoning=False,
+    ),
+    "gemini-3.1-flash-lite": DevModelOption(
+        provider=LLMProviderName.GEMINI,
+        model="gemini-3.1-flash-lite",
+        provider_pin=None,
+        reasoning=False,
+    ),
 }
 
 # --- Tier cost enforcement (free = usage walls, pro = abuse guards) --------------

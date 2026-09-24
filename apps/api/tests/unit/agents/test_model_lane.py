@@ -41,6 +41,7 @@ from app.constants.llm import (
     PAID_MODEL_PROVIDER,
     PRO_MONTHLY_COST_BUDGET_USD,
     LLMProviderName,
+    OpenRouterModelKwargs,
 )
 from app.constants.log_tags import LogTag
 from app.models.notification.notification_models import (
@@ -53,7 +54,7 @@ from app.models.payment_models import PlanType
 USER = "u1"
 
 #: A provider-routing pin, in the shape a DEV_MODEL_OPTIONS entry carries one.
-_A_ROUTING_PIN: dict[str, Any] = {"provider": {"only": ["minimax"]}}
+_A_ROUTING_PIN: OpenRouterModelKwargs = {"provider": {"only": ["minimax"]}}
 
 
 def _plan(plan: PlanType, *, over_budget: bool = False) -> Any:
@@ -489,7 +490,7 @@ class TestDevOverride:
 
         resolved, _ = await resolve_lane(USER, AgentRole.COMMS, dev_option=option)
 
-        assert resolved.provider_pin == option["model_kwargs"]
+        assert resolved.provider_pin == option.provider_pin
         assert resolved.max_input_tokens == DEFAULT_MAX_TOKENS
 
     async def test_the_custom_endpoint_resolves_the_model_the_client_would_serve(
@@ -593,7 +594,7 @@ class TestDevOverride:
             option = dev_option("minimax-m3")
 
         assert option is not None
-        assert option["model"] == "minimax/minimax-m3"
+        assert option.model == "minimax/minimax-m3"
 
     def test_no_stashed_id_selects_nothing(self) -> None:
         assert dev_option(None) is None
@@ -602,7 +603,7 @@ class TestDevOverride:
 class TestSerializationRoundTrip:
     def test_a_lane_survives_the_configurable_round_trip_intact(self) -> None:
         original = ModelLane(
-            provider="openrouter",
+            provider=LLMProviderName.OPENROUTER,
             model="vendor/model",
             reasoning={"effort": "low"},
             provider_pin={"provider": {"only": ["vendor"]}},
@@ -618,7 +619,7 @@ class TestSerializationRoundTrip:
 
     def test_a_lane_is_immutable(self) -> None:
         resolved = ModelLane(
-            provider="openrouter",
+            provider=LLMProviderName.OPENROUTER,
             model="m",
             reasoning=None,
             provider_pin=None,
@@ -634,7 +635,7 @@ class TestFallback:
     def test_the_fallback_lane_switches_provider_and_drops_the_pin(self) -> None:
         """A pin names providers on the lane being left; carrying it to a different provider turns one failure into two."""
         paid = ModelLane(
-            provider="openrouter",
+            provider=LLMProviderName.OPENROUTER,
             model=PAID_MODEL_NAME,
             reasoning=PAID_COMMS_REASONING,
             provider_pin=_A_ROUTING_PIN,
@@ -658,7 +659,7 @@ class TestFallback:
 
     def test_no_other_configured_provider_yields_no_fallback(self) -> None:
         only = ModelLane(
-            provider="openrouter",
+            provider=LLMProviderName.OPENROUTER,
             model="m",
             reasoning=None,
             provider_pin=None,

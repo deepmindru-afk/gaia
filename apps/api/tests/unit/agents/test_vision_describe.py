@@ -16,6 +16,7 @@ import pytest
 from app.agents.llm.vision.capability import model_can_view_images
 from app.agents.llm.vision.describe import describe_image
 from app.constants.llm import (
+    DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_NAME,
     VISION_MODEL_NAME,
     VISION_MODEL_PROVIDER,
@@ -39,6 +40,9 @@ class TestTheDescriberCanSee:
                 "lane": {
                     "provider": VISION_MODEL_PROVIDER,
                     "model": VISION_MODEL_NAME,
+                    "reasoning": None,
+                    "provider_pin": None,
+                    "max_input_tokens": DEFAULT_MAX_TOKENS,
                 },
                 "model": VISION_MODEL_NAME,
             }

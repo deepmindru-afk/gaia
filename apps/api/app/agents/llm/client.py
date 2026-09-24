@@ -71,6 +71,7 @@ from app.constants.llm import (
     LLMProviderKey,
     LLMProviderName,
     ModelUse,
+    OpenRouterModelKwargs,
     ReasoningLevel,
 )
 from app.constants.log_tags import LogTag
@@ -293,7 +294,8 @@ def init_openrouter_llm() -> LanguageModelLike:
             # rates 10x apart. session_id sticky routing composes with `order`
             # (measured: order + session lands on the ordered upstream every time).
             **_provider_order_kwargs(),
-            reasoning=OPENROUTER_REASONING,
+            # Unpacked: ChatOpenRouter declares reasoning as a plain dict.
+            reasoning={**OPENROUTER_REASONING},
         )
     )
     # Every chat LLM must carry the context-window profile — fractional-token
@@ -479,24 +481,11 @@ def register_llm_providers() -> None:
         init_custom_llm()
 
 
-class _ProviderRouting(TypedDict):
-    """OpenRouter's provider-routing preference block."""
-
-    order: list[str]
-    allow_fallbacks: bool
-
-
-class _ProviderModelKwargs(TypedDict):
-    """The model_kwargs payload carrying the routing block."""
-
-    provider: _ProviderRouting
-
-
 class _ProviderOrderKwargs(TypedDict, total=False):
     """Constructor kwargs for a routed client; empty when no order is configured.
 
     model_kwargs is the shape ChatOpenRouter declares (dict[str, Any]); the
-    routing block it carries is _ProviderModelKwargs, built below.
+    routing block it carries is OpenRouterModelKwargs, built below.
     """
 
     model_kwargs: dict[str, Any]
@@ -515,7 +504,7 @@ def _provider_order_kwargs() -> _ProviderOrderKwargs:
     order = [slug.strip() for slug in raw.split(",") if slug.strip()]
     if not order:
         return {}
-    routing: _ProviderModelKwargs = {"provider": {"order": order, "allow_fallbacks": False}}
+    routing: OpenRouterModelKwargs = {"provider": {"order": order, "allow_fallbacks": False}}
     return {"model_kwargs": dict(routing)}
 
 

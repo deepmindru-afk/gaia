@@ -16,7 +16,8 @@ unreadable and its bugs invisible.
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Any
+
+from pydantic import TypeAdapter
 
 from app.agents.llm.client import PROVIDER_MODELS, next_fallback_provider
 from app.agents.llm.dev_lane import dev_default_model_id, dev_default_option
@@ -38,7 +39,10 @@ from app.constants.llm import (
     PROVIDER_FIELD_ID,
     REASONING_FIELD_ID,
     DevModelOption,
+    LaneConfig,
     LLMProviderName,
+    OpenRouterModelKwargs,
+    OpenRouterReasoning,
 )
 from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache
@@ -61,6 +65,11 @@ from shared.py.wide_events import log
 BINDING_FIELD_IDS: frozenset[str] = frozenset(
     {PROVIDER_FIELD_ID, MODEL_FIELD_ID, REASONING_FIELD_ID, MODEL_KWARGS_FIELD_ID}
 )
+
+
+#: Validates a stored lane at the boundary where it comes back off a configurable:
+#: a queue hop and a HIL resume hand it back as plain JSON.
+_LANE_CONFIG: TypeAdapter[LaneConfig] = TypeAdapter(LaneConfig)
 
 
 class AgentRole(StrEnum):
@@ -88,13 +97,13 @@ class ModelLane:
     #: ``None`` means "let the client use its own configured default" — the
     #: env-defined custom dev endpoint serves ``DEV_LLM_MODEL`` this way.
     model: str | None
-    reasoning: dict[str, Any] | None
+    reasoning: OpenRouterReasoning | None
     #: OpenRouter provider-routing pin. Provider-specific by definition, so it
     #: never survives :meth:`fallback`.
-    provider_pin: dict[str, Any] | None
+    provider_pin: OpenRouterModelKwargs | None
     max_input_tokens: int
 
-    def to_configurable(self) -> dict[str, Any]:
+    def to_configurable(self) -> LaneConfig:
         """Return the JSON-safe form stored on configurable[LANE_CONFIG_KEY]."""
         return {
             "provider": self.provider,
@@ -123,7 +132,7 @@ class ModelLane:
             keys["model_kwargs"] = self.provider_pin
         return keys
 
-    def rebind(self, configurable: Mapping[str, Any]) -> dict[str, Any]:
+    def rebind(self, configurable: Mapping[str, object]) -> dict[str, object]:
         """Build configurable with THIS lane's binding keys, and the previous lane's cleared.
 
         A plain merge is not enough: LangChain merges a passed config OVER a
@@ -143,15 +152,18 @@ class ModelLane:
         None is a real answer, not an error: a bag written before lanes
         existed (an in-flight queue item or a stored HIL resume_item) has no
         lane, and the caller resolves a fresh one rather than crashing on it.
+        A lane that IS there is validated whole: only to_configurable writes one,
+        so a malformed lane is a bug in its writer and raises ValidationError.
         """
         if not isinstance(raw, dict) or "provider" not in raw:
             return None
+        config: LaneConfig = _LANE_CONFIG.validate_python(raw)
         return cls(
-            provider=LLMProviderName(raw["provider"]),
-            model=raw.get("model"),
-            reasoning=raw.get("reasoning"),
-            provider_pin=raw.get("provider_pin"),
-            max_input_tokens=int(raw.get("max_input_tokens") or DEFAULT_MAX_TOKENS),
+            provider=config["provider"],
+            model=config["model"],
+            reasoning=config["reasoning"],
+            provider_pin=config["provider_pin"],
+            max_input_tokens=config["max_input_tokens"],
         )
 
     def fallback(self) -> "ModelLane | None":
@@ -168,7 +180,7 @@ class ModelLane:
         return replace(self, provider=provider, model=model, provider_pin=None, reasoning=None)
 
 
-def _reasoning_for(role: AgentRole) -> dict[str, Any]:
+def _reasoning_for(role: AgentRole) -> OpenRouterReasoning:
     """Return the effort a PAID lane gives each role. The free lane's is fixed in :func:_default_lane.
 
     Comms gets its own knob so it can be raised past the executor's default.
@@ -198,12 +210,11 @@ def _dev_lane(option: DevModelOption, role: AgentRole) -> ModelLane:
     accounting sees the real name instead of metering as "unknown". None
     survives only when the env var itself is unset.
     """
-    provider = LLMProviderName(option["provider"])
     return ModelLane(
-        provider=provider,
-        model=option["model"] or PROVIDER_MODELS.get(provider) or None,
-        reasoning=_reasoning_for(role) if option["reasoning"] else None,
-        provider_pin=option["model_kwargs"],
+        provider=option.provider,
+        model=option.model or PROVIDER_MODELS.get(option.provider) or None,
+        reasoning=_reasoning_for(role) if option.reasoning else None,
+        provider_pin=option.provider_pin,
         max_input_tokens=DEFAULT_MAX_TOKENS,
     )
 

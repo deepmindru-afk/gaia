@@ -80,7 +80,7 @@ def dev_default_option() -> DevModelOption | None:
 def custom_lane_forced() -> bool:
     """Whether every LLM call in this process must run on the custom endpoint."""
     option = dev_default_option()
-    return option is not None and option["provider"] is LLMProviderName.CUSTOM
+    return option is not None and option.provider is LLMProviderName.CUSTOM
 
 
 @cache
