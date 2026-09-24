@@ -56,7 +56,6 @@ apps/api/app/services/onboarding/social_profile_service.py	PLR0915	deferred-unti
 apps/api/app/services/tools/tools_service.py	PLR0912	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/utils/crawl4ai_utils.py	PLR0912	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/utils/crawl4ai_utils.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
-apps/api/scripts/dump_config_schema.py	PLR0912
 apps/api/scripts/evals/__main__.py	PLR0912	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/scripts/evals/__main__.py	PLR0915	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/scripts/evals/core/counterfeit.py	PLR0912	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
@@ -87,7 +86,6 @@ apps/api/tests/unit/memory/test_ingestion.py	PLR0913	deferred-until=2026-10-15; 
 apps/api/tests/unit/memory/test_management.py	PLR0913
 apps/api/tests/unit/services/test_trigger_handlers_extras.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/voice-agent/src/agent.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
-apps/web/scripts/analyze-chunks.py	PLR0912
 libs/wake-word/training/src/synthesize.py	PLR0913
 libs/wake-word/training/src/train.py	PLR0913
 libs/wake-word/training/src/validate.py	PLR0913
