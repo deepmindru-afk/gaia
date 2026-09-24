@@ -190,32 +190,36 @@ def _cookie_scopes_to(cookie: StorageStateCookie, host: str) -> bool:
     return bool(domain) and _cookie_applies_to_host(domain, host)
 
 
-def _cookie_identity(cookie: StorageStateCookie) -> tuple[str | None, str | None, str | None]:
-    """Return what makes two cookies the same cookie to a browser: name, domain and path."""
-    return cookie.get("name"), cookie.get("domain"), cookie.get("path")
+def _hosts_in(state: StorageState) -> set[str]:
+    """Return every host state holds a cookie or localStorage for."""
+    hosts = {host for cookie in state.get("cookies", []) if (host := _cookie_host(cookie))}
+    return hosts | {host for origin in state.get("origins", []) if (host := _origin_host(origin))}
 
 
-def overlay_storage_state(base: StorageState | None, live: StorageState) -> StorageState:
-    """Lay live over base: a cookie with the same name, domain and path, or an origin's localStorage, is live's."""
+def overlay_storage_state(
+    base: StorageState | None, live: StorageState, held_hosts: set[str]
+) -> StorageState:
+    """Lay live over base, with live the whole truth for every host it covers.
+
+    Covered means a host live has a cookie or origin for, or one of held_hosts, the
+    sites the live browser is known to have had open. A base cookie a browser would
+    send to a covered host, or a covered origin's localStorage, is dropped rather than
+    merged, since its absence from live may be a logout; base fills only the rest.
+    """
     if base is None:
         return live
-    live_cookies = live.get("cookies", [])
-    live_origins = live.get("origins", [])
-    live_cookie_ids = {_cookie_identity(cookie) for cookie in live_cookies}
-    live_origin_names = {origin.get("origin") for origin in live_origins}
+    covered = _hosts_in(live) | held_hosts
     return StorageState(
         cookies=[
             cookie
             for cookie in base.get("cookies", [])
-            if _cookie_identity(cookie) not in live_cookie_ids
+            if not any(_cookie_scopes_to(cookie, host) for host in covered)
         ]
-        + live_cookies,
+        + live.get("cookies", []),
         origins=[
-            origin
-            for origin in base.get("origins", [])
-            if origin.get("origin") not in live_origin_names
+            origin for origin in base.get("origins", []) if _origin_host(origin) not in covered
         ]
-        + live_origins,
+        + live.get("origins", []),
     )
 
 
@@ -230,16 +234,8 @@ def split_storage_state_by_host(state: StorageState) -> dict[str, StorageState]:
     cookies = state.get("cookies", [])
     origins = state.get("origins", [])
 
-    hosts: set[str] = set()
-    for origin in origins:
-        if origin_host := _origin_host(origin):
-            hosts.add(origin_host)
-    for cookie in cookies:
-        if cookie_host := _cookie_host(cookie):
-            hosts.add(cookie_host)
-
     slices: dict[str, StorageState] = {}
-    for host in hosts:
+    for host in _hosts_in(state):
         host_cookies = [c for c in cookies if _cookie_scopes_to(c, host)]
         host_origins = [o for o in origins if _origin_host(o) == host]
         if host_cookies or host_origins:

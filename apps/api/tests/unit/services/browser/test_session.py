@@ -449,6 +449,65 @@ async def test_a_carried_session_writes_back_both_the_carried_login_and_the_resu
     assert saved == {"flights.example.com", "news.example.com"}
 
 
+#: The user's saved login for flights.example.com, from before the run signed out.
+_SAVED_FLIGHTS_LOGIN = {
+    "cookies": [
+        {"name": "session", "value": "stale", "domain": "flights.example.com", "path": "/"},
+        {"name": "sso", "value": "stale", "domain": ".example.com", "path": "/"},
+    ],
+    "origins": [
+        {"origin": "https://flights.example.com", "localStorage": [{"name": "t", "value": "old"}]}
+    ],
+}
+
+
+async def _seeded_fallback(
+    monkeypatch: pytest.MonkeyPatch, carried: session_mod.LiveSessionState
+) -> dict[str, Any]:
+    """Open a fallback on flights.example.com over the saved flights login; return what it was seeded with."""
+    _make_session_fakes(monkeypatch)
+    monkeypatch.setattr(
+        session_mod, "load_storage_state", AsyncMock(return_value=_SAVED_FLIGHTS_LOGIN)
+    )
+    async with session_mod.browser_session(
+        host_url=_FALLBACK_HOST,
+        user_id="u1",
+        start_url="https://flights.example.com/",
+        carried=carried,
+    ):
+        pass
+    [(seeded, _)] = [call.args for call in session_mod.host_client.create_session.await_args_list]
+    return seeded
+
+
+async def test_a_sign_out_on_the_primary_is_not_undone_by_the_saved_login_on_the_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (Greptile on #876): a logout cleared the site's cookies, and the overlay seeded the saved copies back into the fallback."""
+    carried = session_mod.LiveSessionState(
+        storage_state={"cookies": [], "origins": []}, source=_signed_in_primary()
+    )
+
+    seeded = await _seeded_fallback(monkeypatch, carried)
+
+    assert seeded == {"cookies": [], "origins": []}
+
+
+async def test_a_cookie_the_primary_deleted_stays_deleted_on_a_site_it_still_holds_cookies_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The carried state is the whole truth for a site it has cookies for, not an update to lay over the saved login."""
+    after_logout = {
+        "cookies": [{"name": "lang", "value": "en", "domain": "flights.example.com", "path": "/"}],
+        "origins": [],
+    }
+    carried = session_mod.LiveSessionState(storage_state=after_logout, source=_handle())
+
+    seeded = await _seeded_fallback(monkeypatch, carried)
+
+    assert seeded == after_logout
+
+
 async def test_handing_over_a_live_session_reads_its_state_and_names_it_the_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

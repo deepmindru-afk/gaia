@@ -236,8 +236,11 @@ async def browser_session(
     login_domains = {domain} if saved_login is not None and domain is not None else set()
     storage_state = saved_login
     if carried is not None:
-        storage_state = overlay_storage_state(saved_login, carried.storage_state)
-        login_domains |= carried.source.login_domains
+        source = carried.source
+        # The sites the source opened on or held a login for: a logout there can leave no cookie behind to show it.
+        held = {site for site in (source.start_domain, *source.login_domains) if site}
+        storage_state = overlay_storage_state(saved_login, carried.storage_state, held)
+        login_domains |= source.login_domains
 
     host = await host_client.create_session(storage_state, host_url)
     session = BrowserHostSession(
