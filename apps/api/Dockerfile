@@ -67,6 +67,8 @@ COPY libs/pyproject.toml ./libs/
 
 # UV_PROJECT_ENVIRONMENT=/usr/local tells uv sync to use the system Python dir
 # instead of creating a .venv — entry points (crawl4ai-setup etc.) land in /usr/local/bin
+# No --no-build: cloudinary, pysher and standardwebhooks ship only sdists; --frozen builds only hash-pinned
+# ones. Sonar docker:S8541 does not honour NOSONAR, so it is resolved as Accepted in the SonarCloud UI.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=libs,target=/app/libs,rw \
     uv sync --frozen --package gaia --group backend
@@ -102,7 +104,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # dev, Graviton prod).
 ARG JUICEFS_VERSION=1.3.0
 ARG TARGETARCH
-RUN curl -fsSL "https://github.com/juicedata/juicefs/releases/download/v${JUICEFS_VERSION}/juicefs-${JUICEFS_VERSION}-linux-${TARGETARCH:-amd64}.tar.gz" \
+RUN curl --proto "=https" --tlsv1.2 -fsSL "https://github.com/juicedata/juicefs/releases/download/v${JUICEFS_VERSION}/juicefs-${JUICEFS_VERSION}-linux-${TARGETARCH:-amd64}.tar.gz" \
     | tar -xz -C /tmp \
     && install -m 0755 /tmp/juicefs /usr/local/bin/juicefs \
     && rm -rf /tmp/juicefs /tmp/LICENSE /tmp/README.md

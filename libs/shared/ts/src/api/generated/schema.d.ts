@@ -7111,7 +7111,7 @@ export interface components {
             source_conversation_id?: string | null;
             /**
              * Stop After
-             * @description Stop executing after this date (optional)
+             * @description Stop executing after this date (optional); defaults to 180 days after creation
              */
             stop_after?: string | null;
             /**
