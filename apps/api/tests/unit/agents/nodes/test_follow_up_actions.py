@@ -8,9 +8,15 @@ from app.agents.core.nodes.follow_up_actions_node import (
     _FOLLOW_UP_CONTEXT_MAX_CHARS,
     SUGGEST_FOLLOW_UP_ACTIONS,
     FollowUpActions,
+    _delegated_to_executor,
     _pretty_print_messages,
     follow_up_actions_node,
+    generate_follow_up_actions,
 )
+from app.constants.general import CALL_EXECUTOR_NAME
+from app.constants.log_tags import LogTag
+from app.models import integration_models
+from tests.helpers import captured_wide_event
 
 
 def _make_state(messages=None):
@@ -219,7 +225,9 @@ class TestFollowUpActionsNode:
             patch(
                 "app.agents.core.nodes.follow_up_actions_node.get_user_integration_capabilities",
                 new=AsyncMock(
-                    return_value={"tool_names": ["xyztest_invoice_tool", "xyztest_sms_tool"]}
+                    return_value=integration_models.UserIntegrationCapabilities(
+                        tool_names=["xyztest_invoice_tool", "xyztest_sms_tool"]
+                    )
                 ),
             ) as capabilities,
             patch(
@@ -305,7 +313,9 @@ class TestFollowUpActionsNode:
             ),
             patch(
                 "app.agents.core.nodes.follow_up_actions_node.get_user_integration_capabilities",
-                new=AsyncMock(return_value={"tool_names": []}),
+                new=AsyncMock(
+                    return_value=integration_models.UserIntegrationCapabilities(tool_names=[])
+                ),
             ),
             patch(
                 "app.agents.core.nodes.follow_up_actions_node.ainvoke_structured",
@@ -349,7 +359,9 @@ class TestFollowUpActionsNode:
             ),
             patch(
                 "app.agents.core.nodes.follow_up_actions_node.get_user_integration_capabilities",
-                new=AsyncMock(return_value={"tool_names": []}),
+                new=AsyncMock(
+                    return_value=integration_models.UserIntegrationCapabilities(tool_names=[])
+                ),
             ),
             patch(
                 "app.agents.core.nodes.follow_up_actions_node.ainvoke_structured",
@@ -407,7 +419,9 @@ class TestFollowUpActionsNode:
             ),
             patch(
                 "app.agents.core.nodes.follow_up_actions_node.get_user_integration_capabilities",
-                new=AsyncMock(return_value={"tool_names": []}),
+                new=AsyncMock(
+                    return_value=integration_models.UserIntegrationCapabilities(tool_names=[])
+                ),
             ),
             patch(
                 "app.agents.core.nodes.follow_up_actions_node.ainvoke_structured",
@@ -419,6 +433,118 @@ class TestFollowUpActionsNode:
         assert result is state
         # State messages should be unchanged — actions go only through the writer
         assert result["messages"] == original_messages
+
+
+NODE = "app.agents.core.nodes.follow_up_actions_node"
+
+
+class TestGenerateFollowUpActionsNeverRaises:
+    @pytest.mark.regression
+    async def test_a_failing_capabilities_fetch_yields_no_actions_and_an_error(self) -> None:
+        llm = AsyncMock()
+        with (
+            patch(
+                f"{NODE}.get_user_integration_capabilities",
+                new=AsyncMock(side_effect=RuntimeError("capabilities down")),
+            ),
+            patch(f"{NODE}.ainvoke_structured", new=llm),
+        ):
+            async with captured_wide_event() as event:
+                actions = await generate_follow_up_actions("ctx", "user-123", _make_config())
+
+        assert actions == []
+        llm.assert_not_awaited()
+        (error,) = [e for e in event["errors"] if e.get("error") == "capabilities down"]
+        assert error["user_id"] == "user-123"
+        assert error["error_type"] == "RuntimeError"
+
+    @pytest.mark.regression
+    async def test_a_failing_registry_fallback_yields_no_actions(self) -> None:
+        with patch(
+            f"{NODE}.get_tool_registry", new=AsyncMock(side_effect=RuntimeError("no registry"))
+        ):
+            assert await generate_follow_up_actions("ctx", None, _make_config()) == []
+
+    async def test_an_llm_failure_is_logged_as_an_error(self) -> None:
+        with (
+            patch(
+                f"{NODE}.get_user_integration_capabilities",
+                new=AsyncMock(return_value=integration_models.UserIntegrationCapabilities()),
+            ),
+            patch(f"{NODE}.ainvoke_structured", new=AsyncMock(side_effect=ValueError("bad json"))),
+        ):
+            async with captured_wide_event() as event:
+                actions = await generate_follow_up_actions("ctx", "user-123", _make_config())
+
+        assert actions == []
+        assert [e["error_type"] for e in event["errors"]] == ["ValueError"]
+
+    async def test_the_failure_is_logged_with_its_message_and_the_users_id(self) -> None:
+        with (
+            patch(
+                f"{NODE}.get_user_integration_capabilities",
+                new=AsyncMock(return_value=integration_models.UserIntegrationCapabilities()),
+            ),
+            patch(f"{NODE}.ainvoke_structured", new=AsyncMock(side_effect=ValueError("bad json"))),
+        ):
+            async with captured_wide_event() as event:
+                await generate_follow_up_actions("ctx", "user-123", _make_config())
+
+        (error,) = event["errors"]
+        assert error["msg"] == f"{LogTag.AGENT} Follow-up action generation failed"
+        assert error["user_id"] == "user-123"
+        assert error["error"] == "bad json"
+
+    async def test_capabilities_are_read_for_the_asking_user(self) -> None:
+        capabilities = AsyncMock(
+            return_value=integration_models.UserIntegrationCapabilities(tool_names=["a_tool"])
+        )
+        llm = AsyncMock(return_value=FollowUpActions(actions=["Do it"]))
+        with (
+            patch(f"{NODE}.get_user_integration_capabilities", new=capabilities),
+            patch(f"{NODE}.ainvoke_structured", new=llm),
+        ):
+            actions = await generate_follow_up_actions("ctx", "user-123", _make_config())
+
+        assert actions == ["Do it"]
+        capabilities.assert_awaited_once_with("user-123")
+
+
+def _call(name: str) -> dict[str, object]:
+    return {"name": name, "args": {}, "id": f"call-{name}", "type": "tool_call"}
+
+
+class TestDelegatedToExecutor:
+    def test_a_call_to_the_executor_this_turn_is_delegation(self) -> None:
+        messages = [
+            HumanMessage(content="hi"),
+            AIMessage(content="", tool_calls=[_call(CALL_EXECUTOR_NAME)]),
+        ]
+        assert _delegated_to_executor(messages) is True
+
+    def test_a_call_to_another_tool_is_not_delegation(self) -> None:
+        messages = [
+            HumanMessage(content="hi"),
+            AIMessage(content="", tool_calls=[_call("web_search")]),
+        ]
+        assert _delegated_to_executor(messages) is False
+
+    def test_a_non_ai_message_before_the_call_does_not_hide_it(self) -> None:
+        messages = [
+            HumanMessage(content="hi"),
+            ToolMessage(content="ok", tool_call_id="x"),
+            AIMessage(content="", tool_calls=[_call(CALL_EXECUTOR_NAME)]),
+        ]
+        assert _delegated_to_executor(messages) is True
+
+    def test_a_delegation_before_the_last_human_turn_does_not_count(self) -> None:
+        messages = [
+            HumanMessage(content="first"),
+            AIMessage(content="", tool_calls=[_call(CALL_EXECUTOR_NAME)]),
+            HumanMessage(content="second"),
+            AIMessage(content="plain reply"),
+        ]
+        assert _delegated_to_executor(messages) is False
 
 
 def _ai_calling(name: str) -> AIMessage:

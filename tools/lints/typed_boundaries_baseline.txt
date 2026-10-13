@@ -122,15 +122,11 @@ apps/api/app/services/gaia_knowledge_service.py	TB002	deferred-until=2026-10-15;
 apps/api/app/services/hil/classification.py	TB002
 apps/api/app/services/hil/notify.py	TB001
 apps/api/app/services/hil/notify.py	TB002
-apps/api/app/services/integrations/marketplace.py	TB001
-apps/api/app/services/integrations/marketplace.py	TB002
 apps/api/app/services/llm_metering.py	TB001	deferred-until=2026-12-31; resolve_channel takes the raw configurable Mapping[str, Any]; touched by the llm-cost single-source fix, which leaves it as it was (decided 2026-10-08)
 apps/api/app/services/llm_metering.py	TB002	deferred-until=2026-12-31; 37 string-key reads, mostly parsing provider response_metadata/usage_metadata and the wide-event fields; a typed provider-reply model is its own change, out of scope for the llm-cost single-source fix that touched the file (decided 2026-10-08)
 apps/api/app/services/mail/email_importance_service.py	TB001
 apps/api/app/services/mcp/device_connector.py	TB002
 apps/api/app/services/mcp/device_exec.py	TB002
-apps/api/app/services/mcp/mcp_tools_service.py	TB001
-apps/api/app/services/mcp/mcp_tools_service.py	TB002
 apps/api/app/services/mcp/oauth_discovery.py	TB002
 apps/api/app/services/mcp/resilient_adapter.py	TB001
 apps/api/app/services/mcp/resilient_adapter.py	TB002
@@ -148,7 +144,6 @@ apps/api/app/services/sandbox/lifecycle.py	TB002
 apps/api/app/services/storage/metrics.py	TB002
 apps/api/app/services/storage/sessions/meta.py	TB002
 apps/api/app/services/support_service.py	TB002
-apps/api/app/services/tools/tools_service.py	TB002
 apps/api/app/services/triggers/condition_matching.py	TB001
 apps/api/app/services/triggers/handlers/asana.py	TB001
 apps/api/app/services/triggers/handlers/calendar.py	TB001
