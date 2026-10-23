@@ -950,7 +950,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-node-pnpm
-      - name: tsc --noEmit across web, desktop, mobile, cli, bots
+      - name: tsrs --noEmit across web, desktop, mobile, cli, bots
         run: |
           echo "::group::nx type-check"
           if [ -n "${GITHUB_BASE_REF:-}" ]; then
@@ -964,7 +964,7 @@ jobs:
             pnpm exec nx run-many -t type-check --projects=web,desktop,mobile,cli,bot-discord,bot-slack,bot-telegram,bot-whatsapp,bot-imessage
           fi
           echo "::endgroup::"
-          echo "TypeScript: OK (all affected workspaces pass strict tsc)"
+          echo "TypeScript: OK (all affected workspaces pass strict tsrs)"
       - name: Upload the verdict
         if: always()
         uses: ./.github/actions/upload-verdict

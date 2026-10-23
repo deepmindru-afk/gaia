@@ -29,7 +29,8 @@
     "tokens:build": "style-dictionary build",
     "tokens:check": "design.md export --format dtcg DESIGN.md | diff - config/design.tokens.json",
     "tokens:export": "design.md export --format dtcg DESIGN.md > config/design.tokens.json",
-    "doctor": "npx react-doctor@0.9.12"
+    "doctor": "npx react-doctor@0.9.12",
+    "quality:type:tsc": "GAIA_TS_CHECKER=tsc nx run-many -t type-check --exclude=api,voice-agent"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
@@ -59,6 +60,7 @@
     "react-dom": "19.2.3",
     "style-dictionary": "^4.4.0",
     "syncpack": "^15.3.2",
+    "tsrs": "^0.18.0-ts7.1.0-dev.20260929",
     "tsx": "^4.23.11",
     "typescript": "npm:typescript@6.0.0-beta"
   },
