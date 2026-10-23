@@ -136,6 +136,14 @@ runs:
         rm -f node_modules/.gaia-installed-* 2>/dev/null || true
         touch "$MARK"
 
+    # tools/api-codegen needs a compiler with the JavaScript API, which
+    # typescript 7 does not ship, and it sits outside the workspace so the app
+    # packages stay on 7.x. tools/api-codegen/README.md has the full reasoning
+    # and the conditions for deleting it.
+    - name: Install the API codegen toolchain
+      shell: bash
+      run: pnpm --dir tools/api-codegen install --frozen-lockfile --ignore-workspace --prefer-offline
+
     - name: Set NX_CLOUD_ACCESS_TOKEN
       if: false # Nx Cloud plan exceeded — restore condition to re-enable: inputs.nx-cloud-access-token != ''
       shell: bash
