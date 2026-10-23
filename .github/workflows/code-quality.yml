@@ -79,7 +79,10 @@ jobs:
     # other branch and re-runs every lane against the new base — the case
     # that used to leave a restacked PR with verdicts scoped to master.
     if: ${{ github.event.action != 'edited' || github.event.changes.base != '' }}
-    runs-on: ubuntu-latest
+    # Same reason as main.yml: the dispatcher must not queue behind the
+    # GitHub-hosted backlog it is meant to route around. CI_DISPATCH_RUNNER
+    # unset keeps ubuntu-latest.
+    runs-on: ${{ vars.CI_DISPATCH_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 2
     permissions:
       contents: read
@@ -141,7 +144,8 @@ jobs:
     name: Select runner (services pool)
     # Same guard as select-runner: a title edit must not start either probe.
     if: ${{ github.event.action != 'edited' || github.event.changes.base != '' }}
-    runs-on: ubuntu-latest
+    # Control plane, like select-runner: never queue behind the pool it probes.
+    runs-on: ${{ vars.CI_DISPATCH_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 2
     permissions:
       contents: read
@@ -2119,7 +2123,8 @@ jobs:
       - semgrep
       - test-mutation-plan
       - test-mutation
-    runs-on: ubuntu-latest
+    # Required status check; same reason as main.yml's quality-gate.
+    runs-on: ${{ vars.CI_DISPATCH_RUNNER || 'ubuntu-latest' }}
     # Covers the edit path's wait for the run that validated this commit.
     timeout-minutes: 45
     permissions:
