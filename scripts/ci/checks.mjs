@@ -3,6 +3,10 @@
  * checks.mjs — the static hygiene gates over the TypeScript/JS surface.
  *
  * Subcommands:
+ *   biome               Biome over CHANGED_FILES (or the repo), failing on any
+ *                       error and on a dead biome-ignore (`suppressions/unused`,
+ *                       a warning biome itself never fails on). CI and
+ *                       `mise ci:local` both run this.
  *   file-sizes [--enforce-all] [--quiet]
  *                       File size gate. Default mode reports every file over
  *                       its target limit but only FAILS on the 1200-line hard
@@ -56,7 +60,7 @@
  * `duplication` reads GAIA_PR_BASE, then GITHUB_BASE_REF, for its diff base
  * (default master).
  */
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -180,6 +184,23 @@ function sizeFiles(args) {
 }
 
 const countLines = (p) => readFileSync(p, "utf8").split("\n").length;
+
+function cmdBiome(argv) {
+  const files = explicitFileList(argv);
+  const result = spawnSync(
+    "pnpm",
+    ["exec", "biome", "check", "--no-errors-on-unmatched", ...(files.length ? files : ["."])],
+    { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
+  );
+  if (result.error) throw result.error;
+  const output = `${result.stdout}${result.stderr}`;
+  process.stdout.write(output);
+  if (output.includes("suppressions/unused")) {
+    console.error("biome: a dead biome-ignore no longer masks anything — delete it");
+    process.exit(1);
+  }
+  process.exit(result.status ?? 1);
+}
 
 function cmdFileSizes(argv) {
   const args = new Set(argv);
@@ -576,9 +597,15 @@ function cmdDocComments(argv) {
 const DUPLICATION_THRESHOLD = 3;
 
 function cmdDuplication() {
-  // GAIA_PR_BASE first: a stacked PR's payload names the trunk, not its parent (see changes.sh).
+  // GAIA_PR_BASE first: a stacked PR's payload names the trunk, not its parent,
+  // and a merge_group's base is a commit, not a branch — `changes.sh base-rev`
+  // owns turning either into a revision.
   const baseRef = process.env.GAIA_PR_BASE || process.env.GITHUB_BASE_REF;
-  const BASE = baseRef ? `origin/${baseRef}` : "origin/master";
+  const BASE = baseRef
+    ? execFileSync("bash", ["scripts/ci/changes.sh", "base-rev"], {
+        encoding: "utf8",
+      }).trim()
+    : "origin/master";
 
   const sh = (cmd) =>
     execSync(cmd, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -1084,6 +1111,9 @@ function cmdFrameworkPair() {
   const sub = process.argv[2];
   const rest = process.argv.slice(3);
   switch (sub) {
+    case "biome":
+      cmdBiome(rest);
+      break;
     case "file-sizes":
       cmdFileSizes(rest);
       break;
