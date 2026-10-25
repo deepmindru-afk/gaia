@@ -1300,6 +1300,8 @@ CHECK_AREAS: dict[str, Area] = {
             "api-schema",
             "api-schema-types",
             "analytics-catalog",
+            "cli-config-schema",
+            "deploy-templates",
             "analytics-sync",
             "analytics-check",
             "observability-evlog-tests",

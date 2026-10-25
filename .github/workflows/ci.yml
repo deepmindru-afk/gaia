@@ -193,6 +193,7 @@ jobs:
       has_js_sources: ${{ steps.affected.outputs.has_js_sources }}
       has_api_schema: ${{ steps.affected.outputs.has_api_schema }}
       has_analytics: ${{ steps.affected.outputs.has_analytics }}
+      has_deploy_templates: ${{ steps.affected.outputs.has_deploy_templates }}
       python_projects: ${{ steps.affected.outputs.python_projects }}
       typescript_projects: ${{ steps.affected.outputs.typescript_projects }}
       # The test-python matrices, from the one slice definition
@@ -275,6 +276,8 @@ jobs:
           # changes the generated document with no route edit at all.
           API_SCHEMA_SCOPE=$(node -p "JSON.parse(require('fs').readFileSync('scripts/dev/verify-lanes.json','utf8')).lanes.find((l) => l.name === 'api-schema').scope")
           ANALYTICS_SCOPE=$(node -p "JSON.parse(require('fs').readFileSync('scripts/dev/verify-lanes.json','utf8')).lanes.find((l) => l.name === 'analytics-check').scope")
+          # The compose file, Caddyfile and machine secrets the one-click templates are generated from.
+          DEPLOY_TEMPLATES_SCOPE=$(node -p "JSON.parse(require('fs').readFileSync('scripts/dev/verify-lanes.json','utf8')).lanes.find((l) => l.name === 'deploy-templates').scope")
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             PY=$(pnpm exec nx show projects --projects 'tag:scope:python' | normalize)
@@ -283,6 +286,7 @@ jobs:
             GO=true
             API_SCHEMA=true
             ANALYTICS=true
+            DEPLOY_TEMPLATES=true
             PY_SOURCES=true
           else
             # A PR is scoped to the base `changes.sh base` resolved, like every
@@ -304,6 +308,7 @@ jobs:
               ALERTS=true
               API_SCHEMA=true
               ANALYTICS=true
+              DEPLOY_TEMPLATES=true
               GO=true
               PY_SOURCES=true
             else
@@ -327,6 +332,11 @@ jobs:
               else
                 ANALYTICS=false
               fi
+              if echo "$AFFECTED_FILES" | grep -qE "$DEPLOY_TEMPLATES_SCOPE"; then
+                DEPLOY_TEMPLATES=true
+              else
+                DEPLOY_TEMPLATES=false
+              fi
               # The Go tool is a standalone module outside the nx graph, so it is
               # path-scoped the same way the alert rules are.
               if echo "$AFFECTED_FILES" | grep -qE '^tools/gaia-connect/'; then
@@ -349,8 +359,9 @@ jobs:
           echo "has_js_sources=$([[ -n "$JS" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "has_api_schema=$API_SCHEMA" >> "$GITHUB_OUTPUT"
           echo "has_analytics=$ANALYTICS" >> "$GITHUB_OUTPUT"
+          echo "has_deploy_templates=$DEPLOY_TEMPLATES" >> "$GITHUB_OUTPUT"
           echo "has_go=$GO" >> "$GITHUB_OUTPUT"
-          echo "python: ${PY:-none} | python-sources: $PY_SOURCES | typescript: ${TS:-none} | alert-rules: $ALERTS | api-schema: $API_SCHEMA | analytics: $ANALYTICS | go: $GO"
+          echo "python: ${PY:-none} | python-sources: $PY_SOURCES | typescript: ${TS:-none} | alert-rules: $ALERTS | api-schema: $API_SCHEMA | analytics: $ANALYTICS | deploy-templates: $DEPLOY_TEMPLATES | go: $GO"
 
       # Last, so everything above is decided even when this fails: it is ALSO
       # the step that fails loudly when changed app code has no test file
@@ -1013,8 +1024,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-uv
+      # deploy_templates.py runs in the apps/api environment (PyYAML).
       - uses: ./.github/actions/setup-python-test-env
-        if: needs.detect.outputs.has_python == 'true' || needs.detect.outputs.has_typescript == 'true' || needs.detect.outputs.has_api_schema == 'true'
+        if: needs.detect.outputs.has_python == 'true' || needs.detect.outputs.has_typescript == 'true' || needs.detect.outputs.has_api_schema == 'true' || needs.detect.outputs.has_deploy_templates == 'true'
         with:
           services: "false"
           node: "false"
@@ -1042,8 +1054,19 @@ jobs:
         continue-on-error: true
         if: (needs.detect.outputs.has_python == 'true' || needs.detect.outputs.has_typescript == 'true' || needs.detect.outputs.has_api_schema == 'true') && !contains(fromJSON(needs.detect.outputs.reused_checks || '[]'), 'analytics-catalog')
         run: node scripts/ci/checks.mjs analytics-catalog
+      - name: cli-config-schema — the CLI's config schema matches the settings
+        id: cli-config-schema
+        continue-on-error: true
+        if: (needs.detect.outputs.has_python == 'true' || needs.detect.outputs.has_typescript == 'true' || needs.detect.outputs.has_api_schema == 'true') && !contains(fromJSON(needs.detect.outputs.reused_checks || '[]'), 'cli-config-schema')
+        run: node scripts/ci/checks.mjs cli-config-schema
+      # has_deploy_templates: the compose file and Caddyfile belong to no nx project.
+      - name: deploy-templates — the one-click deploy templates match the self-host compose
+        id: deploy-templates
+        continue-on-error: true
+        if: (needs.detect.outputs.has_python == 'true' || needs.detect.outputs.has_typescript == 'true' || needs.detect.outputs.has_api_schema == 'true' || needs.detect.outputs.has_deploy_templates == 'true') && !contains(fromJSON(needs.detect.outputs.reused_checks || '[]'), 'deploy-templates')
+        run: node scripts/ci/checks.mjs deploy-templates
 
-      # Every check from here to its join below only reads the tree (the two
+      # Every check from here to its join below only reads the tree (the four
       # above regenerate tracked files in place, so they run first and alone).
       # They run side by side: each starts here and reports in its own step
       # after the foreground checks, so it keeps its own log, outcome and status.
@@ -1262,6 +1285,8 @@ jobs:
           CHECKS: >-
             api-schema=${{ steps.api-schema.outcome }}
             analytics-catalog=${{ steps.analytics-catalog.outcome }}
+            cli-config-schema=${{ steps.cli-config-schema.outcome }}
+            deploy-templates=${{ steps.deploy-templates.outcome }}
             api-schema-types=${{ steps.api-schema-types.outcome }}
             observability-evlog-tests=${{ steps.observability-evlog-tests.outcome }}
             observability-map=${{ steps.observability-map.outcome }}
@@ -1850,6 +1875,9 @@ jobs:
       - name: Playwright pin matches uv.lock
         if: steps.inputs.outputs.build != 'false'
         run: bash scripts/ci/audit.sh playwright-pin
+      - name: Baked models match app/constants/memory.py
+        if: steps.inputs.outputs.build != 'false'
+        run: bash scripts/ci/audit.sh model-pin
       - name: Build api image (timed, not pushed)
         if: steps.inputs.outputs.build != 'false'
         shell: bash
