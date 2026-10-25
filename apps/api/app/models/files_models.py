@@ -75,6 +75,9 @@ class FileUpdate(BaseModel):
     filename: str | None = None
     description: str | None = None
     page_wise_summary: PageWiseSummary = None
-    # Server-set only: stamped when a pre-conversation upload is seeded into the
-    # session that adopted it. Never accepted from a client update payload.
+    # Server-set only: stamped when an upload is attached to the conversation
+    # that adopted it. Never accepted from a client update payload.
     conversation_id: str | None = None
+    # Server-set only: the /workspace path the bytes were mirrored to. Written
+    # by the attach path so the agent reads the real file, never a guess.
+    sandbox_path: str | None = None
