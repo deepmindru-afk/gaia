@@ -20,6 +20,7 @@ import Link from "next/link";
 import { type ReactNode, useState } from "react";
 import CopyButton from "@/components/ui/CopyButton";
 import { copyText } from "@/lib/clipboard";
+import { siteConfig } from "@/lib/seo";
 
 function InlineCode({ children }: { children: ReactNode }) {
   return (
@@ -214,7 +215,7 @@ export function InstallPageClient() {
           </Button>
           <Button
             as={Link}
-            href="https://github.com/theexperiencecompany/gaia"
+            href={siteConfig.links.repo}
             variant="bordered"
             target="_blank"
             rel="noopener noreferrer"
