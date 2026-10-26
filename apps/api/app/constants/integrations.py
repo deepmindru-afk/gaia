@@ -121,6 +121,9 @@ USE_CASES_COUNT = 5
 HOW_IT_WORKS_COUNT = 3
 FAQ_COUNT = 4
 
+# Category for an integration that fits no other bucket, or whose inference failed.
+DEFAULT_INTEGRATION_CATEGORY = "other"
+
 # Fixed set of marketplace categories an integration can be classified into.
 INTEGRATION_CATEGORIES = [
     "productivity",  # Notion, Todoist, project management
@@ -132,7 +135,7 @@ INTEGRATION_CATEGORIES = [
     "education",  # Learning platforms, courses, academic tools
     "personal",  # Health, fitness, lifestyle (Strava, etc.)
     "capabilities",  # Agent reasoning & cognitive enhancements only
-    "other",  # Fallback
+    DEFAULT_INTEGRATION_CATEGORY,
 ]
 
 CATEGORY_INFERENCE_PROMPT = """
