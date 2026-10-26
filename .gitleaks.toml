@@ -49,7 +49,12 @@ paths = [
   '''^apps/api/scripts/evals/data/''',
   '''(^|/)\.mutation-[0-9]+/''',
 ]
-# The WorkOS settings test's made-up API key: an sk_test_-prefixed placeholder the
-# stripe-access-token rule reads as a Stripe key. Matched by value, not by commit,
-# because a squash merge gives every finding a new commit id.
-regexes = ['''sk_test_configured''']
+# Placeholders that are fixtures, never credentials, matched by exact value so a
+# real key anywhere still fails (a squash merge gives every finding a new commit
+# id, so commit allowlists do not hold): the IndexNow tests' sequential key
+# (scripts/ci/tests/test_indexnow.py) and the WorkOS settings test's made-up
+# sk_test_ key, which the stripe-access-token rule reads as a Stripe key.
+regexes = [
+  '''^0123456789abcdef0123456789abcdef$''',
+  '''sk_test_configured''',
+]
