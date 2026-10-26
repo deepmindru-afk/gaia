@@ -1,11 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
-import Script from "next/script";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
 import { setRequestLocale } from "next-intl/server";
 import { type ReactNode, Suspense } from "react";
 import { defaultFont, getAllFontVariables } from "@/app/fonts";
 import { AgentationProvider } from "@/components/dev/AgentationProvider";
+import JsonLd from "@/components/seo/JsonLd";
 import { ChunkErrorRecovery } from "@/components/shared/ChunkErrorRecovery";
 import { prerenderedLocales } from "@/i18n/prerenderedLocales";
 import { routing } from "@/i18n/routing";
@@ -196,13 +196,9 @@ export default async function LocaleLayout({ children, params }: Props) {
           </div>
         </NextIntlClientProvider>
 
-        <Script id="json-ld-organization" type="application/ld+json">
-          {JSON.stringify(generateOrganizationSchema())}
-        </Script>
-
-        <Script id="json-ld-website" type="application/ld+json">
-          {JSON.stringify(generateWebSiteSchema())}
-        </Script>
+        <JsonLd
+          data={[generateOrganizationSchema(), generateWebSiteSchema()]}
+        />
 
         <ChunkErrorRecovery />
         <AnalyticsLayout />
