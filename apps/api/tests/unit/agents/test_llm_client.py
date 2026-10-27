@@ -877,6 +877,25 @@ class TestAinvokeLlm:
         # The fallback path is retry-wrapped too.
         fallback.with_retry.assert_called_once()
 
+    @pytest.mark.regression
+    @patch("app.agents.llm.client.log")
+    async def test_a_malformed_structured_reply_reaches_the_fallback_lane(
+        self, mock_log: MagicMock
+    ) -> None:
+        """A prose reply crosses lanes: the fallback's JSON mode cannot answer in prose."""
+        primary = self._runnable(
+            side_effect=MalformedStructuredOutputError(
+                "EpisodeSummary: reply made no EpisodeSummary tool call",
+                llm_output="Routine inbox sweeps, nothing worth summarizing.",
+            )
+        )
+        fallback = self._runnable(result={"summary": "a real summary"})
+
+        result = await ainvoke_llm(primary, [HumanMessage(content="hi")], fallback=fallback)
+
+        assert result == {"summary": "a real summary"}
+        fallback.ainvoke.assert_awaited_once()
+
     @patch("app.agents.llm.client.log")
     async def test_fallback_factory_called_lazily(self, mock_log: MagicMock) -> None:
         fallback = self._runnable(result=AIMessage(content="fallback-ok"))
