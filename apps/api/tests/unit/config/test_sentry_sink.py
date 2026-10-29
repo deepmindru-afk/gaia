@@ -18,9 +18,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.outputs import ChatResult
+from mcp_use.client.connectors.http import HttpConnector
 import pytest
 import sentry_sdk
 from sentry_sdk.consts import OP
@@ -30,6 +32,7 @@ from sentry_sdk.types import Event
 from app.config import sentry as sentry_config
 from app.config.loggers import REQUEST_LOGGER_NAME
 from app.config.sentry import _make_sentry_loguru_sink
+from shared.py import logging as shared_logging
 from shared.py.logging import _InterceptHandler, env_context
 from shared.py.wide_events import (
     BACKGROUND_LOGGER_NAME,
@@ -38,6 +41,7 @@ from shared.py.wide_events import (
     WORKER_LOGGER_NAME,
     log,
 )
+from tests.helpers import pick_free_port
 
 
 def _record(
@@ -237,6 +241,23 @@ def test_a_library_error_log_reaches_sentry_exactly_once(sentry_events: list[Eve
 
 
 @pytest.mark.regression
+async def test_an_unreachable_mcp_server_reports_once_not_per_transport(
+    sentry_events: list[Event],
+) -> None:
+    """Transport lines are duplicates of GAIA's report; the session-task line is not."""
+    with pytest.raises(httpx.ConnectError):
+        await HttpConnector(f"http://127.0.0.1:{pick_free_port()}/mcp").connect()
+
+    messages = [
+        str(event.get("message") or event.get("logentry", {}).get("message", ""))
+        for event in sentry_events
+    ]
+    assert len(sentry_events) == 1, messages
+    assert "transport" not in messages[0].lower()
+    assert "SseConnectionManager" in messages[0]
+
+
+@pytest.mark.regression
 def test_a_failed_llm_attempt_is_left_to_the_retry_policy(sentry_events: list[Event]) -> None:
     # ainvoke_llm retries or falls back on this; the caller reports it only if the policy gives up.
     with sentry_sdk.start_transaction(name="chat turn"):
@@ -293,3 +314,63 @@ def test_only_production_samples_traces_and_profiles(
     global_scope.set_client(None)
 
     assert (options["traces_sample_rate"], options["profiles_sample_rate"]) == (rate, rate)
+
+
+@pytest.mark.regression
+def test_an_mcp_connect_duplicate_does_not_reach_sentry() -> None:
+    """MCPClient.connect reports the same failure with the integration id."""
+    # Read off the module, not imported: importing a constant this PR adds cannot
+    # collect on base, and a collection error is not the red to prove.
+    cap_msg, cap_exc, _scope = _run_sink(
+        _record(
+            message="MCP protocol error during initialization: code=-32601 message='Method not found'",
+            logger_name=shared_logging.MCP_USE_LOGGER_DISPLAY_NAME,
+        )
+    )
+
+    cap_msg.assert_not_called()
+    cap_exc.assert_not_called()
+
+
+@pytest.mark.regression
+def test_an_mcp_background_session_error_still_reaches_sentry() -> None:
+    """The library's task failure has no caller in app/, so it must reach Sentry."""
+    cap_msg, _cap_exc, _scope = _run_sink(
+        _record(
+            message="Error in SseConnectionManager task: unhandled errors in a TaskGroup",
+            logger_name=shared_logging.MCP_USE_LOGGER_DISPLAY_NAME,
+        )
+    )
+
+    cap_msg.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "OAuth initialization failed: no token",
+        "MCP protocol error during initialization: code=-32601 message='Method not found'",
+        "Failed to connect to stdio MCP server",
+        "Both transport methods failed. Streamable HTTP: closed, SSE: failed",
+    ],
+)
+def test_every_connect_transport_line_is_a_duplicate(message: str) -> None:
+    """Each of these is re-raised to MCPClient.connect, which reports it with the id."""
+    cap_msg, cap_exc, _scope = _run_sink(
+        _record(message=message, logger_name=shared_logging.MCP_USE_LOGGER_DISPLAY_NAME)
+    )
+
+    cap_msg.assert_not_called()
+    cap_exc.assert_not_called()
+
+
+def test_a_swallowed_tool_listing_failure_still_reaches_sentry() -> None:
+    """mcp_use catches this one and returns an empty list, so GAIA never re-reports it."""
+    cap_msg, _cap_exc, _scope = _run_sink(
+        _record(
+            message="Error listing tools for connector https://mcp.example: boom",
+            logger_name=shared_logging.MCP_USE_LOGGER_DISPLAY_NAME,
+        )
+    )
+
+    cap_msg.assert_called_once()
