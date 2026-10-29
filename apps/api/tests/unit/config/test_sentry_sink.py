@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -27,7 +27,7 @@ import pytest
 import sentry_sdk
 from sentry_sdk.consts import OP
 from sentry_sdk.integrations.langchain import LangchainIntegration
-from sentry_sdk.types import Event
+from sentry_sdk.types import Event, Hint
 
 from app.config import sentry as sentry_config
 from app.config.loggers import REQUEST_LOGGER_NAME
@@ -40,6 +40,7 @@ from shared.py.wide_events import (
     WORKER_EVENT_NAME,
     WORKER_LOGGER_NAME,
     log,
+    log_context,
 )
 from tests.helpers import pick_free_port
 
@@ -374,3 +375,197 @@ def test_a_swallowed_tool_listing_failure_still_reaches_sentry() -> None:
     )
 
     cap_msg.assert_called_once()
+
+
+def _event(**overrides: object) -> Event:
+    """Build a minimal message event, shaped like what capture_message builds."""
+    return cast("Event", {"logentry": {"message": "boom"}, **overrides})
+
+
+def test_a_wide_event_user_becomes_the_sentry_user() -> None:
+    event = sentry_config._before_send(
+        _event(extra={"user": {"id": "67bdb4367c7dd1f0ea343216"}}), {}
+    )
+
+    assert event is not None
+    assert event["user"] == {"id": "67bdb4367c7dd1f0ea343216"}
+
+
+def test_the_user_falls_back_to_a_flat_user_id() -> None:
+    event = sentry_config._before_send(_event(extra={"user_id": "67bdb4367c7dd1f0ea343216"}), {})
+
+    assert event is not None
+    assert event["user"] == {"id": "67bdb4367c7dd1f0ea343216"}
+
+
+def test_an_event_without_a_user_stays_anonymous() -> None:
+    event = sentry_config._before_send(_event(extra={"trace_id": "t1"}), {})
+
+    assert event is not None
+    assert "user" not in event
+
+
+def test_two_messages_differing_only_by_identifiers_share_a_fingerprint() -> None:
+    first = sentry_config._before_send(
+        _event(
+            tags={"logger": "APP"},
+            logentry={"message": "MCP DCR failed for https://x.dev/u/67bdb4367c7dd1f0ea343216"},
+        ),
+        {},
+    )
+    second = sentry_config._before_send(
+        _event(
+            tags={"logger": "APP"},
+            logentry={"message": "MCP DCR failed for https://y.dev/u/aaaaaaaaaaaaaaaaaaaa"},
+        ),
+        {},
+    )
+
+    assert first is not None and second is not None
+    assert first["fingerprint"] == second["fingerprint"]
+
+
+def test_different_messages_keep_different_fingerprints() -> None:
+    first = sentry_config._before_send(_event(logentry={"message": "redis unreachable"}), {})
+    second = sentry_config._before_send(_event(logentry={"message": "mongo unreachable"}), {})
+
+    assert first is not None and second is not None
+    assert first["fingerprint"] != second["fingerprint"]
+
+
+def test_a_message_fingerprint_names_the_logger_that_said_it() -> None:
+    event = sentry_config._before_send(_event(tags={"logger": "MCP_USE"}), {})
+
+    assert event is not None
+    assert event["fingerprint"][1] == "MCP_USE"
+
+
+def test_an_exception_event_is_grouped_by_its_stack_not_its_message() -> None:
+    event = sentry_config._before_send(
+        _event(exception={"values": []}, logentry={"message": "boom 12"}), {}
+    )
+
+    assert event is not None
+    assert "fingerprint" not in event
+
+
+def test_a_retried_llm_attempt_is_dropped_before_anything_else() -> None:
+    trace = {
+        "origin": LangchainIntegration.origin,
+        "op": OP.GEN_AI_CHAT,
+    }
+    assert sentry_config._before_send(_event(contexts={"trace": trace}), {}) is None
+
+
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        ({"logentry": {"formatted": "boom 4242"}}, ["log", "app", "boom #"]),
+        ({"logentry": {"message": "boom 4242"}}, ["log", "app", "boom #"]),
+        ({"logentry": {}, "message": "boom 4242"}, ["log", "app", "boom #"]),
+        (
+            {"logentry": {"message": "boom 4242"}, "tags": {"logger": "MCP_USE"}, "logger": "x"},
+            ["log", "MCP_USE", "boom #"],
+        ),
+        (
+            {"logentry": {"message": "boom 4242"}, "logger": "sentry.exporter"},
+            ["log", "sentry.exporter", "boom #"],
+        ),
+    ],
+)
+def test_the_fingerprint_reads_every_fallback_in_order(
+    event: dict[str, object], expected: list[str]
+) -> None:
+    """Each source is a fallback: logentry.formatted, then message, then the event's own."""
+    result = sentry_config._before_send(_event(**event), {})
+
+    assert result is not None
+    assert result["fingerprint"] == expected
+
+
+def test_a_very_long_message_is_capped_for_readability() -> None:
+    result = sentry_config._before_send(_event(logentry={"message": "z" * 400}), {})
+
+    assert result is not None
+    assert len(result["fingerprint"][2]) == 160
+
+
+def test_an_event_with_no_message_keeps_sentry_s_own_grouping() -> None:
+    """A blank fingerprint would merge every message-less event into one issue."""
+    result = sentry_config._before_send(_event(logentry={}), {})
+
+    assert result is not None
+    assert "fingerprint" not in result
+
+
+def test_the_hint_reaches_the_llm_attempt_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def record(event: Event, hint: Hint) -> Event:
+        seen["hint"] = hint
+        return event
+
+    monkeypatch.setattr(sentry_config, "_drop_llm_attempt_errors", record)
+    hint: Hint = {"exc_info": (ValueError, ValueError("x"), None)}
+
+    sentry_config._before_send(_event(), hint)
+
+    assert seen["hint"] is hint
+
+
+@pytest.mark.regression
+async def test_an_error_without_user_kwargs_still_reaches_sentry_as_that_user(
+    sentry_events: list[Event],
+) -> None:
+    """A log line binds only its own kwargs; the request's user rides the wide event."""
+    async with log_context("test_operation"):
+        log.set(user={"id": "67bdb4367c7dd1f0ea343216"})
+        log.error("executor run failed")
+
+    assert [event["user"] for event in sentry_events] == [{"id": "67bdb4367c7dd1f0ea343216"}]
+
+
+def test_an_unvalidatable_event_still_reaches_sentry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising before_send makes the SDK drop the event, so it ships ungrouped instead."""
+    warning = MagicMock()
+    monkeypatch.setattr(sentry_config.log, "warning", warning)
+
+    event = sentry_config._before_send(_event(tags={"logger": 5}), {})
+
+    assert event is not None
+    assert "fingerprint" not in event
+    warning.assert_called_once_with("sentry_event_shaping_failed", error_type="ValidationError")
+
+
+def test_a_user_without_an_id_still_gets_one() -> None:
+    """Sentry allows a user dict with only a username; the event's own id must join it."""
+    event = sentry_config._before_send(
+        _event(extra={"user": {"id": "67bdb4367c7dd1f0ea343216"}}, user={"username": "a"}),
+        {},
+    )
+
+    assert event is not None
+    assert event["user"] == {"username": "a", "id": "67bdb4367c7dd1f0ea343216"}
+
+
+def test_an_existing_fingerprint_is_not_replaced() -> None:
+    """Scope code may have grouped the event already; ours must not silently undo it."""
+    event = sentry_config._before_send(
+        _event(logentry={"message": "boom 4242"}, fingerprint=["mine"]), {}
+    )
+
+    assert event is not None
+    assert event["fingerprint"] == ["mine"]
+
+
+def test_a_user_that_already_has_an_id_is_left_alone() -> None:
+    """The caller's attribution wins; ours only fills a gap."""
+    event = sentry_config._before_send(
+        _event(user={"id": "existing"}, extra={"user": {"id": "67bdb4367c7dd1f0ea343216"}}),
+        {},
+    )
+
+    assert event is not None
+    assert event["user"] == {"id": "existing"}

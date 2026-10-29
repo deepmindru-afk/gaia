@@ -1,10 +1,11 @@
 """Sentry configuration for error tracking and performance monitoring."""
 
 from collections.abc import Callable, Mapping
+import re
 from typing import Protocol, TypedDict, cast
 
 from loguru import logger as _loguru
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, ValidationError
 import sentry_sdk
 from sentry_sdk.consts import OP
 from sentry_sdk.integrations.langchain import LangchainIntegration
@@ -20,6 +21,7 @@ from shared.py.logging import ARQ_LOGGER_DISPLAY_NAME, MCP_USE_LOGGER_DISPLAY_NA
 from shared.py.wide_events import (
     BOUNDARY_FAILURE_MESSAGE,
     BOUNDARY_LOGGER_NAMES,
+    current_event_fields,
     log,
 )
 
@@ -71,6 +73,9 @@ _MCP_USE_CONNECT_DUPLICATES = (
     "Both transport methods failed",
 )
 
+# Long enough to tell two messages apart, short enough for a readable issue title.
+_FINGERPRINT_MESSAGE_CHARS = 160
+
 
 def _scrub_pii(extra: Mapping[str, object]) -> dict[str, object]:
     """Drop direct identifiers from wide-event fields, including nested dicts (user.email)."""
@@ -112,6 +117,114 @@ def _drop_llm_attempt_errors(event: Event, _hint: Hint) -> Event | None:
     trace = _CapturedSpan.model_validate(event).contexts.trace
     if trace.origin == LangchainIntegration.origin and trace.op in _LLM_CALL_SPAN_OPS:
         return None
+    return event
+
+
+# Anything a message can vary on: ids, numbers and URLs. Stripping them makes two
+# reports of one failure share a fingerprint instead of opening an issue each.
+_MESSAGE_VARIABLES = re.compile(
+    r"https?://\S+"
+    r"|\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+    r"|\b[0-9a-fA-F]{8,}\b"
+    r"|\d+"
+)
+
+
+class _EventUser(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = None
+
+
+class _EventExtras(BaseModel):
+    """The wide-event fields an event carries back from its log record."""
+
+    model_config = ConfigDict(extra="allow")
+
+    user: _EventUser | None = None
+    user_id: str | None = None
+
+
+class _EventTags(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    logger: str | None = None
+
+
+class _EventLogEntry(BaseModel):
+    formatted: str | None = None
+    message: str | None = None
+
+
+class _EventFields(BaseModel):
+    """The parts of a Sentry event before_send reads, as attributes."""
+
+    exception: dict[str, object] | None = None
+    extra: _EventExtras = _EventExtras()
+    tags: _EventTags = _EventTags()
+    logentry: _EventLogEntry = _EventLogEntry()
+    message: str | None = None
+    logger: str | None = None
+    user: _EventUser | None = None
+
+
+def _stable_fingerprint(event: Event) -> list[str] | None:
+    """Group a log message by what it says, not by the ids it happens to contain.
+
+    Sentry's default for a message event is its literal text, so a library that
+    puts a URL or a user id in the sentence opens a new issue per value. An event
+    carrying an exception is left alone: its stack is the better grouping key.
+    """
+    fields = _EventFields.model_validate(event)
+    if fields.exception:
+        return None
+    message = fields.logentry.formatted or fields.logentry.message or fields.message or ""
+    logger_name = fields.tags.logger or fields.logger
+    normalised = " ".join(_MESSAGE_VARIABLES.sub("#", str(message)).split())[
+        :_FINGERPRINT_MESSAGE_CHARS
+    ]
+    if not normalised:
+        # A blank key would merge every message-less event into one issue.
+        return None
+    return ["log", str(logger_name or "app"), normalised]
+
+
+def _attribute_user(event: Event) -> None:
+    """Copy the wide event's user id onto the Sentry user, so users-affected counts.
+
+    The id already rides every record's extras, because routes and worker tasks
+    stamp the user namespace. Nothing else has to call set_user, and that
+    includes ARQ jobs, which have no request to set it from.
+    """
+    fields = _EventFields.model_validate(event)
+    if fields.user is not None and fields.user.id:
+        return
+    user_id = fields.extra.user.id if fields.extra.user else None
+    if not user_id:
+        user_id = fields.extra.user_id
+    if not user_id:
+        # A log line binds only its own kwargs; the request's user rides the event.
+        event_user = _EventExtras.model_validate(current_event_fields()).user
+        user_id = event_user.id if event_user else None
+    if user_id:
+        merged = fields.user.model_dump() if fields.user else {}
+        event["user"] = {**merged, "id": user_id}
+
+
+def _before_send(event: Event, hint: Hint) -> Event | None:
+    """Decide every event's fate: drop retried LLM attempts, then group and attribute it."""
+    event = _drop_llm_attempt_errors(event, hint)
+    if event is None:
+        return None
+    try:
+        _attribute_user(event)
+        fingerprint = _stable_fingerprint(event)
+    except (ValidationError, TypeError, AttributeError) as exc:
+        # A hook that raises makes the SDK drop the event: ship it ungrouped instead.
+        log.warning("sentry_event_shaping_failed", error_type=type(exc).__name__)
+        return event
+    if fingerprint is not None and "fingerprint" not in event:
+        event["fingerprint"] = fingerprint
     return event
 
 
@@ -197,7 +310,7 @@ def init_sentry() -> None:
         profile_lifecycle="trace",
         # Both re-send every log record the sink below already forwards, unfiltered and unscrubbed.
         disabled_integrations=[LoguruIntegration(), LoggingIntegration()],
-        before_send=_drop_llm_attempt_errors,
+        before_send=_before_send,
     )
     # The API and the ARQ worker share one project; the Promtail service name tells them apart.
     sentry_sdk.get_global_scope().set_tag("service", env_context().service)
